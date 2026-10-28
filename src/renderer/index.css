@@ -2735,14 +2735,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--ui-text-primary);
 }
 
-/* Inset like the hub body above it; the rule still spans the full width. */
-.agent-hub-footer__safe-mode {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-xs);
-}
-
 .agent-session-header,
 .agent-session-composer,
 .agent-resume-root-actions {

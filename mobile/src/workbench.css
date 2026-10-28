@@ -21,7 +21,6 @@
   font-family: var(--ui-font-body);
 }
 
-:lang(ko) .agent-hub-title,
 :lang(ko) .status-section-title {
   font-family: var(--ui-font-body);
   letter-spacing: normal;
@@ -433,36 +432,6 @@
   border-color: var(--ui-border-subtle);
   color: var(--ui-text-primary);
   background: var(--ui-surface);
-}
-
-.mobile-agent-hub .agent-hub-head {
-  position: sticky;
-  z-index: var(--ui-z-sticky);
-  top: 0;
-  min-height: 56px;
-  padding: var(--ui-space-2) var(--ui-space-3);
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--ui-space-2);
-  border-bottom: 1px solid var(--ui-border-subtle);
-  background: var(--ui-surface);
-}
-
-.mobile-agent-hub .agent-hub-head > .ez-ui-icon-button {
-  width: 44px;
-  height: 44px;
-}
-
-.mobile-agent-hub .agent-hub-title {
-  color: var(--ui-text-primary);
-  font-family: var(--ui-font-heading);
-  font-size: var(--ui-font-size-16);
-}
-
-.mobile-agent-hub .agent-hub-summary {
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
 }
 
 .mobile-stats-tabs,

@@ -547,31 +547,6 @@ body,
   margin: 0;
 }
 
-.mobile-agent-hub {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background: var(--ui-canvas);
-}
-
-.mobile-agent-hub .agent-hub-head {
-  padding-top: 10px;
-}
-
-.mobile-agent-hub .agent-hub-body {
-  flex: 1;
-}
-
-.mobile-agent-hub .agent-row {
-  padding: 12px;
-}
-
-.mobile-agent-hub .btn,
-.mobile-agent-hub .agent-followup-input {
-  min-height: 44px;
-}
-
 /* Keep-alive: an inactive tab is hidden, never unmounted (see
  * MobileWorkspace.tsx's module doc) — display:none is toggled inline per tab. */
 .tab-page {
