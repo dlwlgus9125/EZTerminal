@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import type { ChatAgentPhaseMap, ChatAgentProfile, ChatAgentProfileAccess } from '../../shared/chat-agent-profiles';
@@ -10,7 +10,7 @@ import { validateWorkflowGraph, type WorkflowGraph } from '../../shared/workflow
 import { SettingsChangeTrack } from '../chat/SettingsChangeTrack';
 import { AppI18nProvider } from '../i18n';
 import { shellSnapshot } from '../shell/shell-fixtures';
-import { KO_CAPABILITIES, SettingsFixture } from '../shell/tool-screen-fixtures';
+import { SettingsFixture, storyCapabilities } from '../shell/tool-screen-fixtures';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
 import '../workbench/workbench.css';
@@ -19,6 +19,7 @@ import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } fr
 import type { WorkflowPanelSection } from '../workflow/workflow-canvas-model';
 import type { CanvasSelection, WorkflowCanvasRendererProps } from '../workflow/workflow-canvas-types';
 import { useWorkflowCopy } from '../workflow/workflow-copy';
+import { DialogPortalContext } from '../ui/Dialog';
 import { useWorkflowHarness } from '../workflow/use-workflow-harness';
 import { WorkflowFlowCanvas } from '../workflow/WorkflowFlowCanvas';
 import { WorkflowFlowSurface } from '../workflow/WorkflowFlowSurface';
@@ -56,8 +57,12 @@ function item(id: string, sequence: number, kind: DaemonTranscriptItem['kind'], 
   return { id, sessionId: 'harness-chat', turnId: `turn-${Math.ceil(sequence / 2)}`, sequence, kind, text, isDelta: false, isSensitive: false, createdAt: NOW, ...overrides };
 }
 
+/** The mockups speak Korean; the approved references follow the Storybook locale (the checker opens them in both). */
+const StoryLocale = createContext<'ko' | 'en'>('ko');
+
 function Desk({ children, width, height }: { readonly children: ReactNode; readonly width?: number; readonly height?: number }): JSX.Element {
-  return <AppI18nProvider locale="ko" languages={['ko']}>
+  const locale = useContext(StoryLocale);
+  return <AppI18nProvider locale={locale} languages={[locale]}>
     <div style={{ width: width ? `min(${width}px, 100vw)` : '100vw', height: height ? `min(${height}px, 100vh)` : '100vh', boxSizing: 'border-box', padding: 12, overflow: 'hidden' }}>{children}</div>
   </AppI18nProvider>;
 }
@@ -90,23 +95,31 @@ function WithProfiles({ children }: { readonly children: ReactNode }): JSX.Eleme
   }, [access]);
   return <>{children}</>;
 }
-/** The settings fixture with a host snapshot, so the AI names resolve and no "runtime unavailable" shows. */
-const SETTINGS_CAPABILITIES = { ...KO_CAPABILITIES, daemon: { ...KO_CAPABILITIES.daemon, getSnapshot: async () => shellSnapshot() } } as typeof KO_CAPABILITIES;
-
-/** 설정 › AI: agents (who: AI · model · effort · permission · when to use) and which one each phase uses. */
-export const SettingsAgents: Story = {
-  render: () => <Desk>
-    <DesktopUiPreferencesProvider capabilities={KO_CAPABILITIES}>
+/** The settings fixture (in the story's language) with a host snapshot, so the AI names resolve and no "runtime unavailable" shows. */
+const SETTINGS_CAPABILITIES = {
+  ko: (() => { const base = storyCapabilities('ko'); return { ...base, daemon: { ...base.daemon, getSnapshot: async () => shellSnapshot() } } as typeof base; })(),
+  en: (() => { const base = storyCapabilities('en'); return { ...base, daemon: { ...base.daemon, getSnapshot: async () => shellSnapshot() } } as typeof base; })(),
+};
+function SettingsAgentsScreen(): JSX.Element {
+  const locale = useContext(StoryLocale);
+  const capabilities = SETTINGS_CAPABILITIES[locale];
+  return <Desk>
+    <DesktopUiPreferencesProvider capabilities={capabilities}>
       <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-        <SidebarShell destination="settings" title="설정" width={420} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
-          <WithProfiles><SettingsFixture requestedCategory="agents" capabilities={SETTINGS_CAPABILITIES} /></WithProfiles>
+        <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={320} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
+          <WithProfiles><SettingsFixture requestedCategory="agents" capabilities={capabilities} /></WithProfiles>
         </SidebarShell>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
           <StructuredAgentSessionPanel {...chatBase} state="working" items={approvedItems} reasoningEffort="medium" queueSettings />
         </div>
       </div>
     </DesktopUiPreferencesProvider>
-  </Desk>,
+  </Desk>;
+}
+
+/** 설정 › AI: agents (who: AI · model · effort · permission · when to use) and which one each phase uses. */
+export const SettingsAgents: Story = {
+  render: () => <SettingsAgentsScreen />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvas.getByTestId('agent-phase-settings')).toBeVisible(), { timeout: 10_000 });
@@ -309,7 +322,8 @@ export const ChatSettingsChange: Story = { render: () => <Chat props={{ items: s
 
 // ── 6. Phone ────────────────────────────────────────────────────────────────────────────────────────────
 function Phone({ children }: { readonly children: ReactNode }): JSX.Element {
-  return <AppI18nProvider locale="ko" languages={['ko']}><div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-harness-frame">{children}</div></AppI18nProvider>;
+  const locale = useContext(StoryLocale);
+  return <AppI18nProvider locale={locale} languages={[locale]}><div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-harness-frame">{children}</div></AppI18nProvider>;
 }
 /** Phone: no dragging — 에이전트 배정 opens this sheet for the selected stage (the PC's agents come with the flow). */
 export const PhoneAssignSheet: Story = {
@@ -396,3 +410,34 @@ export const PhoneOldHost: Story = {
     target.scrollIntoView({ block: 'start' });
   },
 };
+
+// ── Approved 2.0 references (docs/ux/reference/2.0/manifest.json) ─────────────────────────────────────────
+/**
+ * The approved screens as references: the same renders in the Storybook locale, with dialogs and sheets opened
+ * inside the story root (the reference checker's keyboard walk stays on the surface).
+ */
+function ReferenceFrame({ locale, children }: { readonly locale: 'ko' | 'en'; readonly children: ReactNode }): JSX.Element {
+  const [portal, setPortal] = useState<HTMLDivElement | null>(null);
+  return <StoryLocale.Provider value={locale}>
+    {portal && <DialogPortalContext.Provider value={portal}>{children}</DialogPortalContext.Provider>}
+    <div ref={setPortal} />
+  </StoryLocale.Provider>;
+}
+function reference(story: Story): Story {
+  const render = story.render!;
+  return { ...story, render: (args, context) => <ReferenceFrame locale={context.globals.locale === 'en' ? 'en' : 'ko'}>{render(args, context)}</ReferenceFrame> };
+}
+export const SettingsAgentsReference = reference(SettingsAgents);
+export const ComposerQueuedReference = reference(ComposerQueued);
+export const CanvasAgentsReference = reference(CanvasAgents);
+export const CanvasAnswerReference = reference(CanvasAnswer);
+export const ChatSettingsChangeReference = reference(ChatSettingsChange);
+export const PhoneAssignSheetReference: Story = {
+  ...reference(PhoneAssignSheet),
+  // The checker opens it in both languages: open the sheet by its role, then wait for it.
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: /^(에이전트 배정|Assign an agent)$/u }));
+    await waitFor(() => expect(document.querySelector('[data-testid="workflow-agent-list"][data-variant="sheet"]')).not.toBeNull());
+  },
+};
+export const PhoneComposerQueuedReference = reference(PhoneComposerQueued);

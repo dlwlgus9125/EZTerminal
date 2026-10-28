@@ -100,11 +100,11 @@
 .agent-phase-settings { margin-top: var(--ui-space-4); padding-top: var(--ui-space-3); border-top: 1px solid var(--ui-border-subtle); }
 .agent-phase-settings > * + * { margin-top: var(--ui-space-3); }
 .agent-phase-settings__rows { margin: 0; padding: 0; list-style: none; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-inset); }
-.agent-phase-settings__row { position: relative; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); align-items: start; padding: var(--ui-space-2) var(--ui-space-3); }
-.agent-phase-settings__row > .ez-ui-field { grid-column: 2; margin-top: var(--ui-space-1); }
+/* Settings is a narrow drawer (320 px by default): the step and its title share a line, the agent choice takes the row. */ .agent-phase-settings__row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: var(--ui-space-2); padding: var(--ui-space-2); }
+.agent-phase-settings__row > .ez-ui-field { flex: 1 1 100%; min-width: 0; margin-top: var(--ui-space-2); }
 .agent-phase-settings__row + .agent-phase-settings__row { border-top: 1px solid var(--ui-border-subtle); }
-.agent-phase-settings__step { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
-.agent-phase-settings__phase { display: flex; flex-direction: column; min-width: 0; margin-right: var(--ui-space-3); }
+.agent-phase-settings__step { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
+.agent-phase-settings__phase { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
 .agent-phase-settings__phase strong { font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); }
 .agent-phase-settings__phase small { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
 .agent-phase-settings__arrow { display: none; }

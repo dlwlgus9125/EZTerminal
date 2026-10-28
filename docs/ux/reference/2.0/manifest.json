@@ -409,6 +409,106 @@
         "decidedAt": "2026-10-28"
       },
       "replaces": ["risky-close"]
+    },
+    {
+      "id": "harness-settings-agents",
+      "title": "Agents and phase links in Settings",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "SettingsAgentsReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--settings-agents-reference",
+        "snapshot": "reference-2-0-harness-settings-agents-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-settings-agents.png",
+        "sha256": "5530462ea220523284ac4eb14ab6f0fb8d84270db252c5418ee9e4752cded27d"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "harness-composer-queued",
+      "title": "Queued conversation settings",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "ComposerQueuedReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--composer-queued-reference",
+        "snapshot": "reference-2-0-harness-composer-queued-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-composer-queued.png",
+        "sha256": "a44e693212cb6db37c4321221e5617d5edf1ecebea2630a92c3e00fa7ef68e41"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "harness-canvas-agents",
+      "title": "Workflow canvas with agents",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "CanvasAgentsReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--canvas-agents-reference",
+        "snapshot": "reference-2-0-harness-canvas-agents-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-canvas-agents.png",
+        "sha256": "fc5a8be136ed09e6e734ebfc42b9d5cc4c3888cbaa12c1ba774d594388719709"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "harness-canvas-answer",
+      "title": "Workflow answer stage",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "CanvasAnswerReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--canvas-answer-reference",
+        "snapshot": "reference-2-0-harness-canvas-answer-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-canvas-answer.png",
+        "sha256": "aa9439163d84f88a521ae10404b67027d13a97b8953b4e6801700cdfce3a457c"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "harness-settings-proposal",
+      "title": "Settings changed from a conversation",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "ChatSettingsChangeReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--chat-settings-change-reference",
+        "snapshot": "reference-2-0-harness-settings-proposal-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-settings-proposal.png",
+        "sha256": "9ec70ace8bdb54b01780465f5c78deed12572abf09ef55b84c5f0951dffdaa8b"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
     }
   ]
 }

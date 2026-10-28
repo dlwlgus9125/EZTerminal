@@ -281,6 +281,26 @@ gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허�
 `openclaw`·`openclaw-chat`·`files`, `shell-2-0-crt`)와 흐름 화면 8개(`flow-canvas-*` 6, `workflow-items-*` 2). 고정 캡처
 (`docs/ux/reference/2.0/captures/`)는 승인 당시 실앱 그림이라 그대로 두었다 — 옛 이름이 남아 있다.
 
+### 2.0 승인 화면 — 워크플로 하네스
+
+승인한 시안 23개 가운데 대표 7개를 2.0 기준으로 고정한다. 기준 story는 시안과 같은 렌더를 Storybook 언어로 그리는
+`Production/Harness/Mockup`의 `…Reference`(대화상자·시트는 story 안에 연다)이고, 데스크톱 캡처는 격리 프로필 실 Electron(Matrix·ko·
+1440×900, 합성 데이터, e2e 가짜 Codex)에서 찍었다(스크립트 `artifacts/harness/capture-real/capture.spec.ts`, 커밋 안 함). 1.0 화면은
+대체하지 않는다.
+
+| 화면 id | 화면 | story | 캡처 | 답 |
+|---|---|---|---|---|
+| `harness-settings-agents` | 설정 › 에이전트의 단계 연결: AI별 계획·구현, 공통 검토, 모델도 바꾸기 | `SettingsAgentsReference` | `docs/ux/reference/2.0/captures/harness-settings-agents.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-composer-queued` | 입력창 예약 줄: 지금 차례 → 다음 요청, 다음 요청 1회만 / 이후 계속, 예약 취소 | `ComposerQueuedReference` | `docs/ux/reference/2.0/captures/harness-composer-queued.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-canvas-agents` | 캔버스 오른쪽 위 에이전트 목록(끌어 놓기·배정), 앞 대화 이어서 표시 | `CanvasAgentsReference` | `docs/ux/reference/2.0/captures/harness-canvas-agents.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-canvas-answer` | 내 답변 단계: 실행이 사람의 답을 기다림(AI는 돌지 않음), 앞 단계 결과 보기 | `CanvasAnswerReference` | `docs/ux/reference/2.0/captures/harness-canvas-answer.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-settings-proposal` | 대화로 설정 바꾸기: 바로 적용한 변경과 되돌리기, 사람이 적용하는 제안 | `ChatSettingsChangeReference` | `docs/ux/reference/2.0/captures/harness-settings-proposal.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-phone-assign` | 폰 배정 시트: 고른 단계에 PC의 에이전트를 놓음(끌기 없음) | `PhoneAssignSheetReference` | `docs/ux/reference/2.0/captures/harness-phone-assign.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+| `harness-phone-queued` | 폰 입력창의 같은 예약 줄 | `PhoneComposerQueuedReference` | `docs/ux/reference/2.0/captures/harness-phone-queued.png` | 승인 (2026-10-29): 시안 23개 "모두 승인" |
+
+시안 이후 바뀐 것: 단계 연결 줄이 기본 320px 설정 서랍에서 읽히도록 단계 번호와 제목이 한 줄, 에이전트 선택이 줄 전체를 쓴다(실앱 캡처에서
+찾음 — 시안은 420px 서랍이었다). 대화의 제안 카드 머리는 "설정 제안 · 사람이 적용"으로 바뀌었다(명령 실행 위험 표시 대신).
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약
