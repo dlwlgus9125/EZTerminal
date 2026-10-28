@@ -1,5 +1,5 @@
 import { Glyph } from '../ui/Glyph';
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type DragEvent, type ReactNode } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import { blockingRunOf, stageEditScope, stageWorking, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
@@ -7,8 +7,8 @@ import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/wo
 import { flowRunNumber } from '../../shared/workflow-run-view';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
 import { Button, Dialog, LoadingState, Status, VisuallyHidden } from '../ui';
-import { layoutWorkflowGraph, resolveCanvasView, workflowLayoutOverlaps, workflowRunControls, type WorkflowPanelSection } from './workflow-canvas-model';
-import type { CanvasSelection, WorkflowCanvasRendererProps, WorkflowEdgeDecoration, WorkflowNodeDecoration } from './workflow-canvas-types';
+import { layoutWorkflowGraph, resolveCanvasView, workflowLayoutOverlaps, workflowRunControls, type WorkflowNodeRunView, type WorkflowPanelSection } from './workflow-canvas-model';
+import { WORKFLOW_AGENT_DRAG_TYPE, type CanvasSelection, type WorkflowCanvasRendererProps, type WorkflowEdgeDecoration, type WorkflowNodeDecoration } from './workflow-canvas-types';
 import { WorkflowCanvasHeader, type WorkflowRunCommandInput } from './WorkflowCanvasHeader';
 import type { WorkflowStageLink } from './WorkflowNodeSections';
 import { WorkflowEdgeInspector } from './WorkflowNodeSettings';
@@ -102,8 +102,13 @@ export interface WorkflowFlowSurfaceProps {
   readonly repeatNote?: ReactNode;
   /** Above whatever the side panel shows (the agent list). */
   readonly panelTop?: ReactNode;
-  /** A stage's agent settings and what it waits for, in place of the AI · model · effort fields. */
-  readonly stageSlots?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
+  /**
+   * A stage's agent settings and what it waits for, in place of the AI · model · effort fields. `run` is the run
+   * shown over the flow (null when none is overlaid) and `view` the stage in it.
+   */
+  readonly stageSlots?: (node: WorkflowNode, run: ExecutionRun | null, view: WorkflowNodeRunView | undefined) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
+  /** An agent from the agent list was dropped on an AI stage of the editable flow (desktop). */
+  readonly onDropAgent?: (nodeId: string, agentId: string) => void;
 }
 
 const NO_ISSUES: readonly WorkflowIssue[] = [];
@@ -156,6 +161,9 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const archived = !!node && !view.graph.nodes.some(item => item.id === node.id);
   const edge = selection?.kind === 'edge' ? view.graph.edges.find(item => item.id === selection.id) : undefined;
   const awaiting = (view.overlay?.awaitingApproval ?? []).map(entry => ({ nodeId: entry.nodeId, title: view.graph.nodes.find(item => item.id === entry.nodeId)?.title ?? entry.nodeId }));
+  // Answer stages wait for the person too: the run bar's chip and the announcement count them.
+  const answers = (view.overlay?.awaitingApproval ?? []).filter(entry => entry.asks === 'answer').length;
+  const awaitingLabel = props.awaitingLabel ?? (answers ? (count: number) => answers === count ? text(`답변 대기 ${count}`, `${count} awaiting your answer`) : text(`승인·답변 대기 ${count}`, `${count} awaiting you`) : undefined);
   const controls = view.run ? workflowRunControls(view.run) : null;
   const runNumber = view.run ? flowRunNumber(props.runs, view.run) : 0;
   // Whether a stage change reaches the run still going: the host binds a stage's own settings before its
@@ -171,7 +179,8 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
 
   const integration = useRunIntegration(props.readPlanningResult, props.projectId, props.subproject.id, view.run);
   // One polite announcement per real change (run state, approvals), not per 4 s poll.
-  const summary = view.run ? `${workflowStateLabel(view.run.state, text)}${awaiting.length ? ` · ${text(`승인 대기 ${awaiting.map(item => item.title).join(', ')}`, `awaiting approval: ${awaiting.map(item => item.title).join(', ')}`)}` : ''}` : '';
+  const waitingTitles = awaiting.map(item => item.title).join(', ');
+  const summary = view.run ? `${workflowStateLabel(view.run.state, text)}${awaiting.length ? ` · ${answers ? text(`나를 기다림 ${waitingTitles}`, `waiting for you: ${waitingTitles}`) : text(`승인 대기 ${waitingTitles}`, `awaiting approval: ${waitingTitles}`)}` : ''}` : '';
   const announced = useRef(summary);
   useEffect(() => { if (summary !== announced.current) { announced.current = summary; setAnnouncement(summary); } }, [summary]);
   useEffect(() => { if (!active) setRemoveId(null); }, [active]);
@@ -202,15 +211,47 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     jumpTo(id, 'settings');
   };
   const tidy = () => change(layoutWorkflowGraph(view.graph, card));
+  // An agent dragged from the list lands on the AI stage under the pointer (any renderer: the card carries its id).
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const agentDrop = !!props.onDropAgent && editable && !props.mobile;
+  const stageUnder = (event: DragEvent<HTMLElement>): string | null => {
+    const hits = typeof document.elementsFromPoint === 'function' ? document.elementsFromPoint(event.clientX, event.clientY) : [event.target as Element];
+    for (const hit of hits) {
+      const id = hit instanceof Element ? hit.closest('[data-node-id]')?.getAttribute('data-node-id') : null;
+      if (id) return view.graph.nodes.find(item => item.id === id)?.operation === 'agent' ? id : null;
+    }
+    return null;
+  };
+  const carriesAgent = (event: DragEvent<HTMLElement>) => [...event.dataTransfer.types].includes(WORKFLOW_AGENT_DRAG_TYPE);
+  const dropHandlers = agentDrop ? {
+    onDragOver: (event: DragEvent<HTMLDivElement>) => {
+      if (!carriesAgent(event)) return;
+      const target = stageUnder(event);
+      if (target) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }
+      setDropTarget(target);
+    },
+    onDragLeave: (event: DragEvent<HTMLDivElement>) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); },
+    onDrop: (event: DragEvent<HTMLDivElement>) => {
+      setDropTarget(null);
+      const agentId = event.dataTransfer.getData(WORKFLOW_AGENT_DRAG_TYPE);
+      const target = stageUnder(event);
+      if (!agentId || !target) return;
+      event.preventDefault();
+      props.onDropAgent!(target, agentId);
+      props.onSelectionChange({ kind: 'node', id: target });
+    },
+  } : {};
+  useEffect(() => { if (!agentDrop) setDropTarget(null); }, [agentDrop]);
+  const decorations = useMemo(() => dropTarget ? { ...props.decorations, [dropTarget]: { ...props.decorations?.[dropTarget], dropTarget: true } } : props.decorations, [dropTarget, props.decorations]);
   const Renderer = props.layout === 'graph' ? props.canvasRenderer ?? WorkflowStaticGraph : null;
   const staticRenderer = Renderer === WorkflowStaticGraph;
   const rendererProps: WorkflowCanvasRendererProps = {
     graph: view.graph, overlay: view.overlay, editable: shaping, selection, onSelect: select, onGraphChange: change, text, issueCounts,
     label: text('워크플로 캔버스', 'Workflow canvas'), active, initialViewport: cameras[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
     onViewportChange: viewport => { cameras[cameraKey] = viewport; }, onRequestDeleteNode: shaping ? setRemoveId : undefined, reveal, onTidy: shaping ? tidy : undefined,
-    decorations: props.decorations, edgeDecorations: props.edgeDecorations,
+    decorations, edgeDecorations: props.edgeDecorations,
   };
-  const slots = node ? props.stageSlots?.(node) : undefined;
+  const slots = node ? props.stageSlots?.(node, view.overlay ? view.run : null, view.overlay?.nodes[node.id]) : undefined;
   const removeNode = (id: string) => change({ ...view.graph, nodes: view.graph.nodes.filter(item => item.id !== id), edges: view.graph.edges.filter(item => item.from !== id && item.to !== id), entryNodeId: view.graph.entryNodeId === id ? null : view.graph.entryNodeId });
   const help = view.graph.nodes.length === 0
     ? text('아직 단계가 없습니다. 위에서 단계 종류를 고르고 "단계 추가"를 누르세요.', 'No stages yet. Pick a stage type above and choose "Add stage".')
@@ -224,20 +265,20 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
       hasLocalDraft={!!props.draftGraph} issueCount={props.issues.length} awaiting={awaiting} onLaunch={props.onLaunch} onRunCommand={props.onRunCommand}
       onPickRun={props.onPickRun} onSaveReviewer={props.onSaveReviewer} onAutoApprove={props.onAutoApprove} onJumpToNode={id => jumpTo(id, 'run')}
       repeatStatus={props.repeatStatus} onSaveRepeat={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings}
-      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} integration={integration} awaitingLabel={props.awaitingLabel} repeatNote={props.repeatNote} />
+      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} integration={integration} awaitingLabel={awaitingLabel} repeatNote={props.repeatNote} />
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run}
       editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} structure={props.structure} onStructureChange={props.onStructureChange}
       overlapping={workflowLayoutOverlaps(view.graph, card)} layout={props.layout} onLayoutChange={props.onLayoutChange} onRunView={props.onRunViewChange}
       onAddStage={addStage} onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={tidy}
       panelToggle={props.mobile || !props.onPanelOpenChange ? undefined : { open: panelOpen, controls: panelId, onToggle: () => props.onPanelOpenChange?.(!panelOpen) }} />
     <div className="workflow-flow__body" data-panel={panelOpen ? undefined : 'collapsed'}>
-      <div ref={canvasCell} className="workflow-flow__canvas">
+      <div ref={canvasCell} className="workflow-flow__canvas" {...dropHandlers}>
         {Renderer ? <WorkflowCanvasBoundary onRetry={props.onReloadCanvas} onFailedChange={setCanvasFailed} fallback={retry => <div className="workflow-flow__fallback">
           <p role="alert" className="workflow-notice">{text('캔버스를 불러오지 못해 간단한 그래프로 보여 줍니다. 편집은 오른쪽 패널과 목록에서 할 수 있습니다.', 'The canvas did not load, so a simple graph is shown. Edit in the panel and the list.')}</p>
           <Button size="sm" onClick={retry}>{text('캔버스 다시 불러오기', 'Reload the canvas')}</Button>
           <WorkflowStaticGraph {...rendererProps} />
         </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer key={cameraKey} {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
-          : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} decorations={props.decorations} />}
+          : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} decorations={decorations} />}
       </div>
       <aside ref={panel} id={panelId} hidden={!panelOpen} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('워크플로 요약', 'Workflow summary')}>
         {props.panelTop}

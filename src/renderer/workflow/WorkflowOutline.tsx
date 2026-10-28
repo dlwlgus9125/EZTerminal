@@ -12,7 +12,7 @@ export function WorkflowOutline({ graph, overlay, selection, onSelect, text, dec
     const run = overlay?.nodes[node.id]; const status = run ? workflowRunStatusPresentation(run, text) : null;
     const decoration = decorations?.[node.id];
     const outgoing = graph.edges.filter(edge => edge.from === node.id).map(edge => `${decoration?.portLabels?.[edge.outcome] ?? workflowOutcomeLabel(edge.outcome, text)} → ${title(edge.to)}`).join(' · ');
-    return <li key={node.id}><button type="button" className="workflow-item" aria-pressed={selection?.kind === 'node' && selection.id === node.id} onClick={() => onSelect({ kind: 'node', id: node.id })}>
+    return <li key={node.id}><button type="button" className="workflow-item" data-node-id={node.id} data-drop-target={decoration?.dropTarget || undefined} aria-pressed={selection?.kind === 'node' && selection.id === node.id} onClick={() => onSelect({ kind: 'node', id: node.id })}>
       <strong>{node.title}</strong>
       <span>{decoration?.kindLabel ?? workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</span>
       {decoration?.agent && <span className="workflow-outline__agent" data-missing={decoration.agent.missing || undefined}>{decoration.agent.missing ? text(`에이전트 없음 · ${decoration.agent.name}`, `Agent missing · ${decoration.agent.name}`) : [decoration.agent.name, decoration.agent.effort].filter(Boolean).join(' · ')}{decoration.chain ? text(' · 이어서', ' · continues') : ''}</span>}

@@ -1,6 +1,7 @@
 import { useId, type DragEvent } from 'react';
 import { Button } from '../ui';
 import { Glyph } from '../ui/Glyph';
+import { WORKFLOW_AGENT_DRAG_TYPE } from './workflow-canvas-types';
 import type { WorkflowCopy } from './workflow-copy';
 import './workflow-agents.css';
 
@@ -34,8 +35,7 @@ export interface WorkflowAgentListProps {
   readonly variant?: 'panel' | 'sheet';
 }
 
-/** The data type a stage drop target accepts. */
-export const WORKFLOW_AGENT_DRAG_TYPE = 'application/x-ezterminal-agent';
+export { WORKFLOW_AGENT_DRAG_TYPE };
 
 /**
  * The agents a flow can use, at the top of the canvas side panel: drag one onto a stage, or pick a
@@ -59,7 +59,9 @@ export function WorkflowAgentList({ text, agents, open, onOpenChange, targetStag
       {onManage && <Button size="sm" variant="ghost" leadingIcon={<Glyph name="set" />} onClick={onManage}>{text('설정에서 관리', 'Manage in Settings')}</Button>}
     </header>}
     {(open || sheet) && <>
-      <p className="workflow-agents__hint">{sheet
+      <p className="workflow-agents__hint">{agents.length === 0
+        ? text('아직 에이전트가 없습니다. 설정 › AI › 에이전트에서 만들면 여기서 단계에 놓을 수 있습니다.', 'No agents yet. Create one in Settings › AI › Agents to place it on stages here.')
+        : sheet
         ? text(`'${targetStage ?? ''}' 단계에 놓을 에이전트를 고르세요. 노력·권한은 단계에서 바꿀 수 있습니다.`, `Pick the agent for '${targetStage ?? ''}'. The stage can change its effort and permission.`)
         : targetStage
           ? text(`단계로 끌어다 놓거나, '배정'으로 '${targetStage}'에 놓습니다.`, `Drag onto a stage, or press Assign to place it on '${targetStage}'.`)

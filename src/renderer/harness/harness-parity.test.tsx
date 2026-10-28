@@ -12,9 +12,8 @@ import { clearSessionViewStates } from '../session-view-state';
 import { SettingsChangeTrack } from '../chat/SettingsChangeTrack';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from '../StructuredAgentSession';
 import { WorkflowFlowSurface, type WorkflowFlowSurfaceProps } from '../workflow/WorkflowFlowSurface';
-import { WorkflowAgentList } from '../workflow/WorkflowAgentList';
-import { WorkflowStageAgent } from '../workflow/WorkflowStageAgent';
-import { HARNESS_GRAPH, STORY_EFFORTS, STORY_PERMISSIONS, STORY_REVIEWS, harnessAgents, harnessDecorations } from './harness-fixtures';
+import { useWorkflowHarness } from '../workflow/use-workflow-harness';
+import { HARNESS_CATALOGS, HARNESS_GRAPH, HARNESS_PROVIDERS, harnessCheckAccess, harnessProfileAccess, harnessSubproject } from './harness-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let container: HTMLDivElement;
@@ -67,10 +66,10 @@ describe('harness mockup keeps every shipped control', () => {
     expect(after.has('testid:settings-change-track')).toBe(true);
   });
 
-  it('the flow side panel: the agent list is added above; the stage keeps everything but AI · 모델 · 노력 · 고급, which the agent settings replace', () => {
+  it('the flow side panel: the agent list is added above; the stage keeps everything but AI · 모델 · 노력 · 고급 권한, which the agent settings replace', async () => {
     const base: WorkflowFlowSurfaceProps = {
       text: (ko) => ko, savedGraph: HARNESS_GRAPH, draftGraph: null, revision: 6, archivedNodes: [], runs: [], editLocked: false, commandsDisabled: false, issues: [],
-      providers: [{ id: 'claude', label: 'Claude', models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }] }] as never,
+      providers: HARNESS_PROVIDERS, catalogs: HARNESS_CATALOGS,
       selection: { kind: 'node', id: 'dev:mock' }, onSelectionChange: vi.fn(), section: 'settings', onSectionChange: vi.fn(), pickedRunId: null, onPickRun: vi.fn(),
       runView: false, onRunViewChange: vi.fn(), layout: 'list', onLayoutChange: vi.fn(), onGraphChange: vi.fn(), onSaveDraft: vi.fn(), onDiscardDraft: vi.fn(), onLaunch: vi.fn(),
       onSaveReviewer: vi.fn(), onAutoApprove: vi.fn(), onRunCommand: vi.fn(), stageLinks: () => [], canStartStageChat: true, onStartStageChat: vi.fn(),
@@ -78,12 +77,16 @@ describe('harness mockup keeps every shipped control', () => {
     };
     render(<WorkflowFlowSurface {...base} />);
     const before = inventory(container);
-    const decorations = harnessDecorations();
-    render(<WorkflowFlowSurface {...base} decorations={decorations.nodes} edgeDecorations={decorations.edges}
-      panelTop={<WorkflowAgentList text={(ko) => ko} agents={harnessAgents()} open onOpenChange={vi.fn()} targetStage="시안" onAssign={vi.fn()} />}
-      stageSlots={() => ({ settings: <WorkflowStageAgent text={(ko) => ko} agent={{ name: '설계 담당', detail: 'Claude · Opus 5.5', tone: 'claude', permissionLabel: '승인 후 실행' }}
-        session={{ value: 'continue', from: '계획' }} effort={{ value: 'medium', options: STORY_EFFORTS }} permission={{ value: 'standard', options: STORY_PERMISSIONS }}
-        checks={[]} review={{ value: 'run', options: STORY_REVIEWS }} /> })} />);
+    // The app's own wiring (as the workspace runs it) on the same flow.
+    const profiles = harnessProfileAccess(); const checks = harnessCheckAccess(); const subproject = harnessSubproject();
+    function Wired(): JSX.Element {
+      const harness = useWorkflowHarness({ mobile: false, active: true, text: (ko) => ko, projectId: 'project-story', subproject, graph: HARNESS_GRAPH, profileAccess: profiles, checkAccess: checks,
+        providers: HARNESS_PROVIDERS, catalogs: HARNESS_CATALOGS, selectedNodeId: 'dev:mock', canEdit: () => true, commandsDisabled: false, agentsOpen: true, onAgentsOpenChange: vi.fn(),
+        onGraphChange: vi.fn(), onRunCommand: vi.fn() });
+      return <WorkflowFlowSurface {...base} decorations={harness.decorations} edgeDecorations={harness.edgeDecorations} panelTop={harness.panelTop} stageSlots={harness.stageSlots} onDropAgent={harness.onDropAgent} />;
+    }
+    render(<Wired />);
+    await act(async () => { await Promise.resolve(); });
     const after = inventory(container);
     // Replaced by the agent placed on the stage (WorkflowStageAgent): who and how hard now come from the agent + the stage's overrides.
     const replaced = [...before].filter((key) => /^(enabled:)?select:(AI|모델|노력)|^testid:workflow-stage-(effort|advanced)$/u.test(key));

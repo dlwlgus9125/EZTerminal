@@ -63,6 +63,12 @@ const ISSUE_KO: Record<string, string> = {
   'retry-target': '재시도는 실패를 판단한 단계보다 앞 단계로 돌아가야 합니다.',
   'unbounded-cycle': '횟수 제한이 없는 순환이 있습니다.',
   unreachable: '시작 단계에서 이 단계로 올 수 없습니다.',
+  'missing-agent': '이 PC의 설정에 없는 에이전트입니다. 에이전트를 다시 배정하세요.',
+  'answer-prompt': '이 단계가 사람에게 물어볼 내용을 쓰세요.',
+  'answer-result': '답변 단계는 AI 단계의 결과만 보여 줄 수 있습니다.',
+  'duplicate-check': '확인 명령 ID가 중복됩니다.',
+  'check-stage': '확인 명령은 AI 단계에만 둘 수 있습니다.',
+  'review-off-unconfirmed': '검토를 끄고 확인 명령도 없으면, 바로 뒤에 사람이 결과를 수락하는 승인 단계가 있어야 합니다.',
 };
 /** Validator issues carry English messages; the code picks the Korean wording. */
 export function workflowIssueLabel(issue: { readonly code: string; readonly message: string }, text: WorkflowCopy): string {

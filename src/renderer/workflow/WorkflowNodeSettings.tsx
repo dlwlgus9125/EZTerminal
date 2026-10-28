@@ -5,7 +5,7 @@ import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
 import { Button, Field, IconButton, Input, Select } from '../ui';
 import { workflowOperationLabel, workflowOutcomeLabel, workflowPermissionLabel, type WorkflowCopy } from './workflow-copy';
 
-const operations: WorkflowNode['operation'][] = ['agent', 'condition', 'parallel', 'join', 'approval', 'complete'];
+const operations: WorkflowNode['operation'][] = ['agent', 'condition', 'parallel', 'join', 'approval', 'answer', 'complete'];
 const roles: WorkflowNode['role'][] = ['planning', 'design', 'implementation', 'review', 'integration'];
 
 /**

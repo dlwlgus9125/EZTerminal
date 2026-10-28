@@ -147,6 +147,17 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
 // The run bar names the zone next to the time whenever it differs from what the device reports.
 export { deviceTimezone };
 
+/**
+ * Under 반복 while edits were saved after the confirmed one: the schedule keeps running the pinned revision until a
+ * person confirms the edited one (re-saving 반복 confirms and pins it).
+ */
+export function WorkflowRepeatPinned({ text, pinned, revision, disabled, onConfirm }: { readonly text: WorkflowCopy; readonly pinned: number; readonly revision: number; readonly disabled: boolean; readonly onConfirm: () => void }): JSX.Element {
+  return <div className="workflow-repeat-note" role="status" data-testid="workflow-repeat-pinned">
+    <p><strong>{text(`예약은 v${pinned} · 편집본 v${revision}`, `Scheduled: v${pinned} · edited: v${revision}`)}</strong> {text('반복은 확인한 버전으로 돕니다. 편집본은 다시 확인해야 예약에 씁니다.', 'Repeats run the version you confirmed; confirm the edited one to schedule it.')}</p>
+    <p className="workflow-repeat-note__actions"><button type="button" disabled={disabled} onClick={onConfirm}>{text(`v${revision}로 다시 확인`, `Confirm v${revision}`)}</button></p>
+  </div>;
+}
+
 const MINUTES = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, '0'));
 const HOURS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
 

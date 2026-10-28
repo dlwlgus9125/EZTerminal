@@ -5,9 +5,9 @@ import { Badge, Button, IconButton, Menu, MenuItem } from '../ui';
 import type { WorkflowCanvasMode } from './workflow-canvas-model';
 import { workflowOperationLabel, type WorkflowCopy } from './workflow-copy';
 
-type RunCommand = Extract<WorkflowCommand, { type: 'run.start' | 'run.pause' | 'run.resume' | 'run.approve' | 'run.cancel' | 'run.integrate' }>;
+type RunCommand = Extract<WorkflowCommand, { type: 'run.start' | 'run.pause' | 'run.resume' | 'run.approve' | 'run.answer' | 'run.cancel' | 'run.integrate' }>;
 export type WorkflowRunCommandInput<C = RunCommand> = C extends RunCommand ? Pick<C, 'type' | 'payload'> : never;
-const OPERATIONS: Array<[WorkflowNode['operation'], GlyphIcon]> = [['agent', glyphIcon('bot')], ['approval', glyphIcon('req')], ['condition', glyphIcon('flow')], ['parallel', glyphIcon('flow')], ['join', glyphIcon('merge')], ['complete', glyphIcon('flag')]];
+const OPERATIONS: Array<[WorkflowNode['operation'], GlyphIcon]> = [['agent', glyphIcon('bot')], ['approval', glyphIcon('req')], ['answer', glyphIcon('q')], ['condition', glyphIcon('flow')], ['parallel', glyphIcon('flow')], ['join', glyphIcon('merge')], ['complete', glyphIcon('flag')]];
 
 export interface WorkflowCanvasHeaderProps {
   readonly text: WorkflowCopy;

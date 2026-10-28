@@ -5,8 +5,8 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import type { ChatAgentPhaseMap, ChatAgentProfile, ChatAgentProfileAccess } from '../../shared/chat-agent-profiles';
 import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import type { WorkflowRepeat, WorkflowRepeatStatus } from '../../shared/workflow';
-import { validateWorkflowGraph, type WorkflowIssue, type WorkflowNode } from '../../shared/workflow-graph';
-import { WorkflowCheckConsent } from '../workflow/WorkflowCheckConsent';
+import type { WorkflowCheckStatus } from '../../shared/workflow-checks';
+import { validateWorkflowGraph, type WorkflowGraph } from '../../shared/workflow-graph';
 import { SettingsChangeTrack } from '../chat/SettingsChangeTrack';
 import { AppI18nProvider } from '../i18n';
 import { shellSnapshot } from '../shell/shell-fixtures';
@@ -16,18 +16,19 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import '../workbench/workbench.css';
 import '../shell/shell.css';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from '../StructuredAgentSession';
-import { ActionSheet } from '../ui';
 import type { WorkflowPanelSection } from '../workflow/workflow-canvas-model';
 import type { CanvasSelection, WorkflowCanvasRendererProps } from '../workflow/workflow-canvas-types';
 import { useWorkflowCopy } from '../workflow/workflow-copy';
-import { WorkflowAgentList } from '../workflow/WorkflowAgentList';
-import { WorkflowAnswerBox } from '../workflow/WorkflowAnswerBox';
+import { useWorkflowHarness } from '../workflow/use-workflow-harness';
 import { WorkflowFlowCanvas } from '../workflow/WorkflowFlowCanvas';
 import { WorkflowFlowSurface } from '../workflow/WorkflowFlowSurface';
-import { WorkflowStageAgent } from '../workflow/WorkflowStageAgent';
+import { WorkflowRepeatPinned } from '../workflow/WorkflowRunBar';
 import { WorkflowStaticGraph } from '../workflow/WorkflowStaticGraph';
 import { WorkflowTemplatePicker, WorkflowTemplateSave } from '../workflow/WorkflowTemplateDialog';
-import { CHAIN_HINTS, CHECK_DECORATIONS, CHECK_GRAPH, HARNESS_GRAPH, HARNESS_PHASES, HARNESS_PROFILES, HARNESS_TEMPLATES, STORY_EFFORTS, STORY_PERMISSIONS, STORY_REVIEWS, harnessAgents, harnessDecorations, harnessRun } from './harness-fixtures';
+import {
+  CHECK_GRAPH, HARNESS_CATALOGS, HARNESS_CHECK_STATUSES, HARNESS_GRAPH, HARNESS_PHASES, HARNESS_PROFILES, HARNESS_PROVIDERS, HARNESS_TEMPLATES,
+  harnessCheckAccess, harnessGraph, harnessProfileAccess, harnessRun, harnessSubproject,
+} from './harness-fixtures';
 import '../index.css';
 import '../structured-agent.css';
 import '../workflow/workflow.css';
@@ -38,10 +39,10 @@ import '../../../mobile/src/mobile-shell.css';
 import '../workbench/phone-screens.css';
 
 /**
- * 시안 (2026-10, Phase B): 워크플로 하네스 — agents in Settings with 단계 연결, queued settings in the input box,
+ * 시안 (2026-10, Phase B, approved): 워크플로 하네스 — agents in Settings with 단계 연결, queued settings in the input box,
  * agents placed on workflow stages (drag or 배정) with 이어서 chains, templates, checks, an answer stage, and
- * settings changed from a conversation. Production components; the new pieces are presentational and not
- * wired into the app yet (that waits for the person's approval of this mockup).
+ * settings changed from a conversation. The canvas stories now run the app's own wiring (useWorkflowHarness) on
+ * v18 workflows, so what they show is what the flow screen does.
  */
 const meta = {
   title: 'Production/Harness/Mockup',
@@ -167,110 +168,110 @@ export const ComposerEffortScope: Story = {
   },
 };
 
-// ── 3. Workflow canvas: agents placed on stages ─────────────────────────────────────────────────────────
-const PROVIDERS = [{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }, { id: 'claude', label: 'Claude', models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }] }];
+// ── 3. Workflow canvas: agents placed on stages (the app's wiring) ────────────────────────────────────
 interface CanvasProps {
+  /** The selected stage (its key without the flow prefix). */
   readonly select?: string;
+  readonly graph?: WorkflowGraph;
+  /** Overlay a run stopped where the person is needed (or, for 정기 점검, after a skipped summary). */
+  readonly run?: 'answer' | 'approval' | 'skipped';
   readonly agentsOpen?: boolean;
-  readonly dragging?: string;
-  readonly dropOn?: string;
-  readonly implementWithoutAgent?: boolean;
-  readonly missingOn?: string;
-  readonly answerWaiting?: boolean;
-  readonly approvalWaiting?: boolean;
-  /** Overlay a run stopped where the person is needed. */
-  readonly run?: 'answer' | 'approval';
-  readonly extraIssues?: readonly WorkflowIssue[];
-  readonly repeat?: { readonly value: WorkflowRepeat; readonly status?: WorkflowRepeatStatus; readonly note?: ReactNode };
   readonly panelOpen?: boolean;
+  readonly profiles?: readonly ChatAgentProfile[];
+  readonly statuses?: readonly WorkflowCheckStatus[];
+  readonly repeat?: { readonly value: WorkflowRepeat; readonly status?: WorkflowRepeatStatus; readonly pinned?: number };
+  /** Centre this stage once (a story that drags onto it). */
+  readonly reveal?: string;
   readonly mobile?: boolean;
-  readonly sheet?: boolean;
-  /** The 정기 점검 template instead of 개발 절차. */
-  readonly periodic?: boolean;
-  readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
+  /** The phone's PC is older (or has no agents): no catalog comes with the flow. */
+  readonly noCatalog?: boolean;
 }
-function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting, run, extraIssues = [], repeat, panelOpen = true, mobile = false, sheet = false, periodic = false, slot }: CanvasProps): JSX.Element {
+function Canvas({ select, graph: saved = HARNESS_GRAPH, run, agentsOpen: initialAgentsOpen = true, panelOpen = true, profiles = HARNESS_PROFILES, statuses = HARNESS_CHECK_STATUSES, repeat, reveal, mobile = false, noCatalog = false }: CanvasProps): JSX.Element {
   const text = useWorkflowCopy();
+  const prefix = saved === CHECK_GRAPH ? 'chk' : 'dev';
+  const subproject = useMemo(() => harnessSubproject(saved, repeat ? { repeat: repeat.value, revision: 7 } : {}), [saved, repeat]);
+  const [draft, setDraft] = useState<WorkflowGraph | null>(null);
+  const graph = draft ?? saved;
   const runs = useMemo(() => run ? [harnessRun(run)] : [], [run]);
-  const graph = periodic ? CHECK_GRAPH : HARNESS_GRAPH;
-  const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `${periodic ? 'chk' : 'dev'}:${select}` } : null);
-  const [section, setSection] = useState<WorkflowPanelSection>('settings');
-  // Decision 15: a narrow window starts with the agent list folded.
-  const [open, setOpen] = useState(() => agentsOpen && (typeof window === 'undefined' || window.innerWidth >= 1200));
+  const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `${prefix}:${select}` } : null);
+  const [section, setSection] = useState<WorkflowPanelSection>(run ? 'run' : 'settings');
+  const [agentsOpen, setAgentsOpen] = useState(initialAgentsOpen);
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
-  const decorations = useMemo(() => periodic ? CHECK_DECORATIONS : harnessDecorations({ dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting }), [answerWaiting, approvalWaiting, dropOn, implementWithoutAgent, missingOn, periodic]);
-  const issues = [...validateWorkflowGraph(graph, true), ...extraIssues];
-  const selected = selection?.kind === 'node' ? graph.nodes.find(node => node.id === selection.id) : undefined;
+  const [profileAccess] = useState(() => harnessProfileAccess(profiles));
+  const [checkAccess] = useState(() => harnessCheckAccess(statuses));
+  const [revealRequest, setRevealRequest] = useState(reveal ? { nodeId: `${prefix}:${reveal}`, key: reveal } : undefined);
+  const harness = useWorkflowHarness({
+    mobile, active: true, text, projectId: 'project-story', subproject, graph,
+    ...(mobile ? (noCatalog ? {} : { catalog: profiles }) : { profileAccess, checkAccess }),
+    providers: HARNESS_PROVIDERS, catalogs: HARNESS_CATALOGS, selectedNodeId: selection?.kind === 'node' ? selection.id : null, canEdit: () => true, commandsDisabled: false,
+    agentsOpen, onAgentsOpenChange: setAgentsOpen, onGraphChange: setDraft, onRunCommand: fn(), onOpenAttemptResult: fn(),
+  });
+  const issues = validateWorkflowGraph(graph, true, harness.profileIds ? { profileIds: harness.profileIds } : {});
   const Renderer: ComponentType<WorkflowCanvasRendererProps> = mobile ? WorkflowStaticGraph : WorkflowFlowCanvas;
   return <div className="workflow-workspace" data-mobile={mobile || undefined} style={{ width: '100%', height: '100%', boxSizing: 'border-box' }}>
-    <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={graph} draftGraph={null} revision={6} archivedNodes={[]} runs={runs}
-      {...(run === 'answer' ? { awaitingLabel: (count: number) => `답변 대기 ${count}` } : {})}
-      {...(repeat ? { repeatStatus: repeat.status, repeatNote: repeat.note } : {})}
-      editLocked={false} commandsDisabled={false} issues={issues} providers={PROVIDERS as never}
+    <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={saved} draftGraph={draft} revision={subproject.revision} archivedNodes={[]} runs={runs}
+      editLocked={false} commandsDisabled={false} issues={issues} providers={HARNESS_PROVIDERS} catalogs={HARNESS_CATALOGS}
       selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={null} onPickRun={fn()} runView={false} onRunViewChange={fn()}
-      layout={layout} onLayoutChange={setLayout} onGraphChange={fn()} onSaveDraft={fn()} onDiscardDraft={fn()} onRunCommand={fn()}
-      subproject={{ id: 'dev', status: 'active', autoApprove: false, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } }, repeat: repeat?.value ?? { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: false } }}
-      onSaveRepeat={fn()}
+      layout={layout} onLayoutChange={setLayout} onGraphChange={setDraft} onSaveDraft={fn()} onDiscardDraft={() => setDraft(null)} onRunCommand={fn()}
+      subproject={subproject} savedRunSettings {...(repeat ? { onSaveRepeat: fn(), repeatStatus: repeat.status } : {})}
+      repeatNote={repeat?.pinned !== undefined ? <WorkflowRepeatPinned text={text} pinned={repeat.pinned} revision={subproject.revision} disabled={false} onConfirm={fn()} /> : undefined}
       structure={false} onStructureChange={fn()} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()} stageLinks={() => []} canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()}
-      canvasRenderer={Renderer} panelOpen={panelOpen} onPanelOpenChange={fn()}
-      decorations={decorations.nodes} edgeDecorations={decorations.edges}
-      panelTop={mobile ? undefined : <WorkflowAgentList text={text} agents={harnessAgents({ 'agent-design': 3, 'agent-build': implementWithoutAgent ? 0 : 1, 'agent-review': 1 })} open={open} onOpenChange={setOpen}
-        targetStage={selected?.title} dragging={dragging} onAssign={fn()} onManage={fn()} />}
-      stageSlots={slot} />
-    {mobile && <ActionSheet open={sheet} onOpenChange={fn()} title={text('에이전트 배정', 'Assign an agent')} closeLabel={text('닫기', 'Close')}>
-      <WorkflowAgentList text={text} variant="sheet" agents={harnessAgents()} open onOpenChange={fn()} targetStage={selected?.title} onAssign={fn()} />
-    </ActionSheet>}
+      canvasRenderer={Renderer} panelOpen={panelOpen} onPanelOpenChange={fn()} revealRequest={revealRequest} onRevealHandled={() => setRevealRequest(undefined)}
+      decorations={harness.decorations} edgeDecorations={harness.edgeDecorations} panelTop={harness.panelTop} stageSlots={harness.stageSlots} onDropAgent={harness.onDropAgent} />
+    {harness.dialog}
   </div>;
 }
 function DeskCanvas(props: CanvasProps): JSX.Element { return <Desk><Canvas {...props} /></Desk>; }
+/** The 구현 stage before an agent is placed on it. */
+const IMPLEMENT_EMPTY = harnessGraph({ 'dev:implement': { agent: undefined } });
 
-const stageAgent = (overrides: Partial<Parameters<typeof WorkflowStageAgent>[0]> = {}) => (node: WorkflowNode) => node.operation !== 'agent' ? undefined : {
-  ...(CHAIN_HINTS[node.id] ? { conversationHint: CHAIN_HINTS[node.id] } : {}),
-  settings: <WorkflowStageAgent text={(ko: string) => ko} disabled={false}
-    agent={{ name: '설계 담당', detail: 'Claude · Opus 5.5 · 승인 후 실행', tone: 'claude', effortLabel: '높음', permissionLabel: '승인 후 실행' }}
-    session={{ value: 'continue', from: '계획' }} effort={{ value: 'medium', options: STORY_EFFORTS }}
-    permission={{ value: 'standard', options: STORY_PERMISSIONS, note: '바꿀 수 있는 경로: src/renderer/' }}
-    checks={[]} review={{ value: 'run', options: STORY_REVIEWS }} onChange={fn()} onReplace={fn()} onRemove={fn()} onConfirmCheck={fn()} onAddCheck={fn()} {...overrides} />,
-};
+/** Drags an agent row of the list over a stage card (and drops it when asked), as the browser's drag and drop does. */
+async function dragAgent(canvasElement: HTMLElement, agent: string, stage: string, drop: boolean): Promise<void> {
+  const row = (await within(canvasElement).findByText(agent)).closest('li')!;
+  const card = await waitFor(() => { const element = canvasElement.querySelector<HTMLElement>(`.react-flow__node[data-id="${stage}"] .workflow-node-card`); expect(element).not.toBeNull(); return element!; });
+  const data = new DataTransfer();
+  row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: data }));
+  const point = () => { const box = card.getBoundingClientRect(); return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }; };
+  await waitFor(() => { const { clientX, clientY } = point(); expect(document.elementsFromPoint(clientX, clientY).some(hit => card.contains(hit))).toBe(true); });
+  card.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data, ...point() }));
+  if (drop) { card.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data, ...point() })); row.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: data })); }
+}
 
 /** The canvas: agents from Settings at the top of the side panel; 설계 담당 runs 요구 정리 → 계획 → 시안 in one conversation. */
-export const CanvasAgents: Story = { render: () => <DeskCanvas select="mock" slot={stageAgent()} /> };
+export const CanvasAgents: Story = { render: () => <DeskCanvas select="mock" /> };
 /** Dragging 구현 담당 from the list onto 구현: the stage shows where it will land. */
-export const CanvasDragging: Story = { render: () => <DeskCanvas select="implement" dragging="agent-build" dropOn="dev:implement" implementWithoutAgent slot={stageAgent({ agent: undefined, session: { value: 'fresh', reason: '앞 단계(시안 승인)와 에이전트가 다릅니다. 새 대화로 시작합니다.' } })} /> };
+export const CanvasDragging: Story = {
+  render: () => <DeskCanvas select="implement" graph={IMPLEMENT_EMPTY} reveal="implement" />,
+  play: async ({ canvasElement }) => {
+    await dragAgent(canvasElement, '구현 담당', 'dev:implement', false);
+    await waitFor(() => expect(canvasElement.querySelector('[data-node-id="dev:implement"][data-drop-target]')).not.toBeNull());
+  },
+};
+/** Dropping it places the agent: the card names it and the stage takes its AI, model, effort and permission. */
+export const CanvasDropAssigns: Story = {
+  render: () => <DeskCanvas select="implement" graph={IMPLEMENT_EMPTY} reveal="implement" />,
+  play: async ({ canvasElement }) => {
+    await dragAgent(canvasElement, '구현 담당', 'dev:implement', true);
+    await waitFor(() => expect(canvasElement.querySelector('[data-node-id="dev:implement"] .workflow-node-card__agent-name')?.textContent).toBe('구현 담당'));
+    await expect(within(canvasElement).getByTestId('workflow-stage-agent')).toHaveTextContent('구현 담당');
+  },
+};
+/** 배정 with a 전체 권한 agent: workflows never run with full access, so the stage takes 승인 후 실행 and says so. */
+export const CanvasFullAccessLowered: Story = {
+  render: () => <DeskCanvas select="implement" graph={IMPLEMENT_EMPTY} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: "전체 권한 구현을(를) '구현'에 배정" }));
+    await expect(within(canvasElement).findByText(/승인 후 실행으로 낮췄습니다/u)).resolves.toBeVisible();
+  },
+};
 /** A check command decides pass or fail; a new or changed command waits until a person allows it once. */
-export const CanvasChecks: Story = {
-  render: () => <DeskCanvas select="implement" agentsOpen={false} slot={stageAgent({
-    agent: { name: '구현 담당', detail: 'Codex · GPT-6-Astra · 승인 후 실행', tone: 'codex', effortLabel: '보통', permissionLabel: '승인 후 실행' },
-    session: { value: 'fresh', reason: '앞 단계가 사람 승인이고 에이전트가 달라 새 대화로 시작합니다.' }, effort: { value: '', options: STORY_EFFORTS.map(option => option.value === '' ? { ...option, label: '기본 (보통)' } : option) },
-    permission: { value: 'standard', options: STORY_PERMISSIONS, note: '바꿀 수 있는 경로: src/, test/' },
-    checks: [{ id: 'c1', command: 'pnpm test', consent: 'confirmed' }, { id: 'c2', command: 'pnpm typecheck', consent: 'needed' }],
-    review: { value: 'off', options: STORY_REVIEWS, note: '검토를 끄면 확인 명령이 모두 통과해야 다음으로 갑니다. 명령이 없으면 뒤에 사람 확인 단계가 있어야 하고, 그 확인은 자동 승인으로 넘어가지 않습니다.' },
-  })} />,
-};
+export const CanvasChecks: Story = { render: () => <DeskCanvas select="implement" agentsOpen={false} /> };
 /** A stage that waits for the person's answer (amber): no AI runs; the answer goes to 계획 in the same conversation. */
-export const CanvasAnswer: Story = {
-  render: () => <DeskCanvas select="answer" agentsOpen={false} answerWaiting run="answer" slot={node => node.id === 'dev:answer' ? { top: <AnswerDemo />, kindLabel: '답변 기다림', instructionsLabel: '물어볼 내용', statusLabel: '답변 대기 · 조치 필요' } : undefined} />,
-};
-function AnswerDemo(): JSX.Element {
-  const text = useWorkflowCopy();
-  const [value, setValue] = useState('잠금은 5회 실패 후 10분. 관리자 해제는 이번 범위 밖입니다.');
-  return <WorkflowAnswerBox text={text} from="요구 정리" value={value} onChange={setValue} onSend={fn()} onOpenResult={fn()}
-    question={'1. 로그인을 몇 번 틀리면 잠글까요? (지금은 잠금 없음)\n2. 잠금을 관리자가 풀 수 있어야 하나요?'} />;
-}
-/** Approval with a comment: 승인, or send it back to 시안 with what to change (the same conversation redoes it). */
-export const CanvasApproval: Story = {
-  render: () => <DeskCanvas select="approval" agentsOpen={false} approvalWaiting run="approval" slot={node => node.id === 'dev:approval' ? { top: <ApprovalDemo />, kindLabel: '사람 승인 · 의견', instructionsLabel: '승인할 내용', statusLabel: '승인 대기 · 의견 가능' } : undefined} />,
-};
-function ApprovalDemo(): JSX.Element {
-  const text = useWorkflowCopy();
-  const [value, setValue] = useState('잠금 안내 문구에 남은 시간(분)을 함께 보여 주세요.');
-  return <WorkflowAnswerBox text={text} from="교차 검토" value={value} onChange={setValue} onOpenResult={fn()} decision={{ returnsTo: '시안', onApprove: fn(), onReturn: fn() }}
-    question={'검토를 거친 시안으로 구현해도 될까요? 교차 검토 의견 2건은 반영됐습니다.'} />;
-}
+export const CanvasAnswer: Story = { render: () => <DeskCanvas select="answer" agentsOpen={false} run="answer" /> };
+/** Approval with a note: 승인, or send it back to 시안 with what to change (the same conversation redoes it). */
+export const CanvasApproval: Story = { render: () => <DeskCanvas select="approval" agentsOpen={false} run="approval" /> };
 /** A workflow from a cloned repository names an agent this PC does not have: readable, but it will not run until reassigned. */
-export const CanvasMissingAgent: Story = {
-  render: () => <DeskCanvas select="implement" missingOn="dev:implement" extraIssues={[{ code: 'missing-agent', message: '이 PC에 없는 에이전트입니다. 다시 배정하세요.', nodeId: 'dev:implement' }]} slot={stageAgent({ agent: { name: '구현 담당', detail: '', tone: 'codex', missing: true, permissionLabel: '승인 후 실행' }, session: { value: 'fresh', reason: '에이전트를 다시 배정하면 정할 수 있습니다.' } })} />,
-};
+export const CanvasMissingAgent: Story = { render: () => <DeskCanvas select="implement" profiles={HARNESS_PROFILES.filter(profile => profile.id !== 'agent-build')} /> };
 
 // ── 4. Templates ────────────────────────────────────────────────────────────────────────────────────────
 function Templates({ save = false }: { readonly save?: boolean }): JSX.Element {
@@ -310,15 +311,19 @@ export const ChatSettingsChange: Story = { render: () => <Chat props={{ items: s
 function Phone({ children }: { readonly children: ReactNode }): JSX.Element {
   return <AppI18nProvider locale="ko" languages={['ko']}><div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-harness-frame">{children}</div></AppI18nProvider>;
 }
-/** Phone: no dragging — 배정 opens this sheet for the selected stage. */
+/** Phone: no dragging — 에이전트 배정 opens this sheet for the selected stage (the PC's agents come with the flow). */
 export const PhoneAssignSheet: Story = {
   parameters: { layout: 'centered' },
-  render: () => <Phone><Canvas mobile sheet select="implement" implementWithoutAgent /></Phone>,
+  render: () => <Phone><Canvas mobile select="implement" graph={IMPLEMENT_EMPTY} /></Phone>,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: '에이전트 배정' }));
+    await waitFor(() => expect(within(document.body).getByRole('button', { name: "구현 담당을(를) '구현'에 배정" })).toBeVisible());
+  },
 };
-/** Phone: the stage panel's 에이전트 배정 opens the sheet (no dragging on a phone). */
+/** Phone: the stage panel's 에이전트 배정 opens the sheet (no dragging on a phone); checks are allowed on the PC. */
 export const PhoneStageAssign: Story = {
   parameters: { layout: 'centered' },
-  render: () => <Phone><Canvas mobile select="implement" implementWithoutAgent slot={stageAgent({ agent: undefined, onAssign: fn(), session: { value: 'fresh', reason: '에이전트를 배정하면 정할 수 있습니다.' } })} /></Phone>,
+  render: () => <Phone><Canvas mobile select="implement" graph={IMPLEMENT_EMPTY} /></Phone>,
   play: async ({ canvasElement }) => {
     const target = await within(canvasElement).findByTestId('workflow-stage-agent');
     target.scrollIntoView({ block: 'start' });
@@ -342,42 +347,19 @@ export const ComposerPlanApprovalClaude: Story = {
     turns: [{ id: 'turn-plan', sessionId: 'harness-chat', commandId: 'command-plan', state: 'completed', revision: 2, createdAt: NOW, updatedAt: NOW }],
     planPhaseNote: "구현은 'Claude 구현'(Claude · Opus 5.5 · 보통)으로 시작합니다 · 설정 › AI › 단계 연결" }} />,
 };
-/** 확인하고 허용: exactly what runs, where, and why it is asked again (here: the stage changed the script the command calls). */
+/** 확인하고 허용: exactly what runs, where, the script it calls and why it is asked again (the stage changed that script). */
 export const CanvasCheckConsent: Story = {
-  render: () => <Desk><Canvas select="implement" agentsOpen={false} slot={stageAgent({
-    agent: { name: '구현 담당', detail: 'Codex · GPT-6-Astra · 승인 후 실행', tone: 'codex', effortLabel: '보통', permissionLabel: '승인 후 실행' },
-    session: { value: 'fresh', reason: '앞 단계가 사람 승인이고 에이전트가 달라 새 대화로 시작합니다.' },
-    checks: [{ id: 'c1', command: 'pnpm test', consent: 'confirmed' }, { id: 'c2', command: 'pnpm typecheck', consent: 'needed' }],
-    review: { value: 'off', options: STORY_REVIEWS, note: '검토를 끄면 확인 명령이 모두 통과해야 다음으로 갑니다. 명령이 없으면 뒤에 사람 확인 단계가 있어야 하고, 그 확인은 자동 승인으로 넘어가지 않습니다.' },
-  })} />
-    <ConsentDemo />
-  </Desk>,
+  render: () => <DeskCanvas select="implement" agentsOpen={false} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: '확인하고 허용' }));
+    await waitFor(() => expect(within(document.body).getByRole('button', { name: '이 명령 허용' })).toBeVisible());
+  },
 };
-function ConsentDemo(): JSX.Element {
-  const text = useWorkflowCopy();
-  return <WorkflowCheckConsent text={text} open command="pnpm typecheck" location="<작업 폴더>\.ezterminal\runs\run-dev-1\구현 (이 단계의 결과)" reason="script-changed"
-    resolved={{ label: 'package.json의 typecheck', value: 'tsc --noEmit && pnpm typecheck:mobile-e2e' }} before="tsc --noEmit" onAllow={fn()} onClose={fn()} />;
-}
 /** 정기 점검 with 반복: the schedule runs the confirmed v6 while the edited v7 waits for a look; an unchanged result skipped the AI summary. */
 export const CanvasRepeat: Story = {
-  render: () => <DeskCanvas periodic select="sum" agentsOpen={false} slot={stageAgent({
-    agent: { name: '빠른 조사', detail: 'Claude · Sonnet 5.5 · 계획만', tone: 'claude', effortLabel: '낮음', permissionLabel: '계획만' },
-    session: { value: 'continue', from: '의존성·테스트 확인' }, effort: { value: '', options: STORY_EFFORTS.map(option => option.value === '' ? { ...option, label: '기본 (낮음)' } : option) },
-    permission: { value: 'plan', options: STORY_PERMISSIONS }, checks: [],
-    review: { value: 'off', options: STORY_REVIEWS, note: '요약은 검토 끔. 확인 명령 결과가 지난번과 같으면 이 단계는 건너뜁니다. 뒤의 결과 확인은 사람이 합니다(자동 승인으로 넘어가지 않음).' },
-  })} repeat={{
-    value: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true },
-    status: { nextAt: '2026-10-30T00:00:00.000Z' },
-    note: <RepeatNote />,
-  }} />,
+  render: () => <DeskCanvas graph={CHECK_GRAPH} select="sum" agentsOpen={false} run="skipped"
+    repeat={{ value: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true }, status: { nextAt: '2026-10-30T00:00:00.000Z', pinnedRevision: 6 }, pinned: 6 }} />,
 };
-function RepeatNote(): JSX.Element {
-  return <div className="workflow-repeat-note" role="status">
-    <p><strong>예약 실행은 v6(확인한 버전)으로 돕니다.</strong> 편집본 v7은 아직 확인하지 않아 예약에 쓰지 않습니다.</p>
-    <p className="workflow-repeat-note__actions"><button type="button">v7로 다시 확인</button><button type="button">v6 보기</button><button type="button">바뀐 점 비교</button></p>
-    <p>마지막 실행 10/29 09:00 · 확인 명령 결과가 지난번과 같아 <strong>AI 요약을 건너뜀</strong> · <button type="button">검사 결과 보기</button> (명령이 실패하거나 시간 초과면 건너뛰지 않습니다)</p>
-  </div>;
-}
 /** A narrow window (1024 · 150%): the stage panel starts folded so the canvas keeps readable cards; selecting a stage opens it. */
 export const CanvasNarrow: Story = { render: () => <DeskCanvas agentsOpen={false} panelOpen={false} /> };
 /** The AI's changes over time: undo refused after a later change (shows the difference instead), a proposal resolved on the phone, an expired one. */
@@ -389,10 +371,13 @@ export const ChatSettingsStates: Story = {
       { id: 'p2', title: '반복 켜기 · 정기 점검 매일 09:00', state: 'expired', rows: [{ name: '반복', before: '끔', after: '매일 09:00' }], risk: '자동으로 실행이 시작됩니다.' },
     ]} /> }} />,
 };
-/** A new phone on a PC that does not know agents yet (older EZTerminal): no 배정, it says why and keeps today's AI · 모델 fields. */
+/**
+ * A phone whose PC sends no agents with the flow (an older EZTerminal, or none saved): no 배정, the stage keeps its
+ * AI · 모델 fields. (The two cannot be told apart from the reply, so no "update the PC" line.)
+ */
 export const PhoneOldHost: Story = {
   parameters: { layout: 'centered' },
-  render: () => <Phone><Canvas mobile select="implement" implementWithoutAgent slot={() => ({ top: <p className="workflow-notice" role="status">이 PC의 EZTerminal은 아직 에이전트 배정을 모릅니다. PC를 업데이트하면 단계에 에이전트를 놓을 수 있습니다. 지금은 단계마다 AI·모델을 고릅니다.</p> })} /></Phone>,
+  render: () => <Phone><Canvas mobile noCatalog select="implement" graph={IMPLEMENT_EMPTY} /></Phone>,
   play: async ({ canvasElement }) => {
     const target = await within(canvasElement).findByTestId('workflow-stage-panel');
     target.scrollIntoView({ block: 'start' });

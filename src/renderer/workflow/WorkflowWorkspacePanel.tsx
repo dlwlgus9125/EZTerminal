@@ -8,7 +8,7 @@ import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
 import type { ChatComposerDraft } from '../../shared/chat-message';
 import { ChatComposerDraftSchema } from '../../shared/chat-state';
 import { WorkflowDraftResultSchema, type WorkflowDraftAccess, type WorkflowDraftState } from '../../shared/workflow-draft';
-import { blockingRunOf } from '../../shared/planning-execution';
+import { blockingRunOf, stageWorking } from '../../shared/planning-execution';
 import { WorkflowRecovery } from './workflow-recovery';
 import { withHiddenFlowFields } from '../../shared/workflow-protocol-projection';
 import type { PlanningConversation } from './workflow-conversations';
@@ -19,12 +19,15 @@ import { createStructuredAgentSession, structuredAgentProviderOptions, structure
 import { Badge, Button, Dialog, Field, IconButton, Input, LoadingState, Menu, MenuItem, MenuSeparator, Select, Switch, glyphIcon } from '../ui';
 import { useWorkflowCopy, workflowOperationLabel, workflowOutcomeLabel, workflowPermissionLabel } from './workflow-copy';
 import { WorkflowFlowSurface } from './WorkflowFlowSurface';
+import { WorkflowRepeatPinned } from './WorkflowRunBar';
 import { builtinWorkflowTemplates, instantiateWorkflowTemplate, workflowTemplateGraph, type WorkflowTemplate, type WorkflowTemplateAccess } from '../../shared/workflow-templates';
 import { WorkflowTemplatePicker, WorkflowTemplateSave, workflowTemplateChoice } from './WorkflowTemplateDialog';
 import { pageFromSection, sectionFromPage, workflowLayoutOnlyChange } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 import { PlanningResultDetails, type PlanningResultReader, type PlanningResultSelection } from '../PlanningResultDetails';
 import { useAgentStateLabel } from '../agent-state-label';
+import type { ChatAgentProfileAccess } from '../../shared/chat-agent-profiles';
+import { useWorkflowHarness, type WorkflowCheckAccess } from './use-workflow-harness';
 import './workflow.css';
 
 type CommandInput<C = WorkflowCommand> = C extends WorkflowCommand ? Pick<C, 'type' | 'payload'> : never;
@@ -77,6 +80,19 @@ export interface WorkflowWorkspacePanelProps {
    * 템플릿으로 저장. Absent (the phone, stories, an older preload): the presets as before.
    */
   readonly templateAccess?: WorkflowTemplateAccess;
+  /**
+   * Desktop: the saved agents (Settings › AI › 에이전트) placed on stages, and this PC's allowance of check commands.
+   * Absent: read from the desktop bridge (never on the phone, which lists the PC's `agentCatalog`); null: none.
+   */
+  readonly agentProfiles?: ChatAgentProfileAccess | null;
+  readonly checkAccess?: WorkflowCheckAccess | null;
+}
+
+/** Narrower than a 1200 px window at 100% (the scale counts: 1440 at 130% is narrow): panels start folded. */
+function narrowWindow(): boolean {
+  if (typeof window === 'undefined') return false;
+  const scale = (Number(document.documentElement.dataset.uiScale) || 100) / 100;
+  return window.innerWidth / scale < 1200;
 }
 
 function cleanGraph(graph: WorkflowGraph): WorkflowGraph {
@@ -108,7 +124,7 @@ function graphForPreset(id: WorkflowPresetId, prefix: string, text: (ko: string,
 export function WorkflowWorkspacePanel(props: WorkflowWorkspacePanelProps): JSX.Element {
   return <WorkflowWorkspace key={props.projectId} {...props} />;
 }
-function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onOpenAutomationSettings, retentionAccess, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, canvasRenderer, onReloadCanvas, readPlanningResult, executionAccess, archive, templateAccess }: WorkflowWorkspacePanelProps): JSX.Element {
+function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onOpenAutomationSettings, retentionAccess, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, canvasRenderer, onReloadCanvas, readPlanningResult, executionAccess, archive, templateAccess, agentProfiles, checkAccess: checkAccessProp }: WorkflowWorkspacePanelProps): JSX.Element {
   const text = useWorkflowCopy();
   const stateLabel = useAgentStateLabel();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
@@ -140,7 +156,12 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const camerasFor = (subprojectId: string) => { if (!canvasCameras.current[subprojectId]) canvasCameras.current[subprojectId] = {}; return canvasCameras.current[subprojectId]; };
   const [runView, setRunView] = useState(false);
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
-  const [panelOpen, setPanelOpen] = useState(true);
+  // Decision 15: a narrow window starts with the stage panel and the agent list folded; choosing a stage opens the panel.
+  const [narrowStart] = useState(() => !mobile && narrowWindow());
+  const [panelOpen, setPanelOpen] = useState(!narrowStart);
+  const [agentsOpen, setAgentsOpen] = useState(!narrowStart);
+  /** Why the host last refused a command, when the flow can point at its cause (checks this PC has not allowed). */
+  const [refusal, setRefusal] = useState<string | null>(null);
   // "단계 편집": add, move and connect stages. In memory only, closed when another subproject opens.
   const [structure, setStructure] = useState(false);
   useEffect(() => { setStructure(false); }, [selectedId]);
@@ -339,7 +360,26 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const hostLocked = disabled || !authorityReady || busy || !!pending || !recoveryReady || !!recoveryError;
   const readOnly = hostLocked || editLocked;
   const creatingConversation = !!chatTarget;
-  const issues = graph ? validateWorkflowGraph(cleanGraph(graph), true) : [];
+  // The approved harness canvas (desktop): agents on stages, their settings, checks and what a run waits for.
+  const providerOptions = useMemo(() => structuredAgentProviderOptions(daemon, models), [daemon, models]);
+  const profileAccess = agentProfiles === undefined ? (mobile ? undefined : window.ezterminal?.chatAgentProfiles) : agentProfiles ?? undefined;
+  const checkAccess = useMemo<WorkflowCheckAccess | undefined>(() => {
+    if (checkAccessProp !== undefined) return checkAccessProp ?? undefined;
+    const bridge = mobile ? undefined : window.ezterminal;
+    const status = bridge?.workflowCheckStatus; const allow = bridge?.workflowCheckAllow;
+    return status && allow ? { status: (project, subproject) => status(project, subproject), allow: (project, subproject, stage, check, digest) => allow(project, subproject, stage, check, digest) } : undefined;
+  }, [checkAccessProp, mobile]);
+  const goingRun = selected ? blockingRunOf(snapshot?.runs ?? [], selected.id) : undefined;
+  /** 반복 keeps running the revision a person confirmed while later saves wait for a new confirmation. */
+  const pinnedRevision = selected ? snapshot?.repeatStatus?.[selected.id]?.pinnedRevision : undefined;
+  const harness = useWorkflowHarness({
+    mobile, active, text, projectId, subproject: selected, graph, profileAccess, catalog: snapshot?.agentCatalog, checkAccess, providers: providerOptions, catalogs: models,
+    selectedNodeId: nodeId, commandsDisabled: hostLocked || selected?.status === 'archived',
+    canEdit: stageId => !editLocked && !runView && !(goingRun && stageWorking(goingRun, stageId)),
+    agentsOpen, onAgentsOpenChange: setAgentsOpen, onGraphChange: next => updateGraph(next), onRunCommand: command => void execute(command),
+    onOpenAttemptResult: readPlanningResult && selected ? (_runId, attemptId) => setResultSelection({ kind: 'attempt', projectId, subprojectId: selected.id, attemptId }) : undefined,
+  });
+  const issues = graph ? validateWorkflowGraph(cleanGraph(graph), true, harness.profileIds ? { profileIds: harness.profileIds } : {}) : [];
   const linkedIds = new Set(snapshot?.sessionLinks.map(link => link.sessionId));
   const managedIds = new Set([...(snapshot?.managedSessionIds ?? []), ...(snapshot?.runs.flatMap(run => [...run.attempts.map(attempt => attempt.sessionId), ...run.reviews.map(review => review.reviewerSessionId)]) ?? [])]);
   const general = conversations.filter(conversation => !linkedIds.has(conversation.id) && !managedIds.has(conversation.id));
@@ -443,7 +483,12 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       setPending(command);
       const result = await access.executeWorkflowCommand(command);
       sendingCommand.current = null;
-      if (!result.ok) { setError([result.message, ...(result.issues?.map(issue => issue.message) ?? [])].join('\n')); if (!['unavailable', 'delivery-uncertain', 'execution-unavailable'].includes(result.error)) setPending(null); return false; }
+      if (!result.ok) {
+        setError([result.message, ...(result.issues?.map(issue => issue.message) ?? [])].join('\n')); setRefusal(result.error);
+        if (result.error === 'unconfirmed-command') harness.refreshChecks();
+        if (!['unavailable', 'delivery-uncertain', 'execution-unavailable'].includes(result.error)) setPending(null); return false;
+      }
+      setRefusal(null);
       setSnapshot(result.snapshot); setPending(null);
       const nextDrafts = { ...rebaseUnchangedGraphs(drafts, snapshot, result.snapshot) };
       if ((command.type === 'workflow.patch' || command.type === 'workflow.undo') && command.subprojectId) delete nextDrafts[command.subprojectId];
@@ -652,6 +697,12 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       onClick={() => { launchRequest.current = undefined; if (selected && !flowPage) setView(lastFlowPage.current); else if (selectedId && onBoard) { setSelectedId(null); setView('flow'); onBoard(); } else if (selectedId) { setSelectedId(null); setView('flow'); } else if (onBoard) onBoard(); else onBack?.(); }} data-testid="workflow-back" /><div className="workflow-header__title"><small>{selected ? projectName : text('프로젝트', 'Project')}</small><h2>{selected?.title ?? projectName}</h2></div><div className="workflow-header__actions">{!selected && <IconButton icon={glyphIcon('refresh')} aria-label={text('다시 불러오기', 'Refresh')} disabled={busy || disabled} onClick={() => void refresh()} />}{!selected && archive && <IconButton icon={glyphIcon('archive')} aria-label={text('백업·복원', 'Backup and restore')} disabled={disabled} onClick={() => setArchiveOpen(true)} data-testid="workflow-project-backup" />}{selected && <Button disabled={readOnly} onClick={() => setRename({ title: selected.title, goal: selected.goal })}>{text('이름·목표', 'Name and goal')}</Button>}{selected && <Button leadingIcon={<Glyph name="new" />} disabled={readOnly || !daemonAccess} onClick={() => startChat({ subprojectId: selected.id, scope: 'flow-edit' })}>{text('AI와 워크플로 편집', 'Edit workflow with AI')}</Button>}{selected && <Button leadingIcon={<Glyph name="clock" />} aria-pressed={view === 'history'} onClick={() => setView(view === 'history' ? lastFlowPage.current : 'history')}>{text('변경 기록', 'History')}</Button>}{selected && <Menu label={text('워크플로 작업', 'Workflow actions')} placement="bottom-end" trigger={<IconButton icon={glyphIcon('more')} aria-label={text('워크플로 작업', 'Workflow actions')} />}><MenuItem icon={glyphIcon('refresh')} disabled={busy || disabled} onSelect={() => void refresh()}>{text('다시 불러오기', 'Refresh')}</MenuItem><MenuItem icon={glyphIcon('play')} disabled={hostLocked || !!local || issues.length > 0 || selected.status === 'archived'} onSelect={openPrepare}>{text('실행 준비만', 'Prepare a run only')}</MenuItem><MenuSeparator />{flowLinks.map(link => <MenuItem key={link.sessionId} icon={glyphIcon('chat')} onSelect={() => onOpenConversation?.(link.sessionId)}>{conversations.find(item => item.id === link.sessionId)?.title ?? text('워크플로 편집 대화', 'Workflow editing conversation')}</MenuItem>)}{flowLinks.length > 0 && <MenuSeparator />}<MenuItem icon={glyphIcon('check')} disabled={readOnly || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'completed' ? 'active' : 'completed' } })}>{selected.status === 'completed' ? text('다시 진행', 'Reopen') : text('완료로 표시', 'Mark complete')}</MenuItem><MenuItem icon={glyphIcon('copy')} disabled={hostLocked || !!local} onSelect={() => setCopyTitle(`${selected.title} ${text('복사본', 'copy')}`)}>{text('워크플로 복사', 'Copy workflow')}</MenuItem>{templateAccess && <MenuItem icon={glyphIcon('star')} disabled={!!local} onSelect={() => setTemplateSave({ id: `template-${crypto.randomUUID()}`, name: selected.title, description: '', keepAgents: true, saving: false })}>{text('템플릿으로 저장…', 'Save as template…')}</MenuItem>}{retentionAccess && <MenuItem icon={glyphIcon('trash')} disabled={hostLocked} onSelect={() => setCleanupOpen(true)}>{text('작업 폴더 정리…', 'Clean up work folders…')}</MenuItem>}<MenuItem icon={glyphIcon('archive')} disabled={hostLocked || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'archived' ? 'active' : 'archived' } })}>{selected.status === 'archived' ? text('복원', 'Restore') : text('보관', 'Archive')}</MenuItem></Menu>}</div></header>
     {snapshot && !authorityReady ? <p role="status" className="workflow-notice">{text('기기에 보관된 화면입니다. 초안 편집은 복구되며, 다시 연결해 호스트의 권한·버전을 확인한 뒤에만 직접 저장하거나 실행할 수 있습니다.', 'Showing the copy stored on this device. Draft edits are recoverable; reconnect for a fresh host authority and version check before saving or running.')}</p> : disabled && <p role="status" className="workflow-notice">{disabledReason ?? text('호스트에 다시 연결하세요.', 'Reconnect to the host.')}</p>}
     {shownError && <p role="alert" className="workflow-error">{shownError}</p>}
+    {selected && refusal === 'unconfirmed-command' && harness.unallowed.length > 0 && <div className="workflow-notice" role="status" data-testid="workflow-unallowed-checks">
+      <p>{text('이 PC에서 아직 허용하지 않은 확인 명령이 있어 실행하지 않았습니다. 단계에서 "확인하고 허용"을 누르세요.', 'Not run: this PC has not allowed some check commands yet. Press "Review and allow" on their stages.')}</p>
+      {harness.unallowed.map(check => <Button key={`${check.nodeId}:${check.checkId}`} size="sm" variant="ghost" leadingIcon={<Glyph name="term" />}
+        onClick={() => { setEdgeId(null); setNodeId(check.nodeId); setView('flow'); setPanelOpen(true); setRevealRequest({ nodeId: check.nodeId, key: `check-${check.nodeId}-${Date.now()}` }); }}>
+        {`${selected.graph.nodes.find(node => node.id === check.nodeId)?.title ?? check.nodeId}: ${check.command}`}</Button>)}
+    </div>}
     {busy && <p role="status">{text('호스트에 저장하고 결과를 확인하는 중입니다.', 'Saving to the host and confirming the result.')}</p>}
     {!chatOpen && recoveryControls}
     {pending && <div className="workflow-notice" role="status"><p>{text('아직 요청 결과를 확인하지 못했습니다. 확인 전에는 다른 변경을 보내지 않습니다.', 'The request is not yet confirmed. Reconcile it before sending another change.')}</p><Button disabled={busy || disabled} onClick={() => { const request = pending; void execute(request, undefined, request).then(async ok => { if (ok && request.type === 'subproject.create' && create?.id === request.payload.id) await finishCreate(create); }); }}>{text('같은 요청 확인', 'Reconcile request')}</Button>
@@ -669,10 +720,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         subproject={selected} catalogs={models} structure={structure} onStructureChange={setStructure} savedRunSettings={canLaunch}
         onLaunch={() => void launch()} onSaveReviewer={reviewer => void execute({ type: 'subproject.update', payload: { runSettings: { reviewer } } })}
         repeatStatus={snapshot?.repeatStatus?.[selected.id]} cleanedFolders={cleanedFolders} onSaveRepeat={canRepeat ? repeat => void execute({ type: 'subproject.update', payload: { repeat } }) : undefined} onOpenAutomationSettings={onOpenAutomationSettings}
+        repeatNote={pinnedRevision !== undefined && selected.repeat ? <WorkflowRepeatPinned text={text} pinned={pinnedRevision} revision={selected.revision} disabled={hostLocked || !canRepeat}
+          onConfirm={() => { if (selected.repeat) void execute({ type: 'subproject.update', payload: { repeat: selected.repeat } }); }} /> : undefined}
         onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
-        editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} commandsBusy={busy || !!pending} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
+        editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} commandsBusy={busy || !!pending} issues={issues} providers={providerOptions}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}
-        onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); }}
+        onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); if (narrowStart && next?.kind === 'node') setPanelOpen(true); }}
+        decorations={harness.decorations} edgeDecorations={harness.edgeDecorations} panelTop={harness.panelTop} stageSlots={harness.stageSlots} onDropAgent={harness.onDropAgent}
         section={sectionFromPage(lastFlowPage.current)} onSectionChange={next => setView(pageFromSection(next))}
         pickedRunId={preparedRunId} onPickRun={setPreparedRunId} runView={runView} onRunViewChange={setRunView}
         layout={layout} onLayoutChange={setLayout} onGraphChange={updateGraph} onSaveDraft={() => void saveGraph()}
@@ -686,6 +740,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         revealRequest={revealRequest} onRevealHandled={() => setRevealRequest(undefined)} panelOpen={panelOpen} onPanelOpenChange={setPanelOpen} /></div>}
       {view === 'history' && <div className="workflow-history"><h3><Glyph name="clock" />{text('변경 기록', 'Change history')}</h3>{selected.history.length === 0 && <p>{text('저장된 변경이 없습니다.', 'No saved changes.')}</p>}<ol>{[...selected.history].reverse().map(change => <li key={change.id}><div><strong>v{change.revision} · {change.summary}</strong><p>{change.actor.kind === 'ai' ? 'AI' : text('사용자', 'User')} · {new Date(change.createdAt).toLocaleString()}</p><small>{change.before.nodes.length} → {change.after.nodes.length} {text('단계', 'stages')} · {change.before.edges.length} → {change.after.edges.length} {text('연결', 'connections')}{change.undoOf ? text(' · 되돌리기', ' · Undo') : ''}</small></div>{change.actor.sessionId && <Button onClick={() => onOpenConversation?.(change.actor.sessionId!)}>{text('원래 대화', 'Source conversation')}</Button>}<Button disabled={readOnly || !!local} leadingIcon={<Glyph name="undo" />} onClick={() => void execute({ type: 'workflow.undo', payload: { changeId: change.id } })}>{text('이 변경 되돌리기', 'Undo this change')}</Button></li>)}</ol>{selected.archivedNodes.length > 0 && <><h3>{text('보관된 단계', 'Archived stages')}</h3>{selected.archivedNodes.map(item => <Button key={item.id} onClick={() => openStage(item.id)}>{item.title}</Button>)}</>}</div>}
     </>}
+    {selected && flowPage && harness.dialog}
     {archive && archiveOpen && active && <ProjectArchiveDialog project={{ projectId, name: projectName }} archive={archive} onClose={() => setArchiveOpen(false)} />}
     {readPlanningResult && <PlanningResultDetails selection={active ? resultSelection : null} read={readPlanningResult} onClose={() => { setResultSelection(null); setRetryError(null); }} onOpenConversation={onOpenConversation} disabled={hostLocked}
       actionError={retryError} retryDisabled={retrying}

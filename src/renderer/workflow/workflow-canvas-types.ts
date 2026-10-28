@@ -2,6 +2,9 @@ import type { WorkflowGraph } from '../../shared/workflow-graph';
 import type { WorkflowRunOverlay } from './workflow-canvas-model';
 import type { WorkflowCopy } from './workflow-copy';
 
+/** The data type an agent dragged from the agent list carries (a stage card accepts it). */
+export const WORKFLOW_AGENT_DRAG_TYPE = 'application/x-ezterminal-agent';
+
 /** What is selected on the canvas. Shared by every renderer and the side panel. */
 export type CanvasSelection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
 

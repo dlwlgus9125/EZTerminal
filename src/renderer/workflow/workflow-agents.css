@@ -69,6 +69,18 @@
 .workflow-check > * + * { margin-left: var(--ui-space-2); }
 .workflow-check code { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--ui-text-primary); font-family: var(--ui-font-mono); font-size: var(--ui-font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
 .workflow-check[data-consent='needed'] { border-color: var(--ui-warning-border); background: var(--ui-warning-muted); }
+.workflow-check[data-consent='unsaved'] { border-style: dashed; }
+/* 명령 추가: the command field with 추가 · 취소 on one row. */
+.workflow-check-add { display: flex; align-items: center; margin-top: var(--ui-space-1); }
+.workflow-check-add > :first-child { min-width: 0; flex: 1 1 auto; }
+.workflow-check-add > * + * { margin-left: var(--ui-space-1); }
+/* Said under the agent when it was placed (e.g. 전체 권한 lowered to 승인 후 실행). */
+.workflow-stage-agent__notice { margin: var(--ui-space-2) 0 0; padding: var(--ui-space-1) var(--ui-space-2); border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-sm); background: var(--ui-warning-muted); color: var(--ui-text-primary); font-size: var(--ui-font-size-xs); }
+/* The list view takes a dragged agent too. */
+.workflow-outline .workflow-item[data-drop-target] { outline: 2px dashed var(--ui-accent); outline-offset: 1px; }
+/* A note the stage panel shows for a stage's place in the flow (a person's acceptance, a skipped run). */
+.workflow-stage-note { margin: 0; padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border-mid); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-sm); background: var(--ui-info-muted); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-stage-note strong { color: var(--ui-text-primary); }
 
 /* A stage that waits for the person's answer: amber, the colour of "waiting for a person". */
 .workflow-answer { display: grid; margin: var(--ui-space-2) 0 var(--ui-space-3); padding: var(--ui-space-3); border: 1px solid var(--ui-warning-border); border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-md); background: var(--ui-warning-muted); }
@@ -124,3 +136,5 @@
 .workflow-repeat-note strong { color: var(--ui-text-primary); }
 .workflow-repeat-note button { padding: 0; border: 0; background: none; color: var(--ui-accent); font: inherit; text-decoration: underline; cursor: pointer; }
 .workflow-repeat-note__actions > button + button { margin-left: var(--ui-space-3); }
+.workflow-repeat-note button:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.workflow-repeat-note button:disabled { color: var(--ui-text-muted); text-decoration: none; cursor: not-allowed; }

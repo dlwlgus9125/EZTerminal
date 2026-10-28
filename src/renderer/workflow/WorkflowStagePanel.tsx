@@ -69,6 +69,43 @@ function useLines(value: readonly string[]): [string, (next: string) => readonly
   return [typed, (next) => { setTyped(next); return next.split('\n').map((line) => line.trim()).filter(Boolean); }];
 }
 
+/** The AI stages before this one (forward connections only): the results an answer stage can show. */
+function earlierAiStages(graph: WorkflowGraph, nodeId: string): readonly WorkflowNode[] {
+  const seen = new Set<string>(); const pending = [nodeId];
+  while (pending.length) {
+    const current = pending.pop()!;
+    for (const edge of graph.edges) if (edge.to === current && !edge.retryLimit && !seen.has(edge.from)) { seen.add(edge.from); pending.push(edge.from); }
+  }
+  return graph.nodes.filter((item) => item.id !== nodeId && seen.has(item.id) && item.operation === 'agent');
+}
+
+/**
+ * An answer stage's question and the result it shows beside it. A question is required to store the answer
+ * settings (the flow keeps none while it is blank), so the box keeps what is typed and the result waits for it.
+ */
+function WorkflowAnswerFields({ text, graph, node, onChange }: { readonly text: WorkflowCopy; readonly graph: WorkflowGraph; readonly node: WorkflowNode; readonly onChange: (patch: Partial<WorkflowNode>) => void }): JSX.Element {
+  const saved = node.answer?.prompt ?? '';
+  const [typed, setTyped] = useState(saved);
+  useEffect(() => { setTyped((current) => current.trim() === saved.trim() ? current : saved); }, [saved]);
+  const results = earlierAiStages(graph, node.id);
+  const shown = node.answer?.showResultOf;
+  return <>
+    <label className="workflow-field">{text('물어볼 내용', 'What to ask')}
+      <textarea rows={4} value={typed} maxLength={4000} data-testid="workflow-answer-prompt" onChange={(event) => {
+        const value = event.target.value; setTyped(value);
+        onChange({ answer: value.trim() ? { prompt: value, ...(shown ? { showResultOf: shown } : {}) } : undefined });
+      }} /></label>
+    <Field label={text('보여 줄 결과', 'Result to show')} description={saved.trim() ? undefined : text('물어볼 내용을 쓰면 고를 수 있습니다.', 'Write what to ask first.')}>
+      <Select value={shown ?? ''} disabled={!saved.trim()} data-testid="workflow-answer-result"
+        onChange={(event) => onChange({ answer: { prompt: saved, ...(event.target.value ? { showResultOf: event.target.value } : {}) } })}>
+        <option value="">{text('보여 주지 않음', 'None')}</option>
+        {shown && !results.some((item) => item.id === shown) && <option value={shown}>{graph.nodes.find((item) => item.id === shown)?.title ?? shown}{` · ${text('앞 AI 단계 아님', 'not an earlier AI stage')}`}</option>}
+        {results.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </Select>
+    </Field>
+  </>;
+}
+
 /**
  * What belongs to one stage, in one column: where it stands in the shown run and its conversations,
  * then its own settings (AI · 모델, 노력, 지시; the rest under 고급), its place in the flow while the flow
@@ -145,7 +182,9 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
           </Select>
         </Field>
       </>}
-      <label className="workflow-field">{props.instructionsLabel ?? (node.operation === 'approval' ? text('승인할 내용', 'What to approve') : text('지시', 'Instructions'))}<textarea rows={4} value={node.instructions} onChange={(event) => update({ instructions: event.target.value })} /></label>
+      {node.operation === 'answer' && <WorkflowAnswerFields text={text} graph={graph} node={node} onChange={update} />}
+      {/* An answer stage asks with its question; it has no instructions to run. */}
+      {node.operation !== 'answer' && <label className="workflow-field">{props.instructionsLabel ?? (node.operation === 'approval' ? text('승인할 내용', 'What to approve') : text('지시', 'Instructions'))}<textarea rows={4} value={node.instructions} onChange={(event) => update({ instructions: event.target.value })} /></label>}
       {node.operation === 'agent' && <details className="workflow-stage-panel__more" data-testid="workflow-stage-advanced">
         <summary>{text('고급', 'Advanced')}</summary>
         {/* With an agent placed, permission sits with the agent settings above. */}
