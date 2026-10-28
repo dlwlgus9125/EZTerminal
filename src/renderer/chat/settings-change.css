@@ -36,3 +36,9 @@
 .settings-proposal[data-state='applying'], .settings-proposal[data-state='resolved-elsewhere'], .settings-proposal[data-state='expired'] { border-left-color: var(--ui-border-strong); background: var(--ui-surface-inset); }
 .settings-proposal[data-state='failed'] { border-left-color: var(--ui-danger-border); }
 .settings-proposal__state { margin: 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+
+/* 차이 보기: before / set by the AI / now, under its row. */
+.settings-changes__list > li { flex-wrap: wrap; }
+.settings-changes__list > li > .settings-changes__diff { display: grid; flex: 1 0 100%; grid-template-columns: max-content 1fr; margin: 0 0 var(--ui-space-1); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.settings-changes__diff dt { color: var(--ui-text-muted); }
+.settings-changes__diff dd { min-width: 0; margin: 0 0 0 var(--ui-space-2); overflow-wrap: anywhere; color: var(--ui-text-primary); }

@@ -133,6 +133,13 @@ import { installConversationHistoryIpc } from './conversation-history-ipc';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
+import { AgentAdvisor } from './agent-advisor';
+import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
+import { BUILTIN_THEME_IDS } from '../shared/layout-schema';
+import { createDaemonCommand } from '../shared/daemon-protocol';
+import { FONT_CATALOG } from '../renderer/fonts';
+import { EFFECT_CATALOG } from '../renderer/effects';
+import { getAvailableThemes } from './theme-store';
 import {
   AgentOrchestrationService,
   type WorkerLaunchResult,
@@ -945,8 +952,23 @@ app.on('ready', async () => {
   const runCleanupRef: { current?: RunWorktreeCleanup } = {};
   // The worktree service starts after the orchestration server; agents reach it through this.
   const agentWorktreeRef: { create?: (projectId: string, branch: string) => ReturnType<typeof createWorkspaceWorktree> } = {};
-  const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
-    && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId));
+  // 대화로 설정 바꾸기 + 자문: the authority is set once the profile and template stores are read (below).
+  const settingsRef: { authority?: SettingsAuthority; advisor?: AgentAdvisor; remote?: (enabled: boolean) => Promise<unknown> } = {};
+  const preparedHostSession = (sessionId: string): boolean => Boolean(planningRuntimeRef.current?.preparedSessionSettings(sessionId)
+    || planningRuntimeRef.results?.preparedSessionSettings(sessionId) || settingsRef.advisor?.preparedSessionSettings(sessionId));
+  const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
+  const settingsSessionAllowed = (sessionId: string): boolean => Boolean(settingsRef.authority && daemonRouterRef.current
+    && settingsConversationAllowed(daemonRouterRef.current.getSnapshot(), sessionId, { prepared: preparedHostSession(sessionId) }));
+  /** Each settings call: the turn running now must be one a person sent (not a heartbeat or a report). */
+  const settingsTurnAllowed = (sessionId: string): boolean => {
+    const router = daemonRouterRef.current;
+    if (!settingsRef.authority || !router) return false;
+    const snapshot = router.getSnapshot();
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    const turn = agent?.currentTurnId ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId) : undefined;
+    const principal = turn ? daemonStore.findCommand(turn.commandId)?.command.principal.kind ?? null : null;
+    return settingsConversationAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), turnPrincipal: principal });
+  };
   const remoteProviderModels = createRemoteProviderModels({ registry: providerRegistry, getSnapshot: () => daemonRouterRef.current!.getSnapshot() });
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
@@ -964,6 +986,19 @@ app.on('ready', async () => {
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
     workflowAllowed: workflowSessionAllowed,
+    settings: () => {
+      const authority = settingsRef.authority;
+      const advisor = settingsRef.advisor;
+      return authority ? {
+        allowed: settingsSessionAllowed,
+        callAllowed: settingsTurnAllowed,
+        read: (context, templateId) => authority.read(context, templateId),
+        apply: (context, change) => authority.apply(context, change),
+        propose: (context, change) => authority.propose(context, change),
+        undo: (context, changeId) => authority.undo(changeId, { kind: 'ai', sessionId: context.sessionId, ...(context.turnId ? { turnId: context.turnId } : {}) }),
+        ...(advisor ? { advisor: { enabled: () => authority.advisorEnabled(), ask: (caller, question, signal) => advisor.ask(caller, question, signal) } } : {}),
+      } : undefined;
+    },
     listProfiles: () => chatAgentProfileStore.list(),
     createWorktree: (projectId, branch) => agentWorktreeRef.create
       ? agentWorktreeRef.create(projectId, branch)
@@ -1012,11 +1047,17 @@ app.on('ready', async () => {
     beforeProviderDispatch: (turn) => planningRuntimeRef.current?.beforeProviderDispatch(turn)
       ?? Promise.resolve(!/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId)),
     preparedSessionSettings: (sessionId) => planningRuntimeRef.current?.preparedSessionSettings(sessionId)
-      ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId),
+      ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId)
+      ?? settingsRef.advisor?.preparedSessionSettings(sessionId),
     orchestrationForSession: (sessionId) => (
       agentOrchestrationMcpServer.descriptorForSession(sessionId)
     ),
-    workflowToolsForSession: workflowSessionAllowed,
+    // The same endpoint carries the settings tools for a top-level conversation a person sees.
+    workflowToolsForSession: (sessionId) => workflowSessionAllowed(sessionId) || settingsSessionAllowed(sessionId),
+    settingsProposals: {
+      authorize: (input) => settingsRef.authority?.authorizeProposal(input) ?? 'Settings proposals are unavailable on this host.',
+      resolved: (input) => settingsRef.authority?.proposalResolved(input) ?? Promise.resolve(),
+    },
     conversationWritable: (projectId, sessionId) => workflowRef.service?.conversationWritable(projectId, sessionId) ?? Promise.resolve(true),
     conversationContext: (projectId, sessionId) => workflowRef.service?.conversationContext(projectId, sessionId) ?? Promise.resolve(undefined),
     conversationFolders: (snapshot, target) => conversationFoldersRef.current?.(snapshot, target) ?? Promise.resolve(undefined),
@@ -1221,6 +1262,124 @@ app.on('ready', async () => {
   const workflowTemplatesReady = workflowTemplateStore.init().catch((err) => {
     console.error('[main] workflow templates init failed:', err);
   });
+  // 자문: advisor conversations are recognised by their id from the start (read-only, no tools of ours).
+  settingsRef.advisor = new AgentAdvisor({
+    enabled: () => settingsRef.authority?.advisorEnabled() === true,
+    reviewAgent: () => {
+      const review = chatAgentProfileStore.phases().review;
+      return review ? chatAgentProfileStore.list().find((profile) => profile.id === review.profileId) : undefined;
+    },
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    execute: (command) => daemonRouterRef.current!.execute(command),
+    onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit),
+  });
+  /** A host switch a person applied from a proposal, through the same daemon command as Settings. */
+  const settingsRuntimeCommand = async (payload: { readonly orchestrationToolsEnabled?: boolean; readonly keepRunning?: boolean; readonly startAtLogin?: boolean }, person: SettingsPerson): Promise<void> => {
+    const router = daemonRouterRef.current;
+    if (!router) throw new Error('The agent host is not ready yet.');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const commandId = `settings-proposal-${randomUUID()}`;
+      const receipt = await router.execute(createDaemonCommand({
+        commandId, idempotencyKey: commandId, expectedRevision: router.getSnapshot().revision, issuedAt: new Date().toISOString(),
+        principal: { kind: person.principal, id: person.id }, type: 'runtime.set-settings', payload,
+      }));
+      if (receipt.ok) return;
+      if (receipt.error.code !== 'revision-conflict') throw new Error(receipt.error.message);
+    }
+    throw new Error('The setting kept changing; try again.');
+  };
+  const settingsAuthority = new SettingsAuthority({
+    dir: app.getPath('userData'),
+    ui: {
+      read: async () => {
+        await storeReady;
+        const preferences = await layoutStore.getUiPreferences();
+        return {
+          theme: await layoutStore.getTheme(), uiScale: await layoutStore.getUiScale(), font: (await layoutStore.getFont()) ?? null,
+          effects: await layoutStore.getEffectToggles(), effectIntensity: preferences.effectIntensity, density: preferences.density,
+          locale: preferences.locale, scrollback: await layoutStore.getScrollback(),
+        };
+      },
+      // The setters the Settings screen's IPC uses; the renderer reloads on settings:changed.
+      write: async (patch) => {
+        await storeReady;
+        if (patch.theme !== undefined) await layoutStore.setTheme(patch.theme);
+        if (patch.uiScale !== undefined) await layoutStore.setUiScale(patch.uiScale);
+        if (patch.font === null) await layoutStore.clearFont();
+        else if (patch.font !== undefined) await layoutStore.setFont(patch.font);
+        if (patch.effects) await layoutStore.setEffectToggles({ ...patch.effects });
+        if (patch.scrollback !== undefined) await layoutStore.setScrollback(patch.scrollback);
+        const preferences = {
+          ...(patch.effectIntensity !== undefined ? { effectIntensity: patch.effectIntensity } : {}),
+          ...(patch.density !== undefined ? { density: patch.density } : {}),
+          ...(patch.locale !== undefined ? { locale: patch.locale } : {}),
+        };
+        if (Object.keys(preferences).length > 0) applyNativeMenuLocale((await layoutStore.setUiPreferences(preferences)).locale);
+      },
+      themes: async () => [...BUILTIN_THEME_IDS, ...(await getAvailableThemes()).map((theme) => theme.id)],
+      fonts: FONT_CATALOG.map((font) => ({ id: font.id, label: font.label })),
+      effectIds: Object.keys(EFFECT_CATALOG),
+    },
+    profiles: chatAgentProfileStore,
+    templates: workflowTemplateStore,
+    host: {
+      read: async (key) => {
+        if (key === 'remoteAccess') {
+          await storeReady;
+          return layoutStore.getRemoteEnabled();
+        }
+        const runtime = daemonRouterRef.current?.getSnapshot().runtime;
+        return key === 'orchestration' ? runtime?.orchestrationToolsEnabled === true : runtime?.startAtLogin === true;
+      },
+      write: async (key, value, person) => {
+        if (key === 'remoteAccess') {
+          if (!settingsRef.remote) throw new Error('Remote access is not ready yet.');
+          await settingsRef.remote(value);
+        } else if (key === 'orchestration') {
+          await settingsRuntimeCommand({ orchestrationToolsEnabled: value }, person);
+        } else {
+          // Start at login keeps EZTerminal running in the background (Settings ties the two the same way).
+          await settingsRuntimeCommand(value ? { keepRunning: true, startAtLogin: true } : { startAtLogin: false }, person);
+        }
+      },
+    },
+    workflow: {
+      read: async (projectId, subprojectId) => {
+        const read = await workflowRef.authority?.read(projectId);
+        const subproject = read?.ok ? read.snapshot.subprojects.find((entry) => entry.id === subprojectId) : undefined;
+        return subproject ? { title: subproject.title, autoApprove: subproject.autoApprove === true, repeat: subproject.repeat ?? null } : undefined;
+      },
+      write: async (projectId, subprojectId, set, person) => {
+        const authority = workflowRef.authority;
+        const read = await authority?.read(projectId);
+        const subproject = read?.ok ? read.snapshot.subprojects.find((entry) => entry.id === subprojectId) : undefined;
+        if (!authority || !read?.ok || !subproject) return { ok: false, message: 'This workflow is no longer available.' };
+        const result = await authority.execute({
+          commandId: `settings-proposal-${randomUUID()}`, projectId, hostId: read.snapshot.hostId, expectedRevision: subproject.revision,
+          subprojectId, type: 'subproject.update', payload: set,
+        }, { kind: person.principal, id: person.id });
+        return result.ok ? { ok: true } : { ok: false, message: result.message };
+      },
+    },
+    approvalState: (approvalId) => daemonRouterRef.current?.getSnapshot().approvals.find((approval) => approval.id === approvalId)?.state,
+    raiseApproval: (input) => daemonAgentRuntime.raiseHostApproval(input),
+    korean: async () => {
+      await storeReady;
+      return resolveUiLocale((await layoutStore.getUiPreferences()).locale, app.getPreferredSystemLanguages()) === 'ko';
+    },
+    onChanged: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('settings:changed', event);
+      }
+    },
+  });
+  const settingsAuthorityReady = Promise.all([chatAgentProfilesReady, workflowTemplatesReady, settingsAuthority.init()])
+    .then(() => { settingsRef.authority = settingsAuthority; })
+    .catch((err) => {
+      console.error('[main] settings authority init failed:', err);
+    });
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
   const agentOrchestrationStore = new AgentOrchestrationStore(app.getPath('userData'));
@@ -2269,6 +2428,7 @@ app.on('ready', async () => {
   const pendingWorktreeActions = new Map<string, AbortController>();
   featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady }));
   featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady }));
+  featureIpcDisposers.push(installSettingsChangesIpc({ ipc: ipcMain, authority: settingsAuthority, ready: settingsAuthorityReady }));
   featureIpcDisposers.push(installWorkflowCheckIpc({
     ipc: ipcMain,
     authorized: (event, clientId) => resolveDesktopSessionPrincipal(event, clientId) !== null,
@@ -2809,6 +2969,11 @@ app.on('ready', async () => {
         name: 'workflow templates',
         after: ['local Agent operation ingress', 'main-owned runtime startup'],
         run: () => workflowTemplateStore.flush(),
+      },
+      {
+        name: 'settings changes',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => settingsAuthority.flush(),
       },
       {
         name: 'project workspace access',
@@ -4609,6 +4774,10 @@ app.on('ready', async () => {
       daemonRuntime?.openMainWindow();
     },
   });
+  // A remote-access proposal a person applied goes through the same switch as Settings.
+  settingsRef.remote = (enabled) => runtime.setRemoteEnabled
+    ? runtime.setRemoteEnabled(enabled)
+    : Promise.reject(new Error('Remote access is unavailable on this host.'));
   if (daemonAuthorityShutdown.startupSignal.aborted) {
     void runtime.dispose().catch(() => undefined);
   } else {

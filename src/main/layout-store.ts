@@ -387,6 +387,15 @@ export class LayoutStore {
     await this.updateSettings((current) => ({ ...current, fontFamily: id }), 'fontFamily');
   }
 
+  /** Back to the active theme's own font (undoing a font a conversation's AI chose). */
+  async clearFont(): Promise<void> {
+    await this.updateSettings((current) => {
+      const rest = { ...current };
+      delete rest.fontFamily;
+      return rest;
+    }, 'fontFamily');
+  }
+
   async getEffectToggles(): Promise<Record<string, boolean>> {
     return (await this.loadSettingsFile()).effectToggles ?? {};
   }

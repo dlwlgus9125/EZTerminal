@@ -455,6 +455,17 @@ const api: EzTerminalApi = {
     phases: () => ipcRenderer.invoke('chat-agent-profiles:phases'),
     savePhases: (phases: import('../shared/chat-agent-profiles').ChatAgentPhaseMap) => ipcRenderer.invoke('chat-agent-profiles:save-phases', phases),
   },
+  settingsChanges: {
+    conversation: (sessionId: string) => ipcRenderer.invoke('settings-changes:conversation', sessionId),
+    undo: (changeId: string) => ipcRenderer.invoke('settings-changes:undo', changeId),
+    advisor: () => ipcRenderer.invoke('settings-changes:advisor'),
+    setAdvisor: (enabled: boolean) => ipcRenderer.invoke('settings-changes:set-advisor', enabled),
+    onChanged: (listener: (event: import('../shared/settings-changes').SettingsChangedEvent) => void): (() => void) => {
+      const handler = (_event: unknown, payload: import('../shared/settings-changes').SettingsChangedEvent): void => listener(payload);
+      ipcRenderer.on('settings:changed', handler);
+      return () => ipcRenderer.removeListener('settings:changed', handler);
+    },
+  },
   workflowTemplates: {
     list: () => ipcRenderer.invoke('workflow-templates:list'),
     save: (template: import('../shared/workflow-templates').WorkflowTemplateInput) => ipcRenderer.invoke('workflow-templates:save', template),

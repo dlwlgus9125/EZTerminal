@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, ApprovalRequestSchema, PLAN_PROPOSAL_CAPABILITY, parseApprovalRequest } from '../shared/approval-request';
 import { ChatMessageContextSchema } from '../shared/chat-message';
 import { TRANSCRIPT_PAYLOAD_CAPABILITY, TranscriptPayloadSchema, parseTranscriptPayload } from '../shared/transcript-payload';
+import { SETTINGS_PROPOSAL_CAPABILITY } from '../shared/settings-changes';
 
 import {
   AGENT_SETTINGS_CAPABILITY,
@@ -900,7 +901,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
-      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1', AGENT_SETTINGS_CAPABILITY, 'agent-usage-v1', WORKFLOW_LAUNCH_CAPABILITY, WORKFLOW_REPEAT_CAPABILITY],
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1', AGENT_SETTINGS_CAPABILITY, 'agent-usage-v1', WORKFLOW_LAUNCH_CAPABILITY, WORKFLOW_REPEAT_CAPABILITY, SETTINGS_PROPOSAL_CAPABILITY],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),

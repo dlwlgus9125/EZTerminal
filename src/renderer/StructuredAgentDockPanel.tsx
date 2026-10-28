@@ -78,6 +78,8 @@ import {
 } from './structured-agent-create';
 import { type StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
 import { usePanelPreview } from './shell/panel-preview';
+import { useConversationSettings } from './conversation-settings-track';
+import { SettingsProposalContext } from './chat/SettingsChangeTrack';
 import {
   consumeRendererRecoveryStructuredAgentCreate,
   peekRendererRecoveryStructuredAgentCreate,
@@ -323,6 +325,10 @@ export function StructuredAgentDockPanel(
       .catch(() => undefined);
     return () => { alive = false; };
   }, [planApprovalPending, profileAccess]);
+  // 대화로 설정 바꾸기: what this conversation's AI changed (되돌리기) and proposed (decided in the approval dock).
+  const sessionApprovals = useMemo(() => (snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId), [snapshot?.approvals, sessionId]);
+  const conversationSettings = useConversationSettings({ sessionId: sessionId ?? '', approvals: sessionApprovals, korean, access: window.ezterminal?.settingsChanges });
+  const settingsProposals = useMemo(() => ({ ko: korean, proposal: conversationSettings.proposal }), [korean, conversationSettings.proposal]);
   const checkpointCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
   const [uncertainDraft, setUncertainDraft] = useState<UncertainDraftState | null>(() => {
     const registered = createRecoveryRegistry?.get(props.api.id);
@@ -1200,7 +1206,7 @@ export function StructuredAgentDockPanel(
     && agent !== undefined
     && HEARTBEAT_SESSION_STATES.has(agent.state);
 
-  return (<AgentResultsOwnerContext.Provider value={resultsOwner}>
+  return (<SettingsProposalContext.Provider value={settingsProposals}><AgentResultsOwnerContext.Provider value={resultsOwner}>
     {resultsOwner && sessionId && (
       <ResultsPublisher
         key={sessionId}
@@ -1248,7 +1254,7 @@ export function StructuredAgentDockPanel(
         : undefined}
       items={transcriptItems}
       turns={sessionTurns}
-      approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
+      approvals={sessionApprovals}
       approvalResponses={snapshot?.capabilities?.includes('approval-response-v1') === true}
       approvalSession={snapshot?.capabilities?.includes('approval-session-v1') === true}
       planProposals={snapshot?.capabilities?.includes('plan-proposal-v1') === true}
@@ -1271,6 +1277,7 @@ export function StructuredAgentDockPanel(
       {...(parentSession && props.onOpenSession ? { parent: { sessionId: parentSession.id, title: parentSession.title } } : {})}
       {...(subagentType ? { subagentType } : {})}
       parentApprovalPending={parentApprovalPending}
+      {...(!historyOnly && conversationSettings.track ? { settingsTrack: conversationSettings.track } : {})}
       childTrack={directChildren.length > 0 && props.onOpenSession ? (
         <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
       ) : undefined}
@@ -1347,5 +1354,5 @@ export function StructuredAgentDockPanel(
         onSubmit={(request) => delegate(delegateMode, request)}
       />
     )}
-  </AgentResultsOwnerContext.Provider>);
+  </AgentResultsOwnerContext.Provider></SettingsProposalContext.Provider>);
 }

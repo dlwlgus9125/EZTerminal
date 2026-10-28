@@ -1518,6 +1518,8 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   chatAgentProfiles?: import('./chat-agent-profiles').ChatAgentProfileAccess;
   /** Desktop workflow templates saved on this PC (the two built-ins are code, not in this list). */
   workflowTemplates?: import('./workflow-templates').WorkflowTemplateAccess;
+  /** Desktop: settings a conversation's AI changed or proposed, 되돌리기, the 자문 switch and settings:changed. */
+  settingsChanges?: import('./settings-changes').SettingsChangesAccess;
 
   // ── Git working tree (read-only) ────────────────────────────────────────
   /** Branch and per-file change counts for one directory. Returns an untracked

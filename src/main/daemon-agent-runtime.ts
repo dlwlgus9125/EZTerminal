@@ -1,4 +1,5 @@
-import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalResponse } from '../shared/approval-request';
+import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
+import { isSettingsProposalRequest } from '../shared/settings-changes';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
 import { createHash } from 'node:crypto';
@@ -112,6 +113,14 @@ export interface DaemonAgentRuntimeOptions {
   ) => ProviderSessionContext['orchestration'] | undefined;
   readonly revokeOrchestrationForSession?: (sessionId: string) => void;
   readonly workflowToolsForSession?: (sessionId: string) => boolean;
+  /**
+   * Settings proposals (`settings-proposal:` approvals the host raises with no turn): who may decide one,
+   * and what happens once it is decided. A person applies it; nothing else touches the conversation.
+   */
+  readonly settingsProposals?: {
+    authorize(input: { readonly providerRequestId: string; readonly principal: DaemonPrincipal; readonly decision: 'allow' | 'deny'; readonly response?: ApprovalResponse }): string | undefined;
+    resolved(input: { readonly providerRequestId: string; readonly principal: DaemonPrincipal; readonly decision: 'allow' | 'deny' }): Promise<void>;
+  };
   readonly conversationWritable?: (projectId: string, sessionId: string) => Promise<boolean>;
   readonly conversationContext?: (projectId: string, sessionId: string) => Promise<ChatMessageContext['workflow']>;
   /** The folders a conversation works in: its workspace plus the project's other registered folders. */
@@ -1095,13 +1104,18 @@ export class DaemonAgentRuntime {
     const proposals = snapshot.approvals.filter((approval) => (
       approval.sessionId === session.id && approval.state === 'pending' && approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX)
     ));
+    // A settings proposal waits until the person writes again (then it is out of date), not for automations.
+    const byPerson = command.principal.kind === 'desktop' || command.principal.kind === 'android';
+    const settingsProposals = byPerson ? snapshot.approvals.filter((approval) => (
+      approval.sessionId === session.id && approval.state === 'pending' && isSettingsProposalRequest(approval.providerRequestId)
+    )) : [];
     const mutations: DaemonStoreMutation[] = [{ kind: 'turn.upsert', value: {
       id: turnId,
       sessionId: session.id,
       commandId: command.commandId,
       enqueueSequence: command.expectedRevision + 1,
       state: 'queued',
-    } }, ...proposals.map((approval): DaemonStoreMutation => ({
+    } }, ...[...proposals, ...settingsProposals].map((approval): DaemonStoreMutation => ({
       kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, 'expired', now),
     }))];
     if (interruptFirst && currentTurn && hasActiveCurrentTurn) {
@@ -1631,6 +1645,7 @@ export class DaemonAgentRuntime {
     if (command.type !== 'permission.resolve') return commandError('invalid-command', 'Unexpected approval command.');
     const approval = context.snapshot.approvals.find((entry) => entry.id === command.payload.approvalId);
     if (!approval || approval.state !== 'pending') return commandError('not-found', 'Pending approval was not found.');
+    if (isSettingsProposalRequest(approval.providerRequestId)) return this.resolveSettingsProposal(command, approval);
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === approval.sessionId);
     const session = context.snapshot.sessions.find((entry) => entry.id === approval.sessionId);
     if (!agent?.providerSessionId) return commandError('invalid-state', 'Approval Agent is unavailable.');
@@ -1724,6 +1739,63 @@ export class DaemonAgentRuntime {
         },
       );
     } };
+  }
+
+  /**
+   * A settings proposal: only a person decides it, never for the whole conversation; the decision touches
+   * no turn, agent or provider. An allow applies the change shown, as that person, after the commit.
+   */
+  private resolveSettingsProposal(command: DaemonCommand, approval: DaemonSnapshot['approvals'][number]): DaemonCommandExecutionResult {
+    if (command.type !== 'permission.resolve') return commandError('invalid-command', 'Unexpected approval command.');
+    const { decision, response } = command.payload;
+    const proposals = this.options.settingsProposals;
+    const refusal = proposals
+      ? proposals.authorize({ providerRequestId: approval.providerRequestId, principal: command.principal, decision, ...(response ? { response } : {}) })
+      : 'Settings proposals are unavailable on this host.';
+    // Declining stays possible for a person even when the host could not apply it.
+    if (refusal && (decision === 'allow' || (command.principal.kind !== 'desktop' && command.principal.kind !== 'android'))) {
+      return commandError('unauthorized', refusal);
+    }
+    return { ok: true, commit: { mutations: [
+      { kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, decision === 'allow' ? 'allowed' : 'denied', this.isoNow()) },
+    ] }, afterCommit: () => {
+      if (proposals) this.runBackground(`settings proposal ${approval.id}`, () => proposals.resolved({ providerRequestId: approval.providerRequestId, principal: command.principal, decision }));
+    } };
+  }
+
+  /**
+   * Raises a host approval with no turn in a live conversation (a settings proposal). It does not block the
+   * agent: the AI's turn goes on, and the proposal waits for the person.
+   */
+  async raiseHostApproval(input: {
+    readonly sessionId: string;
+    readonly providerRequestId: string;
+    readonly risk: 'read' | 'write' | 'danger';
+    readonly title: string;
+    readonly detail?: string;
+    readonly request?: ApprovalRequest;
+  }): Promise<string | undefined> {
+    if (!isSettingsProposalRequest(input.providerRequestId)) return undefined;
+    const approvalId = stableId('approval', 'host', input.sessionId, input.providerRequestId);
+    let raised = false;
+    await this.transition((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === input.sessionId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
+      if (!session || !agent || TERMINAL_SESSION_STATES.has(session.state) || TERMINAL_AGENT_STATES.has(agent.state)) return undefined;
+      if (snapshot.approvals.some((entry) => entry.id === approvalId)) return undefined;
+      raised = true;
+      return { mutations: [{ kind: 'approval.upsert', value: {
+        id: approvalId,
+        sessionId: input.sessionId,
+        providerRequestId: input.providerRequestId,
+        risk: input.risk,
+        title: input.title.slice(0, 2_000),
+        ...(input.detail ? { detail: input.detail.slice(0, 2_000) } : {}),
+        ...(input.request ? { request: input.request } : {}),
+        state: 'pending',
+      } }] };
+    });
+    return raised ? approvalId : undefined;
   }
 
   /** Sends the message that follows a decision on a proposed plan, as the person who decided. */
@@ -3127,6 +3199,8 @@ export class DaemonAgentRuntime {
   private pendingApprovalElsewhere(snapshot: DaemonSnapshot, approval: DaemonSnapshot['approvals'][number]): boolean {
     return snapshot.approvals.some((entry) => (
       entry.sessionId === approval.sessionId && entry.id !== approval.id && entry.state === 'pending'
+      // A settings proposal waits for the person without holding the agent.
+      && !isSettingsProposalRequest(entry.providerRequestId)
     ));
   }
 
@@ -3310,6 +3384,8 @@ export class DaemonAgentRuntime {
       .filter((approval) => (
         approval.sessionId === sessionId
         && approval.state === 'pending'
+        // A settings proposal outlives the turn that raised it (the person writing again expires it).
+        && !isSettingsProposalRequest(approval.providerRequestId)
         && (
           turnId === undefined
           || approval.turnId === turnId

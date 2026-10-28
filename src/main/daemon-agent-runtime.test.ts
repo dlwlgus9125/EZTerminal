@@ -144,6 +144,7 @@ async function harness(options: {
   readonly preparedSessionSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['preparedSessionSettings'];
   readonly phaseSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['phaseSettings'];
   readonly pendingSettingsStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['pendingSettingsStore'];
+  readonly settingsProposals?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['settingsProposals'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -4887,6 +4888,69 @@ describe('settings queued for the next request', () => {
     } finally {
       if (restored) { await restored.runtime.dispose(); await restored.store.close(); }
       if (!closed) { await h.runtime.dispose(); await h.store.close(); }
+    }
+  });
+});
+
+describe('settings proposals (대화로 설정 바꾸기)', () => {
+  it('waits for a person without holding the agent or its turn, and only a person decides it', async () => {
+    const authorize = vi.fn((input: { principal: DaemonPrincipal; decision: 'allow' | 'deny'; response?: unknown }) => (
+      input.principal.kind !== 'desktop' && input.principal.kind !== 'android' ? 'A person decides a settings proposal in EZTerminal; automations and agents cannot.'
+        : input.principal.kind === 'android' && input.decision === 'allow' ? 'Only the PC can apply this setting.' : undefined));
+    const resolved = vi.fn(async () => undefined);
+    const h = await harness({ settingsProposals: { authorize, resolved } });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Turn on remote access.' });
+      const turn = h.router.getSnapshot().turns[0]!;
+      const approvalId = await h.runtime.raiseHostApproval({
+        sessionId: 'agent-1', providerRequestId: 'settings-proposal:p-1', risk: 'danger', title: '설정 제안: 원격 접속 켜기',
+        request: { v: 1, kind: 'tool', toolName: 'EZTerminal 설정', target: '원격 접속 켜기', input: '원격 접속: 끔 → 켬' },
+      });
+      expect(approvalId).toBeDefined();
+      expect(h.router.getSnapshot().approvals).toMatchObject([{ id: approvalId, state: 'pending', providerRequestId: 'settings-proposal:p-1' }]);
+      expect(h.router.getSnapshot().approvals[0]!.turnId).toBeUndefined();
+      expect(h.router.getSnapshot().agents[0]!.state).not.toBe('blocked');
+
+      // The turn that raised it ends: the proposal still waits.
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().approvals[0]!.state).toBe('pending');
+
+      expect(await h.execute('permission.resolve', { approvalId: approvalId!, decision: 'allow' }, { kind: 'cli', id: 'automation-runtime' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(await h.execute('permission.resolve', { approvalId: approvalId!, decision: 'allow' }, { kind: 'android', id: 'phone-1' })).toMatchObject({ ok: false, error: { message: 'Only the PC can apply this setting.' } });
+      expect(h.router.getSnapshot().approvals[0]!.state).toBe('pending');
+      expect(resolved).not.toHaveBeenCalled();
+
+      expect(await h.execute('permission.resolve', { approvalId: approvalId!, decision: 'allow' }, { kind: 'desktop', id: 'renderer-agent-ui' })).toMatchObject({ ok: true });
+      expect(h.router.getSnapshot().approvals[0]!.state).toBe('allowed');
+      expect(resolved).toHaveBeenCalledWith({ providerRequestId: 'settings-proposal:p-1', principal: { kind: 'desktop', id: 'renderer-agent-ui' }, decision: 'allow' });
+      // The provider never hears of it.
+      expect(h.codex.resolveApproval).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().agents[0]!.state).toBe('idle');
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('expires when the person writes again, not when an automation does', async () => {
+    const h = await harness({ settingsProposals: { authorize: () => undefined, resolved: async () => undefined } });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard' });
+      const approvalId = await h.runtime.raiseHostApproval({ sessionId: 'agent-1', providerRequestId: 'settings-proposal:p-2', risk: 'write', title: '설정 제안' });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'heartbeat' }, { kind: 'cli', id: 'automation-runtime' });
+      expect(h.router.getSnapshot().approvals.find((approval) => approval.id === approvalId)!.state).toBe('pending');
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: '다른 얘기' });
+      expect(h.router.getSnapshot().approvals.find((approval) => approval.id === approvalId)!.state).toBe('expired');
+      // Only settings proposals are raised this way.
+      expect(await h.runtime.raiseHostApproval({ sessionId: 'agent-1', providerRequestId: 'provider-approval-1', risk: 'write', title: 'x' })).toBeUndefined();
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
     }
   });
 });

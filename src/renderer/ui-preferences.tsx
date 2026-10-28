@@ -62,6 +62,17 @@ export function DesktopUiPreferencesProvider({
     return () => { alive = false; };
   }, [capabilities]);
 
+  // A conversation's AI (or its undo) changed a preference in main: show the stored value.
+  useEffect(() => window.ezterminal?.settingsChanges?.onChanged((event) => {
+    if (!event.domains.includes('ui') || capabilities.snapshot().desktop === 'unavailable') return;
+    void capabilities.uiPreferences.load().then((stored) => {
+      const parsed = UiPreferencesSchema.safeParse(stored);
+      if (!parsed.success) return;
+      preferencesRef.current = parsed.data;
+      setPreferences(parsed.data);
+    }, () => undefined);
+  }), [capabilities]);
+
   useEffect(() => {
     const onLanguageChange = (): void => {
       setLanguages(navigatorLanguages());

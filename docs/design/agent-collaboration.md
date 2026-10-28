@@ -229,6 +229,38 @@ provider enable/update처럼 신뢰 범위를 넓히는 작업은 CLI에서 수�
 provider를 관리하는 광범위 admin API를 노출하지 않는다. 기존 `ezterminal-agent` entry는 한 major release
 동안 compatibility shim으로 유지하고 deprecation 안내 뒤 같은 router를 호출한다.
 
+### 대화로 설정 바꾸기와 자문
+
+같은 MCP endpoint는 사람이 직접 보는 최상위 대화에만 설정 도구 `settings_read`·`settings_apply`·
+`settings_propose`·`settings_undo`를 더 제공한다. 준비된 세션(워크플로 단계·검토·계획), 예약 실행
+(`scheduled-agent-*`), 자문 세션, managed·provider-native 자식 대화에는 목록에도 없고, 매 호출마다 지금
+차례를 보낸 주체가 사람(desktop·android)인지 다시 확인하므로 heartbeat·report-back 같은 자동 차례에서도
+거절한다. 실행은 daemon command(MCP_COMMANDS)가 아니라 `src/main/settings-authority.ts`가 맡는다.
+
+누가 바꿀 수 있는지는 **바뀌는 필드**로 정한다. 보기·편의 설정(테마, UI 크기, 터미널 글꼴, 화면 효과,
+효과 강도, 밀도, 언어, 스크롤백), 저장한 에이전트, 단계 연결, 저장한 워크플로 템플릿은 `settings_apply`로
+바로 적용하고 `userData/settings-changes.json`(최근 500개, `{ id, at, actor, domain, target, before, after,
+undoOf?, proposedBy? }`)에 남긴다. 권한을 올리는 변경(에이전트·템플릿 단계의 권한이 지금 값보다 높아짐,
+새 항목은 '승인 후 실행'보다 높으면), 원격 접속·로그인 시 시작·에이전트가 에이전트 만들기·자문 스위치, 워크플로의
+자동 승인·반복은 `settings_apply`가 아무것도 바꾸지 않고 거절하며 `settings_propose`로만 올린다. 제공자 켜기는
+Settings › AI의 설정 검토가 필요하므로 제안 대상도 아니다. 정의를 저장해도 실행 권한은 생기지 않는다.
+
+제안은 호스트가 띄우는 차례 없는 승인(`settings-proposal:` 접두, 요청 종류 `tool`, 읽을 수 있는 변경 내용 —
+옛 폰도 그대로 표시)이다. 에이전트를 막지 않고, 그 차례가 끝나도 남으며, 사람이 대화에 다시 쓰면 만료된다.
+`permission.resolve` allow는 누른 사람의 주체로 보여 준 변경만 적용하고(그 사이 값이 바뀌었으면 적용하지 않고
+실패로 남김), deny는 아무것도 바꾸지 않는다. 'session' 응답, cli·mcp 주체(자동화·에이전트)는 거절한다.
+폰은 보기 설정과 권한을 올리지 않는 에이전트 제안만 적용할 수 있고 나머지는 PC 전용(거절은 폰에서도 가능)이다.
+데스크톱 대화는 ApprovalDock 안에서 제안을 보여 주고, 입력창 위 SettingsChangeTrack에 이 대화의 AI가 바꾼
+설정(되돌리기)과 제안의 결과(적용 중·실패·다른 곳에서 처리·만료)를 둔다. 되돌리기는 지금 값이 그 변경이
+설정한 값일 때만 이전 값으로 돌리고, 아니면 덮어쓰지 않고 충돌과 차이를 보여 준다. AI의 되돌리기는 자기
+대화의 변경만, 권한을 다시 올리게 되는 되돌리기는 사람만 할 수 있다. 바뀌면 `settings:changed`를 모든 창에
+보내 렌더러가 보기 설정·에이전트·단계 연결을 다시 읽는다(템플릿은 고를 때마다 다시 읽는다).
+
+자문 `ask_advisor`는 에이전트 만들기 토글과 별개인 스위치로, 기본 꺼짐이고 사람이 설정(또는 제안 적용)으로만
+켠다. 켜져 있으면 위와 같은 최상위 대화에만 제공하고, 단계 연결의 검토 에이전트로 읽기 전용(`plan` 강제,
+우리 도구 없음) 대화를 하나 만들어 답을 받은 뒤 보관한다. 검토 에이전트가 없으면 거절하고, 차례당 2번·대화당
+6번으로 제한한다.
+
 ## Browser, script와 service
 
 Browser session은 기본적으로 꺼져 있고 Desktop host가 있을 때만 실행한다. Workspace별 isolated

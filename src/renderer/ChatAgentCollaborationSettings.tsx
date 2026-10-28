@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChatAgentPhaseMap, ChatAgentProfile, ChatAgentProfileAccess } from '../shared/chat-agent-profiles';
+import type { SettingsChangesAccess } from '../shared/settings-changes';
 import { createDaemonCommand, type DaemonSnapshot } from '../shared/daemon-protocol';
 import { AgentPhaseSettings } from './AgentPhaseSettings';
 import { AgentProfilesSettings, type AgentProfileProviderOption } from './AgentProfilesSettings';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { structuredAgentEffortOptions, structuredAgentProviderOptions } from './structured-agent-create';
-import { Status } from './ui';
+import { Status, Switch } from './ui';
 
 /** Names for the built-in AIs when the host lists none yet (a profile can outlive its provider's enablement). */
 const KNOWN_PROVIDER_LABELS: Readonly<Record<string, string>> = { codex: 'Codex', claude: 'Claude' };
@@ -24,9 +25,12 @@ function opaqueId(prefix: string): string {
 export function ChatAgentCollaborationSettings({
   capabilities = rendererCapabilities,
   profilesAccess = window.ezterminal?.chatAgentProfiles,
+  settingsAccess = window.ezterminal?.settingsChanges,
 }: {
   readonly capabilities?: CapabilityAccess;
   readonly profilesAccess?: ChatAgentProfileAccess;
+  /** 자문 switch and settings:changed (a conversation's AI changed agents or 단계 연결). */
+  readonly settingsAccess?: SettingsChangesAccess;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
@@ -51,11 +55,22 @@ export function ChatAgentCollaborationSettings({
   }, [capabilities, t]);
 
   const [phases, setPhases] = useState<ChatAgentPhaseMap | null>(null);
+  const [advisor, setAdvisor] = useState<boolean | null>(null);
   useEffect(() => {
     void refreshSnapshot();
     void profilesAccess?.list().then(setProfiles).catch(() => undefined);
     void profilesAccess?.phases?.().then(setPhases).catch(() => undefined);
-  }, [refreshSnapshot, profilesAccess]);
+    void settingsAccess?.advisor().then(setAdvisor).catch(() => undefined);
+  }, [refreshSnapshot, profilesAccess, settingsAccess]);
+  // Changed from a conversation (or a proposal a person applied): show what is stored now.
+  useEffect(() => settingsAccess?.onChanged((event) => {
+    if (event.domains.includes('agent')) void profilesAccess?.list().then(setProfiles).catch(() => undefined);
+    if (event.domains.includes('phase') || event.domains.includes('agent')) void profilesAccess?.phases?.().then(setPhases).catch(() => undefined);
+    if (event.domains.includes('host')) {
+      void refreshSnapshot();
+      void settingsAccess.advisor().then(setAdvisor).catch(() => undefined);
+    }
+  }), [refreshSnapshot, profilesAccess, settingsAccess]);
 
   const updateOrchestration = async (enabled: boolean): Promise<void> => {
     if (busyRef.current) return;
@@ -100,6 +115,7 @@ export function ChatAgentCollaborationSettings({
   })), [snapshot]);
 
   const unavailable = { ok: false as const, error: t('agentSettings.daemonUnavailable') };
+  const ko = i18n.language.startsWith('ko');
   return (
     <section className="status-section" data-testid="agent-collaboration-settings">
       <AgentProfilesSettings
@@ -123,6 +139,15 @@ export function ChatAgentCollaborationSettings({
         providers={[...new Set([...providers.map((provider) => provider.id), ...profiles.map((profile) => profile.providerId)])]
           .map((id) => ({ id, label: providers.find((provider) => provider.id === id)?.label ?? KNOWN_PROVIDER_LABELS[id] ?? id }))}
         onChange={(next) => { setPhases(next); void profilesAccess.savePhases?.(next).then((result) => { if (result.ok) setPhases(result.phases); }).catch(() => undefined); }} />}
+      {advisor !== null && settingsAccess && <Switch
+        checked={advisor}
+        onChange={(event) => { const enabled = event.target.checked; setAdvisor(enabled); void settingsAccess.setAdvisor(enabled).then(setAdvisor).catch(() => setAdvisor(!enabled)); }}
+        label={ko ? '자문: 대화의 AI가 검토 에이전트에게 물어볼 수 있음' : 'Advisor: conversation AIs can ask the review agent'}
+        description={ko
+          ? '켜면 직접 보는 대화의 AI가 단계 연결의 검토 에이전트에게 읽기 전용으로 질문할 수 있습니다(차례당 2번, 대화당 6번). 검토 에이전트를 연결해야 쓸 수 있고, 에이전트 만들기와는 따로 켭니다.'
+          : 'Lets the AI of a conversation you see ask the review agent from phase links a question, read-only (2 per turn, 6 per conversation). Needs a linked review agent; separate from agents creating agents.'}
+        data-testid="agent-collaboration-advisor"
+      />}
       {busy && <Status variant="loading" live="polite">{t('agentSettings.runtimeSaving')}</Status>}
       {error && <Status className="agent-settings-error" variant="danger" live="assertive">{error}</Status>}
     </section>

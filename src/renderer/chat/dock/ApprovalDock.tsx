@@ -2,6 +2,7 @@ import { Glyph, glyphIcon, type GlyphIcon } from '../../ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
+import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { ACCESS_LEVELS, agentPermissionCopy, type AccessLevel } from '../../agent-permission-copy';
 import { Button } from '../../ui';
 import { SettingPill } from '../composer/SettingPill';
@@ -11,6 +12,7 @@ import type { PendingInteraction } from '../model/types';
 import { DiffView } from '../parts/DiffView';
 import { OutputBlock } from '../parts/ToolDetail';
 import { Prose } from '../parts/Prose';
+import { SettingsProposalDetails, useSettingsProposal } from '../SettingsChangeTrack';
 
 export interface ApprovalResult {
   readonly ok: boolean;
@@ -243,8 +245,11 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [feedback, setFeedback] = useState(false);
-  const Icon = riskIcon(request?.kind);
-  const title = dockTitle(pending, copy);
+  // A settings change the conversation's AI proposed: applied (as the person who presses it) or declined, once.
+  const settingsProposal = isSettingsProposalRequest(approval.providerRequestId);
+  const proposalView = useSettingsProposal(approval.id);
+  const Icon = settingsProposal ? glyphIcon('set') : riskIcon(request?.kind);
+  const title = settingsProposal ? proposalView?.proposal.title ?? approval.title : dockTitle(pending, copy);
   const resolve = async (decision: 'allow' | 'deny', response?: ApprovalResponse): Promise<void> => {
     if (busy || disabled) return;
     setBusy(true);
@@ -273,6 +278,15 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   }
 
   const body = (() => {
+    if (settingsProposal) {
+      return (
+        <div className="chat-dock__detail" data-testid="chat-dock-settings-proposal">
+          {proposalView
+            ? <SettingsProposalDetails ko={proposalView.ko} proposal={proposalView.proposal} />
+            : request?.kind === 'tool' && request.input ? <OutputBlock text={request.input} label={copy.input} /> : approval.detail && <p className="chat-dock__meta">{approval.detail}</p>}
+        </div>
+      );
+    }
     if (request?.kind === 'question') {
       return <QuestionBody questions={request.questions} busy={busy} disabled={disabled || !canRespond}
         onSubmit={(answers) => void resolve('allow', { kind: 'answers', answers })} />;
@@ -314,7 +328,16 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
       </header>
       {body}
       {question && !canRespond && <p className="chat-dock__meta">{copy.approval.unsupportedAnswer}</p>}
-      {feedback ? (
+      {settingsProposal ? (
+        <div className="chat-dock__actions">
+          <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('deny')}>{copy.approval.declineSettings}</Button>
+          {proposalView?.onPhone && proposalView.proposal.desktopOnly
+            ? <p className="chat-dock__meta">{copy.approval.settingsPcOnly}</p>
+            : <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')} data-dock-primary="" data-testid="chat-dock-apply-settings">
+              {copy.approval.applySettings}
+            </Button>}
+        </div>
+      ) : feedback ? (
         <FeedbackForm
           label={plan ? copy.approval.keepPlanningLabel : copy.approval.feedbackLabel}
           submitLabel={copy.approval.sendFeedback}

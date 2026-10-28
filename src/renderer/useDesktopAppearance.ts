@@ -266,6 +266,27 @@ export function useDesktopAppearance({ t }: UseDesktopAppearanceOptions) {
     [applyScrollbackState],
   );
 
+  // ── Changed elsewhere (a conversation's AI, its undo, another window) ─────
+  // settings:changed carries no values: read what Settings would show and apply it without writing back.
+  useEffect(() => window.ezterminal?.settingsChanges?.onChanged((event) => {
+    if (!event.domains.includes('ui')) return;
+    void (async () => {
+      const [name, percent, lines, font, toggles] = await Promise.all([
+        window.ezterminal.getTheme(),
+        window.ezterminal.getUiScale(),
+        window.ezterminal.getScrollback(),
+        window.ezterminalDesktop?.getFont(),
+        window.ezterminalDesktop?.getEffectToggles(),
+      ]);
+      setUserFontId(font);
+      setFontId(font);
+      if (toggles) setEffectToggles(toggles);
+      applyTheme(name);
+      applyUiScaleState(percent);
+      applyScrollbackState(lines);
+    })().catch(() => undefined);
+  }), [applyTheme, applyUiScaleState, applyScrollbackState, setEffectToggles]);
+
   // ── Presets (A-M4) ────────────────────────────────────────────────────────
 
   return {

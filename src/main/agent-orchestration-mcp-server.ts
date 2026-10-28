@@ -21,6 +21,8 @@ import type { ExecutionRun } from '../shared/planning-execution';
 import { WORKFLOW_SKILL } from '../shared/workflow-skill';
 import type { WorkflowService } from './workflow-service';
 import type { WorkflowAuthority } from './workflow-authority';
+import type { SettingsUndoResult } from '../shared/settings-changes';
+import { ADVISOR_CALLS_PER_CONVERSATION, ADVISOR_CALLS_PER_TURN, type AdvisorResult } from './agent-advisor';
 
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_PROMPT_LENGTH = 200_000;
@@ -81,7 +83,34 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly createWorktree?: (projectId: string, branch: string) => Promise<WorkspaceWorktreeIpcResult<{ readonly workspaceId: string; readonly path: string; readonly branch: string }>>;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  /** 대화로 설정 바꾸기 and 자문, for a conversation a person sees directly. */
+  readonly settings?: () => SettingsToolHost | undefined;
 }
+
+/** The conversation an AI acts from. */
+export interface SettingsToolContext {
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly projectId: string;
+}
+
+/** What the settings tools call (SettingsAuthority and AgentAdvisor, bound by the host). */
+export interface SettingsToolHost {
+  /** The tools are listed: a top-level conversation a person sees (not prepared, scheduled or a child). */
+  allowed(sessionId: string): boolean;
+  /** Each call: and the turn running now is one a person sent (not a heartbeat or another automation). */
+  callAllowed(sessionId: string): boolean;
+  read(context: SettingsToolContext, templateId?: string): Promise<Record<string, unknown>>;
+  apply(context: SettingsToolContext, change: unknown): Promise<Record<string, unknown>>;
+  propose(context: SettingsToolContext, change: unknown): Promise<Record<string, unknown>>;
+  undo(context: SettingsToolContext, changeId: string): Promise<SettingsUndoResult>;
+  readonly advisor?: {
+    enabled(): boolean;
+    ask(caller: { readonly sessionId: string; readonly turnId?: string; readonly workspaceId: string }, question: string, signal?: AbortSignal): Promise<AdvisorResult>;
+  };
+}
+
+const SETTINGS_TOOLS = ['settings_read', 'settings_apply', 'settings_propose', 'settings_undo', 'ask_advisor'];
 
 interface SessionCapability {
   readonly digest: Buffer;
@@ -385,14 +414,15 @@ export class AgentOrchestrationMcpServer {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : LATEST_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'ezterminal-orchestration', version: '1.0.0' },
-        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project. To get a child's result, either call wait_agent (and read_agent) after creating it, or create it with reportBack:true and end your turn: the result then arrives as your next message, so do not also wait on it.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}`,
+        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project. To get a child's result, either call wait_agent (and read_agent) after creating it, or create it with reportBack:true and end your turn: the result then arrives as your next message, so do not also wait on it.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}${this.settingsEnabled(sessionId) ? '\nEZTerminal settings: read settings_read first. settings_apply changes view settings, agents, 단계 연결 and templates now (the person can undo each); permission raises and host or workflow switches go only through settings_propose, which a person applies. Saving an agent or template never runs it.' : ''}`,
       };
     }
     if (request.method === 'ping') return {};
     if (request.method === 'tools/list') {
       const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
       const orchestration = snapshot.runtime.orchestrationToolsEnabled && ownerAgent.orchestrationEnabled;
-      return { tools: [...(orchestration ? this.toolDefinitions(ownerAgent.permissionPreset) : []), ...(this.workflowEnabled(sessionId) ? this.workflowToolDefinitions() : [])] };
+      return { tools: [...(orchestration ? this.toolDefinitions(ownerAgent.permissionPreset) : []), ...(this.workflowEnabled(sessionId) ? this.workflowToolDefinitions() : []),
+        ...(this.settingsEnabled(sessionId) ? this.settingsToolDefinitions() : [])] };
     }
     if (request.method !== 'tools/call') throw new McpRequestError(-32601, 'Method not found.');
     const params = strictObject(request.params, ['name', 'arguments', '_meta']);
@@ -419,6 +449,7 @@ export class AgentOrchestrationMcpServer {
     const snapshot = this.requireLiveCapability(sessionId);
     const ownerSession = snapshot.sessions.find((session) => session.id === sessionId)!;
     const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
+    if (SETTINGS_TOOLS.includes(name)) return this.settingsTool(sessionId, ownerSession, ownerAgent, name, value, signal);
     if (['workflow_read', 'workflow_command', 'validate_workflow', 'preview_workflow', 'workflow_run', 'workflow_results'].includes(name)) {
       const workflow = this.options.workflow?.();
       if (!workflow || !this.workflowEnabled(sessionId)) throw new McpRequestError(-32002, 'Workflow tools are unavailable for this session.');
@@ -776,7 +807,7 @@ export class AgentOrchestrationMcpServer {
       ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
       : undefined;
     if (
-      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId))
+      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId) && !this.settingsEnabled(sessionId))
       || !provider?.enabled
       || !agent
       || provider.health !== 'ready'
@@ -794,6 +825,79 @@ export class AgentOrchestrationMcpServer {
 
   private workflowEnabled(sessionId: string): boolean {
     return Boolean(this.options.workflow?.() && this.options.workflowAllowed?.(sessionId));
+  }
+
+  private settingsEnabled(sessionId: string): boolean {
+    return this.options.settings?.()?.allowed(sessionId) === true;
+  }
+
+  /** settings_read / apply / propose / undo and ask_advisor, re-checked on every call. */
+  private async settingsTool(
+    sessionId: string,
+    ownerSession: DaemonSnapshot['sessions'][number],
+    ownerAgent: DaemonSnapshot['agents'][number],
+    name: string,
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    const host = this.options.settings?.();
+    if (!host || !host.allowed(sessionId)) throw new McpRequestError(-32002, 'Settings tools are unavailable for this conversation.');
+    if (!host.callAllowed(sessionId)) throw new McpRequestError(-32002, 'Settings tools answer only a turn a person sent in this conversation.');
+    const context: SettingsToolContext = { sessionId, projectId: ownerSession.projectId, ...(ownerAgent.currentTurnId ? { turnId: ownerAgent.currentTurnId } : {}) };
+    const answer = async (operation: () => Promise<unknown>): Promise<JsonObject> => {
+      try {
+        const result = await operation();
+        return toolText({ ok: true, ...(result as JsonObject) });
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'failed';
+        return toolText({ ok: false, error: code, message: error instanceof Error ? error.message : String(error) }, true);
+      }
+    };
+    switch (name) {
+      case 'settings_read': {
+        const args = strictObject(value, ['templateId']);
+        const templateId = optionalString(args.templateId, 'templateId', 100);
+        return answer(() => host.read(context, templateId));
+      }
+      case 'settings_apply':
+      case 'settings_propose': {
+        const args = strictObject(value, ['change']);
+        if (!isObject(args.change)) throw new McpRequestError(-32602, 'change must be an object.');
+        return answer(() => (name === 'settings_apply' ? host.apply(context, args.change) : host.propose(context, args.change)));
+      }
+      case 'settings_undo': {
+        const args = strictObject(value, ['changeId']);
+        const result = await host.undo(context, requiredString(args.changeId, 'changeId', 128));
+        return toolText(result, !result.ok);
+      }
+      default: {
+        const advisor = host.advisor;
+        if (!advisor?.enabled()) throw new McpRequestError(-32002, '자문 (ask_advisor) is off. Only the person turns it on (Settings › AI).');
+        const args = strictObject(value, ['question']);
+        const question = requiredString(args.question, 'question', 20_000);
+        const result = await advisor.ask({ sessionId, workspaceId: ownerSession.workspaceId, ...(context.turnId ? { turnId: context.turnId } : {}) }, question, signal);
+        return toolText(result, !result.ok);
+      }
+    }
+  }
+
+  private settingsToolDefinitions(): JsonObject[] {
+    const change = { type: 'object', description: 'One change: {domain:"ui",set:{...}} | {domain:"agent",profile:{...}} | {domain:"agent",remove:id} | {domain:"phase",set:{...}} | {domain:"template",template:{...}} | {domain:"template",remove:id} | {domain:"host",set:{...}} | {domain:"workflow",subprojectId,set:{...}}.', additionalProperties: true };
+    const advisor = this.options.settings?.()?.advisor;
+    return [
+      { name: 'settings_read', description: 'Read the EZTerminal settings you may change from this conversation, with what is allowed: view settings (theme, uiScale, terminal font, screen effects, effectIntensity, density, locale, scrollback), saved agents (Settings › AI › 에이전트), 단계 연결 (phases), saved workflow templates (give templateId to read one in full), the host switches (orchestration, advisor, remoteAccess, startAtLogin), and what you changed and proposed here. Nothing changes.',
+        inputSchema: { type: 'object', properties: { templateId: { type: 'string' } }, additionalProperties: false } },
+      { name: 'settings_apply', description: 'Apply a change NOW, recorded with 되돌리기 (undo) for the person: view settings {domain:"ui",set:{theme?,uiScale? 80-150,font? id|null,effects?:{id:true|false|null},effectIntensity? 0-10,density? adaptive|compact|comfortable,locale? system|ko|en,scrollback? 100-100000}}; an agent {domain:"agent",profile:{id,name,providerId,model?,reasoningEffort?,permissionPreset:plan|standard|full-access,whenToUse?}} or {domain:"agent",remove:id}; 단계 연결 {domain:"phase",set:{plan?:{[providerId]:profileId|null},implement?:{[providerId]:profileId|null},review?:profileId|null,switchModel?}}; a saved workflow template {domain:"template",template:{id,title,description,graph}} or {domain:"template",remove:id}.'
+          + ' REFUSED, with nothing changed, when it needs a person: any permission raise (an agent’s permissionPreset above its current value, a new agent above standard, or a template stage’s), every host switch and every workflow 자동 승인/반복 — use settings_propose for those. Saving an agent or template never runs it. Returns each changeId.',
+        inputSchema: { type: 'object', properties: { change }, required: ['change'], additionalProperties: false } },
+      { name: 'settings_propose', description: 'Show a change to the person as a proposal in this conversation. NOTHING changes unless they press 적용; only the PC can apply anything beyond view settings and agent edits that raise no permission. For what settings_apply refuses: permission raises; {domain:"host",set:{orchestration?,advisor?,remoteAccess?,startAtLogin?}} (agents creating agents, 자문, remote access, start at login); {domain:"workflow",subprojectId,set:{autoApprove?,repeat?:{cadence:daily|weekly,weekday?,time:"HH:MM",timezone,enabled}}} (자동 승인, 반복). Same change shapes as settings_apply.'
+          + ' Enabling an AI provider is not proposed here (it needs its setup review in Settings › AI). Returns proposalId; settings_read shows whether it was applied, declined or expired (it expires when the person writes again). It applies exactly the change shown, as the person who pressed it.',
+        inputSchema: { type: 'object', properties: { change }, required: ['change'], additionalProperties: false } },
+      { name: 'settings_undo', description: 'Undo a change made in this conversation (changeId from settings_apply or settings_read). It restores the previous value only while the setting still has the value that change set; if it changed since, nothing changes and the current value is returned. An undo that would raise a permission is left to the person (되돌리기 in the conversation).',
+        inputSchema: { type: 'object', properties: { changeId: { type: 'string' } }, required: ['changeId'], additionalProperties: false } },
+      ...(advisor?.enabled() ? [{ name: 'ask_advisor', description: `Ask the review agent linked in 단계 연결 one question and get its answer. It runs read-only in its own conversation (plan permission: it cannot change files or settings), answers and ends. At most ${String(ADVISOR_CALLS_PER_TURN)} per turn and ${String(ADVISOR_CALLS_PER_CONVERSATION)} per conversation; put the context it needs in the question.`,
+        inputSchema: { type: 'object', properties: { question: { type: 'string', minLength: 1, maxLength: 20_000 } }, required: ['question'], additionalProperties: false } }] : []),
+    ];
   }
 
   /** Runs a subproject's flow for the conversation's agent; the envelope comes from the stored state. */

@@ -1,3 +1,5 @@
+import { createContext, useContext } from 'react';
+
 import { Button } from '../ui';
 import { Glyph, Led } from '../ui/Glyph';
 import './settings-change.css';
@@ -11,6 +13,8 @@ export interface SettingsChangeEntry {
   readonly undone?: boolean;
   /** Changed again since (here or elsewhere): undo is refused rather than overwriting that change. */
   readonly conflict?: boolean;
+  /** 차이 보기, once asked: what the change set, what it was before and what it is now. */
+  readonly diff?: { readonly before: string; readonly after: string; readonly current: string };
 }
 /**
  * A change the AI may only propose — decided by the fields it changes, not by what it is about: an agent edit
@@ -28,6 +32,30 @@ export interface SettingsProposalEntry {
   readonly state?: 'pending' | 'applying' | 'failed' | 'resolved-elsewhere' | 'expired';
   /** Why it failed, or who resolved it elsewhere. */
   readonly detail?: string;
+}
+
+/**
+ * A proposal's rows and what changes for safety — the same body in the approval dock (pending) and in
+ * this track (applying, failed, resolved elsewhere, expired).
+ */
+export function SettingsProposalDetails({ ko, proposal }: { readonly ko: boolean; readonly proposal: Pick<SettingsProposalEntry, 'rows' | 'risk'> }): JSX.Element {
+  const text = (korean: string, english: string): string => ko ? korean : english;
+  return <>
+    <table className="settings-proposal__rows">
+      <thead><tr><th scope="col">{text('설정', 'Setting')}</th><th scope="col">{text('지금', 'Now')}</th><th scope="col">{text('바꾸면', 'After')}</th></tr></thead>
+      <tbody>{proposal.rows.map(row => <tr key={row.name}><th scope="row">{row.name}</th><td>{row.before}</td><td>{row.after}</td></tr>)}</tbody>
+    </table>
+    <p className="settings-proposal__risk"><Glyph name="warn" />{proposal.risk}</p>
+  </>;
+}
+
+/** The approval dock reads a pending settings proposal's rows from here (desktop; phones show its text). */
+export const SettingsProposalContext = createContext<{ readonly ko: boolean; readonly onPhone?: boolean; readonly proposal: (approvalId: string) => SettingsProposalEntry | undefined } | null>(null);
+
+export function useSettingsProposal(approvalId: string): { readonly ko: boolean; readonly onPhone: boolean; readonly proposal: SettingsProposalEntry } | undefined {
+  const context = useContext(SettingsProposalContext);
+  const proposal = context?.proposal(approvalId);
+  return context && proposal ? { ko: context.ko, onPhone: context.onPhone === true, proposal } : undefined;
 }
 
 export interface SettingsChangeTrackProps {
@@ -65,11 +93,7 @@ export function SettingsChangeTrack({ ko, changes, proposals, onPhone = false, o
       const line = stateLine(proposal);
       return <div key={proposal.id} className="settings-proposal" role="group" aria-label={proposal.title} data-state={proposal.state ?? 'pending'} data-testid="settings-proposal">
         <p className="settings-proposal__head">{open ? <Led tone="amber" /> : <Glyph name={proposal.state === 'failed' ? 'warn' : 'clock'} />}<span>{open ? text('확인 필요', 'Needs you') : text('제안', 'Proposal')}</span><strong>{proposal.title}</strong></p>
-        <table className="settings-proposal__rows">
-          <thead><tr><th scope="col">{text('설정', 'Setting')}</th><th scope="col">{text('지금', 'Now')}</th><th scope="col">{text('바꾸면', 'After')}</th></tr></thead>
-          <tbody>{proposal.rows.map(row => <tr key={row.name}><th scope="row">{row.name}</th><td>{row.before}</td><td>{row.after}</td></tr>)}</tbody>
-        </table>
-        <p className="settings-proposal__risk"><Glyph name="warn" />{proposal.risk}</p>
+        <SettingsProposalDetails ko={ko} proposal={proposal} />
         {line && <p className="settings-proposal__state" role="status">{line}</p>}
         {open && <div className="settings-proposal__actions">
           {onPhone && proposal.desktopOnly
@@ -91,6 +115,11 @@ export function SettingsChangeTrack({ ko, changes, proposals, onPhone = false, o
             ? <><span className="settings-changes__state">{text('그 뒤 바뀌어 되돌릴 수 없음', 'Changed since; cannot undo')}</span>
               <Button size="sm" variant="ghost" leadingIcon={<Glyph name="diff" />} onClick={() => onShowDiff?.(change.id)}>{text('차이 보기', 'Show the difference')}</Button></>
             : <Button size="sm" variant="ghost" leadingIcon={<Glyph name="undo" />} onClick={() => onUndo?.(change.id)}>{text('되돌리기', 'Undo')}</Button>}
+        {change.diff && <dl className="settings-changes__diff" data-testid="settings-change-diff">
+          <dt>{text('바꾸기 전', 'Before')}</dt><dd>{change.diff.before}</dd>
+          <dt>{text('AI가 바꾼 값', 'Set by the AI')}</dt><dd>{change.diff.after}</dd>
+          <dt>{text('지금', 'Now')}</dt><dd>{change.diff.current}</dd>
+        </dl>}
       </li>)}</ul>
     </div>}
   </section>;

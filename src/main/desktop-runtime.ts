@@ -85,6 +85,8 @@ export interface DesktopRuntime {
   initialize(): Promise<RemoteRuntimeStatus>;
   isRunning(): boolean;
   dispose(): Promise<void>;
+  /** The remote access switch, as Settings sets it (a settings proposal a person applied). */
+  setRemoteEnabled?(enabled: boolean): Promise<RemoteRuntimeStatus>;
 }
 
 type RuntimePhase = 'new' | 'active' | 'disposing' | 'disposed';
@@ -207,6 +209,11 @@ export class ManagedDesktopRuntime implements DesktopRuntime {
 
   isRunning(): boolean {
     return this.phase === 'active' && this.runtime.currentStatus.state === 'running';
+  }
+
+  setRemoteEnabled(enabled: boolean): Promise<RemoteRuntimeStatus> {
+    if (this.phase !== 'active') return Promise.reject(new Error('Remote access is not ready yet.'));
+    return this.setEnabled(enabled);
   }
 
   dispose(): Promise<void> {

@@ -1059,3 +1059,62 @@ describe('create_worktree', () => {
     expect(await failing.call({ branch: 'feature/notes' })).toEqual({ isError: true, body: { ok: false, error: 'branch exists' } });
   });
 });
+
+describe('AgentOrchestrationMcpServer settings tools (대화로 설정 바꾸기)', () => {
+  function settingsHost(overrides: Partial<import('./agent-orchestration-mcp-server').SettingsToolHost> = {}): import('./agent-orchestration-mcp-server').SettingsToolHost {
+    return {
+      allowed: () => true,
+      callAllowed: () => true,
+      read: vi.fn(async () => ({ ui: { theme: 'matrix' } })),
+      apply: vi.fn(async () => ({ changes: [{ changeId: 'c-1', change: '테마: 매트릭스 → 라이트' }] })),
+      propose: vi.fn(async () => ({ proposalId: 'p-1', title: '원격 접속 켜기', desktopOnly: true })),
+      undo: vi.fn(async () => ({ ok: true as const, changeId: 'c-2' })),
+      ...overrides,
+    };
+  }
+  async function connect(host: import('./agent-orchestration-mcp-server').SettingsToolHost | undefined, current = snapshot()) {
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => current, execute: vi.fn() }, settings: () => host });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    return {
+      list: async () => ((await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/list'))).value?.result as { tools: Array<{ name: string; description: string }> }).tools,
+      call: async (name: string, args: unknown) => JSON.parse(((await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/call', { name, arguments: args }))).value?.result as { content: Array<{ text: string }> }).content[0]!.text) as Record<string, unknown>,
+    };
+  }
+
+  it('offers the settings tools to a conversation a person sees, saying what applies now and what needs a person', async () => {
+    const host = settingsHost();
+    const { list, call } = await connect(host);
+    const tools = await list();
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['settings_read', 'settings_apply', 'settings_propose', 'settings_undo']));
+    expect(tools.find((tool) => tool.name === 'settings_apply')!.description).toMatch(/NOW[\s\S]*REFUSED[\s\S]*permission raise/u);
+    expect(tools.find((tool) => tool.name === 'settings_propose')!.description).toMatch(/NOTHING changes unless they press/u);
+    expect(await call('settings_apply', { change: { domain: 'ui', set: { theme: 'light' } } })).toMatchObject({ ok: true, changes: [{ changeId: 'c-1' }] });
+    expect(host.apply).toHaveBeenCalledWith({ sessionId: 'lead-1', projectId: 'project-1' }, { domain: 'ui', set: { theme: 'light' } });
+  });
+
+  it('offers nothing to a prepared, scheduled or child conversation, and answers only a turn a person sent', async () => {
+    const hidden = await connect(settingsHost({ allowed: () => false }), { ...snapshot(), runtime: { ...snapshot().runtime, orchestrationToolsEnabled: true } });
+    expect((await hidden.list()).map((tool) => tool.name)).not.toContain('settings_apply');
+    expect(await hidden.call('settings_apply', { change: { domain: 'ui', set: { theme: 'light' } } })).toMatchObject({ ok: false, error: expect.stringContaining('unavailable') });
+
+    const automated = settingsHost({ callAllowed: () => false });
+    const heartbeat = await connect(automated);
+    expect(await heartbeat.call('settings_apply', { change: { domain: 'ui', set: { theme: 'light' } } })).toMatchObject({ ok: false, error: expect.stringContaining('a person sent') });
+    expect(automated.apply).not.toHaveBeenCalled();
+  });
+
+  it('offers ask_advisor only while 자문 is on', async () => {
+    const ask = vi.fn(async () => ({ ok: true as const, answer: '그대로 두세요.', truncated: false }));
+    let enabled = false;
+    const { list, call } = await connect(settingsHost({ advisor: { enabled: () => enabled, ask } }));
+    expect((await list()).map((tool) => tool.name)).not.toContain('ask_advisor');
+    expect(await call('ask_advisor', { question: '맞나요?' })).toMatchObject({ ok: false });
+    expect(ask).not.toHaveBeenCalled();
+    enabled = true;
+    expect((await list()).map((tool) => tool.name)).toContain('ask_advisor');
+    expect(await call('ask_advisor', { question: '맞나요?' })).toEqual({ ok: true, answer: '그대로 두세요.', truncated: false });
+    expect(ask).toHaveBeenCalledWith({ sessionId: 'lead-1', workspaceId: 'workspace-1' }, '맞나요?', expect.anything());
+  });
+});
