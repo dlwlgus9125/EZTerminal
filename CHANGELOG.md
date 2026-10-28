@@ -13,6 +13,24 @@
   CLAUDE.md are still read from the working folder only. Editing the project's
   folders reaches running conversations from their next message (Claude resumes
   the same session with the new folders first).
+- Conversation settings no longer need a stop: a model, permission, plan or
+  effort change made while the AI works waits for the next request, shown as
+  "지금 차례 → 다음 요청" above the input with 다음 요청 1회만 / 이후 계속 and
+  예약 취소. Settings › AI › 단계 연결 links saved agents to the plan and implement
+  phases of each AI (and a shared review agent): plan mode takes the plan
+  agent's effort, an approved plan starts with the implement agent (Codex and
+  Claude both start it as a new request).
+- Workflow stages are run by saved agents: drag one onto a stage (or 배정), then
+  change the stage's effort and permission. Consecutive stages of the same
+  agent continue one conversation and result folder (앞 대화 이어서), each with
+  its own effort. Stages can have checks (commands the PC runs on the result;
+  each is allowed once on this PC, with the script it calls), their own review
+  (off: the checks or the person decide), a 내 답변 기다림 stage, and an
+  approval that sends work back with a note. Built-in templates 개발 절차 and
+  정기 점검 (its summary is skipped when the checks give last run's result),
+  and saved templates. A scheduled 반복 runs the version a person confirmed;
+  later edits wait for a new confirmation.
+- Remote protocol 18 (Android versionCode 81); older phones get a reduced view.
 
 ### Changed
 
