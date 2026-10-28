@@ -160,7 +160,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   // setup keeps `custom` and its graph), so a restored setup starts at the first template again.
   const [savedTemplates, setSavedTemplates] = useState<readonly WorkflowTemplate[]>([]);
   const [templateId, setTemplateId] = useState('');
-  const templates = templateAccess ? [...builtinWorkflowTemplates(text).map(template => ({ template, origin: 'builtin' as const })), ...savedTemplates.map(template => ({ template, origin: 'user' as const }))] : [];
+  // Built once per language (the panel renders on every scroll tick).
+  const templateLanguage = text('ko', 'en');
+  const builtinTemplates = useMemo(() => templateAccess ? builtinWorkflowTemplates((ko, en) => templateLanguage === 'ko' ? ko : en) : [], [templateAccess, templateLanguage]);
+  const templates = templateAccess ? [...builtinTemplates.map(template => ({ template, origin: 'builtin' as const })), ...savedTemplates.map(template => ({ template, origin: 'user' as const }))] : [];
   const chosenTemplate = templates.find(entry => entry.template.id === templateId) ?? templates[0];
   const templateGraph = (id: string, subprojectId: string): WorkflowGraph => instantiateWorkflowTemplate((templates.find(entry => entry.template.id === id) ?? templates[0]).template.graph, subprojectId);
   const pickerOpen = !!templateAccess && !!create && create.mode === 'preset' && creationVisible;
