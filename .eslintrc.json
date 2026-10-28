@@ -23,6 +23,11 @@
     "plugin:import/typescript",
     "plugin:react-hooks/recommended"
   ],
+  "rules": {
+    "no-restricted-imports": ["error", {
+      "paths": [{ "name": "lucide-react", "message": "Icons are stencil glyphs: use Glyph or glyphIcon(name) from src/renderer/ui/Glyph." }]
+    }]
+  },
   "settings": {
     "import/resolver": {
       "typescript": {

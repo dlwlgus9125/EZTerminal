@@ -2018,13 +2018,6 @@ export function App(): JSX.Element {
     setSidebarDestination('agents');
   }, []);
 
-  const openHistoryReview = useCallback(async (
-    _session: AgentHistorySessionSummary,
-    project: AgentProjectSummary,
-  ): Promise<void> => {
-    showProjectWorkspace(project.projectId);
-  }, [showProjectWorkspace]);
-
   const openSessionHistoryReview = useCallback((
     projectId: string,
     rootId: string,
@@ -3237,14 +3230,7 @@ export function App(): JSX.Element {
             window.ezterminal.getManagedMergeDiff(requestId, revision)
           ),
           onReadGitStatus: (directory) => window.ezterminal.getGitStatus(directory),
-          onOpenHistorySession: openAgentHistorySession,
-          onOpenHistoryReview: (session, project) => void openHistoryReview(session, project),
           onOpenProjectDocument: openProjectDocument,
-          onOpenPlanningProject: openPlanningProject,
-          onOpenWorkflowProject: (project, subprojectId, nodeId) => planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, nodeId),
-          // Opens from a list take the preview place until the person keeps the tab.
-          onOpenConversationHistory: (entry: ConversationEntry) => openConversationHistory(entry, { preview: true }),
-          onOpenHistory: projectId => setConversationHistory({ projectId: projectId ?? activeProjectId ?? undefined }),
           onOpenProjectMap: openProjectMap,
           activeProjectId,
           onActiveProjectIdChange: setActiveProjectId,
@@ -3253,10 +3239,7 @@ export function App(): JSX.Element {
             if (!activeProjectId) return;
             setProjectWorkspaceStates((current) => ({ ...current, [activeProjectId]: state }));
           },
-          onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
-          onOpenStructuredAgentSession: (input: Parameters<typeof openStructuredAgentSession>[0]) => openStructuredAgentSession(input, { preview: true }),
-          activeConversationSessionId,
           appChatInbox: {
             entries: appChatInbox.entries,
             onOpen: (entry) => {
@@ -3265,28 +3248,10 @@ export function App(): JSX.Element {
             },
             onMarkSeen: (entry) => appChatInbox.markSeen(entry.sessionId),
           },
-          activeConversationId: activePanelId ? apiRef.current?.getPanel(activePanelId)?.params?.conversationId : undefined,
-          onCreateWorkspaceSession: (_projectId, workspaceId) => {
-            void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
-              if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
-              else revealOpenedSession();
-            }).catch(() => pushToast({ title: t('agentHub.projects.launchFailed'), variant: 'danger' }));
-          },
           onOpenProjectTerminal: openProjectTerminal,
-          onCreateWorkspaceTerminal: (workspaceId) => {
-            void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
-              if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
-              else revealOpenedSession();
-            }).catch(() => pushToast({ title: t('agentHub.projects.launchFailed'), variant: 'danger' }));
-          },
-          onOpenAgentSettings: () => {
-            setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
-            setSidebarDestination('settings');
-          },
           // Read afresh: the hub's own list may hold the project as it was before an edit made here.
           onEditProject: (project: AgentProjectSummary) => openProjectEditor(project.projectId),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
-          onClose: () => setSidebarDestination(null),
         }}
         loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
         errorMessage={t('common.featureLoadFailed')}

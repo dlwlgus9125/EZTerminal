@@ -74,23 +74,6 @@ export const AgentRelativeAge = memo(function AgentRelativeAge({
   return <>{label}</>;
 });
 
-export const AgentElapsed = memo(function AgentElapsed({
-  startedAt,
-  currentTime,
-}: {
-  readonly startedAt: number;
-  readonly currentTime?: number;
-}): JSX.Element {
-  const now = useClock(SECOND_CLOCK, currentTime);
-  const total = Math.max(0, Math.floor((now - startedAt) / 1_000));
-  const seconds = String(total % 60).padStart(2, '0');
-  const minutes = Math.floor(total / 60);
-  const label = minutes < 60
-    ? `${String(minutes).padStart(2, '0')}:${seconds}`
-    : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
-  return <>{label}</>;
-});
-
 export const AgentApprovalCountdown = memo(function AgentApprovalCountdown({
   expiresAt,
   currentTime,

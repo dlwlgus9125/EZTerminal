@@ -189,7 +189,7 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/ProjectConversationNavigator.tsx"
+          "relativePath": "src/renderer/PlanningWorkspaceDockPanel.tsx"
         },
         {
           "rootAlias": "app",
@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a26f5c9a88e8e6d939d12dfe76c359130ab1c7eafe5c2f2263bafeee0a1b4c55",
+        "inputDigest": "sha256:cf769d4ad284e290db967b9bcab20952f87dbfaf26b922fd64c41e75ded6ca48",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
+        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fd193ba3293989cbd0efe25725f32286d2633c2d9d63838569550ecc5fcd4cca",
+        "inputDigest": "sha256:11b2f8d0a4fc22ac06696fda7af5330ed34f9985c7984a0c9b5a1509e7be4450",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
+        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
       }
     },
     {
@@ -733,7 +733,7 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/ProjectConversationNavigator.tsx"
+          "relativePath": "src/renderer/PlanningWorkspaceDockPanel.tsx"
         },
         {
           "rootAlias": "app",
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:eb6ebe4e1bbdb1ed84c0023261ea6a4400320a0bb84daed41f0df7641cd31461",
+        "inputDigest": "sha256:4835f310641503fa72cd0439af455afdd2e24baf3449cad4667bbe6c5b3c9102",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
+        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
       }
     }
   ]

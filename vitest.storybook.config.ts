@@ -17,7 +17,6 @@ export default defineConfig({
       'react-dom',
       'react/jsx-runtime',
       'react/jsx-dev-runtime',
-      'lucide-react',
       'i18next',
       'react-i18next',
       'zod',

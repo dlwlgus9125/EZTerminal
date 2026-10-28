@@ -127,11 +127,11 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/ProjectConversationNavigator.tsx",
-          "startLine": 36,
-          "endLine": 143,
-          "lineDigest": "sha256:7a9e556462ad52d6092434f3138c440d211a04f1ca5eae695f879acdfd3efe9c",
-          "claim": "Navigation filters transcript-only events and coalesces refresh, reads worktree git status only when worktrees or their running chats change, opens existing Session IDs directly and native rows as history preview."
+          "relativePath": "src/renderer/PlanningWorkspaceDockPanel.tsx",
+          "startLine": 185,
+          "endLine": 214,
+          "lineDigest": "sha256:78c434cc3f51b57a4759cf0c1cc92bde00982b8f2c2818ba72a50abba733fad0",
+          "claim": "The flow screen lists its conversations from one daemon snapshot read and re-reads only on events that change the session projection (transcript-only events are filtered); a newer read supersedes an older one."
         }
       ]
     },

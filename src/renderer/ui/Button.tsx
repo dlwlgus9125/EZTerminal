@@ -2,7 +2,6 @@ import { Glyph, glyphIcon, type GlyphIcon } from './Glyph';
 import {
   forwardRef,
   type ButtonHTMLAttributes,
-  type ComponentType,
   type MouseEvent,
   type ReactNode,
 } from 'react';
@@ -69,8 +68,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'> {
   readonly 'aria-label': string;
-  /** A lucide icon or a stencil glyph (`glyphIcon(name)`); always rendered decorative. */
-  readonly icon: GlyphIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  /** A stencil glyph (`glyphIcon(name)`); always rendered decorative. */
+  readonly icon: GlyphIcon;
   readonly variant?: ButtonVariant;
   readonly size?: ButtonSize;
   readonly loading?: boolean;

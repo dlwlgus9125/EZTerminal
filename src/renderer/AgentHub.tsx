@@ -1,9 +1,4 @@
-import {
-  Check,
-  GitCompareArrows,
-  GitMerge,
-  X,
-} from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { AppChatInbox } from './AppChatInbox';
 import type { AppChatInboxEntry } from '../shared/app-chat-inbox';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,13 +25,8 @@ import {
   orchestrationWorkerActivityIds,
   type AgentOrchestrationSnapshot,
 } from '../shared/agent-orchestration';
-import type {
-  AgentHistorySessionSummary,
-  AgentLaunchBootstrap,
-  AgentProjectSummary,
-} from '../shared/agent-history';
+import type { AgentProjectSummary } from '../shared/agent-history';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
-import type { ConversationEntry } from '../shared/conversation-history';
 import type {
   ProjectSessionPanelMetadata,
   ProjectSessionTarget,
@@ -164,35 +154,6 @@ export interface AgentHubProps {
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
   /** Fixed clock for deterministic product handoff/reference rendering. */
   readonly currentTime?: number;
-  // App still passes the props below; nothing here reads them since the project list,
-  // the launch picker and the footer went.
-  readonly onOpenPlanningProject?: (project: AgentProjectSummary) => void;
-  readonly onOpenWorkflowProject?: (project: AgentProjectSummary, subprojectId: string, nodeId?: string) => void;
-  readonly onOpenConversationHistory?: (entry: ConversationEntry) => void;
-  readonly onOpenHistory?: (projectId?: string) => void;
-  readonly activeConversationSessionId?: string;
-  readonly activeConversationId?: string;
-  readonly onOpenHistorySession?: (
-    session: AgentHistorySessionSummary,
-    project: AgentProjectSummary,
-  ) => void;
-  readonly onOpenHistoryReview?: (
-    session: AgentHistorySessionSummary,
-    project: AgentProjectSummary,
-  ) => void;
-  readonly onLaunchAgent?: (
-    bootstrap: AgentLaunchBootstrap,
-    projectSession?: ProjectSessionPanelMetadata,
-  ) => void;
-  readonly onOpenStructuredAgentSession?: (input: {
-    readonly sessionId: string;
-    readonly title?: string;
-    readonly providerLabel?: string;
-  }) => void;
-  readonly onCreateWorkspaceTerminal?: (workspaceId: string) => void;
-  readonly onCreateWorkspaceSession?: (projectId: string, workspaceId: string) => void;
-  readonly onOpenAgentSettings?: () => void;
-  readonly onClose?: () => void;
 }
 
 type DiffView =
@@ -517,7 +478,7 @@ export function AgentHub({
                       <Button
                         variant="primary"
                         size="sm"
-                        leadingIcon={<Check aria-hidden="true" />}
+                        leadingIcon={<Glyph name="check" />}
                         disabled={!onDecideApproval}
                         loading={decidingId === item.id}
                         onClick={() => void decide(item, 'allow')}
@@ -528,7 +489,7 @@ export function AgentHub({
                       <Button
                         variant="danger"
                         size="sm"
-                        leadingIcon={<X aria-hidden="true" />}
+                        leadingIcon={<Glyph name="x" />}
                         disabled={decidingId !== null || !onDecideApproval}
                         onClick={() => void decide(item, 'deny')}
                         data-testid="agent-deny"
@@ -539,7 +500,7 @@ export function AgentHub({
                         <Button
                           variant="ghost"
                           size="sm"
-                          leadingIcon={<GitCompareArrows aria-hidden="true" />}
+                          leadingIcon={<Glyph name="diff" />}
                           onClick={() => void openDiff(item.cwd)}
                           data-testid="agent-view-diff"
                         >
@@ -647,7 +608,7 @@ export function AgentHub({
                       data-testid="managed-merge-card"
                     >
                       <div className="agent-row-main">
-                        <GitMerge aria-hidden="true" size={15} />
+                        <Glyph name="merge" size={15} />
                         <span className="agent-provider">{activity?.participant?.alias ?? activity?.providerLabel ?? PROVIDER_LABEL[activity?.provider ?? 'generic']}</span>
                         <span className="agent-status">
                           {t(`agentHub.managedMerge.state.${request.state}`)}
@@ -672,7 +633,7 @@ export function AgentHub({
                           <Button
                             variant="ghost"
                             size="sm"
-                            leadingIcon={<GitCompareArrows aria-hidden="true" />}
+                            leadingIcon={<Glyph name="diff" />}
                             onClick={() => void openManagedMergeDiff(request)}
                             data-testid="managed-merge-review"
                           >
