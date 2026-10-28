@@ -85,8 +85,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/workflow/WorkflowWorkspacePanel.tsx",
-          "startLine": 752,
-          "endLine": 765,
+          "startLine": 754,
+          "endLine": 767,
           "lineDigest": "sha256:e791277e9cf5e02855c5cd1b52e2d6a889e4f166bbe7fd5b34ec4df430695f7e",
           "claim": "The flow screen opens a run's integration result and each attempt's evidence in one result dialog, and asks for an independent review again with one fixed command id per review round."
         },

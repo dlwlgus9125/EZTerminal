@@ -741,7 +741,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5025a94c28f9a3a497d61ce7249c1f5d72e16210c11ca4301bd3c17dfc73a97b",
+        "inputDigest": "sha256:14058df3eeef7ae65dd17e70ecf3c6c83c77d9c43382248d1a4ddff8e7168dcf",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5 follow-ups): the phone project navigator dropped its unused 'tasks' mode and the completion hook merged a duplicate import; the anchored flow and completion blocks are unchanged. Anchors moved."
       }
