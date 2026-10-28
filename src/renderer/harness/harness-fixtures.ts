@@ -10,12 +10,16 @@ import type { WorkflowTemplateChoice } from '../workflow/WorkflowTemplateDialog'
  */
 export const HARNESS_PROFILES: readonly ChatAgentProfile[] = [
   { id: 'agent-design', name: '설계 담당', providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', permissionPreset: 'standard', whenToUse: '요구 정리·계획·시안처럼 판단이 많은 일' },
+  { id: 'agent-claude-build', name: 'Claude 구현', providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'medium', permissionPreset: 'standard', whenToUse: 'Claude 대화에서 승인된 계획을 구현할 때' },
   { id: 'agent-build', name: '구현 담당', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'medium', permissionPreset: 'standard', whenToUse: '정해진 계획대로 코드를 바꾸고 테스트를 고칠 때' },
+  { id: 'agent-codex-plan', name: 'Codex 계획', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'xhigh', permissionPreset: 'plan', whenToUse: 'Codex 대화에서 계획을 세울 때' },
   { id: 'agent-review', name: '교차 검토', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'xhigh', permissionPreset: 'plan', whenToUse: '다른 AI가 만든 결과를 고치지 않고 검토만 할 때' },
   { id: 'agent-quick', name: '빠른 조사', providerId: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'low', permissionPreset: 'plan', whenToUse: '짧은 조사·요약, 정기 점검 요약' },
 ];
-export const HARNESS_PHASES: ChatAgentPhaseMap = { plan: { profileId: 'agent-design' }, implement: { profileId: 'agent-build' }, review: { profileId: 'agent-review' }, switchModel: false };
-
+export const HARNESS_PHASES: ChatAgentPhaseMap = {
+  byProvider: { claude: { plan: { profileId: 'agent-design' }, implement: { profileId: 'agent-claude-build' } }, codex: { plan: { profileId: 'agent-codex-plan' }, implement: { profileId: 'agent-build' } } },
+  review: { profileId: 'agent-review' }, switchModel: false,
+};
 const EFFORT_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
 const PROVIDER: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
 const MODEL: Record<string, string> = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'gpt-6-astra': 'GPT-6-Astra' };
@@ -65,14 +69,14 @@ type DecorationSet = { readonly nodes: Readonly<Record<string, WorkflowNodeDecor
 const design = { name: '설계 담당', tone: 'claude' as const };
 const build = { name: '구현 담당', tone: 'codex' as const };
 /** What the cards show: the design agent runs 요구 정리 → 계획 → 시안 in one conversation (effort per stage). */
-export function harnessDecorations(options: { readonly dropOn?: string; readonly implementWithoutAgent?: boolean; readonly missingOn?: string; readonly answerWaiting?: boolean } = {}): DecorationSet {
+export function harnessDecorations(options: { readonly dropOn?: string; readonly implementWithoutAgent?: boolean; readonly missingOn?: string; readonly answerWaiting?: boolean; readonly approvalWaiting?: boolean } = {}): DecorationSet {
   const nodes: Record<string, WorkflowNodeDecoration> = {
     'dev:req': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 1/3 · 같은 대화', position: 'first' } },
     'dev:answer': { kindLabel: '답변 기다림', chain: { label: '대화 유지 · AI 비용 없음', position: 'middle' }, badges: [options.answerWaiting ? '내 답을 기다림 · 지금' : '사람이 답함'], attention: options.answerWaiting, portLabels: { approved: '답함' }, hiddenPorts: ['rejected'] },
     'dev:plan': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 2/3', position: 'middle' } },
     'dev:mock': { agent: { ...design, detail: 'Claude · Opus 5.5 · 노력만 낮춤', effort: '보통' }, chain: { label: '이어서 3/3', position: 'last' } },
     'dev:review': { agent: { name: '교차 검토', tone: 'codex', detail: 'Codex · GPT-6-Astra · 늘 새 대화', effort: '매우 높음' }, badges: ['읽기 전용'] },
-    'dev:approval': { badges: ['사람이 승인 · 의견 남기기'] },
+    'dev:approval': { badges: [options.approvalWaiting ? '내 승인을 기다림 · 지금' : '사람이 승인 · 의견 남기기'], attention: options.approvalWaiting, portLabels: { rejected: '의견 달아 되돌림' } },
     'dev:implement': options.implementWithoutAgent ? { badges: ['pnpm test', '검토 끔'] } : { agent: { ...build, detail: 'Codex · GPT-6-Astra', effort: '보통' }, badges: ['pnpm test', '검토 끔'] },
   };
   if (options.dropOn) nodes[options.dropOn] = { ...nodes[options.dropOn], dropTarget: true };
@@ -99,7 +103,7 @@ export const STORY_EFFORTS = [
 export const CHAIN_HINTS: Readonly<Record<string, string>> = {
   'dev:req': '실행하면 새 대화로 시작하고, 같은 대화에서 계획·시안까지 이어서 합니다.',
   'dev:plan': '실행하면 요구 정리 대화에서 이어서 합니다. 내 답변도 그 대화로 들어갑니다.',
-  'dev:mock': '실행하면 계획 대화에서 이어서 합니다. 노력만 보통으로 낮춰 같은 대화를 씁니다.',
+  'dev:mock': '실행하면 계획 대화에서 이어서 합니다. 노력만 보통으로 낮춰 같은 대화를 쓰므로 토큰과 시간을 아낄 수 있습니다(얼마나 아끼는지는 개발 전에 측정).',
 };
 export const STORY_PERMISSIONS = [{ value: 'plan', label: '계획만 · 읽기 전용' }, { value: 'standard', label: '승인 후 실행' }];
 export const STORY_REVIEWS = [{ value: 'run', label: '실행 기본 (교차 검토)' }, { value: 'off', label: '끔 · 확인 명령으로만' }, { value: 'agent', label: '다른 에이전트…' }];

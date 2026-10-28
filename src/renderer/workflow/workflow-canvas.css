@@ -198,3 +198,8 @@
 .workflow-edge-path[data-chain] { stroke: var(--ui-accent); stroke-width: 2; }
 /* A stage waiting for the person (an answer): amber like an awaiting approval. */
 .workflow-node-card[data-attention] { border-color: var(--ui-warning); border-width: 2px; box-shadow: 0 0 0 3px var(--ui-warning-ring); }
+/* The agent's lamp in its AI's colour (the same colour as the agent list and the input box stripe). */
+.workflow-node-card__agent { --agent-tone: var(--ui-text-muted); }
+.workflow-node-card__agent[data-tone='codex'] { --agent-tone: var(--ui-agent-codex); }
+.workflow-node-card__agent[data-tone='claude'] { --agent-tone: var(--ui-agent-claude); }
+.workflow-node-card__lamp { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--agent-tone); }

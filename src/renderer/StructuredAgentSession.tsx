@@ -1870,6 +1870,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly pendingSettings?: { readonly current: string; readonly next: string; readonly onCancel?: () => void };
   /** The effort menu's 이번 요청만 / 이후 계속 choice. */
   readonly effortScope?: { readonly value: 'once' | 'keep'; readonly onChange: (scope: 'once' | 'keep') => void };
+  /** Which agent an approved plan runs with (단계 연결), shown in the plan approval dock. */
+  readonly planPhaseNote?: string;
   /** The host queues model, permission and plan changes made during a turn for the next request (pills stay open). */
   readonly queueSettings?: boolean;
   readonly fileSearch?: ComposerFileSearch;
@@ -1966,6 +1968,7 @@ export function StructuredAgentSessionPanel({
   reasoningEffort,
   effortSupported = false,
   pendingSettings,
+  planPhaseNote,
   effortScope,
   queueSettings = false,
   fileSearch,
@@ -2248,7 +2251,7 @@ export function StructuredAgentSessionPanel({
     writePlanAccess(sessionId, level);
     setPlanAccess(level);
   };
-  const planAccessChoice: PlanAccessChoice = { level: planAccess, onChange: changeAccess };
+  const planAccessChoice: PlanAccessChoice = { level: planAccess, onChange: changeAccess, ...(planPhaseNote ? { phaseNote: planPhaseNote } : {}) };
   const approveProposedPlan = async (): Promise<StructuredAgentUiResult> => {
     const changed = await updateSettings({ permissionPreset: planAccess });
     if (!changed.ok) return changed;

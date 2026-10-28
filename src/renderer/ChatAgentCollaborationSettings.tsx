@@ -120,7 +120,8 @@ export function ChatAgentCollaborationSettings({
         }}
       />
       {phases && profilesAccess?.savePhases && <AgentPhaseSettings ko={i18n.language.startsWith('ko')} profiles={profiles} phases={phases}
-        providerLabel={(id) => providers.find((provider) => provider.id === id)?.label ?? KNOWN_PROVIDER_LABELS[id] ?? id}
+        providers={[...new Set([...providers.map((provider) => provider.id), ...profiles.map((profile) => profile.providerId)])]
+          .map((id) => ({ id, label: providers.find((provider) => provider.id === id)?.label ?? KNOWN_PROVIDER_LABELS[id] ?? id }))}
         onChange={(next) => { setPhases(next); void profilesAccess.savePhases?.(next).then((result) => { if (result.ok) setPhases(result.phases); }).catch(() => undefined); }} />}
       {busy && <Status variant="loading" live="polite">{t('agentSettings.runtimeSaving')}</Status>}
       {error && <Status className="agent-settings-error" variant="danger" live="assertive">{error}</Status>}

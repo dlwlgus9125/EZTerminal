@@ -1,4 +1,4 @@
-import { Glyph, glyphIcon, Led, type GlyphIcon } from '../ui/Glyph';
+import { Glyph, glyphIcon, type GlyphIcon } from '../ui/Glyph';
 import type { ReactNode } from 'react';
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { Status, type SemanticVariant } from '../ui';
@@ -70,7 +70,7 @@ export function WorkflowNodeCard({ node, text, entry = false, selected = false, 
       <div className="workflow-node-card__kind"><Icon aria-hidden="true" /><span>{decoration?.kindLabel ?? workflowOperationLabel(node.operation, text)}</span>{entry && <span className="workflow-node-card__entry">{text('시작', 'Start')}</span>}</div>
       <strong className="workflow-node-card__title">{node.title}</strong>
       {agent && <span className="workflow-node-card__agent" data-tone={agent.tone ?? 'other'}>
-        {agent.missing ? <Glyph name="warn" /> : <Led tone="on" />}
+        {agent.missing ? <Glyph name="warn" /> : <span className="workflow-node-card__lamp" aria-hidden="true" />}
         <span className="workflow-node-card__agent-name">{agent.name}</span>
         {agent.effort && <span className="workflow-node-card__agent-effort">{agent.effort}</span>}
       </span>}

@@ -26,6 +26,8 @@ export interface WorkflowStageAgentProps {
   readonly onRemove?: () => void;
   readonly onConfirmCheck?: (id: string) => void;
   readonly onAddCheck?: () => void;
+  /** Opens the agent picker (phone, keyboard): shown when no agent is placed yet. */
+  readonly onAssign?: () => void;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface WorkflowStageAgentProps {
  * previous stage's conversation, and the stage's own effort, permission, checks and review. The
  * stage panel shows it in place of the AI · model · effort fields; instructions stay below it.
  */
-export function WorkflowStageAgent({ text, agent, session, effort, permission, checks, review, disabled = false, onChange, onReplace, onRemove, onConfirmCheck, onAddCheck }: WorkflowStageAgentProps): JSX.Element {
+export function WorkflowStageAgent({ text, agent, session, effort, permission, checks, review, disabled = false, onChange, onReplace, onRemove, onConfirmCheck, onAddCheck, onAssign }: WorkflowStageAgentProps): JSX.Element {
   return <div className="workflow-stage-agent" data-testid="workflow-stage-agent">
     <div>
       <p className="workflow-stage-agent__label">{text('맡은 에이전트', 'Agent')}</p>
@@ -45,7 +47,10 @@ export function WorkflowStageAgent({ text, agent, session, effort, permission, c
         </div>
         <Button size="sm" disabled={disabled} onClick={onReplace}>{text('바꾸기', 'Replace')}</Button>
         {!agent.missing && <Button size="sm" variant="ghost" disabled={disabled} onClick={onRemove} aria-label={text('에이전트 빼기', 'Remove agent')}><Glyph name="x" /></Button>}
-      </div> : <p className="workflow-stage-agent__empty">{text('오른쪽 위 에이전트 목록에서 끌어다 놓거나 \'배정\'을 누르세요.', 'Drag an agent from the list above, or press Assign.')}</p>}
+      </div> : <div className="workflow-stage-agent__empty">
+        <p>{onAssign ? text('이 단계를 맡을 에이전트를 고르세요.', 'Pick the agent for this stage.') : text('오른쪽 위 에이전트 목록에서 끌어다 놓거나 \'배정\'을 누르세요.', 'Drag an agent from the list above, or press Assign.')}</p>
+        {onAssign && <Button variant="primary" size="sm" disabled={disabled} onClick={onAssign} leadingIcon={<Glyph name="bot" />}>{text('에이전트 배정', 'Assign an agent')}</Button>}
+      </div>}
     </div>
     <div>
       <p className="workflow-stage-agent__label">{text('대화', 'Conversation')}</p>
@@ -55,7 +60,7 @@ export function WorkflowStageAgent({ text, agent, session, effort, permission, c
       </div>
       <p className="workflow-stage-agent__note" data-tone={session.value === 'continue' && !session.reason ? 'saving' : undefined}>
         {session.reason ?? (session.value === 'continue'
-          ? text(`'${session.from ?? ''}' 단계와 같은 대화에서 이어서 합니다. 지금까지의 맥락을 다시 읽지 않아 토큰과 시간을 아낍니다.`, `Continues the '${session.from ?? ''}' conversation: no re-reading of the context, so fewer tokens and less time.`)
+          ? text(`'${session.from ?? ''}' 단계와 같은 대화에서 이어서 합니다. 지금까지의 맥락을 다시 읽지 않으니 토큰과 시간을 아낄 수 있습니다.`, `Continues the '${session.from ?? ''}' conversation: no re-reading of the context, which can save tokens and time.`)
           : text('새 대화에서 시작합니다. 앞 단계 결과는 요약으로 넘겨받습니다.', 'Starts a new conversation; the previous result arrives as a summary.'))}
       </p>
     </div>

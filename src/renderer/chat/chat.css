@@ -2272,3 +2272,7 @@
 .structured-agent[data-variant='mobile'] .chat-pending-settings__now,
 .structured-agent[data-variant='mobile'] .chat-pending-settings__next { flex: 1 1 calc(100% - 1.5rem); }
 .structured-agent[data-variant='mobile'] .chat-pending-settings__next { margin-left: 1.375rem; }
+
+/* The agent an approved plan runs with (단계 연결), under the plan's access level. */
+.chat-dock__phase { display: flex; align-items: center; margin: var(--ui-space-1) 0 0; color: var(--ui-text-secondary); }
+.chat-dock__phase > svg { flex: none; width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); color: var(--ui-accent); }

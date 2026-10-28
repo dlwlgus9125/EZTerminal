@@ -99,7 +99,7 @@ export const SettingsAgents: Story = {
           <WithProfiles><SettingsFixture requestedCategory="agents" capabilities={SETTINGS_CAPABILITIES} /></WithProfiles>
         </SidebarShell>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
-          <StructuredAgentSessionPanel {...chatBase} state="working" items={workingItems} queueSettings reasoningEffort="medium" pendingSettings={{ current: '설계 담당 · 높음', next: '구현 담당 · 보통', onCancel: fn() }} />
+          <StructuredAgentSessionPanel {...chatBase} state="working" items={approvedItems} reasoningEffort="medium" queueSettings />
         </div>
       </div>
     </DesktopUiPreferencesProvider>
@@ -121,10 +121,21 @@ const chatBase: StructuredAgentSessionPanelProps = {
   onSend: fn(async () => ({ ok: true as const })), onInterruptAndSend: fn(async () => ({ ok: true as const })),
   onChangeSettings: fn(async () => ({ ok: true as const })), onResolveApproval: fn(async () => ({ ok: true as const })),
 };
+/** A turn the person started; while it runs they pick a lower effort for the next request (queued). */
 const workingItems: readonly DaemonTranscriptItem[] = [
-  item('u1', 1, 'user-message', '계획대로 로그인 오류 안내를 구현해 줘. 테스트도 같이 고쳐 줘.'),
-  item('n1', 2, 'notice', '구현 단계 설정을 적용했습니다: 노력 높음 → 보통 · 권한 승인 후 실행 (설정 › AI › 단계 연결)'),
+  item('u1', 1, 'user-message', '로그인 오류 안내를 구현해 줘. 테스트도 같이 고쳐 줘.'),
+  item('a1', 2, 'assistant-message', 'src/login/LoginForm.tsx의 오류 분기부터 바꾸겠습니다. 잠금 안내 문구는 계획의 3번 항목을 따릅니다…'),
+];
+/** After the plan was approved: the host applied the implement agent of this AI (단계 연결) and says so. */
+const approvedItems: readonly DaemonTranscriptItem[] = [
+  item('p0', 1, 'user-message', '계획대로 실행'),
+  item('n1', 2, 'notice', '계획 승인 → Claude 구현 설정 적용: 노력 높음 → 보통 · 권한 승인 후 실행 (설정 › AI › 단계 연결)'),
   item('a1', 3, 'assistant-message', 'src/login/LoginForm.tsx의 오류 분기부터 바꾸겠습니다. 잠금 안내 문구는 계획의 3번 항목을 따릅니다…'),
+];
+/** A Codex plan waiting for approval: the dock says which agent runs it. */
+const planItems: readonly DaemonTranscriptItem[] = [
+  item('q1', 1, 'user-message', '로그인 실패 잠금 기능 계획을 세워 줘.', { turnId: 'turn-plan' }),
+  item('q2', 2, 'reasoning', '- 5회 실패 후 10분 잠금', { turnId: 'turn-plan', payload: { v: 1, type: 'plan', markdown: '1. LoginForm에 실패 횟수 표시\n2. 5회 실패 후 10분 잠금 (서버 응답 423)\n3. 잠금 안내 문구와 남은 시간\n4. 단위 테스트 6개 추가' } }),
 ];
 function Chat({ props, width = 1100, height = 760, mobile = false }: { readonly props: Partial<StructuredAgentSessionPanelProps>; readonly width?: number; readonly height?: number; readonly mobile?: boolean }): JSX.Element {
   const [scope, setScope] = useState<'once' | 'keep'>('once');
@@ -135,7 +146,13 @@ function Chat({ props, width = 1100, height = 760, mobile = false }: { readonly 
 
 /** While a turn runs, changes are queued: the line says what this turn uses and what the next request will use. */
 export const ComposerQueued: Story = {
-  render: () => <Chat props={{ state: 'working', items: workingItems, queueSettings: true, reasoningEffort: 'medium', pendingSettings: { current: '설계 담당 · 높음', next: '구현 담당 · 보통 · 승인 후 실행', onCancel: fn() }, effortScope: { value: 'once', onChange: fn() } }} />,
+  render: () => <Chat props={{ state: 'working', items: workingItems, queueSettings: true, reasoningEffort: 'medium', pendingSettings: { current: 'Opus 5.5 · 높음', next: 'Opus 5.5 · 보통 · 이후 계속', onCancel: fn() }, effortScope: { value: 'keep', onChange: fn() } }} />,
+};
+/** Plan approval: the dock says which agent of this AI runs the approved plan (단계 연결), before the person presses it. */
+export const ComposerPlanApproval: Story = {
+  render: () => <Chat props={{ providerId: 'codex', providerLabel: 'Codex', model: 'gpt-6-astra', modelOptions: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }], reasoningEffort: 'xhigh', permissionPreset: 'plan', items: planItems,
+    turns: [{ id: 'turn-plan', sessionId: 'harness-chat', commandId: 'command-plan', state: 'completed', revision: 2, createdAt: NOW, updatedAt: NOW }],
+    planPhaseNote: "구현은 '구현 담당'(Codex · GPT-6-Astra · 보통 · 승인 후 실행)으로 시작합니다 · 설정 › AI › 단계 연결" }} />,
 };
 /** The effort menu: pick the level, then whether it is for this request only or from now on. */
 export const ComposerEffortScope: Story = {
@@ -156,17 +173,26 @@ interface CanvasProps {
   readonly implementWithoutAgent?: boolean;
   readonly missingOn?: string;
   readonly answerWaiting?: boolean;
+  readonly approvalWaiting?: boolean;
   readonly mobile?: boolean;
   readonly sheet?: boolean;
-  readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode } | undefined;
+  readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string } | undefined;
 }
-function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, mobile = false, sheet = false, slot }: CanvasProps): JSX.Element {
-  const text = useWorkflowCopy();
+/** The 시안 shows the proposed names (rename table, decision 14); production copy changes in development step 1. */
+function renamed(korean: string): string {
+  return korean.replace(/흐름 편집/gu, '단계 편집').replace(/흐름 v(\d+)/gu, '워크플로 v$1').replace(/흐름 요약/gu, '워크플로 요약').replace(/흐름 캔버스/gu, '워크플로 캔버스').replace(/소프로젝트/gu, '워크플로');
+}
+function useHarnessCopy(): ReturnType<typeof useWorkflowCopy> {
+  const base = useWorkflowCopy();
+  return useMemo(() => ((korean: string, english: string) => base(renamed(korean), english)) as ReturnType<typeof useWorkflowCopy>, [base]);
+}
+function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting, mobile = false, sheet = false, slot }: CanvasProps): JSX.Element {
+  const text = useHarnessCopy();
   const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `dev:${select}` } : null);
   const [section, setSection] = useState<WorkflowPanelSection>('settings');
   const [open, setOpen] = useState(agentsOpen);
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
-  const decorations = useMemo(() => harnessDecorations({ dropOn, implementWithoutAgent, missingOn, answerWaiting }), [answerWaiting, dropOn, implementWithoutAgent, missingOn]);
+  const decorations = useMemo(() => harnessDecorations({ dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting }), [answerWaiting, approvalWaiting, dropOn, implementWithoutAgent, missingOn]);
   const issues = validateWorkflowGraph(HARNESS_GRAPH, true);
   const selected = selection?.kind === 'node' ? HARNESS_GRAPH.nodes.find(node => node.id === selection.id) : undefined;
   const Renderer: ComponentType<WorkflowCanvasRendererProps> = mobile ? WorkflowStaticGraph : WorkflowFlowCanvas;
@@ -175,7 +201,8 @@ function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutA
       editLocked={false} commandsDisabled={false} issues={issues} providers={PROVIDERS as never}
       selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={null} onPickRun={fn()} runView={false} onRunViewChange={fn()}
       layout={layout} onLayoutChange={setLayout} onGraphChange={fn()} onSaveDraft={fn()} onDiscardDraft={fn()} onRunCommand={fn()}
-      subproject={{ id: 'dev', status: 'active', autoApprove: false, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } } }}
+      subproject={{ id: 'dev', status: 'active', autoApprove: false, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } }, repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: false } }}
+      onSaveRepeat={fn()}
       structure={false} onStructureChange={fn()} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()} stageLinks={() => []} canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()}
       canvasRenderer={Renderer} panelOpen onPanelOpenChange={fn()}
       decorations={decorations.nodes} edgeDecorations={decorations.edges}
@@ -222,6 +249,16 @@ function AnswerDemo(): JSX.Element {
   return <WorkflowAnswerBox text={text} from="요구 정리" value={value} onChange={setValue} onSend={fn()} onOpenResult={fn()}
     question={'1. 로그인을 몇 번 틀리면 잠글까요? (지금은 잠금 없음)\n2. 잠금을 관리자가 풀 수 있어야 하나요?'} />;
 }
+/** Approval with a comment: 승인, or send it back to 시안 with what to change (the same conversation redoes it). */
+export const CanvasApproval: Story = {
+  render: () => <DeskCanvas select="approval" agentsOpen={false} approvalWaiting slot={node => node.id === 'dev:approval' ? { top: <ApprovalDemo />, kindLabel: '사람 승인 · 의견', instructionsLabel: '승인할 내용' } : undefined} />,
+};
+function ApprovalDemo(): JSX.Element {
+  const text = useWorkflowCopy();
+  const [value, setValue] = useState('잠금 안내 문구에 남은 시간(분)을 함께 보여 주세요.');
+  return <WorkflowAnswerBox text={text} from="교차 검토" value={value} onChange={setValue} onOpenResult={fn()} decision={{ returnsTo: '시안', onApprove: fn(), onReturn: fn() }}
+    question={'검토를 거친 시안으로 구현해도 될까요? 교차 검토 의견 2건은 반영됐습니다.'} />;
+}
 /** A workflow from a cloned repository names an agent this PC does not have: readable, but it will not run until reassigned. */
 export const CanvasMissingAgent: Story = {
   render: () => <DeskCanvas select="implement" missingOn="dev:implement" slot={stageAgent({ agent: { name: '구현 담당', detail: '', tone: 'codex', missing: true, permissionLabel: '승인 후 실행' }, session: { value: 'fresh', reason: '에이전트를 다시 배정하면 정할 수 있습니다.' } })} />,
@@ -232,7 +269,7 @@ function Templates({ save = false }: { readonly save?: boolean }): JSX.Element {
   return <Desk><TemplatesInner save={save} /></Desk>;
 }
 function TemplatesInner({ save }: { readonly save: boolean }): JSX.Element {
-  const text = useWorkflowCopy();
+  const text = useHarnessCopy();
   const [selected, setSelected] = useState('tpl-dev');
   const [name, setName] = useState(save ? '개발 절차 (EZTerminal)' : '로그인 오류 안내 개선');
   const [description, setDescription] = useState('설계 담당이 이어서 계획·시안, 구현 후 pnpm test');
@@ -268,6 +305,15 @@ function Phone({ children }: { readonly children: ReactNode }): JSX.Element {
 export const PhoneAssignSheet: Story = {
   parameters: { layout: 'centered' },
   render: () => <Phone><Canvas mobile sheet select="implement" implementWithoutAgent /></Phone>,
+};
+/** Phone: the stage panel's 에이전트 배정 opens the sheet (no dragging on a phone). */
+export const PhoneStageAssign: Story = {
+  parameters: { layout: 'centered' },
+  render: () => <Phone><Canvas mobile select="implement" implementWithoutAgent slot={stageAgent({ agent: undefined, onAssign: fn(), session: { value: 'fresh', reason: '에이전트를 배정하면 정할 수 있습니다.' } })} /></Phone>,
+  play: async ({ canvasElement }) => {
+    const target = await within(canvasElement).findByTestId('workflow-stage-agent');
+    target.scrollIntoView({ block: 'start' });
+  },
 };
 /** Phone: the same queued line in the conversation's input box. */
 export const PhoneComposerQueued: Story = {

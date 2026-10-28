@@ -20,7 +20,8 @@
 .workflow-agent[data-tone='claude'] { --agent-tone: var(--ui-agent-claude); }
 .workflow-agents[data-variant='sheet'] .workflow-agent { cursor: default; min-height: 3.25rem; }
 .workflow-agent:hover { border-color: var(--ui-border-strong); background: var(--ui-surface-hover); }
-.workflow-agent[data-dragging] { opacity: 0.45; border-style: dashed; }
+.workflow-agent[data-dragging] { border-style: dashed; border-color: var(--ui-accent); background: var(--ui-surface-selected); }
+.workflow-agent__dragging { flex: none; color: var(--ui-accent); font-size: var(--ui-font-size-xs); font-weight: 600; }
 .workflow-agent__grip { flex: none; width: 0.875rem; height: 0.875rem; color: var(--ui-text-dim); }
 .workflow-agent__lamp { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--agent-tone); box-shadow: 0 0 0 2px var(--ui-surface-inset); }
 .workflow-agent__body { display: grid; min-width: 0; flex: 1 1 auto; }
@@ -46,6 +47,8 @@
 .workflow-stage-agent__who-body strong { color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); }
 .workflow-stage-agent__who-body small { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
 .workflow-stage-agent__empty { padding: var(--ui-space-3); border: 1px dashed var(--ui-border-strong); border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); font-size: var(--ui-font-size-sm); text-align: center; }
+.workflow-stage-agent__empty > p { margin: 0 0 var(--ui-space-2); }
+.workflow-stage-agent__empty > p:last-child { margin: 0; }
 .workflow-stage-agent__session { display: flex; flex-wrap: wrap; }
 .workflow-stage-agent__session > * { margin: 0 var(--ui-space-1) var(--ui-space-1) 0; }
 .workflow-stage-agent__note { margin: var(--ui-space-1) 0 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }

@@ -21,6 +21,8 @@ export interface ApprovalResult {
 export interface PlanAccessChoice {
   readonly level: AccessLevel;
   readonly onChange: (level: AccessLevel) => void;
+  /** Which agent the approved plan runs with (Settings › AI › 단계 연결), e.g. "구현은 'Claude 구현'(보통)으로 시작". */
+  readonly phaseNote?: string;
 }
 
 export interface ApprovalDockProps {
@@ -216,6 +218,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
             disabled={disabled || busy} onChange={access.onChange} testId="chat-dock-plan-access" />
         </div>
       )}
+      {canRespond && access?.phaseNote && <p className="chat-dock__meta chat-dock__phase" data-testid="chat-dock-plan-phase"><Glyph name="bot" />{access.phaseNote}</p>}
       {!canRespond && <p className="chat-dock__meta">{copy.approval.planAccessFixed}</p>}
       <div className="chat-dock__actions">
         {canRespond

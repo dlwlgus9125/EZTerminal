@@ -111,3 +111,11 @@
 .agent-phase-settings [role='note'] { display: flex; align-items: center; }
 .agent-phase-settings [role='note'] > svg { flex: none; width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); color: var(--ui-info); }
 
+/* One group per AI (plan and implement switch within the conversation's own AI), then the shared review row. */
+.agent-phase-settings__group { --agent-tone: var(--ui-text-muted); }
+.agent-phase-settings__group[data-provider='codex'] { --agent-tone: var(--ui-agent-codex); }
+.agent-phase-settings__group[data-provider='claude'] { --agent-tone: var(--ui-agent-claude); }
+.agent-phase-settings__group + .agent-phase-settings__group { margin-top: var(--ui-space-2); }
+.agent-phase-settings__group-title { display: flex; align-items: center; margin: 0 0 var(--ui-space-1); color: var(--ui-text-secondary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-sm); font-weight: 600; }
+.agent-phase-settings__group-title > svg { width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); color: var(--ui-text-muted); }
+.agent-phase-settings__lamp { flex: none; width: 8px; height: 8px; margin-right: var(--ui-space-2); border-radius: 50%; background: var(--agent-tone); }

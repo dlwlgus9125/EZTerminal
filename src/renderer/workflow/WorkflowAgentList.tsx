@@ -74,7 +74,7 @@ export function WorkflowAgentList({ text, agents, open, onOpenChange, targetStag
             <span className="workflow-agent__detail">{[agent.providerLabel, agent.model, agent.effortLabel, agent.permissionLabel].filter(Boolean).join(' · ')}</span>
             {agent.whenToUse && <span className="workflow-agent__when">{agent.whenToUse}</span>}
           </div>
-          {agent.usedOn ? <span className="workflow-agent__used">{text(`${agent.usedOn}곳`, `${agent.usedOn} stages`)}</span> : null}
+          {dragging === agent.id ? <span className="workflow-agent__dragging" role="status">{text('끄는 중', 'Dragging')}</span> : agent.usedOn ? <span className="workflow-agent__used">{text(`${agent.usedOn}곳`, `${agent.usedOn} stages`)}</span> : null}
           <Button size="sm" variant={sheet ? 'primary' : 'secondary'} disabled={!targetStage || !onAssign} onClick={() => onAssign?.(agent.id)}
             title={targetStage ? undefined : text('먼저 캔버스에서 단계를 고르세요', 'Select a stage on the canvas first')}
             aria-label={targetStage ? text(`${agent.name}을(를) '${targetStage}'에 배정`, `Assign ${agent.name} to '${targetStage}'`) : text(`${agent.name} 배정 · 단계를 먼저 고르세요`, `Assign ${agent.name} · select a stage first`)}>

@@ -40,12 +40,13 @@ export type ChatAgentProfileResult =
 /** A conversation phase an agent can be linked to (Settings › AI › 단계 연결). */
 export type ChatAgentPhaseName = 'plan' | 'implement' | 'review';
 /**
- * Which agent applies in each phase. A separate file from the profiles (an older build reads a changed
- * profile file strictly and would overwrite it). `switchModel` off: only effort and permission change.
+ * Which agent applies in each phase. Plan and implement are per AI: a conversation switches only to an agent
+ * of its own AI (same session). Review is shared: it runs as a new conversation, so any AI can review.
+ * A separate file from the profiles (an older build reads a changed profile file strictly and would
+ * overwrite it). `switchModel` off: only effort and permission change at a switch.
  */
 export interface ChatAgentPhaseMap {
-  readonly plan?: { readonly profileId: string };
-  readonly implement?: { readonly profileId: string };
+  readonly byProvider: Readonly<Record<string, { readonly plan?: { readonly profileId: string }; readonly implement?: { readonly profileId: string } }>>;
   readonly review?: { readonly profileId: string };
   readonly switchModel: boolean;
 }
