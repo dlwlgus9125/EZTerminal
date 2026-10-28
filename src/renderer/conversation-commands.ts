@@ -1,5 +1,6 @@
 import type { ChatMessageContext } from '../shared/chat-message';
 import {
+  AGENT_SETTINGS_CAPABILITY,
   createDaemonCommand,
   type DaemonCommand,
   type DaemonCommandReceipt,
@@ -154,9 +155,16 @@ export async function changeConversationSettings(access: ConversationCommandAcce
   readonly model?: string;
   readonly permissionPreset?: PermissionPreset;
   readonly reasoningEffort?: string;
+  /** 'once': the effort for the next request only. Hosts without `agent-settings-v2` keep it. */
+  readonly scope?: 'once' | 'keep';
+  /** Drops what waits for the next request (`agent-settings-v2`). */
+  readonly clearPending?: true;
 }): Promise<StructuredAgentUiResult> {
   const authority = await access.latestSnapshot();
   if (!authority) return { ok: false, message: UNAVAILABLE };
+  const queues = authority.capabilities?.includes(AGENT_SETTINGS_CAPABILITY) === true;
+  if (settings.clearPending && !queues) return { ok: true };
+  const effort = settings.reasoningEffort && authority.capabilities?.includes('agent-effort-v1') ? settings.reasoningEffort : undefined;
   const commandId = opaqueId('command');
   const receipt = await access.sendCommand(createDaemonCommand({
     commandId,
@@ -165,13 +173,13 @@ export async function changeConversationSettings(access: ConversationCommandAcce
     issuedAt: new Date().toISOString(),
     principal: access.principal ?? PRINCIPAL,
     type: 'agent.set-settings',
-    payload: {
+    payload: settings.clearPending ? { sessionId, clearPending: true } : {
       sessionId,
       ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
       ...(settings.model ? { model: settings.model } : {}),
-      ...(settings.reasoningEffort && authority.capabilities?.includes('agent-effort-v1')
-        ? { reasoningEffort: settings.reasoningEffort }
-        : {}),
+      ...(effort ? { reasoningEffort: effort } : {}),
+      // An effort picked in the input box waits for the next request, where its scope can still change.
+      ...(effort && queues && !settings.model && !settings.permissionPreset ? { scope: settings.scope ?? 'keep' } : {}),
     },
   }));
   return receipt ? resultOf(receipt) : { ok: false, message: UNAVAILABLE };

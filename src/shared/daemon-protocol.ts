@@ -263,6 +263,27 @@ export interface DaemonSnapshot {
   readonly attention?: import('./host-attention').HostAttention;
   /** Sessions a /btw side question can be asked in now (attached in this host run); never stored. */
   readonly sideQuestionSessionIds?: readonly string[];
+  /** Settings queued for each live session's next request (`agent-settings-v2`); host memory, never stored. */
+  readonly pendingAgentSettings?: Readonly<Record<string, DaemonPendingAgentSettings>>;
+}
+
+/** Hosts that queue a person's settings changes for the next request and take one-request efforts. */
+export const AGENT_SETTINGS_CAPABILITY = 'agent-settings-v2';
+
+/**
+ * What a session's next request will use beyond its agent record: changes made while a turn ran, a
+ * one-request effort, or the linked phase agent (Settings › AI › 단계 연결). The record keeps what the
+ * running request uses, so children and forks never inherit a change the person queued for later.
+ */
+export interface DaemonPendingAgentSettings {
+  readonly model?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly reasoningEffort?: string;
+  /** 'once': the effort applies to the next request only; the one after sends the record's effort again. */
+  readonly effortScope?: 'once' | 'keep';
+  /** A one-request effort the turn `runningTurnId` runs with (the record keeps the lasting one). */
+  readonly runningEffort?: string;
+  readonly runningTurnId?: string;
 }
 
 export const DAEMON_COMMAND_TYPES = [
@@ -388,6 +409,13 @@ export interface DaemonCommandPayloads {
     readonly permissionPreset?: PermissionPreset;
     /** Sent only to hosts advertising `agent-effort-v1`. */
     readonly reasoningEffort?: string;
+    /**
+     * Sent only to hosts advertising `agent-settings-v2`. 'once' (effort only): the next request alone.
+     * While a turn runs, a person's changes wait for the next request instead of being refused.
+     */
+    readonly scope?: 'once' | 'keep';
+    /** `agent-settings-v2`: drops what waits for the next request. */
+    readonly clearPending?: true;
   };
   /** Cooperatively interrupts only the active turn; queued turns and provider Session remain resumable. */
   readonly 'agent.cancel': { readonly sessionId: string };
@@ -663,7 +691,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'agent.interrupt-and-submit': AgentMessagePayloadSchema,
   'agent.interrupt': SessionIdSchema,
   'agent.queue': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, turnRevision: z.number().int().nonnegative(), action: z.enum(['remove', 'take', 'run-next']) }).strict(),
-  'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional(), reasoningEffort: z.string().min(1).max(32).optional() }).strict(),
+  'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional(), reasoningEffort: z.string().min(1).max(32).optional(), scope: z.enum(['once', 'keep']).optional(), clearPending: z.literal(true).optional() }).strict(),
   'agent.cancel': SessionIdSchema,
   'agent.archive': SessionIdSchema,
   'agent.detach': SessionIdSchema,

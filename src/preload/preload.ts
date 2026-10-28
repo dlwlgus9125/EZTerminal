@@ -450,6 +450,8 @@ const api: EzTerminalApi = {
     list: () => ipcRenderer.invoke('chat-agent-profiles:list'),
     save: (profile: import('../shared/chat-agent-profiles').ChatAgentProfile) => ipcRenderer.invoke('chat-agent-profiles:save', profile),
     remove: (id: string) => ipcRenderer.invoke('chat-agent-profiles:remove', id),
+    phases: () => ipcRenderer.invoke('chat-agent-profiles:phases'),
+    savePhases: (phases: import('../shared/chat-agent-profiles').ChatAgentPhaseMap) => ipcRenderer.invoke('chat-agent-profiles:save-phases', phases),
   },
 };
 

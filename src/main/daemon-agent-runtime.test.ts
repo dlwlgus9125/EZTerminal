@@ -142,6 +142,8 @@ async function harness(options: {
   readonly agentUsageStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['agentUsageStore'];
   readonly conversationFolders?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationFolders'];
   readonly preparedSessionSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['preparedSessionSettings'];
+  readonly phaseSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['phaseSettings'];
+  readonly pendingSettingsStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['pendingSettingsStore'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -173,6 +175,7 @@ async function harness(options: {
     handlers: runtime.handlers(),
     agentUsage: (snapshot) => runtime.agentUsage(snapshot),
     sideQuestionSessions: (snapshot) => runtime.sideQuestionSessionIds(snapshot),
+    pendingAgentSettings: (snapshot) => runtime.pendingAgentSettings(snapshot),
   });
   routerRef.current = router;
   await runtime.start();
@@ -4594,5 +4597,163 @@ describe('side questions (/btw) on a live conversation', () => {
       expect(h.router.getSnapshot().sideQuestionSessionIds).toBeUndefined();
       await expect(h.runtime.askSideQuestion(question, new AbortController().signal)).rejects.toMatchObject({ code: 'not-live' });
     } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
+
+// agent-settings-v2: a person changes settings while a turn runs; they wait for the next request.
+describe('settings queued for the next request', () => {
+  async function workingAgent(h: Awaited<ReturnType<typeof harness>>) {
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', model: 'model-a', permissionPreset: 'standard', reasoningEffort: 'high', initialPrompt: 'Hello' });
+    return h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+  }
+  async function finish(h: Awaited<ReturnType<typeof harness>>, turnId: string) {
+    h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId, outcome: 'completed' });
+    await h.runtime.whenIdle();
+  }
+  const agentOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!;
+
+  it('keeps the record for the running turn and applies model and permission before the next request', async () => {
+    const h = await harness();
+    try {
+      const turn = await workingAgent(h);
+      expect((await h.execute('agent.set-settings', { sessionId: 'agent-1', model: 'model-b', permissionPreset: 'full-access' })).ok).toBe(true);
+      // The running turn (and any child it starts) still uses the record.
+      expect(agentOf(h)).toMatchObject({ model: 'model-a', permissionPreset: 'standard' });
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { model: 'model-b', permissionPreset: 'full-access' } });
+      expect(h.codex.setSettings).not.toHaveBeenCalled();
+      await finish(h, turn.id);
+      const order: string[] = [];
+      const originalSetSettings = vi.mocked(h.codex.setSettings).getMockImplementation()!;
+      vi.mocked(h.codex.setSettings).mockImplementationOnce(async (input) => { order.push('settings'); return originalSetSettings(input); });
+      vi.mocked(h.codex.submit).mockImplementationOnce(async () => { order.push('submit'); });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Next' });
+      expect(order).toEqual(['settings', 'submit']);
+      expect(h.codex.setSettings).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'agent-1', model: 'model-b', permissionPreset: 'full-access' }));
+      expect(agentOf(h)).toMatchObject({ model: 'model-b', permissionPreset: 'full-access' });
+      expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('still refuses an agent changing model or permission during a turn', async () => {
+    const h = await harness();
+    try {
+      await workingAgent(h);
+      expect(await h.execute('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'full-access' }, { kind: 'cli', id: 'agent-shell' }))
+        .toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('drops what waits when the person cancels it', async () => {
+    const h = await harness();
+    try {
+      await workingAgent(h);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'keep' });
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { reasoningEffort: 'low', effortScope: 'keep' } });
+      expect((await h.execute('agent.set-settings', { sessionId: 'agent-1', clearPending: true })).ok).toBe(true);
+      expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+      expect(agentOf(h).reasoningEffort).toBe('high');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('sends a one-request effort once, then the record effort again explicitly', async () => {
+    const h = await harness();
+    try {
+      const turn = await workingAgent(h);
+      await finish(h, turn.id);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'once' });
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { reasoningEffort: 'low', effortScope: 'once' } });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Quick question' });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Quick question', reasoningEffort: 'low' }), expect.anything());
+      const quick = agentOf(h).currentTurnId!;
+      expect(agentOf(h).reasoningEffort).toBe('high');
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { runningEffort: 'low', runningTurnId: quick } });
+      await finish(h, quick);
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Back to work' });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Back to work', reasoningEffort: 'high' }), expect.anything());
+      expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('applies a kept effort to the record when the next request starts', async () => {
+    const h = await harness();
+    try {
+      const turn = await workingAgent(h);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'medium' });
+      expect(agentOf(h).reasoningEffort).toBe('high');
+      await finish(h, turn.id);
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Next' });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Next', reasoningEffort: 'medium' }), expect.anything());
+      expect(agentOf(h).reasoningEffort).toBe('medium');
+      expect(h.codex.setSettings).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('starts an approved Codex plan with the linked implement agent, unless the person queued an effort', async () => {
+    const phaseSettings = vi.fn((_providerId: string, phase: 'plan' | 'implement') => (phase === 'implement' ? { reasoningEffort: 'medium' } : { reasoningEffort: 'xhigh' }));
+    const h = await harness({ phaseSettings });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'plan', reasoningEffort: 'xhigh', initialPrompt: 'Plan a change.' });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      h.codex.emit({ kind: 'approval-requested', sessionId: 'agent-1', providerRequestId: 'proposed-plan:t1', risk: 'write', title: 'Approve plan', request: { v: 1, kind: 'plan', markdown: '- step' } });
+      await h.runtime.whenIdle();
+      const approvalId = h.router.getSnapshot().approvals.find((approval) => approval.providerRequestId === 'proposed-plan:t1')!.id;
+      await h.execute('permission.resolve', { approvalId, decision: 'allow', response: { kind: 'plan', mode: 'standard' } });
+      await vi.waitFor(() => expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Implement the plan above.', reasoningEffort: 'medium' }), expect.anything()));
+      expect(phaseSettings).toHaveBeenCalledWith('codex', 'implement');
+      expect(agentOf(h)).toMatchObject({ permissionPreset: 'standard', reasoningEffort: 'medium' });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('takes the plan agent effort when plan mode turns on between turns', async () => {
+    const h = await harness({ phaseSettings: (_providerId, phase) => (phase === 'plan' ? { reasoningEffort: 'xhigh' } : { reasoningEffort: 'medium' }) });
+    try {
+      const turn = await workingAgent(h);
+      await finish(h, turn.id);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'plan' });
+      expect(agentOf(h)).toMatchObject({ permissionPreset: 'plan', reasoningEffort: 'xhigh' });
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'standard' });
+      expect(agentOf(h)).toMatchObject({ permissionPreset: 'standard', reasoningEffort: 'medium' });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('says in the conversation that queued settings were dropped by a restart', async () => {
+    const saved: unknown[] = [];
+    const h = await harness({ pendingSettingsStore: { load: async () => undefined, save: async (value) => { saved.push(value); } } });
+    let closed = false;
+    let restored: { runtime: DaemonAgentRuntime; store: DaemonStore } | undefined;
+    try {
+      await workingAgent(h);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'keep' });
+      await vi.waitFor(() => expect(saved.at(-1)).toEqual({ 'agent-1': { reasoningEffort: 'low', effortScope: 'keep' } }));
+      await h.runtime.dispose('process-loss');
+      await h.store.close(); closed = true;
+      const store = new DaemonStore(h.directory);
+      await store.init();
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const runtime = new DaemonAgentRuntime({
+        providers: new AgentProviderRegistry([fakeAdapter('codex', 'codex-app-server')]),
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (id, sequence, limit) => routerRef.current!.readTranscript(id, sequence, limit),
+        findCommand: (id) => store.findCommand(id)?.command,
+        pendingSettingsStore: { load: async () => saved.at(-1), save: async (value) => { saved.push(value); } },
+      });
+      restored = { runtime, store };
+      routerRef.current = new DaemonCommandRouter(store, { handlers: runtime.handlers(), pendingAgentSettings: (snapshot) => runtime.pendingAgentSettings(snapshot) });
+      await runtime.start(); await runtime.whenIdle();
+      expect(routerRef.current.readTranscript('agent-1', 0, 500).some((item) => item.kind === 'notice' && item.text.includes('cleared when EZTerminal restarted'))).toBe(true);
+      expect(routerRef.current.getSnapshot().pendingAgentSettings).toBeUndefined();
+      await vi.waitFor(() => expect(saved.at(-1)).toEqual({}));
+    } finally {
+      if (restored) { await restored.runtime.dispose(); await restored.store.close(); }
+      if (!closed) { await h.runtime.dispose(); await h.store.close(); }
+    }
   });
 });

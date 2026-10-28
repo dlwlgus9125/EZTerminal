@@ -31,6 +31,7 @@ import {
   type ConversationCommandAccess,
 } from './conversation-commands';
 import {
+  AGENT_SETTINGS_CAPABILITY,
   createDaemonCommand,
   type DaemonCommand,
   type DaemonCommandReceipt,
@@ -39,11 +40,12 @@ import {
   type ManagedAgentState,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import { nextConversationSettings, planPhaseNote, queuedSettingsFor } from './queued-settings';
 import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from './structured-agent-tab-status';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
-import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { linkedPhaseSettings, type ChatAgentPhaseMap, type ChatAgentProfile } from '../shared/chat-agent-profiles';
 import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
 import { DelegateAgentDialog, type DelegateAgentRequest, type DelegateMode } from './DelegateAgentDialog';
 import { useAppTranslation } from './i18n';
@@ -308,6 +310,19 @@ export function StructuredAgentDockPanel(
     void profileAccess.list().then((profiles) => { if (alive) setDelegateProfiles(profiles); }).catch(() => undefined);
     return () => { alive = false; };
   }, [delegateMode, profileAccess]);
+  // 단계 연결: the plan approval dock says which agent implements the approved plan.
+  const planApprovalPending = (snapshot?.approvals ?? []).some((approval) => (
+    approval.sessionId === sessionId && approval.state === 'pending' && approval.request?.kind === 'plan'
+  ));
+  const [phaseLinks, setPhaseLinks] = useState<{ readonly profiles: readonly ChatAgentProfile[]; readonly phases: ChatAgentPhaseMap } | null>(null);
+  useEffect(() => {
+    if (!planApprovalPending || !profileAccess?.phases) return undefined;
+    let alive = true;
+    void Promise.all([profileAccess.list(), profileAccess.phases()])
+      .then(([profiles, phases]) => { if (alive) setPhaseLinks({ profiles, phases }); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [planApprovalPending, profileAccess]);
   const checkpointCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
   const [uncertainDraft, setUncertainDraft] = useState<UncertainDraftState | null>(() => {
     const registered = createRecoveryRegistry?.get(props.api.id);
@@ -935,7 +950,30 @@ export function StructuredAgentDockPanel(
     ?? snapshot?.workspaces.find((candidate) => candidate.id === createdDraft?.workspaceId);
   const providerId = agent?.providerId ?? createdDraft?.providerId ?? '';
   const provider = snapshot?.providers.find((candidate) => candidate.id === providerId);
-  const currentModel = agent?.model ?? createdDraft?.model;
+  // agent-settings-v2: the pills show what the next request uses; the line says what the running one uses.
+  const queuesSettings = snapshot?.capabilities?.includes(AGENT_SETTINGS_CAPABILITY) === true;
+  const pendingSettings = queuesSettings ? snapshot?.pendingAgentSettings?.[sessionId] : undefined;
+  const nextSettings = agent ? nextConversationSettings(agent, pendingSettings) : undefined;
+  const currentModel = nextSettings?.model ?? createdDraft?.model;
+  const modelOptions = structuredAgentModelOptions(provider?.capabilities ?? [], currentModel, providerModelCatalogs[providerId]);
+  const queuedSettings = agent && queuesSettings ? queuedSettingsFor(agent, pendingSettings, {
+    cancel: () => { void changeConversationSettings(commandAccess, sessionId, { clearPending: true }); },
+    scope: (scope, reasoningEffort) => { void changeConversationSettings(commandAccess, sessionId, { reasoningEffort, scope }); },
+  }) : undefined;
+  const implementLink = planApprovalPending && phaseLinks && agent
+    ? linkedPhaseSettings(phaseLinks.phases, phaseLinks.profiles, agent.providerId, 'implement')
+    : undefined;
+  const phaseNote = implementLink && agent ? planPhaseNote({
+    korean,
+    providerId: agent.providerId,
+    providerLabel: provider?.displayName ?? agent.providerId,
+    agentName: implementLink.profile.name,
+    ...(implementLink.model ? { linkedModel: implementLink.model } : {}),
+    ...(implementLink.reasoningEffort ? { linkedEffort: implementLink.reasoningEffort } : {}),
+    ...(agent.model ? { currentModel: agent.model } : {}),
+    ...(agent.reasoningEffort ? { currentEffort: agent.reasoningEffort } : {}),
+    modelLabel: (model) => modelOptions.find((option) => option.id === model)?.label ?? model,
+  }) : undefined;
   const workspaceOption: StructuredAgentWorkspaceOption = workspace
     ? { id: workspace.id, label: workspace.name, kind: workspace.kind, path: workspace.rootPath }
     : { id: createdDraft?.workspaceId ?? '', label: 'Workspace unavailable', kind: 'local' };
@@ -1197,12 +1235,11 @@ export function StructuredAgentDockPanel(
       {...(shownFolders ? { folders: shownFolders } : {})}
       {...(session && props.onEditProject ? { onEditProject: () => props.onEditProject?.(session.projectId) } : {})}
       model={currentModel}
-      modelOptions={structuredAgentModelOptions(
-        provider?.capabilities ?? [],
-        currentModel,
-        providerModelCatalogs[providerId],
-      )}
-      permissionPreset={agent?.permissionPreset ?? createdDraft?.permissionPreset ?? 'standard'}
+      modelOptions={modelOptions}
+      permissionPreset={nextSettings?.permissionPreset ?? createdDraft?.permissionPreset ?? 'standard'}
+      queueSettings={queuesSettings && !historyOnly}
+      {...(queuedSettings && !historyOnly ? { queuedSettings } : {})}
+      {...(phaseNote ? { planPhaseNote: phaseNote } : {})}
       awaitingFirstMessage={!historyOnly && (agent ? agent.state === 'idle' && !agent.providerSessionId && !snapshot?.turns.some((turn) => turn.sessionId === sessionId) : Boolean(createdDraft && !createdDraft.initialPrompt))}
       state={historyOnly ? 'archived' : agent?.state ?? (createdDraft ? createdDraft.initialPrompt ? 'starting' : 'idle' : loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
@@ -1217,7 +1254,7 @@ export function StructuredAgentDockPanel(
       approvalSession={snapshot?.capabilities?.includes('approval-session-v1') === true}
       planProposals={snapshot?.capabilities?.includes('plan-proposal-v1') === true}
       effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true}
-      {...(agent?.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
+      {...(nextSettings?.reasoningEffort ? { reasoningEffort: nextSettings.reasoningEffort } : {})}
       onOpenLink={openLink}
       {...(fileSearch ? { fileSearch } : {})}
       pathForDrop={pathForDrop}

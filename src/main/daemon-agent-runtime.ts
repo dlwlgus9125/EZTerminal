@@ -12,6 +12,7 @@ import {
   createDaemonCommand,
   type DaemonCommandReceipt,
   type DaemonCommandType,
+  type DaemonPendingAgentSettings,
   type DaemonPrincipal,
   type DaemonSession,
   type DaemonSnapshot,
@@ -122,6 +123,19 @@ export interface DaemonAgentRuntimeOptions {
   readonly agentUsageStore?: {
     readonly load: () => Promise<unknown>;
     readonly save: (state: PersistedAgentUsage) => Promise<void>;
+  };
+  /**
+   * The linked agent of a conversation phase (Settings › AI › 단계 연결) for a session of `providerId`:
+   * its effort, and its model only when the person turned on '모델도 바꾸기'. Absent: no link.
+   */
+  readonly phaseSettings?: (providerId: string, phase: 'plan' | 'implement') => { readonly model?: string; readonly reasoningEffort?: string } | undefined;
+  /**
+   * Remembers which sessions had settings waiting for their next request, so a restart (which drops
+   * them: they live in host memory) can say so in those conversations.
+   */
+  readonly pendingSettingsStore?: {
+    readonly load: () => Promise<unknown>;
+    readonly save: (sessions: Readonly<Record<string, DaemonPendingAgentSettings>>) => Promise<void>;
   };
 }
 
@@ -382,6 +396,8 @@ export class DaemonAgentRuntime {
   private readonly attachedProviderSessions = new Set<string>();
   /** Last reported usage per provider and conversation, merged into snapshots by the router. */
   private readonly agentUsageTracker = new AgentUsageTracker(() => this.now().getTime());
+  /** What each session's next request will use beyond its record (host memory; the snapshot shows it). */
+  private readonly pendingSettings = new Map<string, DaemonPendingAgentSettings>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
@@ -433,6 +449,7 @@ export class DaemonAgentRuntime {
     } catch (error) {
       this.report('agent usage load failed', error);
     }
+    await this.noticeDroppedPendingSettings();
     this.unsubscribeProviders = this.options.providers.subscribe((providerId, event) => {
       this.eventTail = this.eventTail
         .then(() => this.handleProviderEvent(providerId, event))
@@ -465,6 +482,58 @@ export class DaemonAgentRuntime {
     this.unsubscribeProviders?.();
     this.unsubscribeProviders = null;
     this.pumpRequested = false;
+  }
+
+  /** Settings waiting for each live session's next request, for the snapshot. */
+  pendingAgentSettings(snapshot: Pick<DaemonSnapshot, 'agents'>): Readonly<Record<string, DaemonPendingAgentSettings>> | undefined {
+    const entries = snapshot.agents
+      .filter((agent) => !TERMINAL_AGENT_STATES.has(agent.state) && this.pendingSettings.has(agent.sessionId))
+      .map((agent) => [agent.sessionId, this.pendingSettings.get(agent.sessionId)!] as const);
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  }
+
+  /** Replaces what waits for a session's next request; every client refetches the snapshot that shows it. */
+  private setPending(sessionId: string, value: DaemonPendingAgentSettings | undefined): void {
+    const empty = !value || Object.values(value).every((entry) => entry === undefined);
+    if (empty) {
+      if (!this.pendingSettings.delete(sessionId)) return;
+    } else {
+      this.pendingSettings.set(sessionId, Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as DaemonPendingAgentSettings);
+    }
+    const store = this.options.pendingSettingsStore;
+    const sessions = Object.fromEntries(this.pendingSettings);
+    if (store) this.runBackground('pending settings save failed', () => store.save(sessions));
+    this.runBackground('pending settings publish failed', () => this.transition(() => ({ events: [{
+      kind: 'entity.upserted', payload: { entityType: 'agent', entityId: sessionId },
+    }] })).then(() => undefined));
+  }
+
+  /** Settings that waited for a next request when the app last closed are gone; their conversations say so. */
+  private async noticeDroppedPendingSettings(): Promise<void> {
+    const store = this.options.pendingSettingsStore;
+    if (!store) return;
+    let dropped: Record<string, unknown> = {};
+    try {
+      const raw = await store.load();
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) dropped = raw as Record<string, unknown>;
+    } catch (error) {
+      this.report('pending settings load failed', error);
+    }
+    const sessionIds = Object.keys(dropped);
+    if (!sessionIds.length) return;
+    await this.transition((snapshot) => {
+      const live = sessionIds.filter((id) => snapshot.agents.some((agent) => agent.sessionId === id && !TERMINAL_AGENT_STATES.has(agent.state)));
+      if (!live.length) return undefined;
+      return { mutations: this.transcriptMutations(live.map((sessionId) => ({
+        id: stableId('pending-settings-dropped', sessionId, this.isoNow()),
+        sessionId,
+        kind: 'notice' as const,
+        text: 'Settings chosen for the next request were cleared when EZTerminal restarted. Choose them again if you still want them.',
+        isDelta: false,
+        isSensitive: false,
+      }))) };
+    });
+    this.runBackground('pending settings save failed', () => store.save({}));
   }
 
   /** Usage for a snapshot: each live conversation's AI limits and context, and each AI's limits. */
@@ -962,7 +1031,7 @@ export class DaemonAgentRuntime {
       return commandError('not-found', 'Agent Session was not found.');
     }
     if (this.options.conversationWritable && !await this.options.conversationWritable(session.projectId, session.id)) {
-      return commandError('invalid-state', 'This stage or subproject is archived. Restore it or explicitly unlink the conversation before sending.');
+      return commandError('invalid-state', 'This stage or workflow is archived. Restore it or explicitly unlink the conversation before sending.');
     }
     const workspace = findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId);
     if (!workspace) {
@@ -1123,21 +1192,72 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.set-settings') return commandError('invalid-command', 'Unexpected Agent settings command.');
-    if (this.options.preparedSessionSettings?.(command.payload.sessionId)) {
+    const payload = command.payload;
+    if (this.options.preparedSessionSettings?.(payload.sessionId)) {
       return commandError('invalid-state', 'Prepared execution settings are immutable. Prepare a new run to change the provider, model, or permissions.');
     }
-    const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
+    const agent = context.snapshot.agents.find((entry) => entry.sessionId === payload.sessionId);
     if (!agent) return commandError('not-found', 'Agent Session was not found.');
     if (TERMINAL_AGENT_STATES.has(agent.state)) return commandError('invalid-state', 'Agent Session has ended.');
-    // Effort is read at the next submit, so it may change while a turn runs.
-    const effortOnly = command.payload.reasoningEffort !== undefined
-      && command.payload.model === undefined && command.payload.permissionPreset === undefined;
-    if (agent.currentTurnId && !effortOnly) return commandError('invalid-state', 'Change Agent settings between turns.');
+    const pending = this.pendingSettings.get(agent.sessionId);
+    const changesModelOrAccess = payload.model !== undefined || payload.permissionPreset !== undefined;
+    if (payload.clearPending) {
+      if (changesModelOrAccess || payload.reasoningEffort !== undefined || payload.scope !== undefined) {
+        return commandError('invalid-command', 'Clearing queued settings takes no other change.');
+      }
+      if (!pending) return { ok: true };
+      const running = { runningEffort: pending.runningEffort, runningTurnId: pending.runningTurnId };
+      return { ok: true, afterCommit: () => this.setPending(agent.sessionId, running) };
+    }
+    const once = payload.scope === 'once';
+    if (once && (payload.reasoningEffort === undefined || changesModelOrAccess)) {
+      return commandError('invalid-command', 'Only an effort can apply to the next request alone.');
+    }
+    const effortOnly = payload.reasoningEffort !== undefined && !changesModelOrAccess;
+    // A person's change during a turn waits for the next request; an agent still changes its child between turns.
+    const person = command.principal.kind === 'desktop' || command.principal.kind === 'android';
+    const turnRunning = Boolean(agent.currentTurnId);
+    if (turnRunning && !effortOnly && !person) return commandError('invalid-state', 'Change Agent settings between turns.');
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    const nextModel = command.payload.model ?? agent.model;
-    const nextPermissionPreset = command.payload.permissionPreset ?? agent.permissionPreset;
-    const nextEffort = command.payload.reasoningEffort ?? agent.reasoningEffort;
+    // 단계 연결: entering plan mode takes the plan agent's effort, leaving it the implement agent's. An effort the
+    // person chose (now or queued) wins over the link.
+    const accessNow = pending?.permissionPreset ?? agent.permissionPreset;
+    const phase = payload.permissionPreset === undefined || payload.permissionPreset === accessNow ? undefined
+      : payload.permissionPreset === 'plan' ? 'plan' as const : accessNow === 'plan' ? 'implement' as const : undefined;
+    const linked = phase ? this.options.phaseSettings?.(agent.providerId, phase) : undefined;
+    const model = payload.model ?? linked?.model;
+    const effort = payload.reasoningEffort ?? (pending?.reasoningEffort ? undefined : linked?.reasoningEffort);
+
+    if (turnRunning || once) {
+      const next: { -readonly [K in keyof DaemonPendingAgentSettings]: DaemonPendingAgentSettings[K] } = { ...pending };
+      if (model !== undefined) next.model = model;
+      if (payload.permissionPreset !== undefined) next.permissionPreset = payload.permissionPreset;
+      if (effort !== undefined) {
+        next.reasoningEffort = effort;
+        next.effortScope = once ? 'once' : 'keep';
+      }
+      // A value the record already runs with waits for nothing.
+      if (next.model === agent.model) next.model = undefined;
+      if (next.permissionPreset === agent.permissionPreset) next.permissionPreset = undefined;
+      if (next.reasoningEffort === agent.reasoningEffort) {
+        next.reasoningEffort = undefined;
+        next.effortScope = undefined;
+      }
+      return { ok: true, afterCommit: () => this.setPending(agent.sessionId, next) };
+    }
+
+    const nextModel = model ?? agent.model;
+    const nextPermissionPreset = payload.permissionPreset ?? agent.permissionPreset;
+    const nextEffort = effort ?? agent.reasoningEffort;
+    const applyToProvider = model !== undefined || payload.permissionPreset !== undefined;
+    // What this change sets no longer waits for the next request.
+    const remaining = pending ? {
+      ...pending,
+      ...(model !== undefined ? { model: undefined } : {}),
+      ...(payload.permissionPreset !== undefined ? { permissionPreset: undefined } : {}),
+      ...(effort !== undefined ? { reasoningEffort: undefined, effortScope: undefined } : {}),
+    } : undefined;
     return {
       ok: true,
       commit: { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
@@ -1147,18 +1267,23 @@ export class DaemonAgentRuntime {
       }) }] },
       // In the session's provider queue: a message sent right after waits for the new settings (a
       // Claude switch to Full access may relaunch the provider session).
-      afterCommit: () => !effortOnly && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runProviderHandleBackground(
-        `update Agent settings ${agent.sessionId}`,
-        agent.providerId,
-        agent.providerSessionId,
-        () => this.applyProviderSettings(
-          agent.sessionId,
-          agent.providerId,
-          agent.providerSessionId!,
-          nextModel,
-          nextPermissionPreset,
-        ),
-      ) : undefined,
+      afterCommit: () => {
+        if (pending) this.setPending(agent.sessionId, remaining);
+        if (applyToProvider && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId)) {
+          this.runProviderHandleBackground(
+            `update Agent settings ${agent.sessionId}`,
+            agent.providerId,
+            agent.providerSessionId,
+            () => this.applyProviderSettings(
+              agent.sessionId,
+              agent.providerId,
+              agent.providerSessionId!,
+              nextModel,
+              nextPermissionPreset,
+            ),
+          );
+        }
+      },
     };
   }
 
@@ -1516,6 +1641,23 @@ export class DaemonAgentRuntime {
     const planMode = command.payload.decision !== 'allow' ? undefined
       : command.payload.response?.kind === 'plan' ? command.payload.response.mode
         : approval.request?.kind === 'plan' ? 'standard' as const : undefined;
+    // 단계 연결: an approved plan is implemented by the implement agent of this AI. Codex sends the
+    // follow-up as a new request, so it starts with it; Claude continues the same turn, so the link
+    // applies from the next request. Settings the person queued win.
+    const implement = command.payload.decision === 'allow' && approval.request?.kind === 'plan'
+      ? this.options.phaseSettings?.(agent.providerId, 'implement')
+      : undefined;
+    const queueImplement = (): void => {
+      if (!implement) return;
+      const queued = this.pendingSettings.get(agent.sessionId);
+      const model = implement.model && !queued?.model && implement.model !== agent.model ? implement.model : undefined;
+      const effort = implement.reasoningEffort && !queued?.reasoningEffort && implement.reasoningEffort !== agent.reasoningEffort
+        ? implement.reasoningEffort
+        : undefined;
+      if (model || effort) {
+        this.setPending(agent.sessionId, { ...queued, ...(model ? { model } : {}), ...(effort ? { reasoningEffort: effort, effortScope: 'keep' as const } : {}) });
+      }
+    };
     return { ok: true, commit: { mutations: [
       { kind: 'approval.upsert', value: this.resolvedApprovalInput(
         approval,
@@ -1538,7 +1680,7 @@ export class DaemonAgentRuntime {
               { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'idle', ...(planMode ? { permissionPreset: planMode } : {}) }) },
               { kind: 'session.upsert' as const, value: sessionInput(session, 'idle') },
             ]),
-    ] }, afterCommit: () => this.runBackground(
+    ] }, afterCommit: () => { queueImplement(); this.runBackground(
       `resolve approval ${approval.id}`,
       async () => {
         await this.resolveProviderApproval(
@@ -1556,7 +1698,7 @@ export class DaemonAgentRuntime {
           if (followUp) await this.sendPlanFollowUp(approval.id, agent.sessionId, followUp, command.principal);
         }
       },
-    ) };
+    ); } };
   }
 
   /** Sends the message that follows a decision on a proposed plan, as the person who decided. */
@@ -2036,14 +2178,20 @@ export class DaemonAgentRuntime {
       let providerSessionId = selected.agent.providerSessionId;
       let promptSent = false;
       const additionalRoots = await this.additionalRootsFor(dispatchSnapshot, selected.session);
+      // Settings queued for this request apply before it is sent; a one-request effort only to the send itself.
+      const queued = this.pendingSettings.get(selected.session.id);
+      const queuedModel = queued?.model;
+      const queuedAccess = queued?.permissionPreset;
+      const queuedEffort = queued?.effortScope !== 'once' ? queued?.reasoningEffort : undefined;
+      let queuedApplied = !queuedModel && !queuedAccess && !queuedEffort;
       try {
         if (!providerSessionId) {
           const handle = await provider.value.createSession(this.sessionContext(
             selected.session.id,
             selected.workspaceId,
             selected.workspaceRoot,
-            selected.agent.model,
-            selected.agent.permissionPreset,
+            queuedModel ?? selected.agent.model,
+            queuedAccess ?? selected.agent.permissionPreset,
             selected.agent.orchestrationEnabled,
             additionalRoots,
           ), this.lifecycleAbortController.signal);
@@ -2058,7 +2206,7 @@ export class DaemonAgentRuntime {
             return { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
               providerSessionId: handle.providerSessionId,
               ...(handle.model ? { model: handle.model } : {}),
-              ...appliedEffort(agent, handle),
+              ...(queuedEffort ? { reasoningEffort: queuedEffort } : appliedEffort(agent, handle)),
               permissionPreset: handle.permissionPreset,
               state: 'working',
             }) }] };
@@ -2069,11 +2217,25 @@ export class DaemonAgentRuntime {
           }
           providerSessionId = handle.providerSessionId;
           this.setProviderAttached(selected.session.id, true);
+          queuedApplied = true;
         }
         await this.providerHandleOperations.get(JSON.stringify([selected.agent.providerId, providerSessionId]));
         if (!this.attachedProviderSessions.has(selected.session.id)) await this.rehydrateSession(selected.session.id);
         if (!this.attachedProviderSessions.has(selected.session.id)) throw new Error('The original provider session could not be attached. Retry after checking its state.');
         if (this.disposed) return;
+        if (!queuedApplied) {
+          providerSessionId = await this.applyQueuedSettings(provider.value, selected.agent, providerSessionId, queuedModel, queuedAccess, queuedEffort);
+          queuedApplied = true;
+        }
+        if (queued && (queuedModel || queuedAccess || queuedEffort)) {
+          const left = this.pendingSettings.get(selected.session.id);
+          this.setPending(selected.session.id, left && {
+            ...left,
+            ...(left.model === queuedModel ? { model: undefined } : {}),
+            ...(left.permissionPreset === queuedAccess ? { permissionPreset: undefined } : {}),
+            ...(queuedEffort && left.reasoningEffort === queuedEffort && left.effortScope !== 'once' ? { reasoningEffort: undefined, effortScope: undefined } : {}),
+          });
+        }
         if (await this.options.beforeProviderDispatch?.(selected.turn) === false) {
           await this.transition((snapshot) => {
             const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
@@ -2089,6 +2251,17 @@ export class DaemonAgentRuntime {
           continue;
         }
         if (this.disposed) return;
+        // A one-request effort is spent by this send; the next request sends the record effort again.
+        const atSend = this.pendingSettings.get(selected.session.id);
+        const onceEffort = atSend?.effortScope === 'once' ? atSend.reasoningEffort : undefined;
+        if (atSend && (onceEffort || atSend.runningTurnId)) {
+          this.setPending(selected.session.id, {
+            ...atSend,
+            ...(onceEffort ? { reasoningEffort: undefined, effortScope: undefined } : {}),
+            runningEffort: onceEffort,
+            runningTurnId: onceEffort ? selected.turn.id : undefined,
+          });
+        }
         promptSent = true;
         await provider.value.submit({
           sessionId: selected.turn.sessionId,
@@ -2098,6 +2271,7 @@ export class DaemonAgentRuntime {
           prompt: selected.prompt,
           context: this.contextForTurn(selected.turn),
           reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort
+            ?? onceEffort
             ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
           attended: this.attendedTurn(selected.turn),
           ...(additionalRoots ? { additionalRoots } : {}),
@@ -3457,6 +3631,40 @@ export class DaemonAgentRuntime {
         turnId,
       );
     }
+  }
+
+  /**
+   * Applies what waited for this request before it is sent. A failure fails the request with the
+   * provider reason (nothing was sent) and the queued settings stay for the next try.
+   */
+  private async applyQueuedSettings(
+    provider: AgentProviderAdapter,
+    agent: DaemonAgent,
+    providerSessionId: string,
+    model: string | undefined,
+    permissionPreset: DaemonAgent['permissionPreset'] | undefined,
+    reasoningEffort: string | undefined,
+  ): Promise<string> {
+    let handle: ProviderSessionHandle | undefined;
+    if (model || permissionPreset) {
+      const nextModel = model ?? agent.model;
+      handle = await provider.setSettings({
+        sessionId: agent.sessionId,
+        providerSessionId,
+        ...(nextModel ? { model: nextModel } : {}),
+        permissionPreset: permissionPreset ?? agent.permissionPreset,
+      });
+    }
+    await this.transition((snapshot) => {
+      const current = snapshot.agents.find((entry) => entry.sessionId === agent.sessionId);
+      if (!current || TERMINAL_AGENT_STATES.has(current.state)) return undefined;
+      return { mutations: [{ kind: 'agent.upsert', value: agentInput(current, {
+        ...(handle ? { providerSessionId: handle.providerSessionId, permissionPreset: handle.permissionPreset } : {}),
+        ...(handle?.model ? { model: handle.model } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      }) }] };
+    });
+    return handle?.providerSessionId ?? providerSessionId;
   }
 
   private async applyProviderSettings(

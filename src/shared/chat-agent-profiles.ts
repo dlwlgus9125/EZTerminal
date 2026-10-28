@@ -51,6 +51,38 @@ export interface ChatAgentPhaseMap {
   readonly switchModel: boolean;
 }
 
+const PhaseRefSchema = z.object({ profileId: z.string().min(1).max(100) }).strict();
+
+export const ChatAgentPhaseFileSchema = z.object({
+  version: z.literal(1),
+  byProvider: z.record(z.string().min(1).max(100), z.object({ plan: PhaseRefSchema.optional(), implement: PhaseRefSchema.optional() }).strict())
+    .refine((value) => Object.keys(value).length <= 20),
+  review: PhaseRefSchema.optional(),
+  switchModel: z.boolean(),
+}).strict();
+
+export const EMPTY_CHAT_AGENT_PHASES: ChatAgentPhaseMap = { byProvider: {}, switchModel: false };
+
+/**
+ * The linked agent of a conversation phase for a session of `providerId`, or nothing: a deleted profile or
+ * one of another AI (a conversation keeps its AI) is no link. Its model only when `switchModel` is on.
+ */
+export function linkedPhaseSettings(
+  phases: ChatAgentPhaseMap,
+  profiles: readonly ChatAgentProfile[],
+  providerId: string,
+  phase: 'plan' | 'implement',
+): { readonly profile: ChatAgentProfile; readonly model?: string; readonly reasoningEffort?: string } | undefined {
+  const profileId = phases.byProvider[providerId]?.[phase]?.profileId;
+  const profile = profileId ? profiles.find((entry) => entry.id === profileId) : undefined;
+  if (!profile || profile.providerId !== providerId) return undefined;
+  return {
+    profile,
+    ...(phases.switchModel && profile.model ? { model: profile.model } : {}),
+    ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+  };
+}
+
 /** Desktop only: the renderer's view of the saved profiles. */
 export interface ChatAgentProfileAccess {
   list(): Promise<readonly ChatAgentProfile[]>;

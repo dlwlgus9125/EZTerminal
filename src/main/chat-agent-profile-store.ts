@@ -1,8 +1,12 @@
 import type { IpcMain } from 'electron';
 
 import {
+  ChatAgentPhaseFileSchema,
   ChatAgentProfileListSchema,
   ChatAgentProfileSchema,
+  EMPTY_CHAT_AGENT_PHASES,
+  linkedPhaseSettings,
+  type ChatAgentPhaseMap,
   type ChatAgentProfile,
   type ChatAgentProfileList,
   type ChatAgentProfileResult,
@@ -10,7 +14,20 @@ import {
 import { JsonFile } from './json-file';
 
 const FILE = 'chat-agent-profiles.json';
+/** Separate from the profiles: an older build reads a changed profile file strictly and would overwrite it. */
+const PHASE_FILE = 'chat-agent-phases.json';
 const EMPTY: ChatAgentProfileList = { version: 1, profiles: [] };
+type PhaseFile = ChatAgentPhaseMap & { readonly version: 1 };
+const EMPTY_PHASES: PhaseFile = { version: 1, ...EMPTY_CHAT_AGENT_PHASES };
+
+function validatePhases(raw: unknown): PhaseFile | null {
+  const parsed = ChatAgentPhaseFileSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+function withoutVersion(file: PhaseFile): ChatAgentPhaseMap {
+  return { byProvider: file.byProvider, ...(file.review ? { review: file.review } : {}), switchModel: file.switchModel };
+}
 
 function validate(raw: unknown): ChatAgentProfileList | null {
   const parsed = ChatAgentProfileListSchema.safeParse(raw);
@@ -20,19 +37,47 @@ function validate(raw: unknown): ChatAgentProfileList | null {
 /** The desktop's saved agent profiles (main-process JSON, read by settings, the start panel and MCP). */
 export class ChatAgentProfileStore {
   private readonly file: JsonFile;
+  private readonly phaseFile: JsonFile;
   private cached: readonly ChatAgentProfile[] = [];
+  private cachedPhases: ChatAgentPhaseMap = EMPTY_CHAT_AGENT_PHASES;
 
   constructor(dir: string) {
     this.file = new JsonFile(dir, FILE);
+    this.phaseFile = new JsonFile(dir, PHASE_FILE);
   }
 
   async init(): Promise<void> {
     await this.file.init();
     this.cached = (await this.file.readValidated(validate, EMPTY)).profiles;
+    await this.phaseFile.init();
+    this.cachedPhases = withoutVersion(await this.phaseFile.readValidated(validatePhases, EMPTY_PHASES));
   }
 
   list(): readonly ChatAgentProfile[] {
     return this.cached;
+  }
+
+  /** 단계 연결 (Settings › AI): which saved agent each conversation phase uses. */
+  phases(): ChatAgentPhaseMap {
+    return this.cachedPhases;
+  }
+
+  /** The linked agent's effort (and model, with '모델도 바꾸기') for a phase of a `providerId` conversation. */
+  phaseSettings(providerId: string, phase: 'plan' | 'implement'): { readonly model?: string; readonly reasoningEffort?: string } | undefined {
+    const linked = linkedPhaseSettings(this.cachedPhases, this.cached, providerId, phase);
+    return linked && (linked.model || linked.reasoningEffort)
+      ? { ...(linked.model ? { model: linked.model } : {}), ...(linked.reasoningEffort ? { reasoningEffort: linked.reasoningEffort } : {}) }
+      : undefined;
+  }
+
+  async savePhases(raw: unknown): Promise<{ readonly ok: true; readonly phases: ChatAgentPhaseMap } | { readonly ok: false; readonly error: string }> {
+    const parsed = ChatAgentPhaseFileSchema.safeParse(raw && typeof raw === 'object' ? { ...raw, version: 1 } : raw);
+    if (!parsed.success) return { ok: false, error: 'These phase links are incomplete.' };
+    const value = parsed.data;
+    const next = await this.phaseFile.update(validatePhases, EMPTY_PHASES, () => value, 'save chat agent phases');
+    if (!next) return { ok: false, error: 'These phase links could not be saved.' };
+    this.cachedPhases = withoutVersion(next);
+    return { ok: true, phases: this.cachedPhases };
   }
 
   /** Adds a profile, or replaces the one with the same id in place. */
@@ -53,6 +98,7 @@ export class ChatAgentProfileStore {
 
   async flush(): Promise<void> {
     await this.file.flush();
+    await this.phaseFile.flush();
   }
 
   private async write(
@@ -67,7 +113,7 @@ export class ChatAgentProfileStore {
   }
 }
 
-/** `chat-agent-profiles:list|save|remove` for the desktop renderer. */
+/** `chat-agent-profiles:list|save|remove|phases|save-phases` for the desktop renderer. */
 export function installChatAgentProfileIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly store: ChatAgentProfileStore;
@@ -86,7 +132,15 @@ export function installChatAgentProfileIpc(input: {
     await ready;
     return store.remove(id);
   });
+  ipc.handle('chat-agent-profiles:phases', async () => {
+    await ready;
+    return store.phases();
+  });
+  ipc.handle('chat-agent-profiles:save-phases', async (_event, phases: unknown) => {
+    await ready;
+    return store.savePhases(phases);
+  });
   return () => {
-    for (const channel of ['list', 'save', 'remove']) ipc.removeHandler(`chat-agent-profiles:${channel}`);
+    for (const channel of ['list', 'save', 'remove', 'phases', 'save-phases']) ipc.removeHandler(`chat-agent-profiles:${channel}`);
   };
 }

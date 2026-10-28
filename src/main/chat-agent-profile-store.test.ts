@@ -51,7 +51,32 @@ describe('ChatAgentProfileStore', () => {
     expect(await handlers.get('chat-agent-profiles:save')!({}, reviewer)).toMatchObject({ ok: true });
     expect(await handlers.get('chat-agent-profiles:list')!({})).toEqual([reviewer]);
     expect(await handlers.get('chat-agent-profiles:remove')!({}, 'reviewer')).toEqual({ ok: true, profiles: [] });
+    expect(await handlers.get('chat-agent-profiles:phases')!({})).toEqual({ byProvider: {}, switchModel: false });
+    expect(await handlers.get('chat-agent-profiles:save-phases')!({}, { byProvider: { claude: { plan: { profileId: 'reviewer' } } }, switchModel: false })).toMatchObject({ ok: true });
     dispose();
     expect(handlers.size).toBe(0);
+  });
+
+  it('keeps 단계 연결 in its own file and links only an agent of the conversation AI', async () => {
+    const dir = makeDir();
+    const store = new ChatAgentProfileStore(dir);
+    await store.init();
+    await store.save(reviewer);
+    await store.save({ id: 'builder', name: 'Builder', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'medium', permissionPreset: 'standard' });
+    const phases = { byProvider: { codex: { implement: { profileId: 'builder' } }, claude: { plan: { profileId: 'reviewer' }, implement: { profileId: 'builder' } } }, switchModel: false };
+    expect(await store.savePhases(phases)).toEqual({ ok: true, phases });
+    expect(store.phaseSettings('codex', 'implement')).toEqual({ reasoningEffort: 'medium' });
+    // A Claude conversation cannot switch to a Codex agent.
+    expect(store.phaseSettings('claude', 'implement')).toBeUndefined();
+    expect(store.phaseSettings('claude', 'plan')).toEqual({ reasoningEffort: 'high' });
+    await store.savePhases({ ...phases, switchModel: true });
+    expect(store.phaseSettings('codex', 'implement')).toEqual({ model: 'gpt-6-astra', reasoningEffort: 'medium' });
+    // A deleted agent is no link.
+    await store.remove('builder');
+    expect(store.phaseSettings('codex', 'implement')).toBeUndefined();
+    const reloaded = new ChatAgentProfileStore(dir);
+    await reloaded.init();
+    expect(reloaded.phases()).toEqual({ ...phases, switchModel: true });
+    expect(await reloaded.savePhases({ byProvider: { codex: { implement: { profileId: '' } } }, switchModel: false })).toMatchObject({ ok: false });
   });
 });

@@ -293,3 +293,36 @@ describe('StructuredAgentDockPanel command authority', () => {
     expect(settings?.expectedRevision).toBe(revision);
   });
 });
+
+describe('StructuredAgentDockPanel queued settings (agent-settings-v2)', () => {
+  it('shows the next request on the pills, the running turn on the line, and cancels or rescopes on the host', async () => {
+    const { access, sendCommand } = daemon(snapshotWith({
+      capabilities: ['agent-effort-v1', 'agent-settings-v2'],
+      agents: [{
+        sessionId: SESSION, providerId: 'claude', providerSessionId: 'provider-session', model: 'opus', permissionPreset: 'standard', reasoningEffort: 'high',
+        state: 'working', currentTurnId: 'turn-1', queuedTurnCount: 0, orchestrationEnabled: true, revision: 2, createdAt: NOW, updatedAt: NOW,
+      }],
+      turns: [{ id: 'turn-1', sessionId: SESSION, commandId: 'command-1', state: 'working', revision: 1, createdAt: NOW, updatedAt: NOW }],
+      pendingAgentSettings: { [SESSION]: { reasoningEffort: 'medium', effortScope: 'keep' } },
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: 1, itemCount: 1 }],
+    }), [item(1)]);
+    mount(access);
+    await flush();
+
+    const line = container.querySelector('[data-testid="structured-agent-pending-settings"]');
+    expect(line?.textContent).toContain('This turn');
+    expect(line?.textContent).toContain('High');
+    expect(line?.textContent).toContain('Medium');
+    expect(container.querySelector('[data-testid="structured-agent-live-effort"]')?.textContent).toContain('Medium');
+
+    act(() => container.querySelector<HTMLInputElement>('input[type="radio"][value="once"]')!.click());
+    await flush();
+    act(() => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Cancel change')!.click());
+    await flush();
+    const payloads = sendCommand.mock.calls.map(([command]) => command).filter((command) => command.type === 'agent.set-settings').map((command) => command.payload);
+    expect(payloads).toEqual([
+      { sessionId: SESSION, reasoningEffort: 'medium', scope: 'once' },
+      { sessionId: SESSION, clearPending: true },
+    ]);
+  });
+});

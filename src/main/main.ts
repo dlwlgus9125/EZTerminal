@@ -976,6 +976,7 @@ app.on('ready', async () => {
     },
   });
   const agentUsageFile = new JsonFile(app.getPath('userData'), 'agent-usage.json');
+  const pendingSettingsFile = new JsonFile(app.getPath('userData'), 'agent-pending-settings.json');
   // Bound once the project workspace service exists, below; until then sessions keep one folder.
   const conversationFoldersRef: { current?: ConversationFolderResolver } = {};
   const daemonAgentRuntime = new DaemonAgentRuntime({
@@ -984,6 +985,12 @@ app.on('ready', async () => {
       load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
       save: (state) => agentUsageFile.enqueue(() => agentUsageFile.writeAtomic(JSON.stringify(state))),
     },
+    pendingSettingsStore: {
+      load: async () => { await pendingSettingsFile.init(); return pendingSettingsFile.read(); },
+      save: (sessions) => pendingSettingsFile.enqueue(() => pendingSettingsFile.writeAtomic(JSON.stringify(sessions))),
+    },
+    // The profile store is built below; a phase link is read only when a command runs.
+    phaseSettings: (providerId, phase) => chatAgentProfileStore.phaseSettings(providerId, phase),
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
     applySystemTransition: (transition) => daemonRouterRef.current!.applySystemTransition(transition),
@@ -1033,6 +1040,7 @@ app.on('ready', async () => {
     agentUsage: (snapshot) => daemonAgentRuntime.agentUsage(snapshot),
     attention: (snapshot) => hostAttentionRef.current?.attention(snapshot),
     sideQuestionSessions: (snapshot) => daemonAgentRuntime.sideQuestionSessionIds(snapshot),
+    pendingAgentSettings: (snapshot) => daemonAgentRuntime.pendingAgentSettings(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),

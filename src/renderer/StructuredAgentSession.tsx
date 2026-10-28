@@ -65,6 +65,7 @@ import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityIt
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
 import { structuredAgentEffortOptions, withCurrentModel } from './structured-agent-create';
+import type { ConversationSettingsValues, QueuedSettingsProp } from './queued-settings';
 import { SIDE_QUESTION_PROVIDER_IDS, type AgentSideQuestionClient } from '../shared/agent-side-question';
 import { SideQuestionSurface } from './side-question/SideQuestionSurface';
 import { useSideQuestionThread } from './side-question/use-side-question-thread';
@@ -1874,6 +1875,11 @@ export interface StructuredAgentSessionPanelProps {
   readonly planPhaseNote?: string;
   /** The host queues model, permission and plan changes made during a turn for the next request (pills stay open). */
   readonly queueSettings?: boolean;
+  /**
+   * From the host: what the running request uses while the pills show the next request's settings. Builds
+   * the pending line (and its scope choice) unless `pendingSettings` gives it ready-made.
+   */
+  readonly queuedSettings?: QueuedSettingsProp;
   readonly fileSearch?: ComposerFileSearch;
   readonly pathForDrop?: (file: File) => string | null;
   readonly onResolveApproval?: (
@@ -1967,9 +1973,10 @@ export function StructuredAgentSessionPanel({
   onLoadEarlier,
   reasoningEffort,
   effortSupported = false,
-  pendingSettings,
+  pendingSettings: givenPendingSettings,
+  queuedSettings,
   planPhaseNote,
-  effortScope,
+  effortScope: givenEffortScope,
   queueSettings = false,
   fileSearch,
   pathForDrop,
@@ -2364,6 +2371,30 @@ export function StructuredAgentSessionPanel({
     xhigh: i18n.language.startsWith('ko') ? '매우 높음' : 'Extra high',
     max: i18n.language.startsWith('ko') ? '최대' : 'Max',
   } as Record<string, string>)[value] ?? value;
+  // "지금 차례 → 다음 요청": model and effort always, the permission when it changes.
+  const settingsText = (values: ConversationSettingsValues, withAccess: boolean): string => [
+    values.model ? availableModels.find((option) => option.id === values.model)?.label ?? values.model : copy.providerDefault,
+    ...(values.reasoningEffort ? [effortLabel(values.reasoningEffort)] : []),
+    ...(withAccess ? [values.permissionPreset === 'plan' ? permissionText.plan : permissionText.levels[values.permissionPreset].label] : []),
+  ].join(' · ');
+  const nextValues: ConversationSettingsValues = {
+    ...(selectedModel ? { model: selectedModel } : {}),
+    permissionPreset: selectedPermission,
+    ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
+  };
+  const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
+  const queuedDiffers = queuedSettings !== undefined && (
+    queuedAccessChanged
+    || (queuedSettings.current.model ?? '') !== (nextValues.model ?? '')
+    || (queuedSettings.current.reasoningEffort ?? '') !== (nextValues.reasoningEffort ?? ''));
+  const pendingSettings = givenPendingSettings ?? (queuedSettings && queuedDiffers ? {
+    current: settingsText(queuedSettings.current, queuedAccessChanged),
+    next: settingsText(nextValues, queuedAccessChanged),
+    ...(queuedSettings.onCancel ? { onCancel: queuedSettings.onCancel } : {}),
+  } : undefined);
+  const effortScope = givenEffortScope ?? (queuedSettings?.scope && queuedSettings.onScope && pendingSettings
+    ? { value: queuedSettings.scope, onChange: queuedSettings.onScope }
+    : undefined);
 
   const runLifecycle = async (
     action: StructuredAgentLifecycleAction,
@@ -2392,7 +2423,7 @@ export function StructuredAgentSessionPanel({
 <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
             {pendingSettings && !settingsReadOnly && <p className="chat-pending-settings" role="status" data-testid="structured-agent-pending-settings">
               <Glyph name="clock" />
-              <span className="chat-pending-settings__now">{i18n.language.startsWith('ko') ? '지금 차례' : 'This turn'} <strong>{pendingSettings.current}</strong></span>
+              <span className="chat-pending-settings__now">{turnCurrent ? (i18n.language.startsWith('ko') ? '지금 차례' : 'This turn') : (i18n.language.startsWith('ko') ? '지금' : 'Now')} <strong>{pendingSettings.current}</strong></span>
               <span className="chat-pending-settings__arrow" aria-hidden="true"><Glyph name="next" /></span>
               <span className="chat-pending-settings__next">{i18n.language.startsWith('ko') ? '다음 요청' : 'Next request'} <strong>{pendingSettings.next}</strong></span>
               {effortScope && <span className="chat-pending-settings__scope" role="radiogroup" aria-label={i18n.language.startsWith('ko') ? '적용 범위' : 'Applies to'}>

@@ -58,6 +58,8 @@ export interface DaemonCommandRouterOptions {
   readonly attention?: (snapshot: DaemonSnapshot) => DaemonSnapshot['attention'];
   /** Sessions with a live provider that answers /btw (DaemonAgentRuntime.sideQuestionSessionIds). */
   readonly sideQuestionSessions?: (snapshot: DaemonSnapshot) => readonly string[];
+  /** Settings queued for each session's next request (DaemonAgentRuntime.pendingAgentSettings). */
+  readonly pendingAgentSettings?: (snapshot: DaemonSnapshot) => DaemonSnapshot['pendingAgentSettings'];
 }
 
 function commandError(
@@ -170,6 +172,7 @@ export class DaemonCommandRouter {
   private readonly handlers: Partial<Record<DaemonCommandType, DaemonCommandHandler>>;
   private readonly now: () => Date;
   private readonly agentUsage: DaemonCommandRouterOptions['agentUsage'];
+  private readonly pendingAgentSettings: DaemonCommandRouterOptions['pendingAgentSettings'];
   private readonly attention: DaemonCommandRouterOptions['attention'];
   private readonly sideQuestionSessions: DaemonCommandRouterOptions['sideQuestionSessions'];
   private acceptingCommands = true;
@@ -183,6 +186,7 @@ export class DaemonCommandRouter {
     this.agentUsage = options.agentUsage;
     this.attention = options.attention;
     this.sideQuestionSessions = options.sideQuestionSessions;
+    this.pendingAgentSettings = options.pendingAgentSettings;
   }
 
   getSnapshot(): DaemonSnapshot {
@@ -190,11 +194,13 @@ export class DaemonCommandRouter {
     const usage = this.agentUsage?.(snapshot);
     const attention = this.attention?.(snapshot);
     const sideQuestionSessionIds = this.sideQuestionSessions?.(snapshot);
+    const pendingAgentSettings = this.pendingAgentSettings?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
       ...(attention ? { attention } : {}),
       ...(sideQuestionSessionIds?.length ? { sideQuestionSessionIds } : {}),
+      ...(pendingAgentSettings ? { pendingAgentSettings } : {}),
     };
   }
 

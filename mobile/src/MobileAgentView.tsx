@@ -63,6 +63,7 @@ import {
 } from '../../src/renderer/structured-agent-create';
 import { IconButton } from '../../src/renderer/ui';
 import {
+  AGENT_SETTINGS_CAPABILITY,
   createDaemonCommand,
   type DaemonCommand,
   type DaemonSnapshot,
@@ -70,6 +71,7 @@ import {
   type ManagedAgentState,
   type PermissionPreset,
 } from '../../src/shared/daemon-protocol';
+import { nextConversationSettings, queuedSettingsFor } from '../../src/renderer/queued-settings';
 import { isDaemonSessionArchived } from '../../src/shared/daemon-session-visibility';
 import { MobileActionSheet } from './MobileActionSheet';
 import {
@@ -1498,6 +1500,22 @@ export function MobileAgentView({
     const effortSupported = daemonRuntimeState.snapshot?.capabilities?.includes('agent-effort-v1') === true;
     const providerOwned = selectedDaemonRelation?.owner === 'provider-native';
     const archivedHistory = isDaemonSessionArchived(selectedDaemonSession, selectedDaemonAgent) || workflowContext.scope?.readOnly === true;
+    // A PC with agent-settings-v2 queues changes for the next request: the pills show the next request's
+    // settings and a line says what the running one uses. An older PC gets the plain change.
+    const queuesSettings = daemonRuntimeState.snapshot?.capabilities?.includes(AGENT_SETTINGS_CAPABILITY) === true && !archivedHistory;
+    const pendingSettings = queuesSettings ? daemonRuntimeState.snapshot?.pendingAgentSettings?.[selectedDaemonSession.id] : undefined;
+    const nextSettings = nextConversationSettings(selectedDaemonAgent, pendingSettings);
+    const sendSettings = (payload: { readonly reasoningEffort?: string; readonly scope?: 'once' | 'keep'; readonly clearPending?: true }) => {
+      void dispatchDaemonCommand(createDaemonCommand({
+        ...buildCommandBase(),
+        type: 'agent.set-settings',
+        payload: { sessionId: selectedDaemonSession.id, ...payload },
+      }));
+    };
+    const queuedSettings = queuesSettings ? queuedSettingsFor(selectedDaemonAgent, pendingSettings, {
+      cancel: () => sendSettings({ clearPending: true }),
+      scope: (scope, reasoningEffort) => sendSettings({ reasoningEffort, scope }),
+    }) : undefined;
     const canCancel = !providerOwned
       && selectedDaemonAgent.providerSessionId !== undefined
       && DAEMON_CANCELLABLE_STATES.has(selectedDaemonAgent.state);
@@ -1525,11 +1543,13 @@ export function MobileAgentView({
           kind: selectedDaemonWorkspace.kind,
           path: selectedDaemonWorkspace.rootPath,
         }}
-        model={selectedDaemonAgent.model}
+        model={nextSettings.model}
         modelOptions={availableModels}
         effortSupported={effortSupported}
-        {...(selectedDaemonAgent.reasoningEffort ? { reasoningEffort: selectedDaemonAgent.reasoningEffort } : {})}
-        permissionPreset={selectedDaemonAgent.permissionPreset}
+        {...(nextSettings.reasoningEffort ? { reasoningEffort: nextSettings.reasoningEffort } : {})}
+        permissionPreset={nextSettings.permissionPreset}
+        queueSettings={queuesSettings}
+        {...(queuedSettings ? { queuedSettings } : {})}
         awaitingFirstMessage={selectedDaemonAgent.state === 'idle' && !selectedDaemonAgent.providerSessionId && !daemonRuntimeState.snapshot?.turns.some((turn) => turn.sessionId === selectedDaemonSessionId)}
         state={selectedDaemonAgent.state}
         queuedCount={selectedDaemonAgent.queuedTurnCount}
@@ -1619,6 +1639,8 @@ export function MobileAgentView({
             ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
             // Only a PC that takes effort gets it; an older one would refuse the whole change.
             ...(settings.reasoningEffort && effortSupported ? { reasoningEffort: settings.reasoningEffort } : {}),
+            // A picked effort waits for the next request, where its scope can still change.
+            ...(settings.reasoningEffort && effortSupported && queuesSettings && !settings.model && !settings.permissionPreset ? { scope: 'keep' as const } : {}),
           },
         }))}
         {...(!providerOwned && !archivedHistory ? {

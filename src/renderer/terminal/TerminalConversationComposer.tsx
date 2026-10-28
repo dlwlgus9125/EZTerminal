@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChatMessageContext } from '../../shared/chat-message';
 import type { ConversationFolders } from '../../shared/conversation-folders';
-import type { DaemonCommand, DaemonSnapshot, DaemonTranscriptItem } from '../../shared/daemon-protocol';
+import { AGENT_SETTINGS_CAPABILITY, type DaemonCommand, type DaemonSnapshot, type DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import { isDaemonSessionArchived } from '../../shared/daemon-session-visibility';
 import { rendererCapabilities, type CapabilityAccess } from '../capability-access';
 import type { ChatStateAccess } from '../chat-recovery';
@@ -20,6 +20,7 @@ import { conversationQueue } from '../conversation-queue';
 import { useAppTranslation } from '../i18n';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { structuredAgentModelOptions } from '../structured-agent-create';
+import { nextConversationSettings, queuedSettingsFor } from '../queued-settings';
 import { useChatRecovery } from '../use-chat-recovery';
 import { useProviderModelCatalogs } from '../use-provider-models';
 import { useWorkflowConversationScope } from '../workflow/WorkflowConversationContext';
@@ -165,6 +166,14 @@ export function TerminalConversationComposer({
   const providerId = agent.providerId;
   const fileSearch = desktopFileSearch(workspace?.rootPath);
   const shownFolders = folders ?? (readFolders && workspace ? { primary: workspace.rootPath, additional: [], missing: [] } : undefined);
+  // agent-settings-v2: the pills show what the next request uses; the line says what the running one uses.
+  const queuesSettings = snapshot?.capabilities?.includes(AGENT_SETTINGS_CAPABILITY) === true && !historyOnly;
+  const pendingSettings = queuesSettings ? snapshot?.pendingAgentSettings?.[sessionId] : undefined;
+  const next = nextConversationSettings(agent, pendingSettings);
+  const queuedSettings = queuesSettings ? queuedSettingsFor(agent, pendingSettings, {
+    cancel: () => { void changeConversationSettings(access, sessionId, { clearPending: true }); },
+    scope: (scope, reasoningEffort) => { void changeConversationSettings(access, sessionId, { reasoningEffort, scope }); },
+  }) : undefined;
   const send = (type: 'agent.submit' | 'agent.interrupt-and-submit') => (prompt: string, context?: ChatMessageContext): Promise<StructuredAgentUiResult> => (
     submitConversationMessage(access, { sessionId, recovery: recovery.controller, type, prompt, ...(context ? { context } : {}), onAccepted: () => onSent?.(sessionId) })
   );
@@ -183,9 +192,11 @@ export function TerminalConversationComposer({
         ? { id: workspace.id, label: workspace.name, kind: workspace.kind, path: workspace.rootPath }
         : { id: session.workspaceId, label: 'Workspace unavailable', kind: 'local' }}
       {...(shownFolders ? { folders: shownFolders } : {})}
-      model={agent.model}
-      modelOptions={structuredAgentModelOptions(provider?.capabilities ?? [], agent.model, catalogs[providerId])}
-      permissionPreset={agent.permissionPreset}
+      model={next.model}
+      modelOptions={structuredAgentModelOptions(provider?.capabilities ?? [], next.model, catalogs[providerId])}
+      permissionPreset={next.permissionPreset}
+      queueSettings={queuesSettings}
+      {...(queuedSettings ? { queuedSettings } : {})}
       state={historyOnly ? 'archived' : agent.state}
       queuedCount={agent.queuedTurnCount}
       queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], queue.items)}
@@ -195,7 +206,7 @@ export function TerminalConversationComposer({
       items={[]}
       approvalResponses={snapshot?.capabilities?.includes('approval-response-v1') === true}
       effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true}
-      {...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
+      {...(next.reasoningEffort ? { reasoningEffort: next.reasoningEffort } : {})}
       {...(fileSearch ? { fileSearch } : {})}
       pathForDrop={pathForDrop}
       historyOnly={historyOnly}
