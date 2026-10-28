@@ -1587,6 +1587,8 @@ app.on('ready', async () => {
       return agent?.model ? { providerId: agent.providerId, model: agent.model } : undefined;
     },
     repeatStatus: (registry) => workflowRepeatRef.current?.status(registry),
+    // The profile store is built below; it is read only when a reply is made.
+    agentCatalog: () => chatAgentProfileStore.list(),
     repeatConsent: async (projectId, subprojectId, change) => {
       try {
         if (!workflowRepeatRef.current) throw new Error('The repeat schedule is still starting.');

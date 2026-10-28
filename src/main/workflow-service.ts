@@ -6,7 +6,7 @@ import {
   WorkflowCommandSchema, WorkflowRegistrySchema, WorkflowSubprojectSchema, createWorkflowGraph, validateWorkflowGraph, LEGACY_SUBPROJECT_ID,
   WorkflowPreviewRequestSchema, WorkflowGraphSchema, workflowPrincipalIdentity, type WorkflowPreview, type WorkflowPreviewResult,
   type WorkflowCommand, type WorkflowGraph, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
-  type WorkflowNavigationResult, type WorkflowNavigationSnapshot, WorkflowReviewerSchema, type WorkflowRepeat, type WorkflowRepeatStatus,
+  type WorkflowNavigationResult, type WorkflowNavigationSnapshot, WorkflowReviewerSchema, type WorkflowRepeat, type WorkflowRepeatStatus, type WorkflowAgentCatalogEntry,
 } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { WorkflowConversationContext } from '../shared/workflow-conversation';
@@ -94,6 +94,10 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === '
 const failure = (error: string, message: string, revision?: number): Extract<WorkflowResult, { ok: false }> => ({ ok: false, error, message, ...(revision === undefined ? {} : { revision }) });
 const wrap = (registry: WorkflowRegistry, receipts: WorkflowFile['receipts']): WorkflowFile => ({ version: 1, registry, receipts, integrity: workflowDigest({ registry, receipts }) });
 
+function agentCatalogOf(agents: readonly WorkflowAgentCatalogEntry[] | undefined): { agentCatalog?: WorkflowAgentCatalogEntry[] } {
+  return agents?.length ? { agentCatalog: agents.slice(0, 50).map(agent => ({ id: agent.id, name: agent.name, providerId: agent.providerId,
+    ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}), permissionPreset: agent.permissionPreset })) } : {};
+}
 function repeatStatusOf(status: Readonly<Record<string, WorkflowRepeatStatus>> | undefined): { repeatStatus?: Record<string, WorkflowRepeatStatus> } {
   return status && Object.keys(status).length ? { repeatStatus: structuredClone({ ...status }) } : {};
 }
@@ -124,6 +128,8 @@ export interface WorkflowServiceOptions {
   readonly managedSessions?: (projectId: string) => readonly string[];
   /** What the host's repeat schedule did and will do, per subproject with a repeat (protocol v17), for the registry being answered. */
   readonly repeatStatus?: (registry: WorkflowRegistry) => Readonly<Record<string, WorkflowRepeatStatus>> | undefined;
+  /** The PC's saved agents (Settings › AI › 에이전트), sent with each reply so a phone can place them on stages. */
+  readonly agentCatalog?: () => readonly WorkflowAgentCatalogEntry[];
   /** After a command or a restore saved a new registry (the repeat schedule arms from it at once). */
   readonly onCommitted?: (projectId: string) => void;
   /**
@@ -622,7 +628,7 @@ export class WorkflowService {
         return { ...link, referenceStale: workflowDigest({ ...current, graphRevision: 0, fingerprint: '' }) !== workflowDigest({ ...link.referenceSnapshot, graphRevision: 0, fingerprint: '' }) };
       } catch { return { ...link, referenceStale: true }; }
     });
-    return { ok: true, snapshot: { ...snapshot, hostId: this.options.hostId, runs: structuredClone([...this.options.runs(registry.projectId)]), managedSessionIds: [...this.options.managedSessions?.(registry.projectId) ?? []], ...repeatStatusOf(this.options.repeatStatus?.(registry)) }, ...(commandId ? { commandId, duplicate } : {}) };
+    return { ok: true, snapshot: { ...snapshot, hostId: this.options.hostId, runs: structuredClone([...this.options.runs(registry.projectId)]), managedSessionIds: [...this.options.managedSessions?.(registry.projectId) ?? []], ...repeatStatusOf(this.options.repeatStatus?.(registry)), ...agentCatalogOf(this.options.agentCatalog?.()) }, ...(commandId ? { commandId, duplicate } : {}) };
   }
   private error(error: unknown): Extract<WorkflowResult, { ok: false }> { return failure(error instanceof WorkflowFailure ? error.code : 'unavailable', error instanceof Error ? error.message : 'Workflow state is unavailable. Preserve edits and reload before retrying.'); }
   private exclusive<T>(projectId: string, action: () => Promise<T>): Promise<T> {

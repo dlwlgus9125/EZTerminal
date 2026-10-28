@@ -83,9 +83,20 @@ export const WorkflowRegistrySchema = z.object({
 }).strict();
 export type WorkflowRegistry = z.infer<typeof WorkflowRegistrySchema>;
 export type WorkflowRun = ExecutionRun;
+/**
+ * A saved agent as a phone needs it to place it on a stage (v18): phones have no channel to the PC's agent list,
+ * so each workflow reply carries it. Who, not what: no instructions.
+ */
+export const WorkflowAgentCatalogEntrySchema = z.object({
+  id: z.string().min(1).max(100), name: z.string().trim().min(1).max(200), providerId: id, model: z.string().max(200).optional(),
+  reasoningEffort: z.string().max(40).optional(), permissionPreset: z.enum(['plan', 'standard', 'full-access']),
+}).strict();
+export type WorkflowAgentCatalogEntry = z.infer<typeof WorkflowAgentCatalogEntrySchema>;
 export const WorkflowSnapshotSchema = WorkflowRegistrySchema.extend({ hostId: id, runs: PlanningExecutionSnapshotSchema.shape.runs, managedSessionIds: z.array(id).optional(),
   /** Per subproject with a repeat (protocol v17). */
-  repeatStatus: z.record(id, WorkflowRepeatStatusSchema).optional() }).strict();
+  repeatStatus: z.record(id, WorkflowRepeatStatusSchema).optional(),
+  /** The PC's saved agents (v18), for placing them on stages from a phone. */
+  agentCatalog: z.array(WorkflowAgentCatalogEntrySchema).max(50).optional() }).strict();
 export type WorkflowSnapshot = Omit<z.infer<typeof WorkflowSnapshotSchema>, 'runs'> & { readonly runs: readonly ExecutionRun[] };
 
 /** Navigation projection excludes instructions, documents, graph edges, runs and edit history. */

@@ -13,6 +13,8 @@ import type { WorkflowCommand, WorkflowPreviewRequest, WorkflowPreviewResult, Wo
 export const FLOW_V17_NODE_FIELDS = ['reasoningEffort'] as const;
 export const FLOW_V17_SUBPROJECT_FIELDS = ['runSettings', 'repeat'] as const;
 export const FLOW_V17_SNAPSHOT_FIELDS = ['repeatStatus'] as const;
+/** Workflow reply fields added with v18. */
+export const FLOW_V18_SNAPSHOT_FIELDS = ['agentCatalog'] as const;
 export const FLOW_V17_RUN_FIELDS = ['stageBindings'] as const;
 /**
  * Fields added with remote protocol v18 (agents on stages, '이어서', per-stage review, checks, answer
@@ -129,8 +131,9 @@ function legacyExecutionSnapshot(snapshot: PlanningExecutionSnapshot, reader: Fl
 }
 
 export function legacyWorkflowSnapshot(snapshot: WorkflowSnapshot, reader: FlowReaderProtocol = 16): WorkflowSnapshot {
-  const base = reader === 16 ? without(snapshot, FLOW_V17_SNAPSHOT_FIELDS)
-    : snapshot.repeatStatus ? { ...snapshot, repeatStatus: Object.fromEntries(Object.entries(snapshot.repeatStatus).map(([id, status]) => [id, without(status, FLOW_V18_REPEAT_STATUS_FIELDS)])) } : snapshot;
+  const reduced = without(snapshot, FLOW_V18_SNAPSHOT_FIELDS);
+  const base = reader === 16 ? without(reduced, FLOW_V17_SNAPSHOT_FIELDS)
+    : reduced.repeatStatus ? { ...reduced, repeatStatus: Object.fromEntries(Object.entries(reduced.repeatStatus).map(([id, status]) => [id, without(status, FLOW_V18_REPEAT_STATUS_FIELDS)])) } : reduced;
   return { ...legacyWorkflowRegistry(base, reader), runs: base.runs.map((run) => legacyExecutionRun(run, reader)) };
 }
 

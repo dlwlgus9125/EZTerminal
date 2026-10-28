@@ -195,12 +195,15 @@ describe('the reduced flow view for remote protocol v17 readers (v18 fields)', (
 
   it('keeps the repeat status a v17 phone knows and hides the confirmed revision it does not', async () => {
     const { workflow } = await v17();
-    const snapshot = { ...fixture().snapshot, repeatStatus: { 'sub-login': { nextAt: AT, pinnedRevision: 1 } } };
+    const snapshot = { ...fixture().snapshot, repeatStatus: { 'sub-login': { nextAt: AT, pinnedRevision: 1 } },
+      agentCatalog: [{ id: 'builder', name: 'Builder', providerId: 'codex', permissionPreset: 'standard' as const }] };
     const reply: WorkflowResult = { ok: true, snapshot };
     expect(workflow.WorkflowResultSchema.safeParse(reply).success).toBe(false);
     const reduced = legacyWorkflowResult(reply, 17) as Extract<WorkflowResult, { ok: true }>;
     expect(workflow.WorkflowResultSchema.safeParse(reduced).success).toBe(true);
     expect(reduced.snapshot.repeatStatus).toEqual({ 'sub-login': { nextAt: AT } });
+    expect(reduced.snapshot.agentCatalog).toBeUndefined();
+    expect(WorkflowResultSchema.safeParse(reply).success).toBe(true);
   });
 
   it('reduces execution replies for v17 the same way', async () => {
