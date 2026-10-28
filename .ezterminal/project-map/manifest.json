@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:78a77b29d9f26fce008f1603f5205bb5df290ef7e81c7fe0905a0eba7f68bb86",
+        "inputDigest": "sha256:e0a6dbd71af10a8a31996606e0119091ebfe4ab38ea22253b3341bcff2b7a058",
         "decision": "map-updated",
         "reason": "I5-10: the PC no longer builds the planning AI, scene assets, planning drafts or the renderer's planning read/execute IPC; the preload claim now lists flow-run calls, and stale planning-ai sessions never dispatch."
       }
@@ -369,7 +369,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c1c35ac2b98a3cdb36e862f00c449722edfda04618e6a3423fa385587b1dc318",
+        "inputDigest": "sha256:5ae6a790b65867514e47e7c4d4684844152cfb094046285bc9d866ab74f72c38",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-10): main.ts lost the planning AI, asset and draft services and their shutdown step; the anchored window and authority lifecycle blocks only moved."
       }
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:802d3de4d87ea82fac0776de7db1cf19710ff3cd2a3ce815c9782f7734e5f648",
+        "inputDigest": "sha256:2076a60efac8ecb6f0ccb40b01cf4c5674332654d1560c95c9abfb1b39e860c9",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-10): the phone transport drops the old planning editor's requests (planning read/execute, AI, assets, device drafts) and the PC stops offering them; the anchored session and command paths only moved."
       }
@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fd9b8f650abd492fe838612a49ac77fd71165bd5bd60390802226b221414362e",
+        "inputDigest": "sha256:63d973958cb2ef6b9cbe92df1d32f60ac2b6e1d85db73314ce8587a9f24d4bd5",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-9): the flow screen stopped embedding the old planning panel and the run result dialog dropped the device-evidence form; the anchored approval and session blocks are unchanged."
       }
@@ -657,7 +657,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5af85c189601bd08408d888cadc78b0bfc72e0a88e56f9cf97e8ecbf9e8cbe54",
+        "inputDigest": "sha256:177e9bbe200ab43237831d323f2792e796ef1af9a3a544c2fba5f8e7e8a4e672",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5 Codex recheck): planning edits are now refused as forbidden instead of unavailable, so an older phone does not offer to resend them; the anchored refusal still never changes the planning file. Anchors moved."
       }
@@ -741,7 +741,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:616f80ecf70de8877adebb638ea5369b0794af228ca7cfd4c414e864d7750ab2",
+        "inputDigest": "sha256:a7f5ba74442b3f309bb2b353061e74d813bf82f76c510a87f69e0b9c01d2d32c",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5 follow-ups): the phone project navigator dropped its unused 'tasks' mode and the completion hook merged a duplicate import; the anchored flow and completion blocks are unchanged. Anchors moved."
       }

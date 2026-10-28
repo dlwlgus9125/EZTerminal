@@ -85,8 +85,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/workflow/WorkflowWorkspacePanel.tsx",
-          "startLine": 640,
-          "endLine": 653,
+          "startLine": 749,
+          "endLine": 762,
           "lineDigest": "sha256:e791277e9cf5e02855c5cd1b52e2d6a889e4f166bbe7fd5b34ec4df430695f7e",
           "claim": "The flow screen opens a run's integration result and each attempt's evidence in one result dialog, and asks for an independent review again with one fixed command id per review round."
         },
@@ -112,16 +112,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2459,
-          "endLine": 2600,
+          "startLine": 2523,
+          "endLine": 2664,
           "lineDigest": "sha256:ae1dfff30b077dbdaef402a8c0d2dcf039fc7d2a31a76c3205d58ac955d484c0",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 603,
-          "endLine": 620,
+          "startLine": 607,
+          "endLine": 624,
           "lineDigest": "sha256:e3f8c4046d50bf9cf62d6da23b4162e085ff5790daa622318fa1f61fd3d0dfb8",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
@@ -149,15 +149,15 @@
           "relativePath": "src/main/planning-authority.ts",
           "startLine": 16,
           "endLine": 48,
-          "lineDigest": "sha256:1172c38dce7f56cd28e247d07ce99f2e5ff721dfd773b2c58890f264e5347055",
+          "lineDigest": "sha256:faf2a368954925425bbb555d4518828881c44410474e2347b9b5d490926c8985",
           "claim": "Planning reads/writes validate explicit subproject ownership and archive state before entering the existing readiness, trusted actor and local mutation boundaries."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1800,
-          "endLine": 1918,
-          "lineDigest": "sha256:05918942c15298153890371deea330c557062ac9c6413d34f1cdfaf410f6ac53",
+          "startLine": 1803,
+          "endLine": 1921,
+          "lineDigest": "sha256:c7753f218b777fe8e39187e3452b846a1ce7fcc7e64643a82e739c22a09ba281",
           "claim": "Authenticated v14+ clients use workflow/capability handlers; v16-and-older readers get the reduced flow view and are marked for write protection; v13 keeps planning; subproject writes stay bound to the Android principal."
         }
       ]
@@ -176,7 +176,7 @@
           "relativePath": "src/main/planning-service.ts",
           "startLine": 145,
           "endLine": 167,
-          "lineDigest": "sha256:3672a575fa334fdb52b8517d086fe85177bc5ed854dbb8b4f26683f43ab19f87",
+          "lineDigest": "sha256:8b8c88c294799e2159ed4b07107123f1aa6e94df29568089ba9ae18f2b758a5a",
           "claim": "Flow runs capture baselines into the explicit subproject planning file, hashing the copied draft; an existing id must carry the same inputs, and the revision advances in the same atomic write."
         },
         {
@@ -184,7 +184,7 @@
           "relativePath": "src/main/planning-service.ts",
           "startLine": 110,
           "endLine": 129,
-          "lineDigest": "sha256:8c419c1132f088a5e0526401e823fbe5f47f6e9466f584a51ecd876d576e09ba",
+          "lineDigest": "sha256:d4067ec5acbde85f3b8d77c19880fd84a69b597ed0e66c8a6bb5dff8b84896b1",
           "claim": "Restore imports a planning snapshot only into a new project, checking every baseline hash and frozen reference before the first write."
         },
         {
@@ -219,7 +219,7 @@
           "relativePath": "src/main/workflow-draft-store.ts",
           "startLine": 27,
           "endLine": 39,
-          "lineDigest": "sha256:c61791393f42d5f36ea4960b93984d550a4c1317d7b1c106dbe23cec905422e8",
+          "lineDigest": "sha256:64f57f69022e1113b5331f09b8dd16f7910c349ef1ddfbbd2576faa8a3e6cd09",
           "claim": "Flow graph recovery checks the host and project scope and the CAS revision, then writes the encrypted state atomically; it never replaces the saved flow."
         }
       ]
@@ -236,9 +236,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 192,
-          "endLine": 395,
-          "lineDigest": "sha256:5ac8c648d8c8ca1087f37c7e7a05d046a288b14129bd864cfee1930c22634296",
+          "startLine": 228,
+          "endLine": 436,
+          "lineDigest": "sha256:2724df13d52a32869c3eaaeab5d04668c6e89c80b146aff6dd51bfbcb488d8fa",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         },
         {
@@ -282,17 +282,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 635,
-          "endLine": 701,
-          "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
+          "startLine": 702,
+          "endLine": 804,
+          "lineDigest": "sha256:fc919fa4a0530e24bfda71b42a43926317d1e31ef0c7fff3493411a77a3e080e",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 635,
-          "endLine": 740,
-          "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
+          "startLine": 702,
+          "endLine": 843,
+          "lineDigest": "sha256:541edf0e7940e00035e65efb7e93fec56bf655f63e0366316ffcd79474d24de5",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
       ]
@@ -309,24 +309,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 198,
-          "endLine": 249,
-          "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
+          "startLine": 280,
+          "endLine": 350,
+          "lineDigest": "sha256:6ef55684e4ce87c01e81eec6a35d1469d1fc6f64637dcdf74608baab5b9e2b5a",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 253,
-          "endLine": 277,
+          "startLine": 354,
+          "endLine": 378,
           "lineDigest": "sha256:067601ae19915986aeeaef128ff9ab4e91b4014914b2022362d59c1ee54757da",
           "claim": "The reviewer output must identify the same baseline and artifact set; missing inspection evidence is recorded as not run."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 406,
-          "endLine": 466,
+          "startLine": 531,
+          "endLine": 591,
           "lineDigest": "sha256:1ff7fccb937c261bc88a5ca296cd7e8a7f04361e00f16a9c2791690eb6214439",
           "claim": "User-attested device evidence is bound to the exact current attempt or integration candidate and a durable command identity; attempt evidence triggers a new independent review generation."
         }
@@ -344,16 +344,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 480,
-          "endLine": 527,
-          "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
+          "startLine": 605,
+          "endLine": 658,
+          "lineDigest": "sha256:c154e19b4ef963f3eec099153aa6074a30705f541ee6e2601b8b86d27fa31298",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-repository.ts",
-          "startLine": 370,
-          "endLine": 379,
+          "startLine": 393,
+          "endLine": 402,
           "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
           "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
         }
@@ -400,7 +400,7 @@
           "relativePath": "src/main/planning-authority.ts",
           "startLine": 16,
           "endLine": 48,
-          "lineDigest": "sha256:1172c38dce7f56cd28e247d07ce99f2e5ff721dfd773b2c58890f264e5347055",
+          "lineDigest": "sha256:faf2a368954925425bbb555d4518828881c44410474e2347b9b5d490926c8985",
           "claim": "Planning reads/writes validate explicit subproject ownership and archive state before entering the existing readiness, trusted actor and local mutation boundaries."
         }
       ]
@@ -432,9 +432,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 192,
-          "endLine": 395,
-          "lineDigest": "sha256:5ac8c648d8c8ca1087f37c7e7a05d046a288b14129bd864cfee1930c22634296",
+          "startLine": 228,
+          "endLine": 436,
+          "lineDigest": "sha256:2724df13d52a32869c3eaaeab5d04668c6e89c80b146aff6dd51bfbcb488d8fa",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         }
       ]
@@ -466,9 +466,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 635,
-          "endLine": 701,
-          "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
+          "startLine": 702,
+          "endLine": 804,
+          "lineDigest": "sha256:fc919fa4a0530e24bfda71b42a43926317d1e31ef0c7fff3493411a77a3e080e",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
       ]
@@ -483,9 +483,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 198,
-          "endLine": 249,
-          "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
+          "startLine": 280,
+          "endLine": 350,
+          "lineDigest": "sha256:6ef55684e4ce87c01e81eec6a35d1469d1fc6f64637dcdf74608baab5b9e2b5a",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         }
       ]
@@ -500,9 +500,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 480,
-          "endLine": 527,
-          "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
+          "startLine": 605,
+          "endLine": 658,
+          "lineDigest": "sha256:c154e19b4ef963f3eec099153aa6074a30705f541ee6e2601b8b86d27fa31298",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         }
       ]
