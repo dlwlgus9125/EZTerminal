@@ -206,6 +206,19 @@ describe('the reduced flow view for remote protocol v17 readers (v18 fields)', (
     expect(WorkflowResultSchema.safeParse(reply).success).toBe(true);
   });
 
+  it('reduces the stage inside an applied stage binding for v17 too', async () => {
+    const { run: schemas } = await v17();
+    const snapshot = withV18(fixture().snapshot);
+    const first = snapshot.runs[0]!;
+    const node = { ...first.preparation.workflow!.graph.nodes[0]!, agent: { profileId: 'builder', name: 'Builder', providerId: 'codex', capturedAt: AT }, checks: [{ id: 'test', command: 'pnpm test' }] };
+    const bound = { ...first, stageBindings: { [node.id]: { outcome: 'applied' as const, boundAt: AT, changed: ['instructions' as const], task: first.preparation.tasks[0]!, node } } };
+    const reply = { ok: true, snapshot: { version: 1, projectId: snapshot.projectId, revision: 4, runs: [bound] } } as const;
+    expect(schemas.PlanningRunResultSchema.safeParse(reply).success).toBe(false);
+    const reduced = legacyPlanningRunResult(reply as never, 17);
+    expect(schemas.PlanningRunResultSchema.safeParse(reduced).success).toBe(true);
+    expect(JSON.stringify(reduced)).not.toMatch(/"agent":|"checks":/u);
+  });
+
   it('reduces execution replies for v17 the same way', async () => {
     const { run } = await v17();
     const snapshot = withV18(fixture().snapshot);

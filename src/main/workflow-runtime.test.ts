@@ -128,6 +128,15 @@ describe('answer stages and approval notes (v18)', () => {
     expect(inputs.context).toContain('Email and code');
   });
 
+  it('gives a stage only the answers on the path that reached it', () => {
+    let current = resolve(advanceWorkflowRun(run(asking())), 'ask', { outcome: 'next', answer: 'Email' });
+    const work = current.workflowRuntime!.activations.find(entry => entry.nodeId === 'work')!;
+    expect(work.inputResults.ask).toMatchObject({ outcome: 'passed' });
+    // An activation that did not come through the answer (another branch) does not read it.
+    current = { ...current, workflowRuntime: { ...current.workflowRuntime!, activations: current.workflowRuntime!.activations.map(entry => entry.id === work.id ? { ...entry, inputResults: {} } : entry) } };
+    expect(workflowTaskInputs(current, current.preparation.tasks.find(task => task.taskId === 'work')!).context).not.toContain('Email');
+  });
+
   it('sends a rejection note back to the stage the rejection returns to', () => {
     let current = resolve(advanceWorkflowRun(run(asking())), 'ask', { outcome: 'next', answer: 'Email' });
     current = finish(current, 'work');

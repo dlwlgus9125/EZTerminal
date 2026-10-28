@@ -299,7 +299,7 @@ export class WorkflowRepeatService {
       if (this.disposed) return wait;
       wait = Math.min(wait, await this.resolveClaim(projectId, source, claim, eligible, digest));
     }
-    if (!eligible || !source.reviewer || this.disposed) return wait;
+    if (!eligible || !(this.pinnedFlow(entry)?.runSettings?.reviewer ?? source.reviewer) || this.disposed) return wait;
     entry = this.entries.get(id)!;
     const now = this.now();
     const lastAt = entry.occurrences.reduce((value, occurrence) => Math.max(value, Date.parse(occurrence.occurrenceAt)), 0);
@@ -364,8 +364,10 @@ export class WorkflowRepeatService {
   private async run(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, config?: string): Promise<number> {
     if (this.disposed) return RETRY_MS;
     const pinned = this.pinnedFlow(this.entries.get(entryKey(projectId, source.subprojectId)));
-    if (config !== undefined && source.reviewer && pinned) {
-      const intent = launchIntentDigest(repeatContentDigest(pinned), { runId: claim.runId, reviewer: source.reviewer });
+    // The review AI of the confirmed flow (a reviewer saved after it waits for a new confirmation too).
+    const reviewer = pinned?.runSettings?.reviewer ?? source.reviewer;
+    if (config !== undefined && reviewer && pinned) {
+      const intent = launchIntentDigest(repeatContentDigest(pinned), { runId: claim.runId, reviewer });
       if (claim.intent !== intent) claim = await this.record(projectId, source.subprojectId, { ...claim, intent });
     }
     // Checked after the last save and right before the send (nothing awaited in between): automation can be switched
@@ -376,7 +378,7 @@ export class WorkflowRepeatService {
       const entry = this.entries.get(entryKey(projectId, source.subprojectId));
       const occurrenceAt = Date.parse(claim.occurrenceAt);
       if (!this.pinnedFlow(entry) || entry?.armed?.configDigest !== config
-        || Date.parse(entry.armed.armedAt) > occurrenceAt || (this.automationOnSince ?? Number.POSITIVE_INFINITY) > occurrenceAt || !source.reviewer) return RETRY_MS;
+        || Date.parse(entry.armed.armedAt) > occurrenceAt || (this.automationOnSince ?? Number.POSITIVE_INFINITY) > occurrenceAt || !reviewer) return RETRY_MS;
     }
     let result: WorkflowResult;
     try {

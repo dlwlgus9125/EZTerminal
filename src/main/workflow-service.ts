@@ -504,7 +504,8 @@ export class WorkflowService {
           }
           if (command.type === 'run.launch' && !launch) {
             // The request's own, else the flow's saved one, else (an agent's launch) its conversation's provider and model.
-            const reviewer = command.payload.reviewer ?? subproject!.runSettings?.reviewer
+            // 반복 runs with the review AI of the flow the person confirmed (the pinned one), not one saved after it.
+            const reviewer = command.payload.reviewer ?? runSource.runSettings?.reviewer
               ?? (principal.kind === 'ai' && principal.sessionId ? this.options.conversationReviewer?.(principal.sessionId) : undefined);
             if (!reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before running it.');
             launch = { runId: command.payload.runId, reviewer: structuredClone(reviewer) };

@@ -434,6 +434,8 @@ interface SessionRecord {
   approvedPlanMode?: NonNullable<Options['permissionMode']>;
   /** The effort the CLI is currently using, so a changed one is applied before the next message. */
   appliedEffort?: string;
+  /** The effort this adapter set with applyFlagSettings (absent: the session runs at its own). */
+  flagEffort?: string;
   readonly enablement: ClaudeProviderEnablement;
   handle: ProviderSessionHandle;
   readonly abortController: AbortController;
@@ -1384,13 +1386,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         });
       }
     }
-    if (input.reasoningEffort && input.reasoningEffort !== session.appliedEffort && session.query.applyFlagSettings) {
+    // An effort asked for is applied; none asked for after one was applied puts the session's own back (its launch
+    // effort, else the CLI's): applyFlagSettings keeps a one-request effort for the session until it is replaced.
+    const restore = input.reasoningEffort === undefined && session.flagEffort !== undefined;
+    const effort = restore ? session.context.reasoningEffort : input.reasoningEffort;
+    if ((restore || (effort && effort !== session.appliedEffort)) && session.query.applyFlagSettings) {
       try {
-        await bounded(abortable(session.query.applyFlagSettings({ effortLevel: input.reasoningEffort }), signal), this.operationTimeoutMs);
+        await bounded(abortable(session.query.applyFlagSettings({ effortLevel: effort ?? null }), signal), this.operationTimeoutMs);
       } catch (error) {
         throw classifyClaudeProviderError(error);
       }
-      session.appliedEffort = input.reasoningEffort;
+      session.appliedEffort = effort;
+      session.flagEffort = restore ? undefined : effort;
     }
     if (input.context?.skills?.length) {
       if (session.context.toolsDisabled || !session.query.supportedCommands) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');

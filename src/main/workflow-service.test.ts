@@ -244,9 +244,15 @@ describe('workflow authority and storage', () => {
     expect(await service.execute(launch, schedule, { launchIntent: launchIntentDigest(repeatContentDigest(confirmed), { runId: 'repeat-pinned', reviewer }), pinned: confirmed })).toMatchObject({ ok: true });
     const ran = executeRun.mock.calls[0]![1] as WorkflowSubproject;
     expect(ran.graph.nodes[0]!.instructions).toBe('Research the confirmed thing');
+    // A review AI saved after the confirmation waits too: the schedule keeps the confirmed one.
+    expect(await service.execute({ ...base, commandId: 'reviewer-later', subprojectId: 'a', expectedRevision: 2, type: 'subproject.update', payload: { runSettings: { reviewer: { providerId: 'codex', model: 'other' } } } }, user)).toMatchObject({ ok: true });
+    const pinnedLaunch = { ...launch, commandId: 'schedule-pinned-2', expectedRevision: 3, payload: { runId: 'repeat-pinned-2' } } as WorkflowCommand;
+    expect(await service.execute(pinnedLaunch, schedule, { launchIntent: launchIntentDigest(repeatContentDigest(confirmed), { runId: 'repeat-pinned-2', reviewer }), pinned: confirmed })).toMatchObject({ ok: true });
+    expect((executeRun.mock.calls[1]![0] as Extract<WorkflowCommand, { type: 'run.launch' }>).payload.reviewer).toEqual(reviewer);
+    executeRun.mockClear();
     // A person's own launch runs the flow as saved now.
-    expect(await service.execute({ ...launch, commandId: 'person-launch', payload: { runId: 'person-run' } } as WorkflowCommand, user)).toMatchObject({ ok: true });
-    expect((executeRun.mock.calls[1]![1] as WorkflowSubproject).graph.nodes[0]!.instructions).toBe('Something else entirely');
+    expect(await service.execute({ ...launch, commandId: 'person-launch', expectedRevision: 3, payload: { runId: 'person-run' } } as WorkflowCommand, user)).toMatchObject({ ok: true });
+    expect((executeRun.mock.calls[0]![1] as WorkflowSubproject).graph.nodes[0]!.instructions).toBe('Something else entirely');
   });
   it('lets the repeat schedule run a flow and nothing else', async () => {
     await service.execute(create('a'), user);

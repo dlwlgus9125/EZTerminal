@@ -115,8 +115,11 @@ export function legacyExecutionRun(run: ExecutionRun, reader: FlowReaderProtocol
   const base = without(run, runFields(reader));
   const workflow = base.preparation.workflow;
   const runtime = base.workflowRuntime;
+  // A v17 reader keeps stage bindings (v17), but an applied binding's stage is a full node: reduced like the graph's.
+  const bindings = base.stageBindings;
   return {
     ...base,
+    ...(bindings ? { stageBindings: Object.fromEntries(Object.entries(bindings).map(([id, binding]) => [id, binding.node ? { ...binding, node: legacyNode(binding.node, reader) } : binding])) } : {}),
     ...(workflow ? { preparation: { ...base.preparation, workflow: { ...workflow, graph: legacyGraph(workflow.graph, reader) } } } : {}),
     // A waiting answer reads as a pending approval the older reader can see but not resolve.
     ...(runtime ? { workflowRuntime: { ...runtime, activations: runtime.activations.map((activation) => {

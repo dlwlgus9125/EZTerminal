@@ -128,6 +128,8 @@ interface SessionState {
   additionalRoots: readonly string[];
   model?: string;
   readonly reasoningEffort?: string;
+  /** The effort last sent on a turn: Codex keeps it for later turns until another is sent. */
+  sentEffort?: string;
   permissionPreset: PermissionPreset;
   /** Codex's collaboration mode on this thread; a plan turn leaves it in plan until a turn asks for default. */
   threadMode?: 'plan' | 'default';
@@ -1237,10 +1239,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         }, { signal }));
       }
       const exitsBeforeTurn = this.appServerExits;
+      // No effort asked for after another was sent: the thread's own effort again (Codex keeps the last one sent,
+      // and null does not reset it), so a one-request effort does not stay.
+      const effort = input.reasoningEffort ?? (state.sentEffort !== undefined && state.sentEffort !== state.reasoningEffort ? state.reasoningEffort : undefined);
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
-        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        ...(effort ? { effort } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
         ...(nextRoots ? { runtimeWorkspaceRoots: [state.workspaceRoot, ...nextRoots] } : {}),
         input: [
@@ -1254,6 +1259,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
+      if (effort) state.sentEffort = effort;
       // A turn started on this thread: its app-server is live again, so side questions may fork it — unless that
       // app-server exited after answering (a close read in the same chunk runs before this continuation).
       if (this.appServerExits === exitsBeforeTurn) state.appServerExited = false;

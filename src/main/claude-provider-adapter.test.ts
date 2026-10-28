@@ -804,6 +804,21 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('puts the session own effort back after a one-request effort, so it does not stay', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context });
+    const send = (id: string, reasoningEffort?: string) => fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId: `turn-${id}`, commandId: `command-${id}`, prompt: 'Go', ...(reasoningEffort ? { reasoningEffort } : {}),
+    });
+    await send('1');
+    await send('2', 'low');
+    await send('3');
+    await send('4');
+    // Launched without an effort: none applied first, the one-request effort, then the CLI's own again (once).
+    expect(fixture.query.flagSettings).toEqual([{ effortLevel: 'low' }, { effortLevel: null }]);
+    await fixture.adapter.dispose();
+  });
+
   it('launches with the project folders as additional directories, never for a tool-free session', async () => {
     const withFolders = makeAdapter();
     await withFolders.adapter.createSession({ ...context, additionalRoots: ['C:\\Working\\shared-ui', 'C:\\Working\\docs'] });

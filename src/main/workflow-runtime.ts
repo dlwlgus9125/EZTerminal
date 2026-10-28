@@ -35,15 +35,11 @@ function personContext(run: ExecutionRun, active: WorkflowActivation): string {
   const graph = run.preparation.workflow!.graph;
   const runtime = run.workflowRuntime;
   if (!runtime) return '';
-  const upstream = new Set<string>(); const pending = [active.nodeId];
-  while (pending.length) {
-    const target = pending.pop()!;
-    for (const edge of graph.edges.filter(entry => entry.to === target && !entry.retryLimit)) if (!upstream.has(edge.from)) { upstream.add(edge.from); pending.push(edge.from); }
-  }
-  const answers = graph.nodes.filter(node => node.operation === 'answer' && upstream.has(node.id)).flatMap(node => {
-    const latest = runtime.activations.filter(entry => entry.nodeId === node.id && entry.answer !== undefined && entry.iteration <= active.iteration)
-      .sort((left, right) => right.iteration - left.iteration)[0];
-    return latest ? [{ stage: node.title, question: node.answer?.prompt ?? '', answer: latest.answer }] : [];
+  // Only the answers this activation inherited on the path that reached it (not one asked on another branch).
+  const answers = Object.entries(active.inputResults).flatMap(([nodeId, source]) => {
+    const node = graph.nodes.find(entry => entry.id === nodeId);
+    const answered = node?.operation === 'answer' ? runtime.activations.find(entry => entry.id === source.attemptId && entry.nodeId === nodeId) : undefined;
+    return node && answered?.answer !== undefined ? [{ stage: node.title, question: node.answer?.prompt ?? '', answer: answered.answer }] : [];
   });
   const notes = active.incomingEdgeIds.flatMap(edgeId => {
     const edge = graph.edges.find(entry => entry.id === edgeId);
@@ -133,6 +129,8 @@ export function advanceWorkflowRun(input: ExecutionRun): ExecutionRun {
       if (edges.some(edge => edge.retryLimit && (runtime.edgeCounts[edge.id] ?? 0) >= edge.retryLimit)) { current.state = 'retry-exhausted'; current.outcome = outcome; changed = true; continue; }
       current.state = 'completed'; current.outcome = outcome; changed = true;
       if (node.operation === 'agent' && current.attemptId && (outcome === 'passed' || outcome === 'failed')) current.inputResults[node.id] = { attemptId: current.attemptId, outcome };
+      // An answer travels with the activations it leads to (named by its own activation), like a result.
+      if (node.operation === 'answer' && current.answer !== undefined) current.inputResults[node.id] = { attemptId: current.id, outcome: 'passed' };
       if (node.operation === 'complete') runtime.completed = true;
       for (const edge of edges) {
         runtime.edgeCounts[edge.id] = (runtime.edgeCounts[edge.id] ?? 0) + 1;
