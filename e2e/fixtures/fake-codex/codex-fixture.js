@@ -109,7 +109,8 @@ if (args.includes('--version')) {
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-thread-start.json'), JSON.stringify({
             cwd: frame.params?.cwd ?? null, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null,
           }));
-          respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture' });
+          // Like the real app-server, the thread's effective effort comes back with it (the config default).
+          respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture', reasoningEffort: 'medium' });
           break;
         }
         case 'thread/fork': {
@@ -140,7 +141,7 @@ if (args.includes('--version')) {
           const turnId = `fixture-turn-${turnSequence}`;
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));
           if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-turns.jsonl'),
-            `${JSON.stringify({ runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null })}\n`);
+            `${JSON.stringify({ threadId, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null, effort: frame.params?.effort ?? null, input: JSON.stringify(frame.params?.input ?? null).slice(0, 4000) })}\n`);
           respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
           setTimeout(async () => {
             write({
