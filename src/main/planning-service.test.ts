@@ -65,7 +65,7 @@ describe('PlanningService durable project authority', () => {
     for (const command of edits) {
       const result = await service.execute(command);
       expect(PlanningMutationResultSchema.safeParse(result).success).toBe(true);
-      expect(result).toMatchObject({ ok: false, error: 'unavailable', message: expect.stringContaining('Update the app') });
+      expect(result).toMatchObject({ ok: false, error: 'forbidden', message: expect.stringContaining('Update the app') });
     }
     expect(await service.execute({ ...edits[0], expectedRevision: -1 })).toMatchObject({ ok: false, error: 'invalid' });
     expect(await fs.readFile(filePath(), 'utf8')).toBe(before);

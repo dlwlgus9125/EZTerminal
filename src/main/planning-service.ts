@@ -130,14 +130,15 @@ export class PlanningService {
 
   /**
    * Planning edits (patch, freeze, branch, undo, profile proposals) belonged to the old planning screen, removed in
-   * I5; only an older phone still sends them. They are refused; what flows need (reads, the restore/copy import and
-   * the run baselines below) stays.
+   * I5; only an older phone still sends them. They are refused as forbidden (that app takes 'unavailable' for a save
+   * whose result is unknown and offers to send it again); what flows need (reads, the restore/copy import and the run
+   * baselines below) stays.
    */
   execute(value: unknown): Promise<PlanningMutationResult> {
     const parsed = PlanningCommandSchema.safeParse(value);
     if (!parsed.success) return Promise.resolve(failure('invalid', 'The planning command is invalid.', undefined,
       parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)));
-    return Promise.resolve(failure('unavailable', 'Planning editing moved to flows in EZTerminal 2.0. Update the app on this device to work on this project.'));
+    return Promise.resolve(failure('forbidden', 'Planning editing moved to flows in EZTerminal 2.0. Update the app on this device to work on this project.'));
   }
 
   /** Host-generated workflow baseline. Adds an immutable input without replacing the editable planning draft. */

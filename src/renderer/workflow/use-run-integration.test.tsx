@@ -14,7 +14,7 @@ let root: Root;
 beforeEach(() => { vi.useFakeTimers(); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); });
 
-const run = { runId: 'run', revision: 4, integrationAuthorized: true } as unknown as ExecutionRun;
+const run = { runId: 'run', revision: 4, integrationAuthorized: true, preparation: { baseCommit: 'a'.repeat(40) } } as unknown as ExecutionRun;
 const record = (status: 'validating' | 'passed') => ({ ok: true as const, kind: 'integration' as const, integration: { status } }) as unknown as Awaited<ReturnType<PlanningResultReader>>;
 
 describe('useRunIntegration', () => {
@@ -32,5 +32,16 @@ describe('useRunIntegration', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(INTEGRATION_POLL_MS * 3); });
     expect(read).toHaveBeenCalledTimes(3);
     expect(read).toHaveBeenLastCalledWith({ kind: 'integration', projectId: 'P', subprojectId: 'S', runId: 'run' });
+  });
+
+  it('reads nothing for a run prepared without a Git commit: it never gets an integration record', async () => {
+    const read = vi.fn<PlanningResultReader>(async () => record('validating'));
+    let seen: RunIntegrationView | null = { status: null, loading: true };
+    const plain = { ...run, preparation: {} } as unknown as ExecutionRun;
+    function Probe(): null { seen = useRunIntegration(read, 'P', 'S', plain); return null; }
+    await act(async () => root.render(<Probe />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(INTEGRATION_POLL_MS * 3); });
+    expect(seen).toBeNull();
+    expect(read).not.toHaveBeenCalled();
   });
 });

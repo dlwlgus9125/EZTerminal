@@ -174,8 +174,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 144,
-          "endLine": 166,
+          "startLine": 145,
+          "endLine": 167,
           "lineDigest": "sha256:3672a575fa334fdb52b8517d086fe85177bc5ed854dbb8b4f26683f43ab19f87",
           "claim": "Flow runs capture baselines into the explicit subproject planning file, hashing the copied draft; an existing id must carry the same inputs, and the revision advances in the same atomic write."
         },
@@ -190,8 +190,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 295,
-          "endLine": 316,
+          "startLine": 296,
+          "endLine": 317,
           "lineDigest": "sha256:d32871b3cb543b2f215362669dc24b57a95dd6a3f18a13d88bce1831c6b755f3",
           "claim": "The writer fsyncs a private temporary file, checks the expected disk hash and project boundary, then atomically renames."
         }
@@ -416,8 +416,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
           "startLine": 130,
-          "endLine": 141,
-          "lineDigest": "sha256:2f24456e7c9a712e6a804422b0ae36cd020368a246c154a212a0a5a0e535c44b",
+          "endLine": 142,
+          "lineDigest": "sha256:027423f8cc10fa13af43eb1cac6f1e3c236e3e945072d272f655d25196cd6259",
           "claim": "Planning edits (patch, freeze, branch, undo, profile proposals) are validated and refused since the planning screen was removed (I5); this path never changes the planning file."
         }
       ]

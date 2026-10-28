@@ -36,7 +36,7 @@ describe('transport-independent planning authority', () => {
     const { service, ingress, available } = await fixture();
     const execute = vi.spyOn(service, 'execute');
     const authority = new PlanningAuthority({ service, ingress, available, ready: Promise.resolve() });
-    expect(await authority.execute(command(), 'android:device-1')).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(await authority.execute(command(), 'android:device-1')).toMatchObject({ ok: false, error: 'forbidden' });
     expect(execute.mock.calls[0]![0]).toMatchObject({ actor: { kind: 'user', id: 'android:device-1' } });
     expect(await authority.read('project')).toMatchObject({ ok: true, snapshot: { revision: 0, history: [] } });
   });
@@ -64,7 +64,7 @@ describe('transport-independent planning authority', () => {
     await Promise.resolve();
     expect(drained).toBe(false);
     release();
-    expect(await pending).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(await pending).toMatchObject({ ok: false, error: 'forbidden' });
     await drain;
     expect(drained).toBe(true);
   });

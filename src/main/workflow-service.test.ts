@@ -63,7 +63,7 @@ describe('workflow authority and storage', () => {
     expect(migrated.legacyBaselineOwners['old-baseline']).toBe('legacy-default');
     expect(migrated.legacyBaselineOwners.quick).toBeNull();
     // The old planning screen's edits are refused (I5); a legacy-default flow run still adds its baseline to the root file.
-    expect(await planning.execute({ projectId: 'project', commandId: 'later-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 3, type: 'planning.freeze', payload: { baselineId: 'later-baseline', title: 'Later baseline' } })).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(await planning.execute({ projectId: 'project', commandId: 'later-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 3, type: 'planning.freeze', payload: { baselineId: 'later-baseline', title: 'Later baseline' } })).toMatchObject({ ok: false, error: 'forbidden' });
     const empty = { id: 'draft-1', items: [], links: [], scenes: [], components: [], profiles: [], tasks: [], assets: [] };
     expect((await planning.captureWorkflowBaseline('project', 'legacy-default', 'later-baseline', 'Later baseline', empty)).ok).toBe(true);
     expect((await snapshot()).legacyBaselineOwners['later-baseline']).toBe('legacy-default');

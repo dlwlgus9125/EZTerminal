@@ -80,7 +80,7 @@ function buildRun(graph: WorkflowGraph, steps: readonly Step[], state: Execution
   const { approvalPolicy = 'user', ...rest } = extra;
   return {
     runId: 'run-login-4', projectId: 'project-story', revision: 14, state, createdAt: AT, updatedAt: AT, ...(state === 'prepared' ? {} : { startedAt: AT }),
-    preparation: { workflow: { subprojectId: 'login', revision: 4, fingerprint: 'a'.repeat(64), graph }, subprojectId: 'login', baseline: { baselineId: 'baseline-login', revision: 1, fingerprint: 'b'.repeat(64) }, artifacts: [], teamMode: 'division', progressPolicy: 'autonomous', tasks: prepared, approvalPolicy },
+    preparation: { workflow: { subprojectId: 'login', revision: 4, fingerprint: 'a'.repeat(64), graph }, subprojectId: 'login', baseCommit: 'd'.repeat(40), baseline: { baselineId: 'baseline-login', revision: 1, fingerprint: 'b'.repeat(64) }, artifacts: [], teamMode: 'division', progressPolicy: 'autonomous', tasks: prepared, approvalPolicy },
     preparationFingerprint: 'c'.repeat(64), tasks, attempts, evidence: [], reviews, gates: [],
     ...(state === 'prepared' ? {} : { workflowRuntime: { activations, edgeCounts, completed: state === 'completed' } }), ...rest,
   };

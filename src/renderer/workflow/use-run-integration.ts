@@ -15,14 +15,14 @@ export const INTEGRATION_POLL_MS = 5_000;
 
 /**
  * The integration record of the run the flow shows. It exists only after the person (or 자동 승인)
- * allowed integration, so nothing is read before that; then once per run revision, and again every few
- * seconds while it is missing or not final: validation and adoption save their status without moving the
- * run's revision.
+ * allowed integration of a run prepared on a Git commit (a run without one is never integrated), so
+ * nothing is read before that; then once per run revision, and again every few seconds while it is
+ * missing or not final: validation and adoption save their status without moving the run's revision.
  */
 export function useRunIntegration(read: PlanningResultReader | undefined, projectId: string | undefined, subprojectId: string, run: ExecutionRun | null): RunIntegrationView | null {
   const runId = run?.runId;
   const revision = run?.revision;
-  const allowed = Boolean(run?.integrationAuthorized);
+  const allowed = Boolean(run?.integrationAuthorized && run.preparation.baseCommit);
   const [view, setView] = useState<RunIntegrationView | null>(null);
   useEffect(() => {
     if (!read || !projectId || !runId || !allowed) { setView(null); return undefined; }

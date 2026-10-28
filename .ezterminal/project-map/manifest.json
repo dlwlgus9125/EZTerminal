@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b783e9ec9f2a1868b95a36fa1da2de306259ce762050416189f5fe8a5f18a4b7",
-        "decision": "map-updated",
-        "reason": "I5-10b: planning edits are refused (the planning screen is gone); the store keeps reads, restore imports and flow-run baselines. Its node cites capture and restore, the ingress edge now reads and refuses, the writer moved."
+        "inputDigest": "sha256:5af85c189601bd08408d888cadc78b0bfc72e0a88e56f9cf97e8ecbf9e8cbe54",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (I5 Codex recheck): planning edits are now refused as forbidden instead of unavailable, so an older phone does not offer to resend them; the anchored refusal still never changes the planning file. Anchors moved."
       }
     },
     {
