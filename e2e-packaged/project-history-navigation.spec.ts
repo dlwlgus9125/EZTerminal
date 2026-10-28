@@ -91,8 +91,15 @@ test('packaged previous CLI conversations open and scroll without losing project
     await transcript.hover();
     await page.mouse.wheel(0, 750);
     await page.mouse.wheel(0, -450);
-    await conversation.getByRole('button', { name: /Load earlier messages|이전 메시지 불러오기/ }).click();
-    await expect(transcript.getByText(/^Prior response 1\s/)).toHaveCount(1);
+    // Older messages are offered; reaching the top loads them, and the offer goes once nothing older is left. (Scrolling
+    // the off-screen button into view to click it raced that load: CI's 1024×720 window lost the button every time.)
+    const earlier = conversation.getByRole('button', { name: /Load earlier messages|이전 메시지 불러오기/ });
+    await expect(earlier).toHaveCount(1);
+    await expect(async () => {
+      await page.mouse.wheel(0, -4000);
+      await expect(transcript.getByText(/^Prior response 1\s/)).toHaveCount(1, { timeout: 1_000 });
+    }).toPass({ timeout: 20_000 });
+    await expect(earlier).toHaveCount(0);
     await expect(conversation.getByTestId('structured-agent-composer-input')).toBeVisible();
     expect((await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.agents).toHaveLength(0);
     const evidence = path.resolve('artifacts/conversation-ux/windows'); mkdirSync(evidence, { recursive: true });
