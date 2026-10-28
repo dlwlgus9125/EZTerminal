@@ -25,19 +25,15 @@ const snapshot: DaemonSnapshot = {
 };
 const transport = {
   getDaemonSnapshot: async () => snapshot,
-  getPlanningSnapshot: async () => ({ ok: false as const, error: 'unavailable' as const, message: 'Story fixture: no host is connected.' }),
-  executePlanningCommand: async () => ({ ok: false as const, error: 'unavailable' as const, message: 'Story fixture: no commands are sent.' }),
   getRemoteToken: async () => 'storybook-fixture',
   getPlanningExecutionSnapshot: async () => ({ ok: false as const, error: 'unavailable', message: 'Story fixture: no host is connected.' }),
   executePlanningRun: async () => ({ ok: false as const, error: 'unavailable', message: 'Story fixture: no commands are sent.' }),
   listDaemonProviderModels: async () => ({ ok: false as const, code: 'provider-operation-failed', message: 'Story fixture: no provider is connected.' }),
   executeProjectArchive: async () => ({ ok: false as const, error: 'unavailable' as const, message: 'Story fixture: no file operations are available.' }),
-  executePlanningAsset: async () => ({ ok: false as const, message: 'Story fixture: no host assets are available.' }),
-  planningAiRequest: async () => ({ ok: false as const, error: 'unavailable' as const, message: 'Story fixture: no AI requests are sent.' }),
   uploadFile: async () => { throw new Error('Story fixture: uploads are unavailable.'); },
   downloadFile: async () => { throw new Error('Story fixture: downloads are unavailable.'); },
   readPlanningResult: async () => ({ ok: false as const, message: 'Story fixture: no results are stored.' }),
-} as Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getPlanningSnapshot' | 'executePlanningCommand' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest' | 'readPlanningResult'>;
+} as Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'uploadFile' | 'downloadFile' | 'readPlanningResult'>;
 
 function MobileV2Story({ initial = 'home', locale = 'ko', offline = false }: { initial?: MobileShellTab; locale?: 'ko' | 'en'; offline?: boolean }): JSX.Element {
   const [tab, setTab] = useState<MobileShellTab>('terminal');

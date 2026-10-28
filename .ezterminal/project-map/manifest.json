@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:39c4a05b8ef632aefe80e8f09f38675d5fc33a8a2181d4924947df0f4c0941e5",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-9): the flow dock host no longer builds the old planning panel; its conversation list still refreshes only on projection events, now ignoring read failures it used to show only inside that panel."
+        "inputDigest": "sha256:78a77b29d9f26fce008f1603f5205bb5df290ef7e81c7fe0905a0eba7f68bb86",
+        "decision": "map-updated",
+        "reason": "I5-10: the PC no longer builds the planning AI, scene assets, planning drafts or the renderer's planning read/execute IPC; the preload claim now lists flow-run calls, and stale planning-ai sessions never dispatch."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f65f482288bb998adcff48840c714ca9e2a425d3ca39d5ad7842d3e6bee3078d",
+        "inputDigest": "sha256:c1c35ac2b98a3cdb36e862f00c449722edfda04618e6a3423fa385587b1dc318",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
+        "reason": "Reviewed (I5-10): main.ts lost the planning AI, asset and draft services and their shutdown step; the anchored window and authority lifecycle blocks only moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:4f4ad917e95e8ec5f25d5d38a1712e84a4c75382508fc01e00d3acd4cb0c411c",
+        "inputDigest": "sha256:802d3de4d87ea82fac0776de7db1cf19710ff3cd2a3ce815c9782f7734e5f648",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
+        "reason": "Reviewed (I5-10): the phone transport drops the old planning editor's requests (planning read/execute, AI, assets, device drafts) and the PC stops offering them; the anchored session and command paths only moved."
       }
     },
     {
@@ -601,19 +601,11 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-scope.ts"
-        },
-        {
-          "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-service.ts"
-        },
-        {
-          "rootAlias": "app",
           "relativePath": "src/main/planning-authority.ts"
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/main/planning-draft-store.ts"
+          "relativePath": "src/main/workflow-draft-store.ts"
         },
         {
           "rootAlias": "app",
@@ -665,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d6db51c6f34a91d63f8e0c1eeb709b366df2f364ff1fbce87b270e36a498cdd5",
+        "inputDigest": "sha256:104c761e43eff3cc0849acbbe3fe738ff37285ba110a6eb408f6317c15310f52",
         "decision": "map-updated",
-        "reason": "I5-9: the planning and scene workspace is gone; its surface node is now the flow screen and its run result dialog (integration, attempt evidence in the flow's scope, independent review retry). AI, asset and draft nodes go with I5-10."
+        "reason": "I5-10: the planning AI (tool-free proposals) and planning drafts are gone from the PC; their node, edges and chapter are removed, and device recovery now cites the flow graph store beside chat state. Execution, results and archive are unchanged."
       }
     },
     {

@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
 import { WorkflowDraftWriteSchema, WorkflowDraftResultSchema, type WorkflowDraftResult } from '../shared/workflow-draft';
 import { WorkflowIdSchema } from '../shared/workflow';
-import { SecureAtomicFile } from './secure-atomic-file';
-import type { PlanningDraftStoreOptions } from './planning-draft-store';
+import { SecureAtomicFile, type SecureAtomicFileOptions } from './secure-atomic-file';
+
+export interface WorkflowDraftStoreOptions extends SecureAtomicFileOptions {
+  readonly directory: string;
+  readonly hostId: string;
+  readonly protector: {
+    readonly available: () => boolean;
+    readonly encrypt: (plaintext: string) => Buffer | Promise<Buffer>;
+    readonly decrypt: (ciphertext: Buffer) => string | Promise<string>;
+  };
+  readonly resolveProject: (projectId: string) => boolean | Promise<boolean>;
+}
 
 /**
  * Device-local encrypted graph recovery, separate from both authoritative graphs and document drafts.
@@ -12,7 +22,7 @@ import type { PlanningDraftStoreOptions } from './planning-draft-store';
  */
 export class WorkflowDraftStore {
   private readonly files = new Map<string, Promise<SecureAtomicFile>>();
-  constructor(private readonly options: PlanningDraftStoreOptions & { hostId: string }) {}
+  constructor(private readonly options: WorkflowDraftStoreOptions) {}
   read(projectId: unknown): Promise<WorkflowDraftResult> { return this.access(projectId, (file, legacy, id) => this.readFile(file, id, legacy)); }
   write(projectId: unknown, value: unknown): Promise<WorkflowDraftResult> {
     const parsed = WorkflowDraftWriteSchema.safeParse(value);

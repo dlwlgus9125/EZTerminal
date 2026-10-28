@@ -18,7 +18,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
 const read = (relative) => readFileSync(path.join(root, relative), 'utf8');
 
-const DRAFT_DIRECTORIES = ['chat-state', 'planning-drafts', 'workflow-drafts'];
+const DRAFT_DIRECTORIES = ['chat-state', 'workflow-drafts'];
 
 // ── 1. only main.ts (for the draft stores) and the module itself use the directory mode ──
 const mainSources = readdirSync(path.join(root, 'src/main'))

@@ -14,20 +14,13 @@ import { RemoteOpenClawClient } from './remote-openclaw-client';
 import { mobileWorkflowDraftAccess } from '../mobile-workflow-draft-store';
 import type { WorkflowDraftResult, WorkflowDraftWrite } from '../../../src/shared/workflow-draft';
 import type { ChatStateResult } from '../../../src/shared/chat-state';
-import type { PlanningDraftResult } from '../../../src/shared/planning-draft';
 import { PlanningRunResultSchema, type PlanningRunRequest, type PlanningRunResult } from '../../../src/shared/planning-run';
-import { PlanningAiResultSchema, type PlanningAiRequest, type PlanningAiResult } from '../../../src/shared/planning-ai';
-import { PlanningAssetResultSchema, type PlanningAssetRequest, type PlanningAssetResult } from '../../../src/shared/planning-asset';
 import { ProjectArchiveResultSchema, type ProjectArchiveRequest, type ProjectArchiveResult } from '../../../src/shared/project-archive';
 import { WorkflowResultSchema, WorkflowPreviewResultSchema, WorkflowNavigationResultSchema, type WorkflowNavigationResult, type WorkflowCommand, type WorkflowResult, type WorkflowPreviewRequest, type WorkflowPreviewResult } from '../../../src/shared/workflow';
 import { flowCommandNeedsV17, flowPreviewNeedsV17 } from '../../../src/shared/workflow-protocol-projection';
 
 const OLDER_PC_FLOW = 'The connected PC is older and cannot save these flow settings. Your draft is kept here; update the PC to save it.';
 import { PlanningResultQueryResultSchema, type PlanningResultQuery, type PlanningResultQueryResult } from '../../../src/shared/planning-result';
-import {
-  PlanningReadResultSchema, PlanningMutationResultSchema,
-  type PlanningCommand, type PlanningReadResult, type PlanningMutationResult,
-} from '../../../src/shared/planning';
 /**
  * WsEzTerminalTransport — implements the desktop's `EzTerminalApi` (see
  * `src/shared/ipc.ts`) over the WS bridge from `src/main/remote-bridge.ts`
@@ -332,12 +325,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   chatStateWrite(): Promise<ChatStateResult> {
     return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure chat state store.' });
   }
-  planningDraftRead(): Promise<PlanningDraftResult> {
-    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure planning draft store.' });
-  }
-  planningDraftWrite(): Promise<PlanningDraftResult> {
-    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure planning draft store.' });
-  }
   private reattachPrioritySessionId: string | null = null;
 
   /** Stable renderer-side ports. They deliberately survive transient sockets;
@@ -448,14 +435,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
   >();
 
-  private readonly pendingPlanningReads = new Map<string, { projectId: string; resolve: (result: PlanningReadResult) => void }>();
   private readonly pendingPlanningRuns = new Map<string, { projectId: string; commandId?: string; resolve: (result: PlanningRunResult) => void }>();
   private readonly pendingPlanningExtensions = new Map<string, { replyKind: string; resolve: (value: unknown) => void }>();
   /** /btw asks in flight; held in memory only and settled on reply, cancel, timeout or disconnect. */
   private readonly pendingSideQuestions = new Map<string, (result: AgentSideQuestionResult) => void>();
   private readonly legacyConversations = new LegacyConversationHistory(this);
   private readonly pendingPlanningResults = new Map<string, { query: PlanningResultQuery; resolve: (result: PlanningResultQueryResult) => void }>();
-  private readonly pendingPlanningCommands = new Map<string, { command: PlanningCommand; resolve: (result: PlanningMutationResult) => void }>();
   private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
   private agentCoordinationSnapshot: AgentCoordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
   private agentOrchestrationSnapshot: AgentOrchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT;
@@ -1144,18 +1129,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
-  getPlanningSnapshot(projectId: string, subprojectId?: string): Promise<PlanningReadResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
-      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated PC to load planning.' });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest({ kind: 'planning-read', requestId, projectId, ...(subprojectId ? { subprojectId } : {}) }, this.pendingPlanningReads, requestId, { projectId, resolve })) {
-        resolve({ ok: false, error: 'unavailable', message: 'PC connection is unavailable.' });
-      }
-    });
-  }
-
   getPlanningExecutionSnapshot(projectId: string, subprojectId?: string): Promise<PlanningRunResult> {
     return this.requestPlanningRun(projectId, undefined, subprojectId);
   }
@@ -1294,24 +1267,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
-  planningAiRequest(request: PlanningAiRequest): Promise<PlanningAiResult> {
-    const projectId = request.type === 'start' ? request.request.projectId : request.projectId;
-    const requestId = request.type === 'start' ? request.request.requestId : request.requestId;
-    return this.requestPlanningExtension({ kind: 'planning-ai-request', requestId: this.newId(), request }, 'planning-ai-reply', value => {
-      const parsed = PlanningAiResultSchema.safeParse(value);
-      return parsed.success && (!parsed.data.ok || parsed.data.jobs.every(job => job.request.projectId === projectId && (!requestId || job.request.requestId === requestId)))
-        ? parsed.data : { ok: false, message: 'The proposal reply could not be confirmed. Read the saved request after reconnecting.' };
-    });
-  }
-
-  executePlanningAsset(request: PlanningAssetRequest): Promise<PlanningAssetResult> {
-    return this.requestPlanningExtension({ kind: 'planning-asset-request', requestId: this.newId(), request }, 'planning-asset-reply', value => {
-      const parsed = PlanningAssetResultSchema.safeParse(value);
-      return parsed.success && (!parsed.data.ok || (parsed.data.asset.id === request.assetId && (request.type !== 'read' || parsed.data.dataBase64 !== undefined)))
-        ? parsed.data : { ok: false, message: 'The asset reply could not be verified.' };
-    });
-  }
-
   executeProjectArchive(request: ProjectArchiveRequest): Promise<ProjectArchiveResult> {
     return this.requestPlanningExtension({ kind: 'project-archive-request', requestId: this.newId(), request }, 'project-archive-reply', value => {
       const parsed = ProjectArchiveResultSchema.safeParse(value);
@@ -1349,18 +1304,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         : { kind: 'planning-run-read' as const, requestId, projectId, ...(subprojectId ? { subprojectId } : {}) };
       if (!this.tryStartMapRequest(message, this.pendingPlanningRuns, requestId, { projectId, commandId: command?.commandId, resolve })) {
         resolve({ ok: false, error: 'unavailable', message: 'No execution receipt. Reconcile this command after reconnecting.' });
-      }
-    });
-  }
-
-  executePlanningCommand(command: PlanningCommand): Promise<PlanningMutationResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
-      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated PC before applying changes.' });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest({ kind: 'planning-execute', requestId, command }, this.pendingPlanningCommands, requestId, { command, resolve })) {
-        resolve({ ok: false, error: 'unavailable', message: 'No receipt. Reload and reconcile this command before sending another change.' });
       }
     });
   }
@@ -2791,14 +2734,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       ));
     }
     this.pendingDaemonCommands.clear();
-    for (const { resolve } of this.pendingPlanningReads.values()) {
-      resolve({ ok: false, error: 'unavailable', message: 'PC connection was lost.' });
-    }
-    this.pendingPlanningReads.clear();
-    for (const { resolve } of this.pendingPlanningCommands.values()) {
-      resolve({ ok: false, error: 'unavailable', message: 'Receipt was not received. Reconcile the same command after reconnecting.' });
-    }
-    this.pendingPlanningCommands.clear();
     for (const { resolve } of this.pendingPlanningRuns.values()) resolve({ ok: false, error: 'unavailable', message: 'Connection lost. Reconcile the same execution command after reconnecting.' });
     this.pendingPlanningRuns.clear();
     for (const pending of this.pendingPlanningExtensions.values()) pending.resolve({ ok: false, error: 'unavailable', message: 'Connection lost. Reconcile the saved request before sending again.' });
@@ -3480,15 +3415,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         pending?.(accepted ? msg.snapshot : this.daemonRuntimeState.snapshot);
         break;
       }
-      case 'planning-read-reply': {
-        const pending = this.pendingPlanningReads.get(msg.requestId);
-        this.pendingPlanningReads.delete(msg.requestId);
-        if (!pending) break;
-        const parsed = PlanningReadResultSchema.safeParse(msg.result);
-        pending.resolve(parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === pending.projectId)
-          ? parsed.data : { ok: false, error: 'invalid', message: 'The host returned an invalid planning snapshot.' });
-        break;
-      }
       case 'side-question-reply': {
         const settle = this.pendingSideQuestions.get(msg.requestId);
         this.pendingSideQuestions.delete(msg.requestId);
@@ -3497,7 +3423,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         settle(parsed.success ? parsed.data : { ok: false, code: 'failed' });
         break;
       }
-      case 'planning-ai-reply':
       case 'agent-capabilities-list-reply':
       case 'agent-capabilities-manage-reply':
       case 'provider-models-list-reply':
@@ -3510,7 +3435,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'conversation-history-resume-reply':
       case 'workflow-preview-reply':
       case 'workflow-execute-reply':
-      case 'planning-asset-reply':
       case 'project-archive-reply': {
         const pending = this.pendingPlanningExtensions.get(msg.requestId);
         this.pendingPlanningExtensions.delete(msg.requestId);
@@ -3540,15 +3464,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           && (value.kind !== 'integration' || !value.integration || (value.integration.projectId === pending.query.projectId
             && pending.query.kind === 'integration' && value.integration.runId === pending.query.runId))));
         pending.resolve(matches ? value : { ok: false, message: 'Invalid result response. Refresh before continuing.' });
-        break;
-      }
-      case 'planning-execute-reply': {
-        const pending = this.pendingPlanningCommands.get(msg.requestId);
-        this.pendingPlanningCommands.delete(msg.requestId);
-        if (!pending) break;
-        const parsed = PlanningMutationResultSchema.safeParse(msg.result);
-        pending.resolve(parsed.success && (!parsed.data.ok || (parsed.data.commandId === pending.command.commandId && parsed.data.snapshot.projectId === pending.command.projectId))
-          ? parsed.data : { ok: false, error: 'unavailable', message: 'Invalid receipt. Reconcile this command before retrying.' });
         break;
       }
       case 'daemon-command-reply': {

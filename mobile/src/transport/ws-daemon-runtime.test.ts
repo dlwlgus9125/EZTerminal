@@ -6,7 +6,6 @@ import {
   type DaemonSnapshot,
 } from '../../../src/shared/daemon-protocol';
 import { REMOTE_PROTOCOL_VERSION } from '../../../src/shared/remote-protocol';
-import type { PlanningCommand, PlanningSnapshot } from '../../../src/shared/planning';
 import {
   WsEzTerminalTransport,
   type CreateSocket,
@@ -55,71 +54,23 @@ function socketFactory(): { readonly createSocket: CreateSocket; readonly socket
 
 const NOW = '2026-09-04T00:00:00.000Z';
 
-function planningSnapshot(): PlanningSnapshot {
-  return {
-    schemaVersion: 1, projectId: 'project', revision: 0,
-    draft: { id: 'draft-1', items: [], links: [], scenes: [], components: [], profiles: [], tasks: [], assets: [] },
-    baselines: [], history: [], profileProposals: [],
-  };
-}
-
-describe('planning over the authenticated mobile transport', () => {
-  it('rejects malformed or cross-kind asset replies and leaves interrupted archive/AI requests unconfirmed', async () => {
+describe('flow records over the authenticated mobile transport', () => {
+  it('leaves an interrupted archive request unconfirmed and sends it once', async () => {
     const { createSocket, sockets } = socketFactory(); let sequence = 0;
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => `extension-${++sequence}` });
     sockets[0].message({ kind: 'auth-ok' });
-    const asset = transport.executePlanningAsset({ type: 'read', projectId: 'project', assetId: 'logo' });
-    const assetRequest = sockets[0].lastSent() as { requestId: string };
-    sockets[0].message({ kind: 'planning-asset-reply', requestId: assetRequest.requestId, result: { ok: true, asset: { id: 'logo' }, dataBase64: '<script/>' } });
-    expect(await asset).toMatchObject({ ok: false });
-    const crossed = transport.executePlanningAsset({ type: 'read', projectId: 'project', assetId: 'logo' });
-    const crossedRequest = sockets[0].lastSent() as { requestId: string };
-    sockets[0].message({ kind: 'planning-ai-reply', requestId: crossedRequest.requestId, result: { ok: true, jobs: [] } });
-    expect(await crossed).toMatchObject({ ok: false });
     const archive = transport.executeProjectArchive({ type: 'export', projectId: 'project', commandId: 'stable-export' });
-    const ai = transport.planningAiRequest({ type: 'read', projectId: 'project', requestId: 'saved-proposal' });
     transport.disconnect();
     expect(await archive).toMatchObject({ ok: false, error: 'unavailable' });
-    expect(await ai).toMatchObject({ ok: false });
     expect(sockets[0].sent.map(raw => JSON.parse(raw)).filter(message => message.kind === 'project-archive-request')).toHaveLength(1);
   });
 
-  it('correlates and validates project snapshots without accepting another project', async () => {
-    const { createSocket, sockets } = socketFactory();
-    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'read-1' });
-    sockets[0].message({ kind: 'auth-ok' });
-    const read = transport.getPlanningSnapshot('project');
-    expect(sockets[0].lastSent()).toEqual({ kind: 'planning-read', requestId: 'read-1', projectId: 'project' });
-    sockets[0].message({ kind: 'planning-read-reply', requestId: 'read-1', result: { ok: true, snapshot: planningSnapshot() } });
-    expect(await read).toEqual({ ok: true, snapshot: planningSnapshot() });
-    const wrong = transport.getPlanningSnapshot('project');
-    sockets[0].message({ kind: 'planning-read-reply', requestId: 'read-1', result: { ok: true, snapshot: { ...planningSnapshot(), projectId: 'other' } } });
-    expect(await wrong).toMatchObject({ ok: false, error: 'invalid' });
-    transport.disconnect();
-  });
-
-  it('preserves an unconfirmed command for explicit reconciliation instead of auto-replaying it', async () => {
-    const { createSocket, sockets } = socketFactory();
-    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'command-1' });
-    sockets[0].message({ kind: 'auth-ok' });
-    const command: PlanningCommand = {
-      commandId: 'stable-change', projectId: 'project', expectedRevision: 0,
-      actor: { kind: 'user', id: 'client' }, type: 'planning.freeze',
-      payload: { baselineId: 'approved', title: 'Approved' },
-    };
-    const write = transport.executePlanningCommand(command);
-    expect(sockets[0].lastSent()).toEqual({ kind: 'planning-execute', requestId: 'command-1', command });
-    transport.disconnect();
-    expect(await write).toMatchObject({ ok: false, error: 'unavailable' });
-    expect(sockets[0].sent.map((raw) => JSON.parse(raw)).filter((msg) => msg.kind === 'planning-execute')).toHaveLength(1);
-  });
-
-  it('declines planning commands when the host cannot negotiate the new protocol', async () => {
+  it('declines a run result read when the host cannot negotiate the planning protocol', async () => {
     const { createSocket, sockets } = socketFactory();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
     sockets[0].message({ kind: 'auth-ok', protocolVersion: 12 });
-    expect(await transport.getPlanningSnapshot('project')).toMatchObject({ ok: false, error: 'unavailable' });
-    expect(sockets[0].sent.map((raw) => JSON.parse(raw)).some((msg) => msg.kind === 'planning-read')).toBe(false);
+    expect(await transport.readPlanningResult({ kind: 'integration', projectId: 'project', runId: 'run' })).toMatchObject({ ok: false });
+    expect(sockets[0].sent.map((raw) => JSON.parse(raw)).some((msg) => msg.kind === 'planning-result-read')).toBe(false);
     transport.disconnect();
   });
 });

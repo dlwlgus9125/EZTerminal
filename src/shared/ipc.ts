@@ -16,16 +16,12 @@ import type {
   ThemeName,
 } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
-import type { PlanningCommand, PlanningReadResult, PlanningMutationResult } from './planning';
 import type { WorkflowAccess, WorkflowNavigationAccess } from './workflow';
 import type { WorkflowDraftAccess } from './workflow-draft';
 import type { AgentCapabilitiesClient } from './agent-capabilities';
 import type { ChatStateResult, ChatStateScope, ChatStateWrite } from './chat-state';
-import type { PlanningDraftResult, PlanningDraftWrite } from './planning-draft';
 import type { PlanningRunRequest, PlanningRunResult } from './planning-run';
 import type { PlanningResultQuery, PlanningResultQueryResult } from './planning-result';
-import type { PlanningAiRequest, PlanningAiResult } from './planning-ai';
-import type { PlanningAssetRequest, PlanningAssetResult } from './planning-asset';
 import type { ProjectArchiveRequest, ProjectArchiveResult } from './project-archive';
 import type { FilePreviewResult } from './file-preview';
 import type { TerminalCompletionRequest, TerminalCompletionResult } from './terminal-completion';
@@ -1393,20 +1389,14 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   ) => Promise<readonly DaemonTranscriptItem[]>;
   /** Main replaces the caller-supplied principal with this renderer's identity. */
   sendDaemonCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
-  /** One host-owned planning authority for desktop and authenticated Android. */
-  getPlanningSnapshot: (projectId: string, subprojectId?: string) => Promise<PlanningReadResult>;
-  executePlanningCommand: (command: PlanningCommand) => Promise<PlanningMutationResult>;
+  /** One host-owned flow execution authority for desktop and authenticated Android. */
   getPlanningExecutionSnapshot: (projectId: string, subprojectId?: string) => Promise<PlanningRunResult>;
   executePlanningRun: (command: PlanningRunRequest) => Promise<PlanningRunResult>;
   readPlanningResult: (query: PlanningResultQuery) => Promise<PlanningResultQueryResult>;
-  planningAiRequest: (request: PlanningAiRequest) => Promise<PlanningAiResult>;
-  executePlanningAsset: (request: PlanningAssetRequest) => Promise<PlanningAssetResult>;
   executeProjectArchive: (request: ProjectArchiveRequest) => Promise<ProjectArchiveResult>;
   /** Device-local encrypted composition and exact pending submission recovery. */
   chatStateRead: (scope: ChatStateScope) => Promise<ChatStateResult>;
   chatStateWrite: (scope: ChatStateScope, request: ChatStateWrite) => Promise<ChatStateResult>;
-  planningDraftRead: (projectId: string, subprojectId?: string) => Promise<PlanningDraftResult>;
-  planningDraftWrite: (projectId: string, request: PlanningDraftWrite, subprojectId?: string) => Promise<PlanningDraftResult>;
   onDaemonEvent: (listener: (event: DaemonEvent) => void) => () => void;
   /** Reference-counted by callers; only subscribed renderers receive live events. */
   setDaemonEventsSubscribed: (subscribed: boolean) => Promise<void>;

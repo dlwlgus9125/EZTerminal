@@ -631,6 +631,18 @@ describe('planning extension bridge authority', () => {
     await flush(); expect(request).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(readResult).not.toHaveBeenCalled();
     expect(ws.sent.filter(value => 'requestId' in value && typeof value.requestId === 'string' && value.requestId.startsWith('legacy-'))).toHaveLength(messages.length); ws.close();
   });
+  it('refuses an older phone\'s planning AI and scene asset requests once the PC has neither, keeping the connection', async () => {
+    // I5-10: the desktop no longer builds the planning AI or scene assets; an old phone still asks for them.
+    const { options } = makeOptions({});
+    const ws = new FakeWs(); await authed(ws, options);
+    ws.clientSend({ kind: 'planning-ai-request', requestId: 'old-ai', request: { type: 'read', projectId: 'project' } });
+    ws.clientSend({ kind: 'planning-asset-request', requestId: 'old-asset', request: { type: 'read', projectId: 'project', assetId: 'logo' } });
+    await flush();
+    expect(ws.sent).toContainEqual({ kind: 'planning-ai-reply', requestId: 'old-ai', result: { ok: false, message: expect.stringContaining('updated') } });
+    expect(ws.sent).toContainEqual({ kind: 'planning-asset-reply', requestId: 'old-asset', result: { ok: false, message: expect.stringContaining('updated') } });
+    expect(ws.readyState).toBe(1);
+    ws.close();
+  });
   const cases = [
     ['planning-ai-request', 'planning-ai-reply', 'planningAiSource', { type: 'read', projectId: 'project' }],
     ['planning-asset-request', 'planning-asset-reply', 'planningAssetSource', { type: 'read', projectId: 'project', assetId: 'logo' }],

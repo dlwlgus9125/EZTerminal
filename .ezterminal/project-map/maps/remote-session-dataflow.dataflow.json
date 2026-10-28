@@ -116,16 +116,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1113,
-          "endLine": 1144,
+          "startLine": 1098,
+          "endLine": 1129,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2787,
-          "endLine": 2793,
+          "startLine": 2730,
+          "endLine": 2736,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "Connection loss settles each pending daemon command as delivery-uncertain and clears it rather than replaying the mutation."
         }
@@ -158,8 +158,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2539,
-          "endLine": 2550,
+          "startLine": 2482,
+          "endLine": 2493,
           "lineDigest": "sha256:fcbf44c42ac302695e9994f7ff8488cb5bcd725149732b44da631c5c7fc25a49",
           "claim": "The phone sends one auth frame when the socket opens, using baseline v12 plus the explicit v15-v12 offer and the same token/client identity."
         }
@@ -290,8 +290,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1729,
-          "endLine": 1761,
+          "startLine": 1719,
+          "endLine": 1751,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -362,16 +362,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2438,
-          "endLine": 2498,
+          "startLine": 2381,
+          "endLine": 2441,
           "lineDigest": "sha256:25106c9a3a1fd8bac8bd8d5ec443a564d65ac0ce6a3107da9b4d594c4d46c376",
           "claim": "Mobile accepts only a non-regressing authoritative snapshot and responds to event gaps or revision regression by refetching and resubscribing from the new cursor."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3554,
-          "endLine": 3590,
+          "startLine": 3469,
+          "endLine": 3505,
           "lineDigest": "sha256:83c17a2a2e37318b6e54ea36408ac01d540a60d21fe46deaa8f6b932740e3810",
           "claim": "Mobile correlates receipts, validates bounded transcript items against the requested Session, and feeds valid daemon events into continuity handling."
         }
@@ -406,16 +406,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1191,
-          "endLine": 1238,
+          "startLine": 1164,
+          "endLine": 1211,
           "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
           "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3160,
-          "endLine": 3185,
+          "startLine": 3095,
+          "endLine": 3120,
           "lineDigest": "sha256:cae794fbef5daaaa7f4cc84ec542d44eae5341b1a10bd4b1d0d0b6c89f87e9ec",
           "claim": "Mobile accepts one supported auth-ok version, validates host identity and pairing token handoff, and preserves that negotiated version for later feature gates."
         }
@@ -433,24 +433,24 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1113,
-          "endLine": 1144,
+          "startLine": 1098,
+          "endLine": 1129,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2787,
-          "endLine": 2793,
+          "startLine": 2730,
+          "endLine": 2736,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "A connection drop resolves the original pending command as delivery-uncertain and removes it without transport replay."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3095,
-          "endLine": 3124,
+          "startLine": 3030,
+          "endLine": 3059,
           "lineDigest": "sha256:e06de7d97f167589fdb7af32ac72bbb3aa4405fcc25075e74a6f72238217f62d",
           "claim": "Protocol or credential rejection stops the transport, clears retry timing, settles pending work as unavailable and closes the socket; no lower-version retry is scheduled."
         }
@@ -550,8 +550,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1729,
-          "endLine": 1761,
+          "startLine": 1719,
+          "endLine": 1751,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },
@@ -609,8 +609,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2471,
-          "endLine": 2498,
+          "startLine": 2414,
+          "endLine": 2441,
           "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
           "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
         }
@@ -728,8 +728,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1191,
-          "endLine": 1238,
+          "startLine": 1164,
+          "endLine": 1211,
           "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
           "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
         }

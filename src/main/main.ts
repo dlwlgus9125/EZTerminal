@@ -55,7 +55,6 @@ import { AgentCapabilityService } from './agent-capability-service';
 import { createAgentSideQuestionHost } from './agent-side-question-service';
 import { installAgentSideQuestionIpc } from './agent-side-question-ipc';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
-import { installPlanningIpc } from './planning-ipc';
 import { PlanningExecutionStore } from './planning-execution-store';
 import { PlanningRunService, autoApprovalRefused } from './planning-run-service';
 import { HostAttentionService } from './host-attention-service';
@@ -63,19 +62,13 @@ import { PlanningRunAuthority } from './planning-run-authority';
 import { installPlanningRunIpc } from './planning-run-ipc';
 import { PlanningResultService } from './planning-result-service';
 import { PlanningEnvironmentService } from './planning-environment-service';
-import { PlanningAiService } from './planning-ai-service';
-import { PlanningAssetService } from './planning-asset-service';
-import { readPlanningFileReference } from './planning-file-reference';
-import { PlanningExtensionAuthority, installPlanningExtensionIpc } from './planning-extension-authority';
 import { ProjectArchiveService } from './project-archive-service';
 import { installProjectArchiveIpc } from './project-archive-ipc';
 import { ProjectArchiveRemoteAuthority } from './project-archive-remote-authority';
 import { ChatStateStore } from './chat-state-store';
 import { createDesktopRecoveryProtector } from './desktop-recovery-protector';
 import { installChatStateIpc } from './chat-state-ipc';
-import { PlanningDraftStore } from './planning-draft-store';
 import { protectedDirectoryAcl, type WindowsAclRunner } from './secure-atomic-file';
-import { installPlanningDraftIpc } from './planning-draft-ipc';
 import { installSessionSurfaceIpc } from './session-surface-ipc';
 import { installLayoutIpc, installPreferencesIpc, installThemeIpc } from './settings-ipc';
 import { installTerminalToolsIpc } from './terminal-tools-ipc';
@@ -942,15 +935,14 @@ app.on('ready', async () => {
   const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
   // Created once the planning ledger and the agent services exist (below); the snapshot carries it from then on.
   const hostAttentionRef: { current?: HostAttentionService } = {};
-  const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
+  const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
   const workflowRepeatRef: { current?: WorkflowRepeatService } = {};
   const runCleanupRef: { current?: RunWorktreeCleanup } = {};
   // The worktree service starts after the orchestration server; agents reach it through this.
   const agentWorktreeRef: { create?: (projectId: string, branch: string) => ReturnType<typeof createWorkspaceWorktree> } = {};
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
-    && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId)
-    && !planningRuntimeRef.ai?.preparedSessionSettings(sessionId));
+    && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId));
   const remoteProviderModels = createRemoteProviderModels({ registry: providerRegistry, getSnapshot: () => daemonRouterRef.current!.getSnapshot() });
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
@@ -1004,12 +996,12 @@ app.on('ready', async () => {
     subagentRecordExists: (input) => claudeSubagentRecordExists(input),
     canDispatchTurn: (turn) => (planningRuntimeRef.current?.canDispatchTurn(turn)
       ?? !/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId))
-      && (planningRuntimeRef.ai?.canDispatchTurn(turn) ?? !turn.sessionId.startsWith('planning-ai-')),
+      // The planning AI is gone (I5-10): a session it left behind never dispatches.
+      && !turn.sessionId.startsWith('planning-ai-'),
     beforeProviderDispatch: (turn) => planningRuntimeRef.current?.beforeProviderDispatch(turn)
       ?? Promise.resolve(!/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId)),
     preparedSessionSettings: (sessionId) => planningRuntimeRef.current?.preparedSessionSettings(sessionId)
-      ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId)
-      ?? planningRuntimeRef.ai?.preparedSessionSettings(sessionId),
+      ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId),
     orchestrationForSession: (sessionId) => (
       agentOrchestrationMcpServer.descriptorForSession(sessionId)
     ),
@@ -1108,10 +1100,8 @@ app.on('ready', async () => {
       // The repeat schedule stops first: a launch it is sending still reaches a running execution side.
       await workflowRepeatRef.current?.dispose();
       const resultsStopped = planningRuntimeRef.results?.dispose();
-        const aiStopped = planningRuntimeRef.ai?.dispose();
       await planningRuntimeRef.current?.dispose();
       await resultsStopped;
-        await aiStopped;
       await planningRuntimeRef.environments?.dispose();
       await daemonAutomationRuntime.dispose();
     },
@@ -2241,17 +2231,6 @@ app.on('ready', async () => {
         && conversation.kind === 'agent' && conversation.source === 'structured';
     },
   });
-  const planningDraftStore = new PlanningDraftStore({
-    ...draftDirectory('planning-drafts'),
-    protector: desktopRecoveryProtector,
-    resolveSubproject: (projectId, subprojectId) => workflowService.owns(projectId, subprojectId),
-    resolveProject: async (projectId) => {
-      await chatStateReady;
-      if (daemonAvailability?.state !== 'ready') return false;
-      const project = daemonCommandRouter.getSnapshot().projects.find((candidate) => candidate.id === projectId);
-      return !!project && !project.archivedAt;
-    },
-  });
   const workflowDraftStore = new WorkflowDraftStore({ ...draftDirectory('workflow-drafts'), hostId: workflowHostId,
     protector: desktopRecoveryProtector, resolveProject: async projectId => { await chatStateReady; return daemonAvailability?.state === 'ready'
       && daemonCommandRouter.getSnapshot().projects.some(project => project.id === projectId && !project.archivedAt); } });
@@ -2452,21 +2431,9 @@ app.on('ready', async () => {
       return target ? await conversationFolders(snapshot, target) ?? null : null;
     },
   }));
-  featureIpcDisposers.push(installPlanningIpc({
-    ipc: ipcMain,
-    authority: planningAuthority,
-    resolvePrincipal: resolveDesktopSessionPrincipal,
-  }));
   featureIpcDisposers.push(installChatStateIpc({
     ipc: ipcMain,
     store: chatStateStore,
-    resolvePrincipal: resolveDesktopSessionPrincipal,
-    ready: chatStateReady,
-    ingress: localAgentOperationIngress,
-  }));
-  featureIpcDisposers.push(installPlanningDraftIpc({
-    ipc: ipcMain,
-    store: planningDraftStore,
     resolvePrincipal: resolveDesktopSessionPrincipal,
     ready: chatStateReady,
     ingress: localAgentOperationIngress,
@@ -3295,36 +3262,6 @@ app.on('ready', async () => {
   featureIpcDisposers.push(installPlanningRunIpc({
     ipc: ipcMain, authority: planningRunAuthority, resolvePrincipal: resolveDesktopSessionPrincipal,
   }));
-  const resolvePlanningRoot = (projectId: string): string | null => {
-    const project = daemonCommandRouter.getSnapshot().projects.find(entry => entry.id === projectId);
-    return project && !project.archivedAt ? project.rootPath ?? null : null;
-  };
-  const planningAiService = new PlanningAiService({
-    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing),
-    directory: path.join(app.getPath('userData'), 'planning-ai-v1'), protector: desktopRecoveryProtector,
-    planning: planningService, daemon: daemonCommandRouter, store: daemonStore, providers: providerRegistry,
-    resolveProjectRoot: resolvePlanningRoot, wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
-    readFileReference: async (projectId, reference) => {
-      const root = resolvePlanningRoot(projectId);
-      if (!root) throw new Error('The referenced project is unavailable.');
-      return readPlanningFileReference(root, reference);
-    },
-    onChanged: projectId => planningRunService.planningChanged(projectId),
-  });
-  planningRuntimeRef.ai = planningAiService;
-  const planningAiReady = planningExecutionReady.then(() => planningAiService.init());
-  ownMainStartup(planningAiReady);
-  const planningAiAuthority = new PlanningExtensionAuthority({ ready: planningAiReady, ingress: localAgentOperationIngress,
-    available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
-    request: (value, principalId) => planningAiService.request(value, principalId),
-  });
-  const planningAssetService = new PlanningAssetService({ planning: planningService, resolveProjectRoot: resolvePlanningRoot,
-    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing) });
-  const planningAssetAuthority = new PlanningExtensionAuthority({ ready: planningExecutionReady, ingress: localAgentOperationIngress,
-    available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
-    request: value => planningAssetService.request(value),
-  });
-  featureIpcDisposers.push(installPlanningExtensionIpc({ ipc: ipcMain, ai: planningAiAuthority, assets: planningAssetAuthority, resolvePrincipal: resolveDesktopSessionPrincipal }));
   const projectArchiveService = new ProjectArchiveService({
     workflows: workflowService,
     userDataDir: app.getPath('userData'), store: daemonStore, planning: planningService, ledger: planningExecutionStore,
@@ -4582,8 +4519,6 @@ app.on('ready', async () => {
       providerModelsSource: remoteProviderModels,
       sideQuestionSource: sideQuestionHost,
       planningRunSource: planningRunAuthority,
-        planningAiSource: planningAiAuthority,
-        planningAssetSource: planningAssetAuthority,
         projectArchiveSource: { request: (value, principalId) => projectArchiveAuthority.execute(value, principalId) },
       gitSource: gitStatusService,
       pairingSource: {

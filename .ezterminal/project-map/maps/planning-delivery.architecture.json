@@ -32,16 +32,6 @@
       ]
     },
     {
-      "id": "ai-proposals",
-      "title": "Scoped AI proposals",
-      "summary": "Explicit role/model selection freezes inherited instructions and reference values; host scope checks precede user acceptance.",
-      "focusIds": [
-        "planning-workspace",
-        "tool-free-proposals",
-        "planning-store"
-      ]
-    },
-    {
       "id": "frozen-execution",
       "title": "Frozen provider execution",
       "summary": "The approved baseline and exact role/model settings feed one SQLite execution ledger and managed attempt workspaces.",
@@ -208,33 +198,6 @@
       ]
     },
     {
-      "id": "tool-free-proposals",
-      "label": "Scoped tool-free proposals",
-      "detail": "The host freezes inherited role instructions and references, validates one selected entity, and applies only after explicit review.",
-      "kind": "service",
-      "group": "planning-authority",
-      "rank": 2,
-      "order": 1,
-      "evidence": [
-        {
-          "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-service.ts",
-          "startLine": 110,
-          "endLine": 145,
-          "lineDigest": "sha256:aeb7c231a73e9d5c32a0f47f3312bcd69406e6cc98555464f86a2718651b24b7",
-          "claim": "AI proposals resolve explicit subproject planning, validate model/revision/inherited role and references, and encrypt the exact prompt before dispatch."
-        },
-        {
-          "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-scope.ts",
-          "startLine": 31,
-          "endLine": 69,
-          "lineDigest": "sha256:d5b7fa617c8f251aacec0a6ad403ec78fffd1a0170f6b6a84b46bbdc3db47849",
-          "claim": "Proposal validation preserves entity identity/version and confines selected-element edits to properties and layout while checking full planning references."
-        }
-      ]
-    },
-    {
       "id": "encrypted-recovery",
       "label": "Device encrypted recovery",
       "detail": "Drafts and exact pending commands survive restart with project/session identity and compare-and-swap; this is not transcript authority.",
@@ -253,11 +216,11 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/main/planning-draft-store.ts",
-          "startLine": 20,
-          "endLine": 45,
-          "lineDigest": "sha256:8b647c541a5f67ab61a4ff16d83e64623eab07552c00237edf9e7a8ccc80c2de",
-          "claim": "Encrypted recovery compares project/subproject scope and CAS revision before saving unsent entity edits or pending host requests."
+          "relativePath": "src/main/workflow-draft-store.ts",
+          "startLine": 27,
+          "endLine": 39,
+          "lineDigest": "sha256:c61791393f42d5f36ea4960b93984d550a4c1317d7b1c106dbe23cec905422e8",
+          "claim": "Flow graph recovery checks the host and project scope and the CAS revision, then writes the encrypted state atomically; it never replaces the saved flow."
         }
       ]
     },
@@ -541,40 +504,6 @@
           "endLine": 527,
           "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
-        }
-      ]
-    },
-    {
-      "id": "proposal-request",
-      "from": "planning-workspace",
-      "to": "tool-free-proposals",
-      "label": "explicit generation and review",
-      "kind": "secondary",
-      "evidence": [
-        {
-          "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-service.ts",
-          "startLine": 110,
-          "endLine": 145,
-          "lineDigest": "sha256:aeb7c231a73e9d5c32a0f47f3312bcd69406e6cc98555464f86a2718651b24b7",
-          "claim": "AI proposals resolve explicit subproject planning, validate model/revision/inherited role and references, and encrypt the exact prompt before dispatch."
-        }
-      ]
-    },
-    {
-      "id": "proposal-apply",
-      "from": "tool-free-proposals",
-      "to": "planning-store",
-      "label": "user accepts scoped patch",
-      "kind": "secondary",
-      "evidence": [
-        {
-          "rootAlias": "app",
-          "relativePath": "src/main/planning-ai-service.ts",
-          "startLine": 198,
-          "endLine": 221,
-          "lineDigest": "sha256:2da3262717a04359057b019059c597a39138d6290e12617fe335e9e80dbfc3c0",
-          "claim": "Proposal application targets the original explicit subproject and revision; profile and entity writes still require user apply."
         }
       ]
     },
