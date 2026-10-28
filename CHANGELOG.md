@@ -27,9 +27,17 @@
   each is allowed once on this PC, with the script it calls), their own review
   (off: the checks or the person decide), a 내 답변 기다림 stage, and an
   approval that sends work back with a note. Built-in templates 개발 절차 and
-  정기 점검 (its summary is skipped when the checks give last run's result),
-  and saved templates. A scheduled 반복 runs the version a person confirmed;
-  later edits wait for a new confirmation.
+  정기 점검 (its summary is skipped when the checks give last run's result; an
+  AI stage its review rejects is redone in itself, twice at most), and saved
+  templates. A scheduled 반복 runs the version a person confirmed; later edits
+  wait for a new confirmation.
+- Settings by conversation: the AI of a conversation you see can change view
+  settings, agents, 단계 연결 and templates directly (each listed in the
+  conversation with 되돌리기), and only proposes what raises a permission or
+  turns on remote access, start at login, agents creating agents, 자문, 자동 승인
+  or 반복 — a card in the conversation that a person applies (the phone applies
+  view and agent changes only). Off by default, 자문 (`ask_advisor`) lets the AI
+  ask the linked review agent a read-only question a few times per conversation.
 - Remote protocol 18 (Android versionCode 81); older phones get a reduced view.
 
 ### Changed
