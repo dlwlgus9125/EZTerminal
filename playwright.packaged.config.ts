@@ -10,5 +10,7 @@ export default defineConfig({
   workers: 1,
   timeout: 180_000,
   reporter: 'list',
+  // A failed run keeps its step timeline (the step that stalled has a start and no end).
+  use: { trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   globalSetup: './e2e-packaged/global-setup.ts',
 });
