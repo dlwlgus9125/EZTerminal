@@ -38,7 +38,7 @@ export class WorkflowTemplateStore {
   }
 
   /** Adds a template, or replaces the one with the same id in place (keeping when it was first saved). */
-  async save(raw: unknown): Promise<WorkflowTemplateResult> {
+  async save(raw: unknown, expect?: (current: WorkflowTemplate | undefined) => boolean): Promise<WorkflowTemplateResult> {
     const parsed = WorkflowTemplateInputSchema.safeParse(raw);
     if (!parsed.success || isBuiltinWorkflowTemplateId(parsed.data.id)) return { ok: false, error: 'This template is incomplete or too long.' };
     const input = parsed.data;
@@ -48,12 +48,14 @@ export class WorkflowTemplateStore {
       return index < 0
         ? [...current, { ...input, createdAt: at, updatedAt: at }]
         : current.map((entry, position) => (position === index ? { ...input, createdAt: entry.createdAt, updatedAt: at } : entry));
-    }, 'save', 'Up to 200 templates can be saved.');
+    }, 'save', 'Up to 200 templates can be saved.', expect && ((current) => expect(current.find((entry) => entry.id === input.id))));
   }
 
-  async remove(id: unknown): Promise<WorkflowTemplateResult> {
+  /** `expect` (save and remove) sees the saved template (or undefined) in the write itself. */
+  async remove(id: unknown, expect?: (current: WorkflowTemplate | undefined) => boolean): Promise<WorkflowTemplateResult> {
     if (typeof id !== 'string') return { ok: false, error: 'This template is no longer available.' };
-    return this.write((current) => current.filter((entry) => entry.id !== id), 'remove', 'The template could not be removed.');
+    return this.write((current) => current.filter((entry) => entry.id !== id), 'remove', 'The template could not be removed.',
+      expect && ((current) => expect(current.find((entry) => entry.id === id))));
   }
 
   async flush(): Promise<void> {
@@ -64,11 +66,16 @@ export class WorkflowTemplateStore {
     mutate: (current: readonly WorkflowTemplate[]) => readonly WorkflowTemplate[],
     label: string,
     invalid: string,
+    expect?: (current: readonly WorkflowTemplate[]) => boolean,
   ): Promise<WorkflowTemplateResult> {
-    const next = await this.file.update(validate, EMPTY, (current) => ({ version: 1 as const, templates: [...mutate(current.templates)] }), `${label} workflow template`);
+    let conflict = false;
+    const next = await this.file.update(validate, EMPTY, (current) => {
+      if (expect && !expect(current.templates)) { conflict = true; return current; }
+      return { version: 1 as const, templates: [...mutate(current.templates)] };
+    }, `${label} workflow template`);
     if (!next) return { ok: false, error: invalid };
     this.cached = next.templates;
-    return { ok: true, templates: next.templates };
+    return conflict ? { ok: false, error: 'It changed since it was read; nothing was saved.', conflict: true } : { ok: true, templates: next.templates };
   }
 }
 

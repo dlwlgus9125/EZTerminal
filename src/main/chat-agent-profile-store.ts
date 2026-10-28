@@ -70,30 +70,36 @@ export class ChatAgentProfileStore {
       : undefined;
   }
 
-  async savePhases(raw: unknown): Promise<{ readonly ok: true; readonly phases: ChatAgentPhaseMap } | { readonly ok: false; readonly error: string }> {
+  /** `expect`: write only while the saved links still pass it (checked in the write itself, after any save before it). */
+  async savePhases(raw: unknown, expect?: (current: ChatAgentPhaseMap) => boolean): Promise<{ readonly ok: true; readonly phases: ChatAgentPhaseMap } | { readonly ok: false; readonly error: string; readonly conflict?: true }> {
     const parsed = ChatAgentPhaseFileSchema.safeParse(raw && typeof raw === 'object' ? { ...raw, version: 1 } : raw);
     if (!parsed.success) return { ok: false, error: 'These phase links are incomplete.' };
     const value = parsed.data;
-    const next = await this.phaseFile.update(validatePhases, EMPTY_PHASES, () => value, 'save chat agent phases');
+    let conflict = false;
+    const next = await this.phaseFile.update(validatePhases, EMPTY_PHASES, (current) => {
+      if (expect && !expect(withoutVersion(current))) { conflict = true; return current; }
+      return value;
+    }, 'save chat agent phases');
     if (!next) return { ok: false, error: 'These phase links could not be saved.' };
     this.cachedPhases = withoutVersion(next);
-    return { ok: true, phases: this.cachedPhases };
+    return conflict ? { ok: false, error: 'It changed since it was read; nothing was saved.', conflict: true } : { ok: true, phases: this.cachedPhases };
   }
 
-  /** Adds a profile, or replaces the one with the same id in place. */
-  async save(raw: unknown): Promise<ChatAgentProfileResult> {
+  /** Adds a profile, or replaces the one with the same id in place. `expect` sees the saved one (or undefined) in the write itself. */
+  async save(raw: unknown, expect?: (current: ChatAgentProfile | undefined) => boolean): Promise<ChatAgentProfileResult> {
     const parsed = ChatAgentProfileSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'This profile is incomplete or too long.' };
     const profile = parsed.data;
     return this.write((current) => {
       const index = current.findIndex((entry) => entry.id === profile.id);
       return index < 0 ? [...current, profile] : current.map((entry, at) => (at === index ? profile : entry));
-    }, 'save', 'Up to 50 profiles can be saved.');
+    }, 'save', 'Up to 50 profiles can be saved.', expect && ((current) => expect(current.find((entry) => entry.id === profile.id))));
   }
 
-  async remove(id: unknown): Promise<ChatAgentProfileResult> {
+  async remove(id: unknown, expect?: (current: ChatAgentProfile | undefined) => boolean): Promise<ChatAgentProfileResult> {
     if (typeof id !== 'string') return { ok: false, error: 'This profile is no longer available.' };
-    return this.write((current) => current.filter((entry) => entry.id !== id), 'remove', 'The profile could not be removed.');
+    return this.write((current) => current.filter((entry) => entry.id !== id), 'remove', 'The profile could not be removed.',
+      expect && ((current) => expect(current.find((entry) => entry.id === id))));
   }
 
   async flush(): Promise<void> {
@@ -105,11 +111,16 @@ export class ChatAgentProfileStore {
     mutate: (current: readonly ChatAgentProfile[]) => readonly ChatAgentProfile[],
     label: string,
     invalid: string,
+    expect?: (current: readonly ChatAgentProfile[]) => boolean,
   ): Promise<ChatAgentProfileResult> {
-    const next = await this.file.update(validate, EMPTY, (current) => ({ version: 1 as const, profiles: [...mutate(current.profiles)] }), `${label} chat agent profile`);
+    let conflict = false;
+    const next = await this.file.update(validate, EMPTY, (current) => {
+      if (expect && !expect(current.profiles)) { conflict = true; return current; }
+      return { version: 1 as const, profiles: [...mutate(current.profiles)] };
+    }, `${label} chat agent profile`);
     if (!next) return { ok: false, error: invalid };
     this.cached = next.profiles;
-    return { ok: true, profiles: next.profiles };
+    return conflict ? { ok: false, error: 'It changed since it was read; nothing was saved.', conflict: true } : { ok: true, profiles: next.profiles };
   }
 }
 

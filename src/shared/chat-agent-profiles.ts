@@ -35,7 +35,7 @@ export function parseChatAgentProfiles(value: unknown): readonly ChatAgentProfil
 
 export type ChatAgentProfileResult =
   | { readonly ok: true; readonly profiles: readonly ChatAgentProfile[] }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly conflict?: true };
 
 /** A conversation phase an agent can be linked to (Settings › AI › 단계 연결). */
 export type ChatAgentPhaseName = 'plan' | 'implement' | 'review';

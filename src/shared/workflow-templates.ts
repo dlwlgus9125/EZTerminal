@@ -24,7 +24,7 @@ export type WorkflowTemplateFile = z.infer<typeof WorkflowTemplateFileSchema>;
 
 export type WorkflowTemplateResult =
   | { readonly ok: true; readonly templates: readonly WorkflowTemplate[] }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly conflict?: true };
 
 /** Desktop only: the renderer's view of the templates saved on this PC (the built-ins are not in it). */
 export interface WorkflowTemplateAccess {

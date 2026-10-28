@@ -51,7 +51,9 @@ function setup(options: { graph?: WorkflowGraph; runs?: readonly ExecutionRun[];
   let snapshot: WorkflowSnapshot = { ...workflowFixture(), subprojects: [subproject], sessionLinks: [], runs: [...(options.runs ?? [])],
     ...(options.pinned !== undefined ? { repeatStatus: { dev: { pinnedRevision: options.pinned } } } : {}) };
   const commands: WorkflowCommand[] = [];
+  let runsChanged: ((projectId: string) => void) | undefined;
   const access: WorkflowAccess = {
+    onWorkflowRunsChanged: listener => { runsChanged = listener; return () => { runsChanged = undefined; }; },
     getWorkflowSnapshot: async () => ({ ok: true, snapshot }),
     executeWorkflowCommand: async command => {
       commands.push(WorkflowCommandSchema.parse(command));
@@ -74,7 +76,13 @@ function setup(options: { graph?: WorkflowGraph; runs?: readonly ExecutionRun[];
     if (patch?.type !== 'workflow.patch') throw new Error('No workflow.patch was sent');
     return patch.payload.graph.nodes.find(node => node.id === nodeId)!;
   };
-  return { commands, render, saved };
+  /** The host moved the runs on: the panel reads them again (after its 300 ms debounce). */
+  const replaceRuns = async (runs: readonly ExecutionRun[]) => {
+    snapshot = { ...structuredClone(snapshot), runs: [...runs] };
+    await act(async () => { runsChanged?.('project-story'); await new Promise(resolve => setTimeout(resolve, 350)); });
+    await flush();
+  };
+  return { commands, render, saved, replaceRuns };
 }
 const IMPLEMENT_EMPTY = harnessGraph({ 'dev:implement': { agent: undefined } });
 
@@ -155,6 +163,17 @@ describe('the harness canvas in the flow screen', () => {
     await setValue(labelled('Answer'), '5 tries, 10 minutes');
     await click('Send answer');
     expect(state.commands.at(-1)).toMatchObject({ type: 'run.answer', payload: { runId: 'run-dev-1', activationId: 'wf:dev:answer:0', answer: '5 tries, 10 minutes' } });
+  });
+
+  it('an answer written in one run is not shown or sent in the next run, whose activation id is the same', async () => {
+    const state = setup({ runs: [harnessRun('answer')], nodeId: 'dev:answer' });
+    await state.render();
+    await setValue(labelled('Answer'), 'for the first run');
+    await state.replaceRuns([{ ...harnessRun('answer'), runId: 'run-dev-2' }]);
+    expect(labelled('Answer').value).toBe('');
+    await setValue(labelled('Answer'), 'for the second run');
+    await click('Send answer');
+    expect(state.commands.at(-1)).toMatchObject({ type: 'run.answer', payload: { runId: 'run-dev-2', activationId: 'wf:dev:answer:0', answer: 'for the second run' } });
   });
 
   it('an approval that returns to a stage sends a rejection with the note (run.approve comment)', async () => {

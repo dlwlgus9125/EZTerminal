@@ -9,7 +9,8 @@ import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { createWorkflowGraph } from '../shared/workflow';
 import type { WorkflowTemplate } from '../shared/workflow-templates';
 import { ADVISOR_CALLS_PER_TURN, AgentAdvisor } from './agent-advisor';
-import { SettingsAuthority, settingsConversationAllowed, type UiSettingsValues } from './settings-authority';
+import { ChatAgentProfileStore } from './chat-agent-profile-store';
+import { SettingsAuthority, settingsConversationAllowed, type SettingsAuthorityOptions, type UiSettingsValues } from './settings-authority';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -20,7 +21,14 @@ const AI = { sessionId: 'chat-1', turnId: 'turn-1', projectId: 'project-1' };
 const DESKTOP = { kind: 'desktop' as const, id: 'renderer-agent-ui' };
 const PHONE = { kind: 'android' as const, id: 'phone-1' };
 
-async function setup(options: { readonly profiles?: readonly ChatAgentProfile[]; readonly templates?: readonly WorkflowTemplate[]; readonly approvalState?: (approvalId: string) => 'pending' | 'expired' } = {}) {
+async function setup(options: {
+  readonly profiles?: readonly ChatAgentProfile[];
+  readonly templates?: readonly WorkflowTemplate[];
+  readonly approvalState?: (approvalId: string) => 'pending' | 'expired';
+  /** A real store instead of the in-memory one (its writes are queued like the app's). */
+  readonly profileStore?: ChatAgentProfileStore;
+  readonly workflow?: SettingsAuthorityOptions['workflow'];
+} = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'settings-authority-'));
   dirs.push(dir);
   let ui: UiSettingsValues = { theme: 'matrix', uiScale: 100, font: null, effects: { scanlines: true }, effectIntensity: 7, density: 'adaptive', locale: 'ko', scrollback: 5000 };
@@ -41,13 +49,14 @@ async function setup(options: { readonly profiles?: readonly ChatAgentProfile[];
       fonts: [{ id: 'cascadia', label: 'Cascadia Code' }, { id: 'fira-code', label: 'Fira Code' }],
       effectIds: ['scanlines', 'flicker'],
     },
-    profiles: {
+    profiles: options.profileStore ?? {
       list: () => profiles,
       save: async (raw) => { const profile = raw as ChatAgentProfile; profiles = [...profiles.filter((entry) => entry.id !== profile.id), profile]; return { ok: true }; },
       remove: async (raw) => { profiles = profiles.filter((entry) => entry.id !== raw); return { ok: true }; },
       phases: () => phases,
       savePhases: async (raw) => { phases = raw as ChatAgentPhaseMap; return { ok: true }; },
     },
+    ...(options.workflow ? { workflow: options.workflow } : {}),
     templates: {
       list: () => templates,
       save: async (raw) => { const input = raw as WorkflowTemplate; templates = [...templates.filter((entry) => entry.id !== input.id), { ...input, createdAt: '2026-10-29T00:00:00.000Z', updatedAt: '2026-10-29T00:00:00.000Z' }]; return { ok: true }; },
@@ -144,6 +153,43 @@ describe('SettingsAuthority — undo', () => {
     expect(await authority.undo(lowered!.changeId, { kind: 'person', principal: 'desktop', id: 'renderer' })).toMatchObject({ ok: true });
     expect(profiles()[0]!.permissionPreset).toBe('full-access');
   });
+
+  it('never overwrites a person’s save that lands while the undo is under way (compared inside the store’s write)', async () => {
+    const storeDir = await mkdtemp(path.join(os.tmpdir(), 'settings-authority-store-'));
+    dirs.push(storeDir);
+    const store = new ChatAgentProfileStore(storeDir);
+    await store.init();
+    await store.save({ ...implement, permissionPreset: 'full-access' });
+    const { authority } = await setup({ profileStore: store });
+    const [renamed] = (await authority.apply(AI, { domain: 'agent', profile: { ...implement, name: '구현', permissionPreset: 'full-access' } })).changes;
+    // The person lowers it in Settings; the AI's undo is read before that save is written.
+    const lowering = store.save({ ...implement, name: '구현', permissionPreset: 'plan' });
+    const undone = authority.undo(renamed!.changeId, { kind: 'ai', sessionId: 'chat-1' });
+    await lowering;
+    expect(await undone).toMatchObject({ ok: false, error: 'conflict' });
+    expect(store.list()).toEqual([{ ...implement, name: '구현', permissionPreset: 'plan' }]);
+  });
+});
+
+describe('SettingsAuthority — an id removed and saved again', () => {
+  it('starts it no higher than it was before the removal', async () => {
+    const { authority, profiles } = await setup({ profiles: [{ ...implement, permissionPreset: 'plan' }] });
+    await authority.apply(AI, { domain: 'agent', remove: 'implement' });
+    await expect(authority.apply(AI, { domain: 'agent', profile: { ...implement, permissionPreset: 'standard' } })).rejects.toMatchObject({ code: 'needs-person' });
+    await authority.apply(AI, { domain: 'agent', profile: { ...implement, permissionPreset: 'plan' } });
+    expect(profiles()).toEqual([{ ...implement, permissionPreset: 'plan' }]);
+    // A brand-new id still starts at 승인 후 실행.
+    await authority.apply(AI, { domain: 'agent', profile: { ...implement, id: 'fresh', permissionPreset: 'standard' } });
+  });
+
+  it('keeps a template’s stage permissions the same way', async () => {
+    const graph = createWorkflowGraph('feature', 'tpl');
+    const template: WorkflowTemplate = { id: 'tpl-1', title: '내 절차', description: '', graph: { ...graph, nodes: graph.nodes.map((node) => ({ ...node, permissionPreset: 'plan' as const })) }, createdAt: '2026-10-28T00:00:00.000Z', updatedAt: '2026-10-28T00:00:00.000Z' };
+    const { authority } = await setup({ templates: [template] });
+    await authority.apply(AI, { domain: 'template', remove: 'tpl-1' });
+    const raised = { id: template.id, title: template.title, description: template.description, graph: { ...template.graph, nodes: template.graph.nodes.map((node) => ({ ...node, permissionPreset: 'standard' as const })) } };
+    await expect(authority.apply(AI, { domain: 'template', template: raised })).rejects.toMatchObject({ code: 'needs-person' });
+  });
 });
 
 describe('SettingsAuthority — proposals', () => {
@@ -187,6 +233,21 @@ describe('SettingsAuthority — proposals', () => {
     await authority.proposalResolved({ providerRequestId: `settings-proposal:${stale.proposalId}`, decision: 'allow', principal: DESKTOP });
     expect(ui().theme).toBe('light');
     expect((await authority.conversation('chat-1')).proposals.map((proposal) => proposal.state)).toEqual(['declined', 'failed']);
+  });
+
+  it('applies a 반복 proposal only at the workflow revision it showed (an edit since is not what the person saw)', async () => {
+    let revision = 3;
+    const write = vi.fn(async () => ({ ok: true as const }));
+    const { authority } = await setup({ workflow: { read: async () => ({ title: '정기 점검', revision, autoApprove: false, repeat: null }), write } });
+    const repeat = { cadence: 'daily' as const, time: '09:00', timezone: 'Asia/Seoul', enabled: true };
+    const stale = await authority.propose(AI, { domain: 'workflow', subprojectId: 'sp-1', set: { repeat } });
+    revision = 4;
+    await authority.proposalResolved({ providerRequestId: `settings-proposal:${stale.proposalId}`, decision: 'allow', principal: DESKTOP });
+    expect(write).not.toHaveBeenCalled();
+    const current = await authority.propose(AI, { domain: 'workflow', subprojectId: 'sp-1', set: { repeat } });
+    await authority.proposalResolved({ providerRequestId: `settings-proposal:${current.proposalId}`, decision: 'allow', principal: DESKTOP });
+    expect(write).toHaveBeenCalledWith('project-1', 'sp-1', { repeat }, { principal: 'desktop', id: 'renderer-agent-ui' }, 4);
+    expect((await authority.conversation('chat-1')).proposals.map((proposal) => proposal.state)).toEqual(['failed', 'applied']);
   });
 
   it('keeps at most three proposals waiting; an expired one no longer counts', async () => {

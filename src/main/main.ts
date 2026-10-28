@@ -136,7 +136,7 @@ import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
 import { BUILTIN_THEME_IDS } from '../shared/layout-schema';
-import { createDaemonCommand } from '../shared/daemon-protocol';
+import { createDaemonCommand, type DaemonPrincipal, type DaemonSnapshot } from '../shared/daemon-protocol';
 import { FONT_CATALOG } from '../renderer/fonts';
 import { EFFECT_CATALOG } from '../renderer/effects';
 import { getAvailableThemes } from './theme-store';
@@ -957,17 +957,26 @@ app.on('ready', async () => {
   const preparedHostSession = (sessionId: string): boolean => Boolean(planningRuntimeRef.current?.preparedSessionSettings(sessionId)
     || planningRuntimeRef.results?.preparedSessionSettings(sessionId) || settingsRef.advisor?.preparedSessionSettings(sessionId));
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
-  const settingsSessionAllowed = (sessionId: string): boolean => Boolean(settingsRef.authority && daemonRouterRef.current
-    && settingsConversationAllowed(daemonRouterRef.current.getSnapshot(), sessionId, { prepared: preparedHostSession(sessionId) }));
+  /** Who sent the turn the conversation runs now: undefined between turns, null when it cannot be told. */
+  const settingsTurnPrincipal = (snapshot: DaemonSnapshot, sessionId: string): DaemonPrincipal['kind'] | null | undefined => {
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    const turn = agent?.currentTurnId ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId) : undefined;
+    return turn ? daemonStore.findCommand(turn.commandId)?.command.principal.kind ?? null : undefined;
+  };
+  /** Settings tools are listed for a conversation a person sees, except while it runs a turn no person sent (a report, a heartbeat). */
+  const settingsSessionAllowed = (sessionId: string): boolean => {
+    const router = daemonRouterRef.current;
+    if (!settingsRef.authority || !router) return false;
+    const snapshot = router.getSnapshot();
+    const principal = settingsTurnPrincipal(snapshot, sessionId);
+    return settingsConversationAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), ...(principal === undefined ? {} : { turnPrincipal: principal }) });
+  };
   /** Each settings call: the turn running now must be one a person sent (not a heartbeat or a report). */
   const settingsTurnAllowed = (sessionId: string): boolean => {
     const router = daemonRouterRef.current;
     if (!settingsRef.authority || !router) return false;
     const snapshot = router.getSnapshot();
-    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
-    const turn = agent?.currentTurnId ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId) : undefined;
-    const principal = turn ? daemonStore.findCommand(turn.commandId)?.command.principal.kind ?? null : null;
-    return settingsConversationAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), turnPrincipal: principal });
+    return settingsConversationAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), turnPrincipal: settingsTurnPrincipal(snapshot, sessionId) ?? null });
   };
   const remoteProviderModels = createRemoteProviderModels({ registry: providerRegistry, getSnapshot: () => daemonRouterRef.current!.getSnapshot() });
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
@@ -1055,7 +1064,8 @@ app.on('ready', async () => {
     // The same endpoint carries the settings tools for a top-level conversation a person sees.
     workflowToolsForSession: (sessionId) => workflowSessionAllowed(sessionId) || settingsSessionAllowed(sessionId),
     settingsProposals: {
-      authorize: (input) => settingsRef.authority?.authorizeProposal(input) ?? 'Settings proposals are unavailable on this host.',
+      // authorizeProposal answers undefined when the person may decide: only a missing authority refuses here.
+      authorize: (input) => (settingsRef.authority ? settingsRef.authority.authorizeProposal(input) : 'Settings proposals are unavailable on this host.'),
       resolved: (input) => settingsRef.authority?.proposalResolved(input) ?? Promise.resolve(),
     },
     conversationWritable: (projectId, sessionId) => workflowRef.service?.conversationWritable(projectId, sessionId) ?? Promise.resolve(true),
@@ -1348,15 +1358,16 @@ app.on('ready', async () => {
       read: async (projectId, subprojectId) => {
         const read = await workflowRef.authority?.read(projectId);
         const subproject = read?.ok ? read.snapshot.subprojects.find((entry) => entry.id === subprojectId) : undefined;
-        return subproject ? { title: subproject.title, autoApprove: subproject.autoApprove === true, repeat: subproject.repeat ?? null } : undefined;
+        return subproject ? { title: subproject.title, revision: subproject.revision, autoApprove: subproject.autoApprove === true, repeat: subproject.repeat ?? null } : undefined;
       },
-      write: async (projectId, subprojectId, set, person) => {
+      write: async (projectId, subprojectId, set, person, revision) => {
         const authority = workflowRef.authority;
         const read = await authority?.read(projectId);
         const subproject = read?.ok ? read.snapshot.subprojects.find((entry) => entry.id === subprojectId) : undefined;
         if (!authority || !read?.ok || !subproject) return { ok: false, message: 'This workflow is no longer available.' };
+        // At the revision the proposal showed: one saved since is refused by the workflow service itself.
         const result = await authority.execute({
-          commandId: `settings-proposal-${randomUUID()}`, projectId, hostId: read.snapshot.hostId, expectedRevision: subproject.revision,
+          commandId: `settings-proposal-${randomUUID()}`, projectId, hostId: read.snapshot.hostId, expectedRevision: revision,
           subprojectId, type: 'subproject.update', payload: set,
         }, { kind: person.principal, id: person.id });
         return result.ok ? { ok: true } : { ok: false, message: result.message };

@@ -94,8 +94,9 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === '
 const failure = (error: string, message: string, revision?: number): Extract<WorkflowResult, { ok: false }> => ({ ok: false, error, message, ...(revision === undefined ? {} : { revision }) });
 const wrap = (registry: WorkflowRegistry, receipts: WorkflowFile['receipts']): WorkflowFile => ({ version: 1, registry, receipts, integrity: workflowDigest({ registry, receipts }) });
 
+/** A host with saved agents sends its list, empty too (phones tell "no agents" from an older PC by its absence). */
 function agentCatalogOf(agents: readonly WorkflowAgentCatalogEntry[] | undefined): { agentCatalog?: WorkflowAgentCatalogEntry[] } {
-  return agents?.length ? { agentCatalog: agents.slice(0, 50).map(agent => ({ id: agent.id, name: agent.name, providerId: agent.providerId,
+  return agents ? { agentCatalog: agents.slice(0, 50).map(agent => ({ id: agent.id, name: agent.name, providerId: agent.providerId,
     ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}), permissionPreset: agent.permissionPreset })) } : {};
 }
 function repeatStatusOf(status: Readonly<Record<string, WorkflowRepeatStatus>> | undefined): { repeatStatus?: Record<string, WorkflowRepeatStatus> } {

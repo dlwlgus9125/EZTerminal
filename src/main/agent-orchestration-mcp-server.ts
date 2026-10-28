@@ -96,7 +96,7 @@ export interface SettingsToolContext {
 
 /** What the settings tools call (SettingsAuthority and AgentAdvisor, bound by the host). */
 export interface SettingsToolHost {
-  /** The tools are listed: a top-level conversation a person sees (not prepared, scheduled or a child). */
+  /** The tools are listed: a top-level conversation a person sees (not prepared, scheduled or a child), not running a turn no person sent. */
   allowed(sessionId: string): boolean;
   /** Each call: and the turn running now is one a person sent (not a heartbeat or another automation). */
   callAllowed(sessionId: string): boolean;

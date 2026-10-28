@@ -95,7 +95,7 @@ export function useWorkflowHarness(input: WorkflowHarnessInput): WorkflowHarness
     return () => { alive = false; };
     // Read again for each workflow and when the list is opened (agents change in Settings meanwhile).
   }, [profileAccess, subproject?.id, profileRead]);
-  // A PC with no agents sends no catalog: like an older PC, its stages keep the AI · 모델 · 노력 fields.
+  // An older PC sends no catalog: its stages keep the AI · 모델 · 노력 fields. A PC with none saved sends an empty one.
   const profiles: readonly ChatAgentProfile[] | null = profileAccess ? listed : input.catalog ?? null;
   const { agentsOpen, onAgentsOpenChange } = input;
   const openAgents = (open: boolean) => { if (open) setProfileRead(count => count + 1); onAgentsOpenChange(open); };
@@ -219,8 +219,10 @@ export function useWorkflowHarness(input: WorkflowHarnessInput): WorkflowHarness
     const frozen = frozenGraph?.nodes.find(entry => entry.id === node.id) ?? node;
     const titleOf = (id: string) => frozenGraph?.nodes.find(entry => entry.id === id)?.title ?? id;
     const activationId = view.activationId;
-    const value = notes[activationId] ?? '';
-    const setValue = (next: string) => setNotes(current => ({ ...current, [activationId]: next }));
+    // Activation ids repeat from run to run (wf:<node>:<iteration>): a draft belongs to this run of this workflow.
+    const draftKey = JSON.stringify([projectId, subproject?.id ?? '', run.runId, activationId]);
+    const value = notes[draftKey] ?? '';
+    const setValue = (next: string) => setNotes(current => ({ ...current, [draftKey]: next }));
     const disabled = input.commandsDisabled || !workflowRunControls(run).approvalsOpen;
     const resultOf = (stageId: string | undefined) => {
       const attempt = stageId ? latestAttempt(run, stageId) : undefined;

@@ -182,6 +182,14 @@ describe('workflow authority and storage', () => {
     expect(await service.execute({ ...base, commandId: 'copy-repeat', subprojectId: 'a', expectedRevision: 4, type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } }, user)).toMatchObject({ ok: true });
     expect((await snapshot()).subprojects.find(entry => entry.id === 'b')?.repeat).toMatchObject({ enabled: false, cadence: 'daily' });
   });
+  it('sends the saved agents with each read, an empty list too (only an older PC sends none)', async () => {
+    let agents: { id: string; name: string; providerId: string; permissionPreset: 'standard' }[] = [{ id: 'builder', name: 'Builder', providerId: 'codex', permissionPreset: 'standard' }];
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, agentCatalog: () => agents });
+    await service.execute(create('a'), user);
+    expect((await snapshot()).agentCatalog).toEqual([{ id: 'builder', name: 'Builder', providerId: 'codex', permissionPreset: 'standard' }]);
+    agents = [];
+    expect((await snapshot()).agentCatalog).toEqual([]);
+  });
   it('answers each read with the repeat status of the registry it returns, and tells the schedule what it saved', async () => {
     const onCommitted = vi.fn();
     const repeatStatus = vi.fn((registry: { subprojects: readonly { id: string; repeat?: unknown }[] }) =>

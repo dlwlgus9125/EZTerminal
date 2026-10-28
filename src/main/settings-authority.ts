@@ -69,6 +69,8 @@ export interface SettingsAiContext {
   readonly projectId: string;
 }
 
+type StoreResult = { readonly ok: true } | { readonly ok: false; readonly error: string; readonly conflict?: true };
+
 export interface SettingsAuthorityOptions {
   readonly dir: string;
   readonly ui: {
@@ -78,17 +80,18 @@ export interface SettingsAuthorityOptions {
     readonly fonts: readonly { readonly id: string; readonly label: string }[];
     readonly effectIds: readonly string[];
   };
+  /** `expect` is checked inside the store's own write, after any save queued before it (a person's too). */
   readonly profiles: {
     list(): readonly ChatAgentProfile[];
-    save(raw: unknown): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
-    remove(id: unknown): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
+    save(raw: unknown, expect?: (current: ChatAgentProfile | undefined) => boolean): Promise<StoreResult>;
+    remove(id: unknown, expect?: (current: ChatAgentProfile | undefined) => boolean): Promise<StoreResult>;
     phases(): ChatAgentPhaseMap;
-    savePhases(raw: unknown): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
+    savePhases(raw: unknown, expect?: (current: ChatAgentPhaseMap) => boolean): Promise<StoreResult>;
   };
   readonly templates: {
     list(): readonly WorkflowTemplate[];
-    save(raw: unknown): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
-    remove(id: unknown): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
+    save(raw: unknown, expect?: (current: WorkflowTemplate | undefined) => boolean): Promise<StoreResult>;
+    remove(id: unknown, expect?: (current: WorkflowTemplate | undefined) => boolean): Promise<StoreResult>;
   };
   /** Host switches a person turns on (the 자문 switch is kept here). */
   readonly host: {
@@ -97,8 +100,9 @@ export interface SettingsAuthorityOptions {
   };
   /** A workflow's 자동 승인 and 반복 (only a person sets them). */
   readonly workflow?: {
-    read(projectId: string, subprojectId: string): Promise<{ readonly title: string; readonly autoApprove: boolean; readonly repeat: WorkflowRepeat | null } | undefined>;
-    write(projectId: string, subprojectId: string, set: { readonly autoApprove?: boolean; readonly repeat?: WorkflowRepeat }, person: SettingsPerson): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
+    read(projectId: string, subprojectId: string): Promise<{ readonly title: string; readonly revision: number; readonly autoApprove: boolean; readonly repeat: WorkflowRepeat | null } | undefined>;
+    /** Applies at `revision` (the one the proposal showed): a workflow saved since is refused, so 반복 pins what was proposed. */
+    write(projectId: string, subprojectId: string, set: { readonly autoApprove?: boolean; readonly repeat?: WorkflowRepeat }, person: SettingsPerson, revision: number): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
   };
   /** Raises the proposal as a turn-less approval in the conversation; its approval id, or undefined. */
   /** Where a raised proposal's approval stands now (the person writing again expires it). */
@@ -120,7 +124,7 @@ export interface SettingsAuthorityOptions {
 
 /** A refused request: the message tells the AI (or the person) exactly why. */
 export class SettingsError extends Error {
-  constructor(readonly code: 'invalid' | 'needs-person' | 'not-found' | 'limit' | 'unavailable', message: string) {
+  constructor(readonly code: 'invalid' | 'needs-person' | 'not-found' | 'limit' | 'unavailable' | 'conflict', message: string) {
     super(message);
     this.name = 'SettingsError';
   }
@@ -137,6 +141,8 @@ interface WorkflowEdit {
   readonly projectId: string;
   readonly subprojectId: string;
   readonly title: string;
+  /** The workflow revision the proposal was made at (applied only at it). */
+  readonly revision: number;
   readonly field: 'autoApprove' | 'repeat';
   readonly before: unknown;
   readonly after: unknown;
@@ -177,24 +183,30 @@ function templateContent(template: WorkflowTemplate | WorkflowTemplateInput): Wo
   return { id: template.id, title: template.title, description: template.description, graph: template.graph };
 }
 
+function lower(left: PermissionPreset, right: PermissionPreset | undefined): PermissionPreset {
+  return right !== undefined && rank(right) < rank(left) ? right : left;
+}
+
 /**
  * Who may change a setting is decided by the field that changes: a permission raised above what it is
  * (a new agent or stage starts at 승인 후 실행) needs a person; host switches and a workflow's 자동 승인 or
- * 반복 always do. Everything else applies now.
+ * 반복 always do. Everything else applies now. `earlier` is what the same id held before it was removed,
+ * so removing and saving it again starts no higher than it was.
  */
-function reasonsFor(edit: Edit): Reason[] {
+function reasonsFor(edit: Edit, earlier?: unknown): Reason[] {
   if (edit.domain === 'agent' && edit.after) {
     const before = edit.before as ChatAgentProfile | null;
     const after = edit.after as ChatAgentProfile;
-    const base = before?.permissionPreset ?? NEW_ENTRY_PERMISSION;
+    const base = before?.permissionPreset ?? lower(NEW_ENTRY_PERMISSION, (earlier as ChatAgentProfile | null | undefined)?.permissionPreset);
     return rank(after.permissionPreset) > rank(base) ? [{ kind: 'agent-permission', name: after.name, before: base, after: after.permissionPreset }] : [];
   }
   if (edit.domain === 'template' && edit.after) {
     const before = edit.before as WorkflowTemplateInput | null;
     const after = edit.after as WorkflowTemplateInput;
+    const removed = before ? undefined : (earlier as WorkflowTemplateInput | null | undefined);
     return after.graph.nodes.flatMap((node): Reason[] => {
       const previous = before?.graph.nodes.find((entry) => entry.id === node.id);
-      const base = previous?.permissionPreset ?? NEW_ENTRY_PERMISSION;
+      const base = previous?.permissionPreset ?? lower(NEW_ENTRY_PERMISSION, removed?.graph.nodes.find((entry) => entry.id === node.id)?.permissionPreset);
       return rank(node.permissionPreset) > rank(base)
         ? [{ kind: 'stage-permission', template: after.title, stage: node.title, before: base, after: node.permissionPreset }] : [];
     });
@@ -368,6 +380,9 @@ export class SettingsAuthority {
         const [written] = await this.writeEdits([inverse], actor, { undoOf: record.id });
         return { ok: true, changeId: written!.id };
       } catch (error) {
+        if (error instanceof SettingsError && error.code === 'conflict') {
+          return { ok: false, error: 'conflict', message: 'It changed again since; undo would overwrite that change, so nothing was changed.', current: await this.currentValue(record.domain, record.target) };
+        }
         return { ok: false, error: 'failed', message: error instanceof Error ? error.message : 'The change could not be undone.' };
       }
     });
@@ -497,16 +512,16 @@ export class SettingsAuthority {
         const current = await this.options.workflow.read(projectId, change.subprojectId);
         if (!current) throw new SettingsError('not-found', 'Unknown subprojectId in this conversation’s project. Read workflow_read first.');
         if (change.set.autoApprove !== undefined && change.set.autoApprove !== current.autoApprove) {
-          workflow.push({ projectId, subprojectId: change.subprojectId, title: current.title, field: 'autoApprove', before: current.autoApprove, after: change.set.autoApprove });
+          workflow.push({ projectId, subprojectId: change.subprojectId, title: current.title, revision: current.revision, field: 'autoApprove', before: current.autoApprove, after: change.set.autoApprove });
         }
         if (change.set.repeat && !same(current.repeat, change.set.repeat)) {
-          workflow.push({ projectId, subprojectId: change.subprojectId, title: current.title, field: 'repeat', before: current.repeat, after: change.set.repeat });
+          workflow.push({ projectId, subprojectId: change.subprojectId, title: current.title, revision: current.revision, field: 'repeat', before: current.repeat, after: change.set.repeat });
         }
         break;
       }
     }
     const reasons: Reason[] = [
-      ...edits.flatMap(reasonsFor),
+      ...edits.flatMap((edit) => reasonsFor(edit, edit.before === null ? this.lastKnown(edit.domain, edit.target) : undefined)),
       ...host.map((edit): Reason => ({ kind: 'host', key: edit.key, on: edit.after })),
       ...workflow.map((edit): Reason => ({ kind: 'workflow', field: edit.field, title: edit.title, on: this.turnsOn(edit) })),
     ];
@@ -567,6 +582,17 @@ export class SettingsAuthority {
 
   // ── Reading and writing one field ─────────────────────────────────────────────────────────────────────
 
+  /** The latest value the history saw for this id (what it held before a removal), or undefined. */
+  private lastKnown(domain: SettingsDomain, target: string): unknown {
+    for (let index = this.changes.length - 1; index >= 0; index -= 1) {
+      const record = this.changes[index]!;
+      if (record.domain !== domain || record.target !== target) continue;
+      const value = record.after ?? record.before;
+      if (value !== null && value !== undefined) return value;
+    }
+    return undefined;
+  }
+
   private async currentValue(domain: SettingsDomain, target: string): Promise<unknown> {
     switch (domain) {
       case 'ui': {
@@ -600,16 +626,21 @@ export class SettingsAuthority {
       }
       await this.options.ui.write({ ...(patch as UiSettingsWrite), ...(effects ? { effects } : {}) });
     }
+    // Each store compares what it holds with what this edit was planned from inside its own write, so a
+    // person's save that lands first (a lowered permission, say) is never overwritten.
+    const fail = (result: StoreResult): void => {
+      if (result.ok) return;
+      throw result.conflict ? new SettingsError('conflict', 'It changed since it was read (someone saved it meanwhile); nothing was changed.') : new SettingsError('invalid', result.error);
+    };
     for (const edit of edits) {
       if (edit.domain === 'agent') {
-        const result = edit.after ? await this.options.profiles.save(edit.after) : await this.options.profiles.remove(edit.target);
-        if (!result.ok) throw new SettingsError('invalid', result.error);
+        const expect = (current: ChatAgentProfile | undefined): boolean => same(current ?? null, edit.before ?? null);
+        fail(edit.after ? await this.options.profiles.save(edit.after, expect) : await this.options.profiles.remove(edit.target, expect));
       } else if (edit.domain === 'phase') {
-        const result = await this.options.profiles.savePhases(edit.after);
-        if (!result.ok) throw new SettingsError('invalid', result.error);
+        fail(await this.options.profiles.savePhases(edit.after, (current) => same(current, edit.before)));
       } else if (edit.domain === 'template') {
-        const result = edit.after ? await this.options.templates.save(edit.after) : await this.options.templates.remove(edit.target);
-        if (!result.ok) throw new SettingsError('invalid', result.error);
+        const expect = (current: WorkflowTemplate | undefined): boolean => same(current ? templateContent(current) : null, edit.before ?? null);
+        fail(edit.after ? await this.options.templates.save(edit.after, expect) : await this.options.templates.remove(edit.target, expect));
       }
     }
     const at = this.now().toISOString();
@@ -631,7 +662,8 @@ export class SettingsAuthority {
     for (const edit of plan.host) if ((edit.key === 'advisor' ? this.advisor : await this.options.host.read(edit.key)) !== edit.before) throw new Error(changedSince);
     for (const edit of plan.workflow) {
       const current = await this.options.workflow?.read(edit.projectId, edit.subprojectId);
-      if (!current || !same(edit.field === 'autoApprove' ? current.autoApprove : current.repeat, edit.before)) throw new Error(changedSince);
+      // A workflow saved since the proposal is not the one the person saw: 반복 would pin the newer one.
+      if (!current || current.revision !== edit.revision || !same(edit.field === 'autoApprove' ? current.autoApprove : current.repeat, edit.before)) throw new Error(changedSince);
     }
     if (plan.edits.length) {
       await this.writeEdits(plan.edits, { kind: 'person', principal: person.principal, id: person.id },
@@ -642,7 +674,7 @@ export class SettingsAuthority {
       else await this.options.host.write(edit.key, edit.after, person);
     }
     for (const edit of plan.workflow) {
-      const result = await this.options.workflow!.write(edit.projectId, edit.subprojectId, { [edit.field]: edit.after } as { autoApprove?: boolean; repeat?: WorkflowRepeat }, person);
+      const result = await this.options.workflow!.write(edit.projectId, edit.subprojectId, { [edit.field]: edit.after } as { autoApprove?: boolean; repeat?: WorkflowRepeat }, person, edit.revision);
       if (!result.ok) throw new Error(result.message);
     }
     if (plan.host.length) this.emit(['host']);
