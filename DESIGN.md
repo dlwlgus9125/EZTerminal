@@ -82,9 +82,8 @@ runtime theme registry만 정의한다.
 
 ## Typography
 
-제품 본문, 설정과 도움말은 편안한 local system UI typography를 사용한다. Display
-face는 wordmark와 짧은 signal label에만, monospace는 command, path, diagnostic value,
-terminal content처럼 고정 폭이 의미를 돕는 곳에만 사용한다.
+제품 본문, 설정과 도움말은 편안한 local system UI typography를 사용한다. monospace는 command, path,
+diagnostic value, terminal content와 계기판 숫자처럼 고정 폭이 의미를 돕는 곳에만 사용한다.
 
 한국어 문장 전체를 display 또는 terminal font로 만들지 않는다. Heading은 짧고 기능을
 명명하며, metadata는 작아질 수 있지만 핵심 상태나 action보다 먼저 희미해져야 한다.
@@ -139,8 +138,9 @@ feedback와 toast의 시각·접근성 문법을 feature마다 다시 만들지 
   않는다.
 - Loading, empty, offline, permission denied, unsupported와 stale state는 실제 원인과
   recovery를 숨기지 않는다. 가짜 성공 데이터로 layout을 채우지 않는다.
-- 셸·판·작업 목록·흐름의 icon은 [`ui/Glyph.tsx`](src/renderer/ui/Glyph.tsx)의 채운 스텐실 glyph이고, 나머지는
-  Lucide stroke icon을 쓰며 단계마다 glyph로 옮긴다. Emoji를 product icon으로 사용하지 않는다.
+- 모든 icon은 데스크톱과 폰 모두 [`ui/Glyph.tsx`](src/renderer/ui/Glyph.tsx)의 채운 스텐실 glyph다. 다른 icon
+  set은 쓰지 않는다(lucide는 I5에서 지웠고 test와 ESLint가 다시 들어오는 것을 막는다). 상태 glyph는 색만으로 말하지
+  않고 글자나 `Led`와 함께 쓴다. Emoji를 product icon으로 사용하지 않는다.
 - External provider content와 remote video는 제품 frame 안에 들어오지만 body를
   EZTerminal component처럼 위조하지 않는다.
 
@@ -183,9 +183,8 @@ flow·state·responsive·accessibility는 UX 계약, 정확한 값은 runtime to
 우선한다.
 
 Storybook과 visual snapshot은 구현 증거이지 별도 규범 원천이 아니다. 의도 비교 기준은
-사용자가 승인한 [2.0 reference](docs/ux/reference/2.0/manifest.json)이며, 아직 대체되지 않은
-화면은 보관된 1.0 desktop handoff를 기준으로 한다. Snapshot은 기준과 side-by-side 검토한
-뒤에만 갱신한다. 외부 content와 remote media는 결정적으로 mask한다.
+사용자가 승인한 [2.0 reference](docs/ux/reference/2.0/manifest.json)다. 1.0 desktop handoff 화면은 I5에서 모두
+2.0 승인 화면으로 대체됐고 보관 원본으로만 남는다. Snapshot은 기준과 side-by-side 검토한 뒤에만 갱신한다. 외부 content와 remote media는 결정적으로 mask한다.
 
 ## 근거 소스
 

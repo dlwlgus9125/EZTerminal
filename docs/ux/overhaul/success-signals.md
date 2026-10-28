@@ -17,7 +17,9 @@
 | S9 | 소프로젝트 실행 화면 | 2 | 1 | ① | e2e |
 | S10a | J2 캔버스 열기 단계 수 | 3 | 목록에서 3 유지, 타이틀바 현재 프로젝트에서 2(D①-10 제안대로일 때). 골격 실측 | ① | 셸 골격 여정 스토리 → ② e2e |
 | S10b | J2 캔버스 → 첫 승인 단계 수 | 8 | B3에서 확정(실행 준비 흐름은 B3 범위이고 관문 ① 골격은 재지 않음) | B3 | B3 여정 e2e |
-| S11 | `src/renderer/ui` 밖 raw `<button>` / `role="dialog"` | 395 / 24 | 0 / 0(B5 종료 시) | ② | 가드 ratchet |
-| S12 | feature CSS 크기 리터럴(font-size·radius·spacing·duration) | 149·107·659·46 | 감소만 허용, 새 파일 0 | ② | 가드 ratchet |
+| S11 | `src/renderer/ui` 밖 raw `<button>` / `role="dialog"` | 395 / 24 | **만들지 않음**(I5 결정: 개수 래칫은 범위 밖) | — | — |
+| S12 | feature CSS 크기 리터럴(font-size·radius·spacing·duration) | 149·107·659·46 | **만들지 않음**(I5 결정). 폰 모서리만 반경 역할 래칫(`test/mobile-glyph-ratchet.test.ts`) | — | — |
+| S15 | 아이콘 출처 | lucide + glyph 섞임 | glyph만(I5) | I5 | `test/no-lucide.test.ts` + ESLint `no-restricted-imports` |
+| S16 | 폰에 실리는 flex gap 중 WebView 74 대체가 없는 것 | 237(빌드 CSS 기준) | 사유가 적힌 기준선만(I5 끝 11) | I5 | `scripts/verify-mobile-css-webview74.mjs`(폰 빌드마다) |
 | S13 | UX 계약 안의 자기모순 절 | 있음(§3.3·3.4·4.5·10.1·13.3) | 0 | ① | 관문 ① 검수 |
 | S14 | 화면별 승인 근거 | 한 줄 승인 | 실앱 전후 대조(Matrix 포함) + 결정 답변 | 매 화면 | [`approvals.md`](approvals.md) |

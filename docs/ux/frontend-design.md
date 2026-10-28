@@ -8,16 +8,16 @@
 > 두 계약에 동의해야 한다. 코드와 문서가 어긋나면 회귀인지 의도된 변경인지 먼저 결정하며, 코드를 이유로
 > 문서를 자동 수정하지 않는다.
 
-## 0. 이 문서를 읽는 법 (ux2 개편 중)
+## 0. 이 문서를 읽는 법
 
 2026-10-23 시작한 ux2 개편([기록](overhaul/README.md))이 이 문서를 전면 교체했다. 개편 전 원문은
 [`reviews/2026-10-23-ux2-baseline/frontend-design.md`](reviews/2026-10-23-ux2-baseline/frontend-design.md)에
 그대로 있다. 2026-10-24 사용자가 방향 **Board + Desk**(프로젝트 판 + 작업 모드 + 터미널, 계기판 시각 언어)를
 Storybook 실물로 확인하고 승인했다("승인 이대로 실물 구현해줘"). 관문 ①의 A/B 레일 안은 이 방향으로 대체되었다.
 
-- **1부(§1–§9)**는 정보 구조와 흐름이다. 각 절의 **구현 상태**가 `I1`이면 이번 셸 단계(`feat/ux2-desk-shell`)에서
-  구현되었고, `I2`(흐름)·`I3`(터미널)·`I4`(Android)·`I5`(정리)면 그 단계에서 구현된다. 구현 전까지 제품은 개편 전
-  원문의 해당 배치를 유지하며, 그 차이는 회귀가 아니다.
+- **1부(§1–§9)**는 정보 구조와 흐름이다. 각 절의 **구현 상태**는 그 절을 구현한 단계다: `I1` 셸, `I2` 흐름,
+  `I3` 터미널, `I4` Android, `I5` 정리(도구 화면 12개, 전부 glyph, 옛 기획 패널과 1.0 틀 삭제). 개편은 2026-10-28
+  I5로 끝났다.
 - **2부(§10–§27)**는 배치와 무관하게 유지되는 기능 영역 계약(토큰 사용, 상태, 접근성, PC Control,
   편집기, Explorer, Project Map, 채팅, 결과물, 흐름 캔버스 등)이다. 배치를 말하는 문장은 1부로 옮겼다.
 
@@ -69,7 +69,7 @@ I2의 범위다. 새 설치 기본 테마·채팅 스킨은 [`DESIGN.md`](../../
 | 판 밖에서 일하는 화면(목록 + 도크) | **작업 모드**(라벨로 쓰지 않음) |
 | 작업 모드 왼쪽 열 | **작업 목록 / Work list** |
 | 사람이 판단할 요청(승인·질문) | **나를 기다리는 것 / Waiting for me**. 전체(완료 알림·터미널 에이전트 포함)는 **받은 요청 / All requests** |
-| 분할·배치 프리셋·작업 공간을 고르는 메뉴 | **배치 / Layout**(버튼 이름은 기존 `워크스페이스`, I5에서 정리) |
+| 분할·배치 프리셋·작업 공간을 고르는 메뉴 | **배치 / Layout**(I5에서 버튼 이름도 `배치`로 맞춤) |
 | 함께 열어 둔 탭 묶음 | 작업 공간 / Workspace(배치 메뉴 안) |
 | 대화를 만드는 동작 | **새 대화 / New conversation** |
 | 목록에서 연 뒤 고정 전까지의 탭 | **미리보기 / Preview**, 고정은 **탭으로 고정 / Keep open** |
@@ -480,8 +480,24 @@ mobile root가 한 번만 소유한다.
 - 기준선과 성공 신호: [`overhaul/journeys-baseline.md`](overhaul/journeys-baseline.md),
   [`overhaul/success-signals.md`](overhaul/success-signals.md)
 - 진입점 통합표와 다시 쓸 테스트: [`overhaul/entry-points.md`](overhaul/entry-points.md)
-- 시각 비교 기준: [`reference/2.0/manifest.json`](reference/2.0/manifest.json)(승인 화면과 아직 대체되지 않은 1.0
-  handoff surface), 상태표 [`reference/README.md`](reference/README.md)
+- 시각 비교 기준: [`reference/2.0/manifest.json`](reference/2.0/manifest.json)(승인 화면 19개, 1.0 handoff surface는
+  모두 대체), 상태표 [`reference/README.md`](reference/README.md)
+
+### 1.0에서 넘어온 고정 test id
+
+e2e와 기기 시나리오가 쓰는 id라 2.0 셸에서도 이름을 바꾸지 않았다. 새 화면은 자기 이름의 id를 쓴다.
+
+| test id | 2.0에서 붙은 곳 |
+|---|---|
+| `workbench-header` | 위 막대 |
+| `workbench-brand-mark` | 위 막대의 EZTerminal 표지 |
+| `btn-command-center` | 위 막대 찾기 |
+| `btn-toggle-settings` | 위 막대 설정 |
+| `settings-update-badge` | 위 막대 설정의 업데이트 점 |
+| `btn-new-tab` | 작업 목록의 새 터미널 |
+| `btn-workspace-menu` | 작업 모드의 배치 메뉴 |
+| `btn-toggle-files`, `btn-toggle-stats`, `btn-toggle-openclaw` | 작업 목록 도구 줄의 파일·모니터·OpenClaw |
+| `rail-remote` | 작업 목록 도구 줄의 원격 · 폰 |
 
 # 2부 · 기능 영역 계약
 
@@ -1058,7 +1074,7 @@ mobile root가 한 번만 소유한다.
 
 ### Component와 입력
 
-- 기존 Monaco, lucide-react, project token, button, input, tree와 SidebarShell primitive를 재사용한다.
+- 기존 Monaco, glyph(`ui/Glyph.tsx`), project token, button, input, tree와 SidebarShell primitive를 재사용한다.
 - 새 dependency, font, image asset, network resource나 telemetry를 추가하지 않는다.
 - Component taxonomy는 App 소유 project state, Project Explorer tree/search, document open coordinator,
   `project-editor`, comparison provenance, worktree approval, layout coordinator로 제한한다.
@@ -1106,7 +1122,7 @@ mobile root가 한 번만 소유한다.
 - 이 규칙은 desktop의 일반 Files Explorer와 Project Explorer가 공유하는 entry 표현 계약이며, 큰 폴더에서
   별도 학습이나 view 전환 없이 폴더·파일 종류·계층을 즉시 구분하게 한다.
 - Quick Open, editor tab, breadcrumb와 mobile surface는 이 계약의 범위가 아니다.
-- Icon은 Lucide, 색은 semantic `--ui-*` token만 쓴다.
+- Icon은 glyph(`ui/Glyph.tsx`), 색은 semantic `--ui-*` token만 쓴다.
 - File-icon package 같은 새 dependency, image, font, network asset, telemetry 또는 persisted theme role을
   추가하지 않는다.
 - Folder는 `Folder`와 `FolderOpen`, 낮은 opacity의 fill, 절제된 accent와 굵기 650의 이름을 쓴다.
@@ -1407,8 +1423,7 @@ mobile root가 한 번만 소유한다.
 - 시작한 대화의 pill 메뉴는 작업 위치(바꿀 수 없음), 함께 보는 폴더, 찾을 수 없는 폴더, 지침 파일 안내와
   `프로젝트 편집…`(project 편집 창)을 보인다.
 - 좁은 창에서 작업 위치 pill은 아이콘과 `+N`만 남는다.
-- Android는 대화 헤더에 작업 위치를 보인다. **대체 예정(B1)**: 1부 §7의 한 줄 채팅 헤더로 바뀌며 작업 위치는 ⋯
-  시트와 입력창 칩에서 보인다.
+- Android 대화 머리줄은 1부 §7의 한 줄이다(I4). 작업 위치는 ⋯ 시트와 입력창 칩에서 보인다.
 
 ### 모델·권한·계획
 
@@ -1445,8 +1460,7 @@ mobile root가 한 번만 소유한다.
 ### 좁은 창과 오류 표시
 
 - 좁은 창(600px 미만)에서 설정은 한 줄을 유지하고 값은 줄이며 계획 스위치는 아이콘만 보인다.
-- 대화 헤더는 제공자(와 Android의 작업 위치)를 먼저 숨기고 제목과 상태를 남긴다(Android 작업 위치는 B1에서
-  헤더 밖으로 옮겨진다).
+- 대화 헤더는 제공자를 먼저 숨기고 제목과 상태를 남긴다(Android 작업 위치는 머리줄 밖, ⋯ 시트와 입력창 칩에 있다).
 - 설정·세션 동작 실패는 대화 헤더 아래 전체 폭 알림 띠로 보인다.
 
 ### 대화 명령과 단축키
@@ -1587,7 +1601,8 @@ mobile root가 한 번만 소유한다.
 - 단계 설정·단계 문서는 언제나 단계 칸에서 고친다(초안). 단계를 더하고, 끌고, 잇고, 지우는 일은 캔버스 머리줄
   `흐름 편집` 상태에서만 한다. 이 상태는 메모리에만 두고 다른 소프로젝트를 열면 닫는다.
 - 노드 끌기, 카드 오른쪽 출력 포트(포트 이름 표시)에서 끌어 연결, 연결 끝 옮기기, Delete/Backspace(노드는 확인
-  대화상자), 자동 정렬은 `흐름 편집` 상태에서, 확대·이동·Fit·미니맵은 늘 제공한다.
+  대화상자), 자동 정렬은 `흐름 편집` 상태에서 한다. 확대·이동·Fit은 늘 제공하고, 미니맵은 캔버스가 44rem보다 넓을 때
+  보인다(좁은 캔버스에서는 단계 상자를 가리지 않게 숨긴다).
 - 모든 편집은 초안만 바꾸며 `초안 저장`이 `workflow.patch`를 보낸다. 배치만 바뀐 저장은 `배치 변경`으로 기록한다.
 - 실패·거절 포트에서 되돌아가는 연결에는 재시도 한도 2를 넣는다.
 - 끌기 없이도 Tab·화살표 이동, 설정 폼, 목록 보기로 같은 편집을 할 수 있다.

@@ -109,7 +109,7 @@ schema v7은 `transcript_items.payload_json`, `approvals.request_json`, `agents.
   계획 같은 도구 입력을 64KB 상한으로 담는다. snapshot은 대기 중인 승인에만 request를 노출하므로
   백업 archive에는 포함되지 않는다. 민감도(`isSensitive`)는 메타데이터다. 기록과 미리보기는 민감 행을
   보여 주고, archive는 민감 행의 본문, 첨부와 payload를 비운다. 실행 결과(읽기 전용 단계의 결과 캡처,
-  독립 검토 판정, 다음 단계 입력)와 AI 기획 제안은 같은 턴의 답변을 민감 표시와 관계없이 쓰며,
+  독립 검토 판정, 다음 단계 입력)는 같은 턴의 답변을 민감 표시와 관계없이 쓰며,
   같은 `messageId`의 delta는 답변 하나로 합친다. 명령 실행 결과처럼 민감한 도구 출력은 넣지 않는다.
 - Claude는 대화 세션에서 partial message를 스트리밍한다. 두 adapter의 DeltaCoalescer가 delta를 약
   80ms 또는 2KB 단위로 묶어 기록하고, 블록의 최종 메시지가 같은 `messageId`로 delta를 대체한다.
@@ -265,8 +265,9 @@ checkpoint에 exact command를 확인 저장한 뒤 전송한다. 미확정 crea
 함께 경고한다. 메모리 checkpoint의 동시 미확정 create 상한은 64개이며, 상한을 넘는 새 create는 기존
 레코드를 잘라내지 않고 persistence와 daemon 전송 전에 fail closed한다.
 
-Desktop 채팅·기획·워크플로 초안은 Electron safeStorage(Windows DPAPI 사용자 범위)로 암호화해
-user data의 전용 디렉터리(`chat-state`, `planning-drafts`, `workflow-drafts`)에 저장한다. Windows에서는
+Desktop 채팅·워크플로 초안은 Electron safeStorage(Windows DPAPI 사용자 범위)로 암호화해
+user data의 전용 디렉터리(`chat-state`, `workflow-drafts`)에 저장한다(옛 기획 초안 `planning-drafts`는 I5에서
+기획 패널과 함께 없앴다). Windows에서는
 그 디렉터리에 현재 사용자와 SYSTEM만 허용하는 보호·상속 DACL을 시작 시 한 번 적용·검증하고, 안에서 만든
 파일은 이를 상속한다. 입력 중 저장마다 PowerShell로 파일 DACL을 다시 검증하지 않는 대신 디렉터리 DACL이
 다른 principal의 파일 생성·교체를 막고, 내용은 DPAPI 암호문으로 기밀성과 무결성을 지킨다. 원격 토큰 등
