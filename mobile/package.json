@@ -29,7 +29,8 @@
     "e2e:session-heavy-resume": "node --experimental-strip-types e2e/session-heavy-output-resume.ts",
     "e2e:release-soak": "node --experimental-strip-types e2e/release-soak.ts",
     "e2e:theme-effects": "node --experimental-strip-types e2e/theme-effects-font.ts",
-    "e2e:handoff-surfaces": "node --experimental-strip-types e2e/handoff-surfaces.ts"
+    "e2e:handoff-surfaces": "node --experimental-strip-types e2e/handoff-surfaces.ts",
+    "e2e:i6-upgrade": "node --experimental-strip-types e2e/i6-upgrade.ts"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.2",
