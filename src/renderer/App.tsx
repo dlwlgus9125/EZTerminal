@@ -2121,6 +2121,10 @@ export function App(): JSX.Element {
       setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
       setSidebarOpen('settings', true);
     },
+    openAgentSettings: () => {
+      setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
+      setSidebarOpen('settings', true);
+    },
   }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject, shellNavigation, setSidebarOpen]);
 
   const requestPanelClose = useCallback(

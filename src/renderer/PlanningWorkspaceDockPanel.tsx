@@ -30,6 +30,8 @@ export interface PlanningNavigation {
   readonly openBoard?: (projectId: string) => void;
   /** Settings › General: start at login and keep running (반복 needs both). */
   readonly openAutomationSettings?: () => void;
+  /** Settings › AI › 에이전트, from a workflow's agent list. */
+  readonly openAgentSettings?: () => void;
 }
 export const PlanningNavigationContext =
   createContext<PlanningNavigation | null>(null);
@@ -169,6 +171,7 @@ export function PlanningWorkspaceDockPanel(
     <WorkflowWorkspacePanel
       onOpenHistory={navigation?.openHistory ? () => navigation.openHistory?.(projectId) : undefined}
       onOpenAutomationSettings={navigation?.openAutomationSettings}
+      onOpenAgentSettings={navigation?.openAgentSettings}
       retentionAccess={window.ezterminal.runRetention}
       templateAccess={window.ezterminal.workflowTemplates}
       projectId={projectId}

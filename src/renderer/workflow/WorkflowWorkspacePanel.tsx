@@ -42,6 +42,8 @@ export interface WorkflowWorkspacePanelProps {
   readonly onOpenHistory?: () => void;
   /** The PC app's start-at-login and keep-running settings (반복 runs only with both on). */
   readonly onOpenAutomationSettings?: () => void;
+  /** Settings › AI › 에이전트 (desktop): the agent list's 설정에서 관리 and 새 에이전트. */
+  readonly onOpenAgentSettings?: () => void;
   /** 작업 폴더 정리 (desktop only). */
   readonly retentionAccess?: import('../../shared/run-retention').RunRetentionAccess;
   readonly projectId: string;
@@ -124,7 +126,7 @@ function graphForPreset(id: WorkflowPresetId, prefix: string, text: (ko: string,
 export function WorkflowWorkspacePanel(props: WorkflowWorkspacePanelProps): JSX.Element {
   return <WorkflowWorkspace key={props.projectId} {...props} />;
 }
-function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onOpenAutomationSettings, retentionAccess, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, canvasRenderer, onReloadCanvas, readPlanningResult, executionAccess, archive, templateAccess, agentProfiles, checkAccess: checkAccessProp }: WorkflowWorkspacePanelProps): JSX.Element {
+function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onOpenAutomationSettings, onOpenAgentSettings, retentionAccess, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, canvasRenderer, onReloadCanvas, readPlanningResult, executionAccess, archive, templateAccess, agentProfiles, checkAccess: checkAccessProp }: WorkflowWorkspacePanelProps): JSX.Element {
   const text = useWorkflowCopy();
   const stateLabel = useAgentStateLabel();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
@@ -378,6 +380,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     selectedNodeId: nodeId, commandsDisabled: hostLocked || selected?.status === 'archived',
     canEdit: stageId => !editLocked && !runView && !(goingRun && stageWorking(goingRun, stageId)),
     agentsOpen, onAgentsOpenChange: setAgentsOpen, onGraphChange: next => updateGraph(next), onRunCommand: command => void execute(command),
+    ...(onOpenAgentSettings ? { onManageAgents: onOpenAgentSettings } : {}),
     onOpenAttemptResult: readPlanningResult && selected ? (_runId, attemptId) => setResultSelection({ kind: 'attempt', projectId, subprojectId: selected.id, attemptId }) : undefined,
   });
   const issues = graph ? validateWorkflowGraph(cleanGraph(graph), true, harness.profileIds ? { profileIds: harness.profileIds } : {}) : [];

@@ -39,6 +39,8 @@ export interface WorkflowHarnessInput {
   readonly profileAccess?: ChatAgentProfileAccess;
   readonly catalog?: readonly WorkflowAgentCatalogEntry[];
   readonly checkAccess?: WorkflowCheckAccess;
+  /** Settings › AI › 에이전트 (desktop): 설정에서 관리 and 새 에이전트 in the list. */
+  readonly onManageAgents?: () => void;
   readonly providers: readonly StructuredAgentProviderOption[];
   readonly catalogs: Readonly<Record<string, readonly ProviderModel[]>>;
   readonly selectedNodeId: string | null;
@@ -272,7 +274,8 @@ export function useWorkflowHarness(input: WorkflowHarnessInput): WorkflowHarness
     profiles, profileIds,
     decorations: decorationSet?.nodes, edgeDecorations: decorationSet?.edges,
     panelTop: usable && !mobile ? <div ref={listRef}><WorkflowAgentList text={text} agents={items} open={agentsOpen} onOpenChange={openAgents}
-      targetStage={target?.title} dragging={dragging ?? undefined} onDragAgent={setDragging} onAssign={target ? agentId => assign(target.id, agentId) : undefined} /></div> : undefined,
+      targetStage={target?.title} dragging={dragging ?? undefined} onDragAgent={setDragging} onAssign={target ? agentId => assign(target.id, agentId) : undefined}
+      {...(input.onManageAgents ? { onManage: input.onManageAgents } : {})} /></div> : undefined,
     stageSlots,
     onDropAgent: usable && !mobile ? assign : undefined,
     unallowed: statuses?.filter(entry => !entry.allowed) ?? [],
