@@ -35,6 +35,15 @@ describe('retryIndependentReview', () => {
     expect(sent.map((command) => [command.commandId, command.expectedRevision])).toEqual([['retry-review:A:3', 7], ['retry-review:A:3', 9]]);
   });
 
+  it('treats this round’s id already taken (an earlier answer was lost) as the retry already recorded', async () => {
+    const access: WorkflowExecutionAccess = {
+      getPlanningExecutionSnapshot: vi.fn(async () => snapshotAt(11)),
+      executePlanningRun: vi.fn(async () => ({ ok: false as const, error: 'command-conflict', message: 'This command ID belongs to a different request.' })),
+    };
+    await expect(retryIndependentReview(access, TARGET)).resolves.toEqual(snapshotAt(11));
+    expect(access.executePlanningRun).toHaveBeenCalledTimes(1);
+  });
+
   it('returns the host refusal as it is and does not resend other errors', async () => {
     const access: WorkflowExecutionAccess = {
       getPlanningExecutionSnapshot: vi.fn(async () => snapshotAt(7)),

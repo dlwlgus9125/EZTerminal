@@ -10,6 +10,9 @@ export interface WorkflowExecutionAccess {
  * 독립 검토 다시 요청: asks the host to run the independent review of an attempt again (a reviewer that
  * failed is never retried on its own). One command id per review generation, so a resend after a lost
  * answer is the same request. A revision that moved meanwhile is read again once and sent with the same id.
+ * The host fingerprints the whole request, revision included: when that id is already taken by this round's
+ * earlier send (its answer was lost and the run moved on), the round's retry is recorded, so the current
+ * execution state is the answer.
  */
 export async function retryIndependentReview(access: WorkflowExecutionAccess, target: {
   readonly projectId: string;
@@ -33,5 +36,8 @@ export async function retryIndependentReview(access: WorkflowExecutionAccess, ta
     });
   };
   const first = await send();
-  return !first.ok && first.error === 'revision-conflict' ? send() : first;
+  const answer = !first.ok && first.error === 'revision-conflict' ? await send() : first;
+  return !answer.ok && answer.error === 'command-conflict'
+    ? access.getPlanningExecutionSnapshot(target.projectId, target.subprojectId)
+    : answer;
 }

@@ -5,6 +5,10 @@ import { ProjectArchiveRequestSchema, type ProjectArchiveRequest } from '../shar
  * The archive dialog shows it until the person checks it again, so the same request is never sent
  * twice blindly. One per project; `scope` keeps one host's request apart from another's (the phone
  * passes its PC). Kept in this device's storage; an unreadable entry is dropped.
+ *
+ * Known limit (I5): a request the old planning panel left unanswered lived in its encrypted planning
+ * drafts, which went with that panel; it is not carried over. Such a restore may already have made its
+ * project on the host, so look at the project list before restoring the same archive again.
  */
 const KEY = 'ezterminal-project-archive-pending-v1';
 

@@ -25,14 +25,15 @@ export interface ProjectRef {
 export type ProjectDialogState =
   | { readonly kind: 'list' }
   | { readonly kind: 'add'; readonly returnTo?: 'list' }
-  | { readonly kind: 'edit'; readonly project: AgentProjectSummary; readonly returnTo?: 'list' }
+  /** `archiveOpen`: backup and restore opened on top of the settings, which keep their unsaved edits. */
+  | { readonly kind: 'edit'; readonly project: AgentProjectSummary; readonly returnTo?: 'list'; readonly archiveOpen?: boolean }
   | { readonly kind: 'delete'; readonly project: AgentProjectSummary; readonly returnTo?: 'list' }
   | { readonly kind: 'worktrees'; readonly project: ProjectRef }
   | { readonly kind: 'worktree-new'; readonly project: ProjectRef; readonly returnTo?: 'worktrees' }
   | { readonly kind: 'merge'; readonly project: ProjectRef; readonly worktree: ProjectWorktree }
   | { readonly kind: 'diff'; readonly project: ProjectRef; readonly worktree: ProjectWorktree }
-  /** Backup, restore and history cleanup; `editing` is the project dialog it was opened from (closing goes back to it). */
-  | { readonly kind: 'archive'; readonly project: ProjectRef; readonly editing?: AgentProjectSummary };
+  /** Backup, restore and history cleanup on its own (from the project settings it opens on top of them instead). */
+  | { readonly kind: 'archive'; readonly project: ProjectRef };
 
 export interface ProjectDialogHostProps {
   readonly state: ProjectDialogState | null;
@@ -200,24 +201,25 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
     case 'archive': {
       const { archive } = props;
       if (!archive) return null;
-      const editing = state.editing;
       return (
         <ProjectArchiveDialog
           project={state.project}
           archive={archive}
-          onClose={() => (editing ? onStateChange({ kind: 'edit', project: editing }) : close())}
+          onClose={close}
           onOpenProject={archive.onOpenProject ? (projectId) => { close(); archive.onOpenProject!(projectId); } : undefined}
         />
       );
     }
     case 'add':
-    case 'edit':
-      return (
+    case 'edit': {
+      const { archive } = props;
+      const editing = state.kind === 'edit' ? state : null;
+      return (<>
         <ProjectEditorDialog
           open
           mode={state.kind === 'add' ? ADD : { kind: 'edit', project: state.project }}
           access={access}
-          {...(state.kind === 'edit' && props.archive ? { onOpenArchive: () => onStateChange({ kind: 'archive', project: { projectId: state.project.projectId, name: state.project.name }, editing: state.project }) } : {})}
+          {...(editing && archive ? { onOpenArchive: () => onStateChange({ ...editing, archiveOpen: true }) } : {})}
           onClose={() => back(false)}
           onSaved={(project, previousProjectId) => {
             props.onSaved(project, state.kind, previousProjectId);
@@ -226,7 +228,16 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
             else back(true);
           }}
         />
-      );
+        {editing?.archiveOpen && archive && (
+          <ProjectArchiveDialog
+            project={{ projectId: editing.project.projectId, name: editing.project.name }}
+            archive={archive}
+            onClose={() => onStateChange({ ...editing, archiveOpen: false })}
+            onOpenProject={archive.onOpenProject ? (projectId) => { close(); archive.onOpenProject!(projectId); } : undefined}
+          />
+        )}
+      </>);
+    }
   }
 }
 

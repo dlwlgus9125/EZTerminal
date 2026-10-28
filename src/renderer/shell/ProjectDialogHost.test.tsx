@@ -57,20 +57,27 @@ function chooseFromMenu(label: string): void {
 }
 
 describe('ProjectDialogHost', () => {
-  it('opens backup and restore from the project settings and goes back to them; an unanswered request shows again', async () => {
+  it('opens backup and restore on top of the project settings and goes back to them, edits kept; an unanswered request shows again', async () => {
     const pending = { read: vi.fn(() => ({ type: 'export' as const, projectId: 'p-kitchen', commandId: 'export-1' })), write: vi.fn(async () => undefined) };
     const executeProjectArchive = vi.fn(async () => ({ ok: false as const, error: 'unavailable' as const, message: 'offline' }));
     render({ archive: { access: { executeProjectArchive }, pending } });
     act(() => openDialog({ kind: 'edit', project: kitchen }));
     await flush();
+    const name = byTestId<HTMLInputElement>('agent-project-name');
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Kitchen renamed');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     act(() => byTestId('agent-project-backup').click());
     await flush();
-    expect(dialogs()).toBe(1);
+    expect(dialogs()).toBe(2);
     expect(byTestId('project-archive-dialog').textContent).toContain('Kitchen');
     expect(pending.read).toHaveBeenCalledWith('p-kitchen');
     pressEscape();
     await flush();
+    expect(dialogs()).toBe(1);
     expect(byTestId('agent-project-editor').textContent).toContain('Edit project');
+    expect(byTestId<HTMLInputElement>('agent-project-name').value).toBe('Kitchen renamed');
   });
 
   it('offers no backup entry where the host has no archive', async () => {
