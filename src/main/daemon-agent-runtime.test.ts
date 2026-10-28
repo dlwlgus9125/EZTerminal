@@ -4722,6 +4722,54 @@ describe('settings queued for the next request', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
+  it('lets an effort picked while idle wait, so its scope can still change, and applies it at the next request', async () => {
+    const h = await harness();
+    try {
+      const turn = await workingAgent(h);
+      await finish(h, turn.id);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'keep' });
+      expect(agentOf(h).reasoningEffort).toBe('high');
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { reasoningEffort: 'low', effortScope: 'keep' } });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Next' });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Next', reasoningEffort: 'low' }), expect.anything());
+      expect(agentOf(h).reasoningEffort).toBe('low');
+      // Without a scope (an older client or an agent), an idle effort change applies at once.
+      await finish(h, agentOf(h).currentTurnId!);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'medium' });
+      expect(agentOf(h).reasoningEffort).toBe('medium');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('never links a phase agent into a prepared workflow session', async () => {
+    const phaseSettings = vi.fn(() => ({ reasoningEffort: 'low' }));
+    const h = await harness({ phaseSettings, preparedSessionSettings: (sessionId) => (sessionId === 'agent-1' ? { managedExecution: true } : undefined) });
+    try {
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Stage', providerId: 'claude', permissionPreset: 'plan', initialPrompt: 'Plan.' });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.claude.emit({ kind: 'approval-requested', sessionId: 'agent-1', turnId: turn.id, providerRequestId: 'plan-1', risk: 'write', title: 'Approve plan', request: { v: 1, kind: 'plan', callId: 'call', markdown: '- step' } });
+      await h.runtime.whenIdle();
+      await h.execute('permission.resolve', { approvalId: h.router.getSnapshot().approvals[0]!.id, decision: 'allow' });
+      expect(phaseSettings).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('gives no restart notice for a one-request effort that was only running', async () => {
+    const saved: unknown[] = [];
+    const h = await harness({ pendingSettingsStore: { load: async () => ({ 'agent-1': { runningEffort: 'low', runningTurnId: 'turn-x' } }), save: async (value) => { saved.push(value); } } });
+    try {
+      await workingAgent(h);
+      expect(h.router.readTranscript('agent-1', 0, 500).some((item) => item.text.includes('restarted'))).toBe(false);
+      await vi.waitFor(() => expect(saved).toContainEqual({}));
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'once' });
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', clearPending: true });
+      // Nothing waits any more: the marker holds no session.
+      await vi.waitFor(() => expect(saved.at(-1)).toEqual({}));
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
   it('says in the conversation that queued settings were dropped by a restart', async () => {
     const saved: unknown[] = [];
     const h = await harness({ pendingSettingsStore: { load: async () => undefined, save: async (value) => { saved.push(value); } } });

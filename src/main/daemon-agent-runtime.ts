@@ -501,7 +501,8 @@ export class DaemonAgentRuntime {
       this.pendingSettings.set(sessionId, Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as DaemonPendingAgentSettings);
     }
     const store = this.options.pendingSettingsStore;
-    const sessions = Object.fromEntries(this.pendingSettings);
+    // Only what still waits for a request is worth a notice after a restart.
+    const sessions = Object.fromEntries([...this.pendingSettings].filter(([, entry]) => entry.model || entry.permissionPreset || entry.reasoningEffort));
     if (store) this.runBackground('pending settings save failed', () => store.save(sessions));
     this.runBackground('pending settings publish failed', () => this.transition(() => ({ events: [{
       kind: 'entity.upserted', payload: { entityType: 'agent', entityId: sessionId },
@@ -519,8 +520,14 @@ export class DaemonAgentRuntime {
     } catch (error) {
       this.report('pending settings load failed', error);
     }
-    const sessionIds = Object.keys(dropped);
-    if (!sessionIds.length) return;
+    const sessionIds = Object.entries(dropped).filter(([, entry]) => {
+      const value = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      return Boolean(value.model || value.permissionPreset || value.reasoningEffort);
+    }).map(([sessionId]) => sessionId);
+    if (!sessionIds.length) {
+      if (Object.keys(dropped).length) this.runBackground('pending settings save failed', () => store.save({}));
+      return;
+    }
     await this.transition((snapshot) => {
       const live = sessionIds.filter((id) => snapshot.agents.some((agent) => agent.sessionId === id && !TERMINAL_AGENT_STATES.has(agent.state)));
       if (!live.length) return undefined;
@@ -1225,11 +1232,12 @@ export class DaemonAgentRuntime {
     const accessNow = pending?.permissionPreset ?? agent.permissionPreset;
     const phase = payload.permissionPreset === undefined || payload.permissionPreset === accessNow ? undefined
       : payload.permissionPreset === 'plan' ? 'plan' as const : accessNow === 'plan' ? 'implement' as const : undefined;
-    const linked = phase ? this.options.phaseSettings?.(agent.providerId, phase) : undefined;
+    const linked = phase && !this.options.preparedSessionSettings?.(agent.sessionId) ? this.options.phaseSettings?.(agent.providerId, phase) : undefined;
     const model = payload.model ?? linked?.model;
     const effort = payload.reasoningEffort ?? (pending?.reasoningEffort ? undefined : linked?.reasoningEffort);
 
-    if (turnRunning || once) {
+    // An effort picked in the input box (sent with a scope) also waits while idle: its scope can still change.
+    if (turnRunning || once || (effortOnly && payload.scope !== undefined)) {
       const next: { -readonly [K in keyof DaemonPendingAgentSettings]: DaemonPendingAgentSettings[K] } = { ...pending };
       if (model !== undefined) next.model = model;
       if (payload.permissionPreset !== undefined) next.permissionPreset = payload.permissionPreset;
@@ -1644,7 +1652,8 @@ export class DaemonAgentRuntime {
     // 단계 연결: an approved plan is implemented by the implement agent of this AI. Codex sends the
     // follow-up as a new request, so it starts with it; Claude continues the same turn, so the link
     // applies from the next request. Settings the person queued win.
-    const implement = command.payload.decision === 'allow' && approval.request?.kind === 'plan'
+    // A prepared (workflow) session keeps the settings its run fixed.
+    const implement = command.payload.decision === 'allow' && approval.request?.kind === 'plan' && !this.options.preparedSessionSettings?.(agent.sessionId)
       ? this.options.phaseSettings?.(agent.providerId, 'implement')
       : undefined;
     const queueImplement = (): void => {
