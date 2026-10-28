@@ -167,6 +167,8 @@ const MAX_CHILD_SUMMARY_LENGTH = 2_000;
 const REPORT_BACK_PRINCIPAL = 'report-back-runtime';
 /** Codex's own wording after its "Implement this plan?" prompt. */
 const IMPLEMENT_PLAN_PROMPT = 'Implement the plan above.';
+/** After a Claude plan approved by ending its turn: the model saw the CLI's decline text, so this says it was approved. */
+const APPROVED_PLAN_PROMPT = 'Your plan was approved. Implement it now.';
 
 interface ReportBackPlan {
   readonly parentSessionId: string;
@@ -398,6 +400,8 @@ export class DaemonAgentRuntime {
   private readonly agentUsageTracker = new AgentUsageTracker(() => this.now().getTime());
   /** What each session's next request will use beyond its record (host memory; the snapshot shows it). */
   private readonly pendingSettings = new Map<string, DaemonPendingAgentSettings>();
+  /** Plan turns a person approved by ending them, by turn: their implementation is sent once they completed. */
+  private readonly approvedPlanFollowUps = new Map<string, { readonly approvalId: string; readonly sessionId: string; readonly principal: DaemonPrincipal }>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
@@ -1132,8 +1136,8 @@ export class DaemonAgentRuntime {
       commit: { mutations },
       afterCommit: () => {
         for (const approval of proposals) {
-          if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, () => this.resolveProviderApproval(
-            agent.providerId, session.id, agent.providerSessionId!, approval.providerRequestId, 'deny'));
+          if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, async () => { await this.resolveProviderApproval(
+            agent.providerId, session.id, agent.providerSessionId!, approval.providerRequestId, 'deny'); });
         }
         if (interruptFirst && currentTurn && hasActiveCurrentTurn && agent.providerSessionId) {
           this.runBackground(
@@ -1650,23 +1654,27 @@ export class DaemonAgentRuntime {
       : command.payload.response?.kind === 'plan' ? command.payload.response.mode
         : approval.request?.kind === 'plan' ? 'standard' as const : undefined;
     // 단계 연결: an approved plan is implemented by the implement agent of this AI. Codex sends the
-    // follow-up as a new request, so it starts with it; Claude continues the same turn, so the link
-    // applies from the next request. Settings the person queued win.
+    // follow-up as a new request, so it starts with it. Claude would continue the same turn, so when the
+    // link changes something its plan turn ends at the approval and the implementation is sent as the
+    // next request (the adapter's approvePlanEndingTurn). Settings the person queued win.
     // A prepared (workflow) session keeps the settings its run fixed.
     const implement = command.payload.decision === 'allow' && approval.request?.kind === 'plan' && !this.options.preparedSessionSettings?.(agent.sessionId)
       ? this.options.phaseSettings?.(agent.providerId, 'implement')
       : undefined;
-    const queueImplement = (): void => {
-      if (!implement) return;
+    /** Whether the link queued anything for the next request. */
+    const queueImplement = (): boolean => {
+      if (!implement) return false;
       const queued = this.pendingSettings.get(agent.sessionId);
       const model = implement.model && !queued?.model && implement.model !== agent.model ? implement.model : undefined;
       const effort = implement.reasoningEffort && !queued?.reasoningEffort && implement.reasoningEffort !== agent.reasoningEffort
         ? implement.reasoningEffort
         : undefined;
-      if (model || effort) {
-        this.setPending(agent.sessionId, { ...queued, ...(model ? { model } : {}), ...(effort ? { reasoningEffort: effort, effortScope: 'keep' as const } : {}) });
-      }
+      if (!model && !effort) return false;
+      this.setPending(agent.sessionId, { ...queued, ...(model ? { model } : {}), ...(effort ? { reasoningEffort: effort, effortScope: 'keep' as const } : {}) });
+      return true;
     };
+    const proposedPlan = approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX);
+    const planTurnId = !proposedPlan && typeof provider.value.approvePlanEndingTurn === 'function' ? approval.turnId : undefined;
     return { ok: true, commit: { mutations: [
       { kind: 'approval.upsert', value: this.resolvedApprovalInput(
         approval,
@@ -1689,25 +1697,32 @@ export class DaemonAgentRuntime {
               { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'idle', ...(planMode ? { permissionPreset: planMode } : {}) }) },
               { kind: 'session.upsert' as const, value: sessionInput(session, 'idle') },
             ]),
-    ] }, afterCommit: () => { queueImplement(); this.runBackground(
-      `resolve approval ${approval.id}`,
-      async () => {
-        await this.resolveProviderApproval(
-          agent.providerId,
-          agent.sessionId,
-          agent.providerSessionId!,
-          approval.providerRequestId,
-          command.payload.decision,
-          command.payload.response,
-        );
-        // A plan Codex proposed: running it asks Codex to implement it; asking for changes sends them, still planning.
-        if (approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX)) {
-          const followUp = command.payload.decision === 'allow' ? IMPLEMENT_PLAN_PROMPT
-            : command.payload.response?.kind === 'feedback' ? command.payload.response.message : undefined;
-          if (followUp) await this.sendPlanFollowUp(approval.id, agent.sessionId, followUp, command.principal);
-        }
-      },
-    ); } };
+    ] }, afterCommit: () => {
+      // Only a plan turn whose implementation now starts with other settings ends at the approval.
+      const endTurn = queueImplement() && planTurnId !== undefined;
+      if (endTurn) this.approvedPlanFollowUps.set(planTurnId, { approvalId: approval.id, sessionId: agent.sessionId, principal: command.principal });
+      this.runBackground(
+        `resolve approval ${approval.id}`,
+        async () => {
+          const delivered = await this.resolveProviderApproval(
+            agent.providerId,
+            agent.sessionId,
+            agent.providerSessionId!,
+            approval.providerRequestId,
+            command.payload.decision,
+            command.payload.response,
+            endTurn,
+          );
+          if (endTurn && !delivered) this.approvedPlanFollowUps.delete(planTurnId);
+          // A plan Codex proposed: running it asks Codex to implement it; asking for changes sends them, still planning.
+          if (proposedPlan) {
+            const followUp = command.payload.decision === 'allow' ? IMPLEMENT_PLAN_PROMPT
+              : command.payload.response?.kind === 'feedback' ? command.payload.response.message : undefined;
+            if (followUp) await this.sendPlanFollowUp(approval.id, agent.sessionId, followUp, command.principal);
+          }
+        },
+      );
+    } };
   }
 
   /** Sends the message that follows a decision on a proposed plan, as the person who decided. */
@@ -2596,6 +2611,17 @@ export class DaemonAgentRuntime {
       if (report) {
         const { plan, summaryRow } = report;
         this.runBackground(`report ${plan.childSessionId} back to ${plan.parentSessionId}`, () => this.sendReportBack(plan, summaryRow));
+      }
+      // A plan approved by ending its turn is implemented by the next request, unless the turn was stopped or failed.
+      const followUp = this.approvedPlanFollowUps.get(event.turnId);
+      if (followUp && followUp.sessionId === event.sessionId) {
+        this.approvedPlanFollowUps.delete(event.turnId);
+        if (event.outcome === 'completed') {
+          this.runBackground(
+            `implement approved plan ${followUp.approvalId}`,
+            () => this.sendPlanFollowUp(followUp.approvalId, followUp.sessionId, APPROVED_PLAN_PROMPT, followUp.principal),
+          );
+        }
       }
       return;
     }
@@ -3715,20 +3741,25 @@ export class DaemonAgentRuntime {
     providerRequestId: string,
     decision: 'allow' | 'deny',
     response?: ApprovalResponse,
-  ): Promise<void> {
+    endTurn = false,
+  ): Promise<boolean> {
     const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
     if (!provider.ok) {
       await this.markSessionDeliveryUncertain(sessionId, 'approval-provider-unavailable', provider.message);
-      return;
+      return false;
     }
     try {
-      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision, ...(response ? { response } : {}) });
+      const input = { sessionId, providerSessionId, providerRequestId, ...(response ? { response } : {}) };
+      if (endTurn && provider.value.approvePlanEndingTurn) await provider.value.approvePlanEndingTurn(input);
+      else await provider.value.resolveApproval({ ...input, decision });
+      return true;
     } catch (error) {
       await this.markSessionDeliveryUncertain(
         sessionId,
         'approval-delivery-failed',
         error instanceof Error ? error.message : 'Approval decision could not be delivered.',
       );
+      return false;
     }
   }
 

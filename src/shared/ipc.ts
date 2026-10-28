@@ -1226,6 +1226,9 @@ export interface RemoteDesktopHostStatus {
 
 export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, WorkflowNavigationAccess, WorkflowDraftAccess, ConversationHistoryClient {
   agentCapabilitiesList: AgentCapabilitiesClient['list'];
+  /** 확인 명령 동의 (desktop): a workflow's checks and whether this PC allows them; allowing one as it is now. */
+  workflowCheckStatus?: (projectId: string, subprojectId: string) => Promise<import('./workflow-checks').WorkflowCheckConsentResult>;
+  workflowCheckAllow?: (projectId: string, subprojectId: string, nodeId: string, checkId: string, digest: string) => Promise<import('./workflow-checks').WorkflowCheckConsentResult>;
   agentCapabilitiesManage: AgentCapabilitiesClient['manage'];
   readonly versions: RuntimeVersions;
   /**

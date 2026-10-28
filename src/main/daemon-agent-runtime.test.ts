@@ -4710,6 +4710,68 @@ describe('settings queued for the next request', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
+  describe('an approved Claude plan', () => {
+    async function claudePlan(implementEffort: string) {
+      const h = await harness({ phaseSettings: (_providerId, phase) => (phase === 'implement' ? { reasoningEffort: implementEffort } : undefined) });
+      const approvePlanEndingTurn = vi.fn(async () => undefined);
+      h.claude.approvePlanEndingTurn = approvePlanEndingTurn;
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'claude', permissionPreset: 'plan', reasoningEffort: 'high', initialPrompt: 'Plan a change.' });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.claude.emit({ kind: 'approval-requested', sessionId: 'agent-1', turnId: turn.id, providerRequestId: 'plan-1', risk: 'write', title: 'Approve plan', request: { v: 1, kind: 'plan', callId: 'call', markdown: '- step' } });
+      await h.runtime.whenIdle();
+      const approvalId = h.router.getSnapshot().approvals.find((approval) => approval.providerRequestId === 'plan-1')!.id;
+      expect((await h.execute('permission.resolve', { approvalId, decision: 'allow', response: { kind: 'plan', mode: 'standard' } })).ok).toBe(true);
+      return { h, turn, approvePlanEndingTurn };
+    }
+
+    it('ends the plan turn when the implement agent changes the effort, then sends the implementation with it', async () => {
+      const { h, turn, approvePlanEndingTurn } = await claudePlan('medium');
+      try {
+        expect(approvePlanEndingTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'agent-1', providerRequestId: 'plan-1', response: { kind: 'plan', mode: 'standard' } }));
+        expect(h.claude.resolveApproval).not.toHaveBeenCalled();
+        expect(agentOf(h).permissionPreset).toBe('standard');
+        expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { reasoningEffort: 'medium', effortScope: 'keep' } });
+        // Nothing more is sent while the plan turn is still ending.
+        expect(h.claude.submit).toHaveBeenCalledTimes(1);
+
+        h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+        await h.runtime.whenIdle();
+        await vi.waitFor(() => expect(h.claude.submit).toHaveBeenCalledTimes(2));
+        expect(h.claude.submit).toHaveBeenLastCalledWith(expect.objectContaining({
+          prompt: 'Your plan was approved. Implement it now.', reasoningEffort: 'medium', attended: true,
+        }), expect.anything());
+        expect(agentOf(h)).toMatchObject({ permissionPreset: 'standard', reasoningEffort: 'medium' });
+        expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+        const transcript = h.router.readTranscript('agent-1', 0, 500);
+        expect(transcript.filter((item) => item.kind === 'user-message').at(-1)?.text).toBe('Your plan was approved. Implement it now.');
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
+    it('continues the same turn as before when the implement agent changes nothing', async () => {
+      const { h, turn, approvePlanEndingTurn } = await claudePlan('high');
+      try {
+        expect(approvePlanEndingTurn).not.toHaveBeenCalled();
+        expect(h.claude.resolveApproval).toHaveBeenCalledWith(expect.objectContaining({ providerRequestId: 'plan-1', decision: 'allow', response: { kind: 'plan', mode: 'standard' } }));
+        h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+        await h.runtime.whenIdle();
+        expect(h.claude.submit).toHaveBeenCalledTimes(1);
+        expect(h.router.getSnapshot().pendingAgentSettings).toBeUndefined();
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
+    it('sends no implementation when the person stopped the plan turn', async () => {
+      const { h, turn, approvePlanEndingTurn } = await claudePlan('medium');
+      try {
+        expect(approvePlanEndingTurn).toHaveBeenCalled();
+        h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'interrupted' });
+        await h.runtime.whenIdle();
+        expect(h.claude.submit).toHaveBeenCalledTimes(1);
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+  });
+
   it('takes the plan agent effort when plan mode turns on between turns', async () => {
     const h = await harness({ phaseSettings: (_providerId, phase) => (phase === 'plan' ? { reasoningEffort: 'xhigh' } : { reasoningEffort: 'medium' }) });
     try {

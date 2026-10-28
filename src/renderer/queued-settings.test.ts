@@ -38,16 +38,16 @@ describe('the plan approval note on who implements the plan', () => {
   const base = { korean: true, providerLabel: 'Codex', agentName: '구현 담당', currentModel: 'gpt-6-astra', currentEffort: 'xhigh', modelLabel: (model: string) => (model === 'gpt-6-astra' ? 'GPT-6-Astra' : model) };
 
   it('names the implement agent Codex starts with', () => {
-    expect(planPhaseNote({ ...base, providerId: 'codex', linkedEffort: 'medium' }))
+    expect(planPhaseNote({ ...base, linkedEffort: 'medium' }))
       .toBe("구현은 '구현 담당'(Codex · GPT-6-Astra · 보통)으로 시작합니다 · 설정 › AI › 단계 연결");
   });
 
-  it('tells Claude conversations the link applies from the next request', () => {
-    expect(planPhaseNote({ ...base, providerId: 'claude', providerLabel: 'Claude', agentName: 'Claude 구현', currentModel: 'claude-opus-5-5', currentEffort: 'high', linkedEffort: 'medium', modelLabel: () => 'Opus 5.5' }))
-      .toBe("Claude는 승인 뒤 같은 차례로 이어집니다. 이번 구현은 지금 설정(Opus 5.5 · 높음)으로 하고, 다음 요청부터 'Claude 구현'(Opus 5.5 · 보통)을 씁니다");
+  it('names the implement agent Claude starts with, its plan turn ending at the approval', () => {
+    expect(planPhaseNote({ ...base, providerLabel: 'Claude', agentName: 'Claude 구현', currentModel: 'claude-opus-5-5', currentEffort: 'high', linkedEffort: 'medium', modelLabel: () => 'Opus 5.5' }))
+      .toBe("구현은 'Claude 구현'(Claude · Opus 5.5 · 보통)으로 시작합니다 · 설정 › AI › 단계 연결");
   });
 
   it('says nothing when the link changes nothing', () => {
-    expect(planPhaseNote({ ...base, providerId: 'codex', linkedEffort: 'xhigh' })).toBeUndefined();
+    expect(planPhaseNote({ ...base, linkedEffort: 'xhigh' })).toBeUndefined();
   });
 });

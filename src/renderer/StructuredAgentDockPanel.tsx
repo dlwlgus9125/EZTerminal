@@ -965,7 +965,6 @@ export function StructuredAgentDockPanel(
     : undefined;
   const phaseNote = implementLink && agent ? planPhaseNote({
     korean,
-    providerId: agent.providerId,
     providerLabel: provider?.displayName ?? agent.providerId,
     agentName: implementLink.profile.name,
     ...(implementLink.model ? { linkedModel: implementLink.model } : {}),

@@ -228,6 +228,12 @@ export interface AgentProviderAdapter {
     readonly permissionPreset?: PermissionPreset;
   }): Promise<ProviderSessionHandle>;
   resolveApproval(input: ProviderApprovalDecision): Promise<void>;
+  /**
+   * Approve a plan request and end its turn there instead of continuing it, so the host can send the
+   * implementation as a new turn that starts with changed settings. The turn finishes as completed,
+   * and `response` carries the chosen mode. Without it, an approved plan continues the same turn.
+   */
+  approvePlanEndingTurn?(input: Omit<ProviderApprovalDecision, 'decision'>): Promise<void>;
   /** /btw: one tool-less answer from this live session's context; never a turn, never recorded or persisted. */
   askSideQuestion?(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer>;
 

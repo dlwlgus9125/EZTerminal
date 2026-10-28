@@ -1307,6 +1307,53 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('approves a plan by ending its turn, which completes as approved, and leaves plan mode before the next message', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-plan', commandId: 'command-plan', prompt: 'Plan' });
+    const planTurn = (await inputIterator.next()).value as SDKUserMessage;
+    fixture.query.emit({ type: 'assistant', uuid: 'a-plan', session_id: providerSessionId, parent_tool_use_id: null, user_message_uuid: planTurn.uuid,
+      message: { id: 'msg_plan', content: [{ type: 'tool_use', id: 'toolu_p', name: 'ExitPlanMode', input: { plan: '# Plan' } }] } });
+    const plan = fixture.query.inputOptions.canUseTool!('ExitPlanMode', { plan: '# Plan' }, {
+      signal: new AbortController().signal, toolUseID: 'toolu_p', requestId: 'p',
+    });
+    await vi.waitFor(() => expect(fixture.events.some((event) => event.kind === 'approval-requested')).toBe(true));
+
+    await fixture.adapter.approvePlanEndingTurn({ sessionId: context.sessionId, providerSessionId, providerRequestId: 'p', response: { kind: 'plan', mode: 'standard' } });
+    await expect(plan).resolves.toMatchObject({ behavior: 'deny', interrupt: true, toolUseID: 'toolu_p' });
+    // The CLI stays in plan mode after the decline; the chosen mode waits for the next message.
+    expect(fixture.query.permissionModes).toEqual([]);
+    expect(fixture.query.interruptCount).toBe(0);
+
+    // What the CLI sends back for a decline with interrupt.
+    fixture.query.emit({ type: 'user', uuid: 'r-plan', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_p', is_error: true,
+        content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }] } });
+    fixture.query.emit({ type: 'result', subtype: 'error_during_execution', uuid: 'result-plan', session_id: providerSessionId,
+      user_message_uuid: planTurn.uuid, user_message_uuids: [planTurn.uuid], is_error: true, stop_reason: 'tool_use',
+      permission_denials: [{ tool_name: 'ExitPlanMode', tool_use_id: 'toolu_p', tool_input: { plan: '# Plan' } }] });
+    await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-plan' })));
+    expect(fixture.events.filter((event) => event.kind === 'turn-finished')).toEqual([expect.objectContaining({ turnId: 'turn-plan', outcome: 'completed' })]);
+    expect(fixture.events.some((event) => event.kind === 'provider-error')).toBe(false);
+    expect(fixture.events.filter((event) => event.kind === 'session-state').at(-1)).toMatchObject({ state: 'idle' });
+    const transcript = fixture.events
+      .filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript')
+      .map((event) => event.item);
+    expect(transcript.find((item) => item.kind === 'approval')?.text).toBe('Claude tool request allowed.');
+    expect(transcript.find((item) => item.kind === 'tool-result')).toMatchObject({
+      text: 'Plan approved.', payload: { callId: 'toolu_p', name: 'ExitPlanMode', status: 'completed' },
+    });
+    expect(JSON.stringify(transcript)).not.toMatch(/doesn't want to proceed|denied|rejected/u);
+
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-implement', commandId: 'command-implement',
+      prompt: 'Your plan was approved. Implement it now.', reasoningEffort: 'medium' });
+    expect(fixture.query.permissionModes).toEqual(['default']);
+    expect(fixture.query.flagSettings).toEqual([{ effortLevel: 'medium' }]);
+    expect((await inputIterator.next()).value).toMatchObject({ message: { content: 'Your plan was approved. Implement it now.' } });
+    await fixture.adapter.dispose();
+  });
+
   it('lets a plan turn nobody watches finish with its plan instead of waiting for approval', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });

@@ -363,6 +363,8 @@ interface TurnRecord {
   state: TurnState;
   providerTurnId?: string;
   interruptRequested: boolean;
+  /** Its plan was approved by ending it (approvePlanEndingTurn): the error result that follows is its normal end. */
+  endsWithApprovedPlan?: boolean;
 }
 
 interface PendingApproval {
@@ -426,6 +428,10 @@ interface SessionRecord {
    * armed before the next message, the app allows tool requests itself, so the level applies at once.
    */
   relaunchArmed?: boolean;
+  /** The ExitPlanMode call of a plan approved by ending its turn: the CLI records it as declined. */
+  approvedPlanToolUse?: string;
+  /** The mode chosen with that plan: after a decline the CLI stays in plan mode, so it applies before the next message. */
+  approvedPlanMode?: NonNullable<Options['permissionMode']>;
   /** The effort the CLI is currently using, so a changed one is applied before the next message. */
   appliedEffort?: string;
   readonly enablement: ClaudeProviderEnablement;
@@ -1366,6 +1372,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       await this.relaunchWithFolders(session, input.additionalRoots);
       session = this.session(input.sessionId, input.providerSessionId);
     }
+    const approvedPlanMode = session.approvedPlanMode;
+    if (approvedPlanMode) {
+      session.approvedPlanMode = undefined;
+      try {
+        await bounded(abortable(session.query.setPermissionMode(approvedPlanMode), signal), this.operationTimeoutMs);
+      } catch {
+        this.throwIfAborted(signal);
+        this.appendTranscript(session, 'notice', 'Claude could not switch the permission mode after the plan approval.', {
+          source: `approved-plan:${input.commandId}:permission-mode`,
+        });
+      }
+    }
     if (input.reasoningEffort && input.reasoningEffort !== session.appliedEffort && session.query.applyFlagSettings) {
       try {
         await bounded(abortable(session.query.applyFlagSettings({ effortLevel: input.reasoningEffort }), signal), this.operationTimeoutMs);
@@ -1497,6 +1515,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     if (input.permissionPreset !== undefined && session.pendingApprovals.size > 0) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
     // A level other than Full access ends any Full access still waiting for its armed relaunch.
     if (input.permissionPreset !== undefined && input.permissionPreset !== 'full-access') session.relaunchArmed = false;
+    // A level set now replaces the one an approved plan left for the next message.
+    if (input.permissionPreset !== undefined) session.approvedPlanMode = undefined;
     if (input.permissionPreset === 'full-access' && !session.bypassArmed) {
       if (session.context.toolsDisabled) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
       return this.relaunchArmed(session, 'model' in input ? input.model : session.handle.model);
@@ -1576,6 +1596,46 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         source: `approval:${input.providerRequestId}:permission-mode`,
       });
     }
+  }
+
+  /**
+   * Approves an ExitPlanMode request by ending its turn: answered deny + interrupt, the CLI ends the
+   * turn at once with no further model request. The host then sends the implementation as the next
+   * message, so the settings linked to it apply. The CLI shows the model its standard decline text,
+   * which is why that message says the plan was approved.
+   */
+  async approvePlanEndingTurn(input: Omit<ProviderApprovalDecision, 'decision'>): Promise<void> {
+    const session = this.session(input.sessionId, input.providerSessionId);
+    const pending = session.pendingApprovals.get(input.providerRequestId);
+    if (!pending) throw new ClaudeProviderError('CLAUDE_APPROVAL_NOT_FOUND');
+    const turn = pending.turnId === undefined ? undefined
+      : [...session.turnsByCommand.values()].find((candidate) => candidate.turnId === pending.turnId && candidate.state === 'submitted');
+    if (pending.toolName !== 'ExitPlanMode' || !turn) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    // Without a chosen mode (older clients) the CLI would have left plan mode for `default` itself.
+    const mode = input.response?.kind === 'plan' ? input.response.mode : 'standard';
+    // A session not launched for bypass relaunches armed before the next message instead.
+    const deferBypass = mode === 'full-access' && !session.bypassArmed;
+    turn.endsWithApprovedPlan = true;
+    session.approvedPlanToolUse = pending.toolUseId;
+    session.approvedPlanMode = deferBypass ? undefined : permissionMode(mode);
+    session.relaunchArmed = deferBypass;
+    session.handle = { ...session.handle, permissionPreset: mode };
+    pending.settle({
+      behavior: 'deny',
+      message: 'The plan was approved; its implementation follows as the next message.',
+      interrupt: true,
+      toolUseID: pending.toolUseId,
+    });
+    session.pendingApprovals.delete(input.providerRequestId);
+    this.appendTranscript(session, 'approval', 'Claude tool request allowed.', {
+      turnId: pending.turnId,
+      source: `approval:${input.providerRequestId}:allow`,
+    });
+    this.emit({
+      kind: 'session-state',
+      sessionId: input.sessionId,
+      state: session.pendingApprovals.size > 0 ? 'blocked' : 'working',
+    });
   }
 
   subscribe(listener: AgentProviderEventListener): () => void {
@@ -2180,13 +2240,16 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       const call = toolId ? session.toolCalls.get(toolId) : undefined;
       if (toolId) session.toolCalls.delete(toolId);
       const name = call?.name ?? 'tool';
-      const failed = block.is_error === true;
+      // The ExitPlanMode of a plan approved by ending its turn: the CLI declined it, the person approved it.
+      const approvedPlan = toolId !== null && toolId === session.approvedPlanToolUse;
+      if (approvedPlan) session.approvedPlanToolUse = undefined;
+      const failed = block.is_error === true && !approvedPlan;
       const fragment = toolId ? session.fileChanges.get(toolId) : undefined;
       if (toolId) session.fileChanges.delete(toolId);
       const numbered = fragment && !failed ? recordedClaudeChange(fragment, structured) : undefined;
       // A numbered record over the size limit falls back to the fragment it came from.
       const change = numbered && encodeFileChanges([numbered]) ? numbered : fragment;
-      const text = toolResultText(block.content);
+      const text = approvedPlan ? 'Plan approved.' : toolResultText(block.content);
       const denied = meta.some((entry) => entry?.id === toolId && entry?.non_execution_kind === 'permission-rule')
         || text === 'Denied by the user.';
       const status: ToolStatus = !failed
@@ -2285,11 +2348,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const turns = this.turnsForResult(session, message);
     this.closeStream(session, turns[0]);
     const terminalReason = asString(message.terminal_reason);
+    // A plan approved by ending its turn also ends in error_during_execution (its ExitPlanMode
+    // declined with interrupt): that is the turn's normal end.
+    const planApproved = turns.some((turn) => turn.endsWithApprovedPlan);
     // A user stop ends in error_during_execution; it is an interruption, not a provider failure.
-    const interrupted = terminalReason === 'aborted_streaming'
+    const interrupted = !planApproved && (terminalReason === 'aborted_streaming'
       || terminalReason === 'aborted_tools'
-      || turns.some((turn) => turn.interruptRequested);
-    const isError = !interrupted && (message.is_error === true || message.subtype !== 'success');
+      || turns.some((turn) => turn.interruptRequested));
+    const isError = !planApproved && !interrupted && (message.is_error === true || message.subtype !== 'success');
     const errorValue = asString(message.error)
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
       ?? (isError ? asString(message.result) : null);

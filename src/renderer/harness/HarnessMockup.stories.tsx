@@ -336,11 +336,11 @@ export const PhoneSettingsChange: Story = {
 };
 
 // ── 7. Review round (Codex · advisor): states the first pictures did not show ──────────────────────────────
-/** Claude: the approval continues the same turn, so this implementation keeps the current settings and the implement agent applies from the next request (until probe 2 shows the turn can be split). */
+/** Claude: when the implement agent changes the settings, the approval ends the plan turn and the implementation starts as a new request with that agent (probe 2). */
 export const ComposerPlanApprovalClaude: Story = {
   render: () => <Chat props={{ reasoningEffort: 'high', permissionPreset: 'plan', items: planItems,
     turns: [{ id: 'turn-plan', sessionId: 'harness-chat', commandId: 'command-plan', state: 'completed', revision: 2, createdAt: NOW, updatedAt: NOW }],
-    planPhaseNote: "Claude는 승인 뒤 같은 차례로 이어집니다. 이번 구현은 지금 설정(Opus 5.5 · 높음)으로 하고, 다음 요청부터 'Claude 구현'(보통)을 씁니다" }} />,
+    planPhaseNote: "구현은 'Claude 구현'(Claude · Opus 5.5 · 보통)으로 시작합니다 · 설정 › AI › 단계 연결" }} />,
 };
 /** 확인하고 허용: exactly what runs, where, and why it is asked again (here: the stage changed the script the command calls). */
 export const CanvasCheckConsent: Story = {

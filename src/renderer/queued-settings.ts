@@ -67,13 +67,12 @@ function effortName(value: string, korean: boolean): string {
 }
 
 /**
- * The plan approval dock's note on who implements the approved plan (Settings › AI › 단계 연결). Codex starts
- * the implementation as a new request, so the linked agent runs it; Claude continues the same turn, so the
- * link applies from the next request. Nothing when the link changes nothing.
+ * The plan approval dock's note on who implements the approved plan (Settings › AI › 단계 연결). The
+ * implementation starts as a new request, so the linked agent runs it (Claude ends its plan turn at the
+ * approval for that). Nothing when the link changes nothing.
  */
 export function planPhaseNote(input: {
   readonly korean: boolean;
-  readonly providerId: string;
   readonly providerLabel: string;
   readonly agentName: string;
   readonly linkedModel?: string;
@@ -91,15 +90,6 @@ export function planPhaseNote(input: {
     ...(model ? [input.modelLabel(model)] : []),
     ...(effort ? [effortName(effort, input.korean)] : []),
   ].join(' · ');
-  if (input.providerId === 'claude') {
-    const now = [
-      ...(input.currentModel ? [input.modelLabel(input.currentModel)] : []),
-      ...(input.currentEffort ? [effortName(input.currentEffort, input.korean)] : []),
-    ].join(' · ');
-    return input.korean
-      ? `Claude는 승인 뒤 같은 차례로 이어집니다. 이번 구현은 지금 설정(${now})으로 하고, 다음 요청부터 '${input.agentName}'(${linked})을 씁니다`
-      : `Claude continues the same turn after approval: this implementation keeps the current settings (${now}); '${input.agentName}' (${linked}) applies from the next request`;
-  }
   return input.korean
     ? `구현은 '${input.agentName}'(${input.providerLabel} · ${linked})으로 시작합니다 · 설정 › AI › 단계 연결`
     : `The implementation starts with '${input.agentName}' (${input.providerLabel} · ${linked}) · Settings › AI › Phase links`;

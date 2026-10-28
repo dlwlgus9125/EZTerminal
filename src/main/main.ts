@@ -45,6 +45,7 @@ import { installProjectWorkspaceIpc } from './project-workspace-ipc';
 import { PlanningService } from './planning-service';
 import { PlanningAuthority } from './planning-authority';
 import { WorkflowService, loadWorkflowHostId } from './workflow-service';
+import { WorkflowCommandConsentStore, installWorkflowCheckIpc } from './workflow-command-consent';
 import { WorkflowRepeatService } from './workflow-repeat-service';
 import { RunWorktreeCleanup } from './run-worktree-cleanup';
 import { installRunRetentionIpc } from './run-retention-ipc';
@@ -936,6 +937,8 @@ app.on('ready', async () => {
   // Created once the planning ledger and the agent services exist (below); the snapshot carries it from then on.
   const hostAttentionRef: { current?: HostAttentionService } = {};
   const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService } = {};
+  // Bound once the execution services exist, below; the check allowance IPC is installed earlier.
+  const workflowChecksRef: { consents?: WorkflowCommandConsentStore; projectRoot?: (projectId: string) => string | undefined } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
   const workflowRepeatRef: { current?: WorkflowRepeatService } = {};
   const runCleanupRef: { current?: RunWorktreeCleanup } = {};
@@ -2258,6 +2261,24 @@ app.on('ready', async () => {
   };
   const pendingWorktreeActions = new Map<string, AbortController>();
   featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady }));
+  featureIpcDisposers.push(installWorkflowCheckIpc({
+    ipc: ipcMain,
+    authorized: (event, clientId) => resolveDesktopSessionPrincipal(event, clientId) !== null,
+    status: async (projectId, subprojectId) => {
+      const committed = await workflowService.committedSubproject(projectId, subprojectId);
+      const projectRoot = workflowChecksRef.projectRoot?.(projectId);
+      if (!committed.ok || !projectRoot || !workflowChecksRef.consents) return { ok: false, error: 'not-found', message: 'This workflow is not available on this PC.' };
+      return { ok: true, checks: await workflowChecksRef.consents!.status(projectId, subprojectId, projectRoot, committed.subproject.graph) };
+    },
+    allow: async (projectId, subprojectId, nodeId, checkId, digest) => {
+      const committed = await workflowService.committedSubproject(projectId, subprojectId);
+      const projectRoot = workflowChecksRef.projectRoot?.(projectId);
+      if (!committed.ok || !projectRoot || !workflowChecksRef.consents) return { ok: false, error: 'not-found', message: 'This workflow is not available on this PC.' };
+      const result = await workflowChecksRef.consents!.grant({ projectId, subprojectId, projectRoot, graph: committed.subproject.graph, nodeId, checkId, digest, grantedBy: 'desktop', now: new Date() });
+      if (result.ok) planningRuntimeRef.current?.requestTick();
+      return result;
+    },
+  }));
   featureIpcDisposers.push(installWorkspaceWorktreeIpc({
     ipc: ipcMain,
     worktrees: worktreeService,
@@ -3180,7 +3201,23 @@ app.on('ready', async () => {
     planningRuntimeRef.current?.requestTick();
   });
   const planningEnvironmentsReady = planningEnvironments.init();
+  // 확인 명령 동의: a person allows each stage check once on this PC (command, project folder, the script it calls).
+  const workflowCommandConsents = new WorkflowCommandConsentStore(app.getPath('userData'));
+  const workflowProjectRoot = (projectId: string): string | undefined => {
+    const snapshot = daemonCommandRouter.getSnapshot();
+    const project = snapshot.projects.find((entry) => entry.id === projectId && !entry.archivedAt);
+    return project?.rootPath ?? snapshot.workspaces.find((entry) => project && entry.projectId === projectId && !entry.archivedAt && entry.kind === 'local')?.rootPath;
+  };
+  workflowChecksRef.consents = workflowCommandConsents;
+  workflowChecksRef.projectRoot = workflowProjectRoot;
   const planningResultService = new PlanningResultService({
+    commandConsent: async (run, _task, validation, resultRoot) => {
+      const projectRoot = workflowProjectRoot(run.projectId);
+      if (!projectRoot || !validation.command) return 'This check could not be matched to an allowance on this PC.';
+      const { digest } = await workflowCommandConsents.digest(projectRoot, resultRoot, validation.command);
+      return await workflowCommandConsents.allowed(digest) ? undefined
+        : 'Allow this check again: in this stage result the command or the script it calls is not what you allowed.';
+    },
     userDataDir: app.getPath('userData'), ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
     git: agentCollaborationGitRunner, worktrees: worktreeService,
     validationRunner: { run: (...args) => planningEnvironments.runValidation(() => validationRunner.run(...args), args[3]) },
@@ -3195,6 +3232,11 @@ app.on('ready', async () => {
     planning: planningService, ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
     providers: providerRegistry, worktrees: worktreeService, git: agentCollaborationGitRunner,
     environments: planningEnvironments,
+    unconfirmedChecks: async (projectId, subproject) => {
+      const projectRoot = workflowProjectRoot(projectId);
+      if (!projectRoot) return (subproject.graph.nodes.flatMap((node) => (node.checks ?? []).map((check) => ({ nodeId: node.id, command: check.command }))));
+      return (await workflowCommandConsents.status(projectId, subproject.id, projectRoot, subproject.graph)).filter((check) => !check.allowed);
+    },
     wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
     captureResult: (...args) => planningResultService.captureResult(...args),
     capturePartialResult: (...args) => planningResultService.capturePartialResult(...args),
