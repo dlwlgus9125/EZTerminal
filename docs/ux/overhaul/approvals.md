@@ -274,6 +274,13 @@ OpenClaw는 e2e 가짜 게이트웨이와 이야기하며, 페어링 감지는 �
 gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허용이 통과처럼 보임, 제안 경계·되돌리기 충돌, 현재/다음 모순, Claude
 과약속, 이어서 경계, 실행 상태 모순, 반복 화면, 좁은 창, 폰 호환, parity 누락, 키보드) — 전부 반영.
 
+**시각 기준 갱신 (2026-10-29, 개발 후)**: `pnpm test:visual` 19건이 승인 기준 그림과 달라 diff를 나란히 보고 갱신했다. 차이는
+승인된 이름 바꾸기(사이드바·보드·폰 피드의 "소프로젝트" → "워크플로", 캔버스 머리 "흐름 vN" → "워크플로 vN", "흐름 편집" → "단계 편집",
+"흐름 요약" → "워크플로 요약", 입력창 옆 "새 소프로젝트" → "새 워크플로")와 결정 15(800×600 창은 단계 패널을 접은 채 시작)뿐이다.
+승인 기준 story 11개(`reference-2-0-shell-board`·`work-mode`·`flow-run-view`·`phone-feed`·`desk-settings`·`monitor`·`remote`·
+`openclaw`·`openclaw-chat`·`files`, `shell-2-0-crt`)와 흐름 화면 8개(`flow-canvas-*` 6, `workflow-items-*` 2). 고정 캡처
+(`docs/ux/reference/2.0/captures/`)는 승인 당시 실앱 그림이라 그대로 두었다 — 옛 이름이 남아 있다.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약
