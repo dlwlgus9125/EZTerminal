@@ -8,9 +8,9 @@ const stage = (id: string, patch: Partial<WorkflowNode> = {}) => WorkflowNodeSch
 const line = (...nodes: WorkflowNode[]): WorkflowGraph => ({ entryNodeId: nodes[0]!.id, nodes, edges: nodes.slice(1).map((node, index) => ({ id: `e${index}`, from: nodes[index]!.id, to: node.id, outcome: nodes[index]!.operation === 'approval' ? 'approved' : 'next' })) });
 
 describe('앞 대화 이어서 chains', () => {
-  it('continues the same agent across person stages and stops at another agent, a review or a fresh choice', () => {
+  it('continues the same agent across person stages and stops at another agent or a fresh choice', () => {
     const graph = line(stage('req'), WorkflowNodeSchema.parse({ id: 'ask', title: 'Ask', operation: 'answer', answer: { prompt: 'Q' } }), stage('plan'), stage('mock'),
-      stage('review', { role: 'review' }), WorkflowNodeSchema.parse({ id: 'ok', title: 'OK', operation: 'approval' }), stage('build', { agent: builder }), stage('test', { agent: builder, session: 'fresh' }));
+      stage('review', { role: 'review', session: 'fresh' }), WorkflowNodeSchema.parse({ id: 'ok', title: 'OK', operation: 'approval' }), stage('build', { agent: builder }), stage('test', { agent: builder, session: 'fresh' }));
     expect(workflowChainPredecessor(graph, 'plan')).toBe('req');
     expect(workflowChainPredecessor(graph, 'mock')).toBe('plan');
     expect(workflowChainPredecessor(graph, 'review')).toBeUndefined();
@@ -30,5 +30,9 @@ describe('앞 대화 이어서 chains', () => {
     const retried = line(stage('a'), stage('b'));
     retried.edges.push({ id: 'back', from: 'b', to: 'a', outcome: 'failed', retryLimit: 2 });
     expect(workflowChainPredecessor(retried, 'b')).toBe('a');
+    // Passed and failed both leading to the next stage are one line.
+    const both = line(stage('a'), stage('b'));
+    both.edges.push({ id: 'failed', from: 'a', to: 'b', outcome: 'failed' });
+    expect(workflowChainPredecessor(both, 'b')).toBe('a');
   });
 });

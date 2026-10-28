@@ -152,6 +152,10 @@ export interface PlanningRunServiceOptions {
   readonly continueChain?: (run: ExecutionRun, predecessor: ExecutionAttempt, root: string) => Promise<boolean>;
   /** A retried chain stage continues in place only while its folder still starts where it began. */
   readonly chainStageIntact?: (run: ExecutionRun, task: PreparedExecutionTask, root: string) => Promise<boolean>;
+  /** The check results of the stages before, quoted into the stage's turn. */
+  readonly workflowCheckContext?: (run: ExecutionRun, task: PreparedExecutionTask) => Promise<string>;
+  /** 정기 점검: why a skipWhenUnchanged stage need not run (same check results as last run), or nothing. */
+  readonly checksUnchanged?: (run: ExecutionRun, task: PreparedExecutionTask) => Promise<string | undefined>;
   readonly processReview: (run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt) => Promise<void>;
   readonly processIntegration?: (run: ExecutionRun) => Promise<void>;
   readonly cancelReviews?: (run: ExecutionRun) => Promise<boolean>;
@@ -330,6 +334,8 @@ export class PlanningRunService {
           if (!planning.ok) return planning.error === 'unavailable' ? { ...planning, transient: true } : planning;
           const root = this.projectRoot(command.projectId);
           const baseCommit = await this.options.git.run(root, ['rev-parse', '--verify', 'HEAD']).then(value => value.trim()).catch(() => undefined);
+          // A check runs in the stage's isolated result, which needs Git.
+          if (!baseCommit && subproject.graph.nodes.some(node => node.checks?.length)) return { ok: false, error: 'checks-need-git', message: 'Checks run only in a Git project (each stage result is checked in its own folder). Remove the checks or use a Git repository.' };
           // A provider that cannot list its models, or a file that cannot be read for a reason other than
           // being absent, leaves the outcome open: the same request is retried, not settled as failed.
           let unsettled = false;
@@ -636,6 +642,14 @@ export class PlanningRunService {
         if (activeTasks.length && (admittedTask.executionEnvironment?.mode !== 'namespaced'
           || activeTasks.some((entry) => entry.executionEnvironment?.mode !== 'namespaced'))) continue;
         if (admitted > active && admittedTask.executionEnvironment?.mode !== 'namespaced') continue;
+        // 정기 점검: the same check results as last time need no AI summary; the person still sees why.
+        const skipping = target.preparation.workflow?.graph.nodes.find((node) => node.id === state.taskId)?.skipWhenUnchanged
+          && !target.attempts.some((attempt) => attempt.taskId === state.taskId) ? await this.options.checksUnchanged?.(target, admittedTask) : undefined;
+        const activation = skipping ? target.workflowRuntime?.activations.find((entry) => entry.nodeId === state.taskId && entry.state === 'active') : undefined;
+        if (skipping && activation) {
+          const skipped = await this.runtimeCommand(target, `skip-${hash([target.runId, activation.id]).slice(0, 32)}`, 'workflow.skip', { activationId: activation.id, reason: skipping });
+          if (skipped.ok) { this.requested = true; continue; }
+        }
         // Now this stage is sent: a workflow stage edited before it starts runs with the edited settings
         // (decided and recorded once, here, before any session or turn exists for it).
         const bound = await this.bindStage(target, state.taskId);
@@ -777,7 +791,8 @@ export class PlanningRunService {
     const handoff = chain?.own ? this.chainRetryHandoff(run, chain.own) : this.handoff(run, task);
     const chainBrief = chain ? 'Continue in this conversation and folder: the previous stage\'s accepted work is above and already in this folder. Now do this stage.\n\n' : '';
     const environmentBrief = environment ? `\n\nExecution environment: ${JSON.stringify(environment.environment)}\nUse the assigned PORT and output/temp directories. When namespaced parallel execution is enabled, use EZTERMINAL_TEST_NAMESPACE for test databases and fixtures. If a tool cannot isolate its shared resources, stop and report the conflict. Never terminate processes you did not start. Stop your temporary preview/test servers before submitting the result.` : '';
-    const prompt = `${chainBrief}${task.profile.prompt}\n\n${task.brief}${inputs.context}${environmentBrief}${handoff}`;
+    const checkContext = await this.options.workflowCheckContext?.(run, task) ?? '';
+    const prompt = `${chainBrief}${task.profile.prompt}\n\n${task.brief}${inputs.context}${checkContext}${environmentBrief}${handoff}`;
     if (inputs.acceptedResults.length && !this.options.workflowResultContext) throw new Error('The captured workflow result authority is unavailable. No stage was submitted.');
     const outputContext = inputs.acceptedResults.length ? await this.options.workflowResultContext!(run, task, 100_000 - prompt.length, continued) : '';
     if (prompt.length + outputContext.length > 100_000) throw new Error('The exact stage prompt exceeds the 100,000 character turn limit. All source documents and results were preserved; no truncated prompt was submitted.');

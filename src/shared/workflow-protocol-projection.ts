@@ -21,7 +21,7 @@ export const FLOW_V17_RUN_FIELDS = ['stageBindings'] as const;
  */
 export const FLOW_V18_NODE_FIELDS = ['agent', 'session', 'review', 'checks', 'answer', 'skipWhenUnchanged'] as const;
 export const FLOW_V18_ACTIVATION_FIELDS = ['answer', 'comment', 'skipped'] as const;
-export const FLOW_V18_RUN_FIELDS = ['checkDigests'] as const;
+export const FLOW_V18_RUN_FIELDS: readonly string[] = [];
 export const FLOW_V18_SUBPROJECT_FIELDS: readonly string[] = [];
 /** The protocol a reduced reader speaks: 16 (no v17 or v18 fields) or 17 (no v18 fields). */
 export type FlowReaderProtocol = 16 | 17;

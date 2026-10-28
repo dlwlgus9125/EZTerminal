@@ -139,6 +139,15 @@ describe('answer stages and approval notes (v18)', () => {
     expect(inputs.context).toContain('Email');
   });
 
+  it('routes a stage the host skipped (정기 점검, nothing changed) on as passed, with no attempt', () => {
+    const graph = runnable(conditional());
+    let current = advanceWorkflowRun(run(graph));
+    current = advanceWorkflowRun({ ...current, tasks: current.tasks.map(task => ({ ...task, state: 'cancelled' as const })),
+      workflowRuntime: { ...current.workflowRuntime!, activations: current.workflowRuntime!.activations.map(entry => entry.nodeId === 'work' ? { ...entry, skipped: 'Same check results' } : entry) } });
+    expect(current.workflowRuntime!.activations.find(entry => entry.nodeId === 'work')).toMatchObject({ state: 'completed', outcome: 'passed' });
+    expect(current.workflowRuntime!.activations.find(entry => entry.nodeId === 'work')!.inputResults.work).toBeUndefined();
+  });
+
   it('needs a question and names a missing agent', () => {
     const graph = asking();
     graph.nodes[0] = { ...graph.nodes[0]!, answer: undefined };

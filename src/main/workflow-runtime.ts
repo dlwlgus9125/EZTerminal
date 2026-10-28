@@ -103,7 +103,9 @@ export function advanceWorkflowRun(input: ExecutionRun): ExecutionRun {
         if (held?.state === 'waiting' && !held.currentAttemptId) { tasks = tasks.map(entry => entry.taskId === node.id ? { ...entry, state: 'ready' } : entry); changed = true; }
       }
       let outcome: WorkflowActivation['outcome'];
-      if (node.operation === 'agent') {
+      // 정기 점검: a stage the host skipped (same check results as last time) routes on as passed, with no attempt.
+      if (node.operation === 'agent' && current.state === 'active' && current.skipped) outcome = 'passed';
+      else if (node.operation === 'agent') {
         const task = tasks.find(entry => entry.taskId === node.id);
         if (!task?.currentAttemptId || !['completed', 'failed'].includes(task.state)) continue;
         const attempt = input.attempts.find(entry => entry.attemptId === task.currentAttemptId);

@@ -21,6 +21,16 @@ const judgmentSchema = z.object({
   decision: z.enum(['approve', 'reject']), summary: z.string().min(1).max(65_536),
   inspections: z.array(z.object({ validationId: z.string(), status: z.enum(['passed', 'failed', 'not-run']), summary: z.string().min(1).max(10_000) }).strict()),
 }).strict();
+/** Check output as compared between runs: colours, clock times, dates and durations taken out, spaces folded. */
+export function normalizeCheckOutput(output: string): string {
+  return output
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/gu, '')
+    .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/gu, '<time>')
+    .replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/gu, '<time>')
+    .replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds|m|min)\b/giu, '<duration>')
+    .replace(/[ \t]+/gu, ' ').replace(/\r\n/gu, '\n').trim();
+}
 const sameArtifacts = (a: readonly ExecutionArtifact[], b: readonly ExecutionArtifact[]): boolean =>
   resultHash([...a].sort((x, y) => x.artifactId.localeCompare(y.artifactId))) === resultHash([...b].sort((x, y) => x.artifactId.localeCompare(y.artifactId)));
 const errorText = (error: unknown): string => error instanceof Error ? error.message : 'Result verification failed.';
@@ -170,6 +180,56 @@ export class PlanningResultService {
       }
     }
     await this.repository.prepareWorkspace(run, task, workspaceRoot, this.dependencies(run, task), repair);
+  }
+  /**
+   * The checks of the AI stages before this one in its activation (passed or sent back): command, exit code and the
+   * end of the output, from the host's own logs. Nothing when a check did not finish (not run, timed out).
+   */
+  private async upstreamChecks(run: ExecutionRun, task: PreparedExecutionTask): Promise<readonly { stage: string; command: string; exitCode: number; output: string }[] | undefined> {
+    const active = run.workflowRuntime?.activations.find(entry => entry.nodeId === task.taskId && entry.state === 'active');
+    if (!active) return undefined;
+    const checks: { stage: string; command: string; exitCode: number; output: string }[] = [];
+    for (const [nodeId, source] of Object.entries(active.inputResults).sort(([left], [right]) => left.localeCompare(right))) {
+      const definition = run.preparation.tasks.find(entry => entry.taskId === nodeId);
+      const commands = definition?.validations.filter(validation => validation.method === 'command') ?? [];
+      if (!commands.length) continue;
+      const record = await this.repository.readResult(run.projectId, source.attemptId);
+      for (const validation of commands) {
+        const checked = record?.validations.find(entry => entry.validationId === validation.validationId);
+        if (!checked || checked.status === 'not-run' || checked.exitCode === undefined) return undefined;
+        const log = checked.logRefs[0] ? await this.repository.readLog(run.projectId, checked.logRefs[0]) : null;
+        const output = log === null ? '' : log.slice(log.indexOf('\n\n') >= 0 ? log.indexOf('\n\n') + 2 : log.length);
+        checks.push({ stage: definition!.title, command: validation.command ?? validation.validationId, exitCode: checked.exitCode, output });
+      }
+    }
+    return checks;
+  }
+  /** The check results this stage should read (bounded tails), for its turn. */
+  async workflowCheckContext(run: ExecutionRun, task: PreparedExecutionTask): Promise<string> {
+    const checks = await this.upstreamChecks(run, task);
+    if (!checks?.length) return '';
+    return `\n\nHost-run check results of the stages before (the exit code decides; output is the end of the log):\n${JSON.stringify(checks.map(check => ({ ...check, output: check.output.slice(-4_000) })))}`;
+  }
+  /**
+   * 정기 점검: why this stage may be skipped — the checks before it gave the same results (same commands, exit codes
+   * and output once times, durations and colours are taken out) as in the last finished run of this workflow.
+   */
+  async checksUnchanged(run: ExecutionRun, task: PreparedExecutionTask): Promise<string | undefined> {
+    const node = run.preparation.workflow?.graph.nodes.find(entry => entry.id === task.taskId);
+    if (!node?.skipWhenUnchanged || !run.preparation.workflow) return undefined;
+    const current = await this.upstreamChecks(run, task);
+    if (!current?.length) return undefined;
+    const subprojectId = run.preparation.workflow.subprojectId;
+    const previous = this.options.ledger.read(run.projectId).runs
+      .filter(entry => entry.runId !== run.runId && entry.state === 'completed' && entry.preparation.workflow?.subprojectId === subprojectId)
+      .sort((left, right) => (right.startedAt ?? '').localeCompare(left.startedAt ?? ''))[0];
+    const previousTask = previous?.preparation.tasks.find(entry => entry.taskId === task.taskId);
+    const previousActivation = previous?.workflowRuntime?.activations.filter(entry => entry.nodeId === task.taskId && entry.state === 'completed').at(-1);
+    if (!previous || !previousTask || !previousActivation) return undefined;
+    const earlier = await this.upstreamChecks({ ...previous, workflowRuntime: { ...previous.workflowRuntime!, activations: [{ ...previousActivation, state: 'active' }] } }, previousTask);
+    const digest = (checks: readonly { command: string; exitCode: number; output: string }[]) => resultHash(checks.map(check => [check.command.trim(), check.exitCode, normalizeCheckOutput(check.output)]));
+    if (!earlier?.length || digest(earlier) !== digest(current)) return undefined;
+    return `Same check results as the run started ${previous.startedAt}: ${current.map(check => `${check.command} (exit ${check.exitCode})`).join(', ')}.`;
   }
   /** '앞 대화 이어서': moves the chain folder to the accepted result of the stage before (see the repository). */
   async continueChain(run: ExecutionRun, predecessor: ExecutionAttempt, root: string): Promise<boolean> {

@@ -293,7 +293,7 @@ export class PlanningExecutionStore {
   }
 
   private checkPrincipal(command: PlanningExecutionCommand): void {
-    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'task.bind', 'run.cancel-reconcile', 'review.checks'].includes(command.type);
+    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'task.bind', 'run.cancel-reconcile', 'review.checks', 'workflow.skip'].includes(command.type);
     // The host approves and integrates only for a run frozen with automatic approval (checked in apply).
     const autoApproval = command.principal.kind === 'runtime' && command.principal.id === PLANNING_AUTO_APPROVAL_PRINCIPAL
       && (command.type === 'workflow.approve' || command.type === 'workflow.integrate');
@@ -402,6 +402,15 @@ export class PlanningExecutionStore {
         const comment = command.payload.decision === 'reject' ? command.payload.comment : undefined;
         return { ...run, workflowRuntime: { ...run.workflowRuntime!, activations: run.workflowRuntime!.activations.map(entry => entry.id === activation.id
           ? { ...entry, state: 'active', outcome: command.payload.decision === 'approve' ? 'approved' : 'rejected', resolvedBy: command.principal.id, resolvedAt: now, ...(comment ? { comment } : {}) } : entry) } };
+      }
+      case 'workflow.skip': {
+        const activation = run.workflowRuntime?.activations.find(entry => entry.id === command.payload.activationId);
+        requireState(activation?.state === 'active' && !activation.skipped, 'invalid-transition', 'This stage is not waiting to run.');
+        const node = run.preparation.workflow?.graph.nodes.find(entry => entry.id === activation.nodeId);
+        const task = run.tasks.find(entry => entry.taskId === activation.nodeId);
+        requireState(node?.operation === 'agent' && node.skipWhenUnchanged === true && task?.state === 'ready', 'invalid-reference', 'Only a ready stage set to skip when nothing changed can be skipped.');
+        return withTask({ ...run, workflowRuntime: { ...run.workflowRuntime!, activations: run.workflowRuntime!.activations.map(entry => entry.id === activation.id
+          ? { ...entry, skipped: command.payload.reason } : entry) } }, task.taskId, { state: 'cancelled' });
       }
       case 'workflow.answer': {
         // Only a person answers: never 자동 승인, never an agent.

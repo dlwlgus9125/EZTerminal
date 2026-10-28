@@ -176,24 +176,25 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, c
 
 /**
  * '앞 대화 이어서': the AI stage whose conversation (and result folder) this stage continues, or nothing. It is the AI
- * stage right before it on a single line — person stages (answer, approval) in between keep the line — when both
- * have the same agent, provider and model. A parallel start, a join, a condition, a review stage or `session:
- * 'fresh'` starts a new conversation.
+ * stage right before it on a single line — person stages (answer, approval) in between keep the line, and several
+ * outcomes of one stage leading to the same next stage are one line — when both have the same agent, provider and
+ * model. A parallel start, a join, a condition or `session: 'fresh'` starts a new conversation (the independent
+ * review of every stage always runs in a new one).
  */
 export function workflowChainPredecessor(graph: WorkflowGraph, nodeId: string): string | undefined {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
   const node = nodes.get(nodeId);
-  if (!node || node.operation !== 'agent' || node.session === 'fresh' || node.role === 'review' || !node.agent) return undefined;
+  if (!node || node.operation !== 'agent' || node.session === 'fresh' || !node.agent) return undefined;
   const forwardIn = (id: string) => graph.edges.filter(edge => edge.to === id && !edge.retryLimit);
   const forwardOut = (id: string) => graph.edges.filter(edge => edge.from === id && !edge.retryLimit);
   let current = nodeId;
   for (let steps = 0; steps < graph.nodes.length; steps += 1) {
-    const incoming = forwardIn(current);
-    if (incoming.length !== 1) return undefined;
-    const previous = nodes.get(incoming[0]!.from);
-    if (!previous || forwardOut(previous.id).length !== 1) return undefined;
+    const sources = new Set(forwardIn(current).map(edge => edge.from));
+    if (sources.size !== 1) return undefined;
+    const previous = nodes.get([...sources][0]!);
+    if (!previous || new Set(forwardOut(previous.id).map(edge => edge.to)).size !== 1) return undefined;
     if (previous.operation === 'answer' || previous.operation === 'approval') { current = previous.id; continue; }
-    if (previous.operation !== 'agent' || previous.role === 'review' || !previous.agent) return undefined;
+    if (previous.operation !== 'agent' || !previous.agent) return undefined;
     return previous.agent.profileId === node.agent.profileId && previous.providerId === node.providerId && previous.model === node.model ? previous.id : undefined;
   }
   return undefined;

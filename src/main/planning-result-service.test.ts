@@ -12,7 +12,7 @@ import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { PlanningResultService } from './planning-result-service';
+import { PlanningResultService, normalizeCheckOutput } from './planning-result-service';
 import { PlanningResultRepository, resultHash } from './planning-result-repository';
 import { GitRunner, WorktreeService } from './worktree-service';
 import { createWorkflowGraph } from '../shared/workflow';
@@ -324,6 +324,48 @@ describe('planning result authority', () => {
     expect(record.changedPaths).toEqual(['src/b.txt']);
     await f.git.run(f.worker, ['merge-base', '--is-ancestor', first.commit!, record.commit!]);
   }, 60_000);
+  it('tells a 정기 점검 summary stage the check results, and skips it when they match the last finished run', async () => {
+    const f = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, validations: [validations[0]] });
+    await f.capture();
+    await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
+    const run = f.current();
+    // A summary stage after the checked stage, waiting to run in this activation.
+    const summary = { ...f.preparation.tasks[0], taskId: 'S', title: 'Summary', validations: [validations[1]] };
+    const withSummary = (source: ExecutionRun, attemptId: string): ExecutionRun => ({ ...source,
+      preparation: { ...source.preparation, tasks: [...source.preparation.tasks, summary],
+        workflow: { ...source.preparation.workflow!, graph: { ...source.preparation.workflow!.graph, nodes: [...source.preparation.workflow!.graph.nodes, { ...source.preparation.workflow!.graph.nodes[0]!, id: 'S', checks: undefined, review: undefined, skipWhenUnchanged: true }] } } },
+      workflowRuntime: { ...source.workflowRuntime!, activations: [...source.workflowRuntime!.activations, { id: 'wf:S:0', nodeId: 'S', iteration: 0, state: 'active', incomingEdgeIds: [], inputResults: { T: { attemptId, outcome: 'passed' } } }] } });
+    const current = withSummary(run, 'A');
+    const context = await f.service.workflowCheckContext(current, summary);
+    expect(context).toContain('Host-run check results');
+    expect(context).toContain('verified exact file');
+    // No finished run before: it runs.
+    expect(await f.service.checksUnchanged(current, summary)).toBeUndefined();
+    // The last finished run had the same result (the time in the output differs only).
+    const record = (await f.service.readResult('P', 'A'))!;
+    const log = await f.service.readLog('P', record.validations[0]!.logRefs[0]!);
+    const oldLog = await f.service.repository.saveLog('P', log!.replace('verified exact file', 'verified exact file in 12ms'));
+    await f.service.repository.saveResult({ ...record, runId: 'OLD', attemptId: 'OLD-A', validations: [{ ...record.validations[0]!, logRefs: [oldLog] }] });
+    const finished = { ...withSummary({ ...run, runId: 'OLD', state: 'completed', startedAt: '2026-10-28T00:00:00.000Z' }, 'OLD-A') };
+    finished.workflowRuntime = { ...finished.workflowRuntime!, activations: finished.workflowRuntime!.activations.map(entry => entry.nodeId === 'S' ? { ...entry, state: 'completed' as const } : entry) };
+    const read = f.service['options'].ledger.read.bind(f.service['options'].ledger);
+    vi.spyOn(f.service['options'].ledger, 'read').mockImplementation((projectId: string) => { const value = read(projectId); return { ...value, runs: [...value.runs, finished] }; });
+    expect(await f.service.checksUnchanged(current, summary)).toMatch(/Same check results/u);
+    // A different exit code is a change.
+    await f.service.repository.saveResult({ ...record, runId: 'OLD', attemptId: 'OLD-A', validations: [{ ...record.validations[0]!, exitCode: 7, logRefs: [oldLog] }] });
+    expect(await f.service.checksUnchanged(current, summary)).toBeUndefined();
+  }, 60_000);
+  it('skips only a ready stage set to skip, and only for the host (v18)', async () => {
+    const f = await fixture({ workflow: true });
+    const activation = f.current().workflowRuntime!.activations.find(entry => entry.nodeId === 'T')!;
+    expect(await f.send('workflow.skip', { activationId: activation.id, reason: 'Same' })).toMatchObject({ ok: false, error: 'runtime-required' });
+    expect(await f.send('workflow.skip', { activationId: activation.id, reason: 'Same' }, 'runtime')).toMatchObject({ ok: false });
+    expect(f.current().workflowRuntime!.activations.find(entry => entry.nodeId === 'T')!.skipped).toBeUndefined();
+  }, 60_000);
+  it('compares check output without colours, times or durations', () => {
+    expect(normalizeCheckOutput('\u001b[32m✓\u001b[0m 12 tests passed in 3.2s at 10:31:02')).toBe(normalizeCheckOutput('✓ 12 tests passed in 4.9s at 11:02:59'));
+    expect(normalizeCheckOutput('12 tests passed')).not.toBe(normalizeCheckOutput('11 tests passed'));
+  });
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();
     await f.capture();
