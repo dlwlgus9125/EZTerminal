@@ -13,6 +13,8 @@ export interface WorkflowCheckStatus {
   readonly scripts: readonly string[];
   /** The command allowed before, when it changed. */
   readonly before?: string;
+  /** Why it cannot be allowed at all (it runs a script outside the project folder, or one that is missing). */
+  readonly blocked?: string;
 }
 
 export type WorkflowCheckConsentResult =

@@ -78,7 +78,10 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
   const wakeExecution = vi.fn();
   const service = new PlanningResultService({ userDataDir, store, daemon, ledger, git, worktrees, validationRunner: runner,
     wakeQueuedTurns: () => runtime.wakeQueuedTurns(), reportError: error => errors.push(error), wakeExecution,
-    ...(options.commandConsent ? { commandConsent: async (_run, _task, validation, resultRoot) => options.commandConsent!(validation.command ?? '', resultRoot) } : {}) });
+    ...(options.commandConsent ? { commandConsent: async (_run, _task, validation, resultRoot) => {
+      const refused = options.commandConsent!(validation.command ?? '', resultRoot);
+      return refused ? { refused } : { digest: 'a'.repeat(64) };
+    } } : {}) });
   await store.applySystemCommit({ mutations: [
     { kind: 'project.upsert', value: { id: 'P', name: 'Project', source: 'native', rootPath: root } },
     { kind: 'workspace.upsert', value: { id: 'W', projectId: 'P', name: 'Worker', kind: 'worktree', rootPath: worker } },
@@ -283,16 +286,24 @@ describe('planning result authority', () => {
     expect(auto).toMatchObject({ ok: false, error: 'user-required' });
     expect(await f.send('workflow.approve', { activationId: activation.id, decision: 'approve' })).toMatchObject({ ok: true });
   }, 60_000);
-  it('does not run a check the person has not allowed as it is in the result folder (v18)', async () => {
+  it('does not run a check the person has not allowed as it is in the result folder, and runs it once they do (v18)', async () => {
     const seen: string[] = [];
+    let allowed = false;
     const f = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, validations: [validations[0]],
-      commandConsent: (_command, resultRoot) => { seen.push(resultRoot); return 'Allow this check again.'; } });
+      commandConsent: (_command, resultRoot) => { seen.push(resultRoot); return allowed ? undefined : 'Allow this check again.'; } });
     await f.capture();
     await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
     expect(f.runner.run).not.toHaveBeenCalled();
     expect(seen.length).toBe(1);
     expect(f.current().tasks[0]).toMatchObject({ state: 'awaiting-review' });
-    expect((await f.service.readResult('P', 'A'))!.validations).toEqual([expect.objectContaining({ status: 'not-run', summary: 'Allow this check again.' })]);
+    expect(f.current().evidence).toEqual([]);
+    expect((await f.service.readResult('P', 'A'))!.validations).toEqual([expect.objectContaining({ status: 'not-run', summary: expect.stringContaining('Allow this check again.') })]);
+    // Allowed now: the next pass runs it and the stage is decided.
+    allowed = true;
+    await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
+    expect(f.runner.run).toHaveBeenCalledOnce();
+    expect(f.current().tasks[0]).toMatchObject({ state: 'completed' });
+    expect((await f.service.readResult('P', 'A'))!.validations).toEqual([expect.objectContaining({ status: 'passed', summary: expect.stringMatching(/Allowed as a{16}\./u) })]);
   }, 60_000);
   it('moves a chain folder to the accepted result only while it holds exactly that result (앞 대화 이어서)', async () => {
     const f = await fixture({ workflow: true });

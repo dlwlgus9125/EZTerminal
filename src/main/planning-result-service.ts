@@ -21,6 +21,8 @@ const judgmentSchema = z.object({
   decision: z.enum(['approve', 'reject']), summary: z.string().min(1).max(65_536),
   inspections: z.array(z.object({ validationId: z.string(), status: z.enum(['passed', 'failed', 'not-run']), summary: z.string().min(1).max(10_000) }).strict()),
 }).strict();
+/** The summary of a stage check the person has not allowed as it is now (it is looked at again on every pass). */
+const CHECK_NOT_ALLOWED = 'Check not allowed yet: ';
 /** Check output as compared between runs: colours, clock times, dates and durations taken out, spaces folded. */
 export function normalizeCheckOutput(output: string): string {
   return output
@@ -48,8 +50,11 @@ export interface PlanningResultServiceOptions {
   readonly reportError?: (error: unknown) => void;
   readonly canValidateEnvironment?: (environment: string) => boolean;
   readonly validationTimeoutMs?: number;
-  /** A reason a stage check may not run now (the person allowed a different command or script), or nothing. */
-  readonly commandConsent?: (run: ExecutionRun, task: PreparedExecutionTask, validation: PreparedExecutionTask['validations'][number], resultRoot: string) => Promise<string | undefined>;
+  /**
+   * Whether a stage check may run in this folder as the person allowed it: `refused` says why not (another command,
+   * or the script it calls changed); `digest` names the allowance it runs under (compared by 정기 점검).
+   */
+  readonly commandConsent?: (run: ExecutionRun, task: PreparedExecutionTask, validation: PreparedExecutionTask['validations'][number], resultRoot: string) => Promise<{ readonly refused?: string; readonly digest?: string } | undefined>;
 }
 
 /** Captures exact results, gathers host evidence and requests a separate read-only review. */
@@ -185,10 +190,10 @@ export class PlanningResultService {
    * The checks of the AI stages before this one in its activation (passed or sent back): command, exit code and the
    * end of the output, from the host's own logs. Nothing when a check did not finish (not run, timed out).
    */
-  private async upstreamChecks(run: ExecutionRun, task: PreparedExecutionTask): Promise<readonly { stage: string; command: string; exitCode: number; output: string }[] | undefined> {
+  private async upstreamChecks(run: ExecutionRun, task: PreparedExecutionTask): Promise<readonly { stage: string; command: string; exitCode: number; output: string; allowance: string }[] | undefined> {
     const active = run.workflowRuntime?.activations.find(entry => entry.nodeId === task.taskId && entry.state === 'active');
     if (!active) return undefined;
-    const checks: { stage: string; command: string; exitCode: number; output: string }[] = [];
+    const checks: { stage: string; command: string; exitCode: number; output: string; allowance: string }[] = [];
     for (const [nodeId, source] of Object.entries(active.inputResults).sort(([left], [right]) => left.localeCompare(right))) {
       const definition = run.preparation.tasks.find(entry => entry.taskId === nodeId);
       const commands = definition?.validations.filter(validation => validation.method === 'command') ?? [];
@@ -199,7 +204,8 @@ export class PlanningResultService {
         if (!checked || checked.status === 'not-run' || checked.exitCode === undefined) return undefined;
         const log = checked.logRefs[0] ? await this.repository.readLog(run.projectId, checked.logRefs[0]) : null;
         const output = log === null ? '' : log.slice(log.indexOf('\n\n') >= 0 ? log.indexOf('\n\n') + 2 : log.length);
-        checks.push({ stage: definition!.title, command: validation.command ?? validation.validationId, exitCode: checked.exitCode, output });
+        const allowance = /Allowed as ([0-9a-f]{16})\./u.exec(checked.summary)?.[1] ?? '';
+        checks.push({ stage: definition!.title, command: validation.command ?? validation.validationId, exitCode: checked.exitCode, output, allowance });
       }
     }
     return checks;
@@ -208,7 +214,7 @@ export class PlanningResultService {
   async workflowCheckContext(run: ExecutionRun, task: PreparedExecutionTask): Promise<string> {
     const checks = await this.upstreamChecks(run, task);
     if (!checks?.length) return '';
-    return `\n\nHost-run check results of the stages before (the exit code decides; output is the end of the log):\n${JSON.stringify(checks.map(check => ({ ...check, output: check.output.slice(-4_000) })))}`;
+    return `\n\nHost-run check results of the stages before (the exit code decides; output is the end of the log):\n${JSON.stringify(checks.map(check => ({ stage: check.stage, command: check.command, exitCode: check.exitCode, output: check.output.slice(-4_000) })))}`;
   }
   /**
    * 정기 점검: why this stage may be skipped — the checks before it gave the same results (same commands, exit codes
@@ -227,7 +233,8 @@ export class PlanningResultService {
     const previousActivation = previous?.workflowRuntime?.activations.filter(entry => entry.nodeId === task.taskId && entry.state === 'completed').at(-1);
     if (!previous || !previousTask || !previousActivation) return undefined;
     const earlier = await this.upstreamChecks({ ...previous, workflowRuntime: { ...previous.workflowRuntime!, activations: [{ ...previousActivation, state: 'active' }] } }, previousTask);
-    const digest = (checks: readonly { command: string; exitCode: number; output: string }[]) => resultHash(checks.map(check => [check.command.trim(), check.exitCode, normalizeCheckOutput(check.output)]));
+    // Same command, same allowance (the script it calls), same exit code and output.
+    const digest = (checks: readonly { command: string; exitCode: number; output: string; allowance: string }[]) => resultHash(checks.map(check => [check.command.trim(), check.allowance, check.exitCode, normalizeCheckOutput(check.output)]));
     if (!earlier?.length || digest(earlier) !== digest(current)) return undefined;
     return `Same check results as the run started ${previous.startedAt}: ${current.map(check => `${check.command} (exit ${check.exitCode})`).join(', ')}.`;
   }
@@ -280,17 +287,26 @@ export class PlanningResultService {
     if (record.validationWorkspace !== root) { record = { ...record, validationWorkspace: root }; await this.repository.saveResult(record); }
     for (const validation of task.validations) {
       if (this.stopped) return;
-      if (validation.method === 'inspection' || record.validations.some(entry => entry.validationId === validation.validationId)) continue;
+      const existing = record.validations.find(entry => entry.validationId === validation.validationId);
+      // A check the person had not allowed is looked at again on every pass (it runs once they allow it).
+      if (validation.method === 'inspection' || (existing && !existing.summary.startsWith(CHECK_NOT_ALLOWED))) continue;
       // A stage check runs only as the person allowed it: the script it calls is read again in this result folder.
-      const refused = validation.method === 'command' && run.preparation.workflow ? await this.options.commandConsent?.(run, task, validation, root) : undefined;
-      const checked: PlanningValidationRecord = refused ? { validationId: validation.validationId, status: 'not-run', logRefs: [], summary: refused }
-        : await this.validate(run.projectId, root, validation, record.commit);
-      record = { ...record, validations: [...record.validations, checked] };
+      const consent = validation.method === 'command' && run.preparation.workflow ? await this.options.commandConsent?.(run, task, validation, root) : undefined;
+      if (consent?.refused) {
+        // Recorded for the person to see, but not as evidence: nothing decides the stage until the check runs.
+        if (!existing) {
+          record = { ...record, validations: [...record.validations, { validationId: validation.validationId, status: 'not-run', logRefs: [], summary: `${CHECK_NOT_ALLOWED}${consent.refused}` }] };
+          await this.repository.saveResult(record);
+        }
+        continue;
+      }
+      const checked = await this.validate(run.projectId, root, validation, record.commit, consent?.digest);
+      record = { ...record, validations: [...record.validations.filter(entry => entry.validationId !== validation.validationId), checked] };
       await this.repository.saveResult(record);
       await this.recordEvidence(run, attempt, validation, checked);
     }
     // Recover a validation whose durable log was saved just before the ledger commit.
-    for (const checked of record.validations) {
+    for (const checked of record.validations.filter(entry => !entry.summary.startsWith(CHECK_NOT_ALLOWED))) {
       const validation = task.validations.find(entry => entry.validationId === checked.validationId);
       if (validation) await this.recordEvidence(run, attempt, validation, checked);
     }
@@ -299,7 +315,9 @@ export class PlanningResultService {
     if (stage?.operation === 'agent' && stage.review?.mode === 'off') { await this.acceptByChecks(run, task, attempt, record); return; }
     const runReviewer = run.preparation.reviewer;
     const ownReviewer = stage?.review?.mode === 'agent' ? stage.review.agent : undefined;
-    const reviewer = runReviewer && ownReviewer ? { ...runReviewer, providerId: ownReviewer.providerId, model: ownReviewer.model ?? runReviewer.model } : runReviewer;
+    // A stage's own reviewer of another AI never borrows the run reviewer's model (its provider default instead).
+    const reviewer = runReviewer && ownReviewer ? { ...runReviewer, providerId: ownReviewer.providerId,
+      model: ownReviewer.model ?? (ownReviewer.providerId === runReviewer.providerId ? runReviewer.model : '') } : runReviewer;
     if (this.current(run.projectId, run.runId).cancelRequested) return;
     if (!reviewer || reviewer.permissionPreset !== 'plan' || reviewer.role !== 'review') throw new Error('An independent read-only reviewer must be configured.');
     if (record.commit) await this.repository.assertCleanRevision(root, record.commit);
@@ -309,7 +327,7 @@ export class PlanningResultService {
       workspaceId, projectId: run.projectId, name: `Review · ${task.title}`, kind: record.commit ? 'worktree' : 'local', rootPath: root,
     });
     if (!this.options.daemon.getSnapshot().sessions.some(entry => entry.id === sessionId)) await this.daemonCommand(`${sessionId}-create`, 'agent.create', {
-      sessionId, workspaceId, title: `Independent review · ${task.title}`, providerId: reviewer.providerId, model: reviewer.model, permissionPreset: 'plan',
+      sessionId, workspaceId, title: `Independent review · ${task.title}`, providerId: reviewer.providerId, ...(reviewer.model ? { model: reviewer.model } : {}), permissionPreset: 'plan',
     });
     const prompt = [reviewer.prompt, 'Independently inspect this exact frozen result. Do not write files, execute repairs, change Git refs, integrate, or claim device verification without host evidence.',
       JSON.stringify({ baseline: run.preparation.baseline, task, artifacts: record.artifacts, commit: record.commit, baseCommit: record.baseCommit,
@@ -402,7 +420,7 @@ export class PlanningResultService {
     });
     if (!receipt.ok) throw new Error(receipt.message);
   }
-  private async validate(projectId: string, root: string, validation: PreparedExecutionTask['validations'][number], commit?: string): Promise<PlanningValidationRecord> {
+  private async validate(projectId: string, root: string, validation: PreparedExecutionTask['validations'][number], commit?: string, allowance?: string): Promise<PlanningValidationRecord> {
     if (validation.method !== 'command' || !validation.command) return { validationId: validation.validationId, status: 'not-run', logRefs: [], summary: 'This validation requires separate device or inspection evidence.' };
     if (!commit) return { validationId: validation.validationId, status: 'not-run', logRefs: [], summary: 'Command validation requires an isolated Git result; the original project was preserved.' };
     const available = this.options.canValidateEnvironment?.(validation.environment)
@@ -424,7 +442,7 @@ export class PlanningResultService {
       let changed = false;
       if (commit) changed = await this.repository.assertCleanRevision(root, commit).then(() => false, () => true);
       return { validationId: validation.validationId, status: result.timedOut || result.cancelled ? 'not-run' : result.exitCode === 0 && !changed ? 'passed' : 'failed', exitCode: result.exitCode,
-        logRefs: [log], summary: changed ? 'The check changed the exact result workspace; its evidence was not accepted.' : `Executed on ${process.platform}; exit ${result.exitCode}${result.timedOut ? '; tool timeout' : ''}${result.cancelled ? '; cancelled' : ''}.` };
+        logRefs: [log], summary: changed ? 'The check changed the exact result workspace; its evidence was not accepted.' : `Executed on ${process.platform}; exit ${result.exitCode}${result.timedOut ? '; tool timeout' : ''}${result.cancelled ? '; cancelled' : ''}.${allowance ? ` Allowed as ${allowance.slice(0, 16)}.` : ''}` };
     });
   }
   private async recordEvidence(run: ExecutionRun, attempt: ExecutionAttempt, validation: PreparedExecutionTask['validations'][number], checked: PlanningValidationRecord): Promise<void> {
@@ -609,7 +627,13 @@ export class PlanningResultService {
       if (validation.method === 'inspection') continue;
       const id = `${task.taskId}:${validation.validationId}`;
       if (candidate.validations.some(entry => entry.validationId === id)) continue;
-      const checked = await this.validate(run.projectId, candidate.workspacePath, validation, candidate.candidateCommit);
+      // A stage check runs in the combined result only as the person allowed it (a later stage may have changed its script).
+      const consent = validation.method === 'command' && run.preparation.workflow ? await this.options.commandConsent?.(run, task, validation, candidate.workspacePath) : undefined;
+      if (consent?.refused) {
+        await this.repository.saveIntegration({ ...candidate, status: 'failed', error: `${CHECK_NOT_ALLOWED}${consent.refused} The last successful revision was preserved.` });
+        return;
+      }
+      const checked = await this.validate(run.projectId, candidate.workspacePath, validation, candidate.candidateCommit, consent?.digest);
       candidate = { ...candidate, validations: [...candidate.validations, { ...checked, validationId: id }] };
       await this.repository.saveIntegration(candidate);
     }

@@ -3391,10 +3391,11 @@ app.on('ready', async () => {
   const planningResultService = new PlanningResultService({
     commandConsent: async (run, _task, validation, resultRoot) => {
       const projectRoot = workflowProjectRoot(run.projectId);
-      if (!projectRoot || !validation.command) return 'This check could not be matched to an allowance on this PC.';
-      const { digest } = await workflowCommandConsents.digest(projectRoot, resultRoot, validation.command);
-      return await workflowCommandConsents.allowed(digest) ? undefined
-        : 'Allow this check again: in this stage result the command or the script it calls is not what you allowed.';
+      if (!projectRoot || !validation.command) return { refused: 'This check could not be matched to an allowance on this PC.' };
+      const { digest, blocked } = await workflowCommandConsents.digest(projectRoot, resultRoot, validation.command);
+      if (blocked) return { refused: blocked };
+      return await workflowCommandConsents.allowed(digest) ? { digest }
+        : { refused: 'Allow this check again: in this result the command or the script it calls is not what you allowed.' };
     },
     userDataDir: app.getPath('userData'), ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
     git: agentCollaborationGitRunner, worktrees: worktreeService,

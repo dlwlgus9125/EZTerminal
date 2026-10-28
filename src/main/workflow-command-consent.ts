@@ -53,33 +53,51 @@ async function insideFile(root: string, relative: string): Promise<string | unde
   } catch { return undefined; }
 }
 
+/** What a command calls, resolved in a folder: each script by name with a digest, or why it cannot be allowed. */
+export interface CheckScripts { readonly scripts: Readonly<Record<string, string>>; readonly blocked?: string }
+
+/** A path a command names: relative, inside the folder, and there. */
+function isPathLike(word: string): boolean {
+  return word.startsWith('./') || word.startsWith('.\\') || word.startsWith('../') || word.startsWith('..\\') || path.isAbsolute(word) || SCRIPT_FILE.test(word);
+}
+
 /**
- * What the command calls, by name, with a digest of its content: `pnpm test` → package.json's `test` script,
- * `node scripts/x.mjs` or `./run.sh` → that file. A command that calls nothing in the folder has none.
+ * What the command calls, by name, with a digest of its content: `pnpm test` → package.json's `test` script and the
+ * script files that script runs, `node scripts/x.mjs` or `./run.sh` → that file. A script path that leaves the folder
+ * or is not there blocks the allowance (the person could not see what would run).
  */
-export async function resolveCheckScripts(root: string, command: string): Promise<Readonly<Record<string, string>>> {
-  const parts = words(command);
-  const first = path.basename(parts[0] ?? '').replace(/\.(?:cmd|exe|ps1)$/iu, '').toLowerCase();
+export async function resolveCheckScripts(root: string, command: string, depth = 0): Promise<CheckScripts> {
   const scripts: Record<string, string> = {};
-  if (RUNNERS.has(first)) {
-    const rest = parts.slice(1).filter(part => !part.startsWith('-'));
-    const name = rest[0] === 'run' || rest[0] === 'run-script' ? rest[1] : rest[0];
-    const manifest = await insideFile(root, 'package.json');
-    if (name && manifest) {
+  // A package script may chain commands: each one is resolved the same way.
+  for (const segment of command.split(/&&|\|\||;|\|/u).map(part => part.trim()).filter(Boolean)) {
+    const parts = words(segment).filter(part => !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(part));
+    const first = path.basename(parts[0] ?? '').replace(/\.(?:cmd|exe|ps1)$/iu, '').toLowerCase();
+    let file: string | undefined;
+    if (RUNNERS.has(first)) {
+      const rest = parts.slice(1).filter(part => !part.startsWith('-'));
+      const name = rest[0] === 'run' || rest[0] === 'run-script' ? rest[1] : rest[0];
+      const manifest = await insideFile(root, 'package.json');
+      if (!name || !manifest) continue;
       let script = '';
       try { script = String((JSON.parse(await fs.readFile(manifest, 'utf8')) as { scripts?: Record<string, unknown> }).scripts?.[name] ?? ''); }
-      catch { script = '<unreadable package.json>'; }
+      catch { return { scripts, blocked: 'package.json could not be read, so what the check runs cannot be shown.' }; }
       scripts[`package.json#${name}`] = sha256(script);
+      // What the script itself runs (one level: a script calling another package script is named, not followed again).
+      if (script && depth < 1) {
+        const nested = await resolveCheckScripts(root, script, depth + 1);
+        Object.assign(scripts, nested.scripts);
+        if (nested.blocked) return { scripts, blocked: nested.blocked };
+      }
+      continue;
     }
-  } else if (INTERPRETERS.has(first)) {
-    const file = parts.slice(1).find(part => !part.startsWith('-'));
-    const found = file ? await insideFile(root, file) : undefined;
-    if (file && found) scripts[file.replace(/\\/gu, '/')] = sha256(await fs.readFile(found));
-  } else if (parts[0] && (parts[0].startsWith('./') || parts[0].startsWith('.\\') || SCRIPT_FILE.test(parts[0]))) {
-    const found = await insideFile(root, parts[0]);
-    if (found) scripts[parts[0].replace(/\\/gu, '/')] = sha256(await fs.readFile(found));
+    if (INTERPRETERS.has(first)) file = parts.slice(1).find(part => !part.startsWith('-'));
+    else if (parts[0] && isPathLike(parts[0])) file = parts[0];
+    if (!file || !isPathLike(file)) continue;
+    const found = await insideFile(root, file);
+    if (!found) return { scripts, blocked: `The check runs ${file}, which is outside the project folder or missing, so it cannot be allowed.` };
+    scripts[file.replace(/\\/gu, '/')] = sha256(await fs.readFile(found));
   }
-  return scripts;
+  return { scripts };
 }
 
 /** The allowance digest: the command, the project folder, the platform and what the command calls. */
@@ -99,9 +117,10 @@ export class WorkflowCommandConsentStore {
   }
 
   /** The digest of a check computed in `scriptRoot` (the project, or a stage's result folder) for `projectRoot`. */
-  async digest(projectRoot: string, scriptRoot: string, command: string): Promise<{ readonly digest: string; readonly scripts: readonly string[] }> {
-    const scripts = await resolveCheckScripts(scriptRoot, command);
-    return { digest: checkConsentDigest({ command, projectRoot, platform: this.platform, scripts }), scripts: Object.keys(scripts).sort() };
+  async digest(projectRoot: string, scriptRoot: string, command: string): Promise<{ readonly digest: string; readonly scripts: readonly string[]; readonly blocked?: string }> {
+    const resolved = await resolveCheckScripts(scriptRoot, command);
+    return { digest: checkConsentDigest({ command, projectRoot, platform: this.platform, scripts: resolved.scripts }), scripts: Object.keys(resolved.scripts).sort(),
+      ...(resolved.blocked ? { blocked: resolved.blocked } : {}) };
   }
 
   async allowed(digest: string): Promise<boolean> {
@@ -114,10 +133,10 @@ export class WorkflowCommandConsentStore {
     await this.ready;
     const result: WorkflowCheckStatus[] = [];
     for (const node of graph.nodes) for (const check of node.checks ?? []) {
-      const { digest, scripts } = await this.digest(projectRoot, projectRoot, check.command);
-      const allowed = this.cached.some(entry => entry.digest === digest);
+      const { digest, scripts, blocked } = await this.digest(projectRoot, projectRoot, check.command);
+      const allowed = !blocked && this.cached.some(entry => entry.digest === digest);
       const previous = [...this.cached].reverse().find(entry => entry.projectId === projectId && entry.subprojectId === subprojectId && entry.nodeId === node.id && entry.checkId === check.id);
-      result.push({ nodeId: node.id, checkId: check.id, command: check.command, digest, allowed, scripts,
+      result.push({ nodeId: node.id, checkId: check.id, command: check.command, digest, allowed, scripts, ...(blocked ? { blocked } : {}),
         ...(allowed ? {} : { reason: !previous ? 'new' as const : previous.command.trim() === check.command.trim() ? 'script-changed' as const : 'changed' as const }),
         ...(!allowed && previous && previous.command.trim() !== check.command.trim() ? { before: previous.command } : {}) });
     }
@@ -130,6 +149,7 @@ export class WorkflowCommandConsentStore {
     const check = input.graph.nodes.find(node => node.id === input.nodeId)?.checks?.find(entry => entry.id === input.checkId);
     if (!check) return { ok: false, error: 'not-found', message: 'This check is no longer in the workflow.' };
     const current = await this.digest(input.projectRoot, input.projectRoot, check.command);
+    if (current.blocked) return { ok: false, error: 'blocked', message: current.blocked };
     if (current.digest !== input.digest) return { ok: false, error: 'changed', message: 'The command or the script it calls changed. Look at it again before allowing it.' };
     const entry: WorkflowCommandConsent = { digest: current.digest, projectId: input.projectId, subprojectId: input.subprojectId, nodeId: input.nodeId, checkId: input.checkId,
       command: check.command, grantedBy: input.grantedBy, grantedAt: input.now.toISOString() };

