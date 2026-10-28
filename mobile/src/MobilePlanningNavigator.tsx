@@ -1,7 +1,6 @@
 import { Glyph } from '../../src/renderer/ui';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { PlanningWorkspacePanel } from '../../src/renderer/PlanningWorkspacePanel';
 import { WorkflowWorkspacePanel } from '../../src/renderer/workflow/WorkflowWorkspacePanel';
 import { ProjectConversationTree } from '../../src/renderer/ProjectConversationTree';
 import { useProjectConversationNavigation } from '../../src/renderer/use-project-conversation-navigation';
@@ -10,11 +9,9 @@ import { attachedChildSessionIds } from '../../src/shared/daemon-session-visibil
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobilePageHeader } from './MobilePageHeader';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
-import { mobilePlanningDraftStorage } from './mobile-planning-draft-store';
 import { phoneChatStateAccess, seedPhoneConversationDraft } from './phone-conversation-access';
 import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
 import { mobileWorkflowDraftAccess } from './mobile-workflow-draft-store';
-import { saveDownloadToDevice } from './download-storage';
 import { mobileProjectArchiveAccess } from './mobile-project-archive';
 import { projectArchivePendingStore } from '../../src/renderer/project-archive-pending';
 import type { MobileWorkspaceTerminalResult } from './workspace-terminal';
@@ -23,7 +20,7 @@ import './mobile-v2.css';
 
 export interface MobilePlanningNavigatorProps {
   readonly state: DaemonRuntimeViewState;
-  readonly transport: Pick<WsEzTerminalTransport, 'getPlanningSnapshot' | 'executePlanningCommand' | 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest' | 'readPlanningResult'> & Partial<Pick<WsEzTerminalTransport, 'getWorkflowSnapshot' | 'executeWorkflowCommand' | 'sendDaemonCommand' | 'agentCapabilitiesList' | 'agentCapabilitiesManage' | 'workflowPreview' | 'listConversations' | 'getWorkflowNavigation'>>;
+  readonly transport: Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'uploadFile' | 'downloadFile' | 'readPlanningResult'> & Partial<Pick<WsEzTerminalTransport, 'getWorkflowSnapshot' | 'executeWorkflowCommand' | 'sendDaemonCommand' | 'agentCapabilitiesList' | 'agentCapabilitiesManage' | 'workflowPreview' | 'listConversations' | 'getWorkflowNavigation'>>;
   readonly connected: boolean;
   readonly mode: 'projects' | 'tasks';
   readonly projectId: string | null;
@@ -32,7 +29,6 @@ export interface MobilePlanningNavigatorProps {
   readonly onOpenConversationHistory?: (entry: ConversationEntry) => void;
   readonly onOpenHistory?: (projectId: string) => void;
   readonly onOpenTerminal: (workspaceId?: string) => void | Promise<MobileWorkspaceTerminalResult>;
-  readonly onOpenFiles: () => void;
   readonly onOpenPcControl: () => void;
   readonly active?: boolean;
   readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly runId?: string; readonly key: string };
@@ -43,7 +39,7 @@ export interface MobilePlanningNavigatorProps {
 }
 
 /** One project list, then the same project workspace used on Windows. */
-export function MobilePlanningNavigator({ state, transport, connected, mode, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenFiles, onOpenPcControl, active = true, navigationTarget, onBack, onProjectExit }: MobilePlanningNavigatorProps): JSX.Element {
+export function MobilePlanningNavigator({ state, transport, connected, mode, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenPcControl, active = true, navigationTarget, onBack, onProjectExit }: MobilePlanningNavigatorProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const projects = state.snapshot?.projects.filter(project => project.archivedAt === undefined) ?? [];
@@ -83,7 +79,6 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       if (body.scrollTop >= target) scrollRestore.current.target = null;
     }
   }, [project, authorityScope, conversationNavigation.nodes, active]);
-  const draftStores = useMemo(() => ({ projectId, transport, stores: new Map<string, ReturnType<typeof mobilePlanningDraftStorage>>() }), [projectId, transport]).stores;
   const workflowAccess = useMemo(() => ({ workflowPreview: transport.workflowPreview?.bind(transport), getWorkflowSnapshot: (id: string) => transport.getWorkflowSnapshot?.(id) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '소프로젝트를 사용하려면 PC를 업데이트하세요.' : 'Update the PC to use subprojects.' }), executeWorkflowCommand: (command: Parameters<WsEzTerminalTransport['executeWorkflowCommand']>[0]) => transport.executeWorkflowCommand?.(command) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '호스트가 흐름 편집을 지원하지 않습니다.' : 'This host does not support workflow editing.' }) }), [transport, ko]);
   const daemonAccess = useMemo(() => transport.sendDaemonCommand ? { getDaemonSnapshot: () => transport.getDaemonSnapshot(), listDaemonProviderModels: (providerId: string) => transport.listDaemonProviderModels(providerId), sendDaemonCommand: (command: Parameters<NonNullable<typeof transport.sendDaemonCommand>>[0]) => transport.sendDaemonCommand!(command) } : undefined, [transport]);
   const capabilityClient = useMemo(() => transport.agentCapabilitiesList && transport.agentCapabilitiesManage ? { list: transport.agentCapabilitiesList.bind(transport), manage: transport.agentCapabilitiesManage.bind(transport) } : undefined, [transport]);
@@ -123,29 +118,6 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       onOpenConversation={onOpenChat}
       onOpenHistory={onOpenHistory ? () => onOpenHistory(project.id) : undefined}
       conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined && !attachedChildSessionIds(state.snapshot?.agentRelations ?? []).has(session.id)).map(session => ({ id: session.id, title: session.title, status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state, workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name }))}
-      renderPlanning={(subproject, section, runId) => {
-        const key = subproject?.id ?? '';
-        if (!draftStores.has(key)) draftStores.set(key, mobilePlanningDraftStorage(project.id, () => transport.getRemoteToken(), undefined, subproject?.id));
-        return <PlanningWorkspacePanel projectId={project.id} projectName={subproject?.title ?? project.name} subprojectId={subproject?.id} access={transport} mobile
-      executionAccess={transport}
-      archiveAccess={archiveAccess} assetApi={transport} aiAccess={transport}
-      disabled={!connected} disabledReason={offlineReason}
-      draftStorage={draftStores.get(key)}
-      onExportScene={(name, content) => saveDownloadToDevice(name, new TextEncoder().encode(content)).then(() => undefined)}
-      initialSection={section ?? (mode === 'tasks' ? 'tasks' : 'overview')}
-      initialRunId={runId}
-      onBack={() => navigation.closeLayer(layerId, 'ui')}
-      onNewConversation={() => onOpenChat()}
-      conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined && !attachedChildSessionIds(state.snapshot?.agentRelations ?? []).has(session.id)).map(session => ({
-        id: session.id, title: session.title,
-        status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state,
-        workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name,
-      }))}
-      onOpenConversation={onOpenChat}
-      onOpenTerminal={connected && workspace ? () => void openProjectTerminal() : undefined}
-      onOpenFiles={connected ? onOpenFiles : undefined}
-    />;
-      }}
     />
   </main>;
   return <main className="mob-page mobile-v2" data-testid={`mobile-${mode}-navigator`}>

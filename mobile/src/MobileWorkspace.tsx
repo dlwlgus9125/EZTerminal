@@ -1436,7 +1436,6 @@ export function MobileWorkspace({
                 setConversationHistoryRequest({ projectId, key: crypto.randomUUID() });
                 openConversation(null, null);
               }}
-              onOpenFiles={() => openSubPage('files', 'mobile-feed-more')}
               onOpenTerminal={workspaceId => { if (workspaceId) return createWorkspaceTerminal(workspaceId); selectTab('terminal'); }}
               onOpenPcControl={() => openSubPage('pc-control', 'mobile-feed-pc')}
             />

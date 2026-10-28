@@ -17,9 +17,6 @@
 .workflow-toolbar [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
 /* Project view: a segmented switch between items and quick tasks (a mode, not a section).
    Scoped under .workflow-workspace to outrank the button variant rules. */
-.workflow-switch { display: inline-flex; flex-wrap: nowrap; gap: 0; align-self: flex-start; padding: 2px; margin-bottom: var(--ui-space-3); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); background: var(--ui-surface-inset); }
-.workflow-workspace .workflow-switch > .ez-ui-button { border-color: transparent; background: transparent; color: var(--ui-text-secondary); }
-.workflow-workspace .workflow-switch > .ez-ui-button[aria-pressed='true'] { border-color: var(--ui-border-subtle); background: var(--ui-surface-raised); color: var(--ui-text-primary); }
 /* Subproject sections read as tabs, like the planning sections inside them. */
 .workflow-tabs { gap: 0; flex-wrap: nowrap; overflow-x: auto; margin-bottom: var(--ui-space-3); border-bottom: 1px solid var(--ui-border-subtle); }
 .workflow-workspace .workflow-tabs > .ez-ui-button { flex: 0 0 auto; border: 0; border-radius: 0; background: transparent; color: var(--ui-text-secondary); box-shadow: inset 0 -2px 0 transparent; }
@@ -81,9 +78,6 @@
 .workflow-flow-host > .workflow-flow { flex: 1 1 auto; }
 .workflow-workspace[data-mobile] .workflow-flow-host { min-height: 32rem; }
 /* Planning fills the rest of the workspace and scrolls inside its own panes. */
-.workflow-workspace[data-view='planning'] { display: flex; flex-direction: column; overflow: hidden; }
-.workflow-existing { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.workflow-existing > .planning-workspace { flex: 1 1 auto; min-height: 0; }
 .workflow-approval { width: 100%; padding: var(--ui-space-3); background: var(--ui-warning-muted); border-left: 3px solid var(--ui-warning); }
 .workflow-approval small { overflow-wrap: anywhere; }
 .workflow-workspace[data-mobile] { padding: var(--ui-space-3); }

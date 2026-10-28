@@ -260,8 +260,8 @@ test("project workbench content is readable and bounded", async ({ page }) => {
   });
 });
 
-test.describe("Planning and workflow project screens", () => {
-  // Each story pins its own locale (workflow: English, planning: Korean).
+test.describe("Workflow project screens", () => {
+  // Each story pins its own locale (English).
   for (const visualCase of [
     {
       name: "wide English project items",
@@ -280,24 +280,6 @@ test.describe("Planning and workflow project screens", () => {
       locale: "en",
       theme: "light",
       screenshot: "desktop-800x600-workflow-items-light-en.png",
-    },
-    {
-      name: "wide Korean planning overview",
-      viewport: { width: 1200, height: 800 },
-      storyId: "production-planning-project-workspace--overview",
-      testId: "planning-workspace",
-      locale: "ko",
-      theme: "dark",
-      screenshot: "desktop-1200x800-planning-overview-dark-ko.png",
-    },
-    {
-      name: "narrow Korean planning conversations",
-      viewport: { width: 800, height: 600 },
-      storyId: "production-planning-project-workspace--conversations",
-      testId: "planning-workspace",
-      locale: "ko",
-      theme: "light",
-      screenshot: "desktop-800x600-planning-conversations-light-ko.png",
     },
   ] as const) {
     test(visualCase.name, async ({ page }) => {
@@ -1045,6 +1027,82 @@ test("all built-in themes use the semantic token gallery", async ({ page }) => {
   await expectNoAccessibilityViolations(page);
   await expect(page).toHaveScreenshot("desktop-1440x900-theme-gallery.png", {
     animations: "disabled",
+  });
+});
+
+// The 2.0 top bar, left to right. Project tabs sit between the mark and the add button.
+const shellTopBarTestIds = [
+  "workbench-brand-mark",
+  "shell-add-project",
+  "shell-all-projects",
+  "shell-top-waits",
+  "btn-command-center",
+  "shell-host",
+  "btn-toggle-settings",
+] as const;
+
+async function expectShellTopBarControlsNotToOverlap(page: Page): Promise<void> {
+  const bounds = await Promise.all(
+    shellTopBarTestIds.map(async (testId) => {
+      const box = await page.getByTestId(testId).boundingBox();
+      expect(box, `${testId} must have measurable geometry`).not.toBeNull();
+      return { box: box!, testId };
+    }),
+  );
+  for (let index = 0; index < bounds.length - 1; index += 1) {
+    const current = bounds[index];
+    const next = bounds[index + 1];
+    expect(
+      current.box.x + current.box.width,
+      `${current.testId} must not overlap ${next.testId}`,
+    ).toBeLessThanOrEqual(next.box.x + 0.5);
+  }
+}
+
+test.describe("2.0 shell effects", () => {
+  test("keeps the top bar controls disjoint at supported widths and scales", async ({ page }) => {
+    const viewportHeights = new Map([[800, 600], [1024, 720], [1200, 800], [1440, 900]]);
+    for (const scale of [100, 150] as const) {
+      for (const width of [800, 1024, 1200, 1440] as const) {
+        await page.setViewportSize({ width, height: viewportHeights.get(width)! });
+        await openStory(page, "compositions-shell-2-0--crt-effects", {
+          theme: "matrix",
+          locale: "en",
+          density: "compact",
+          motion: "reduced",
+          scale,
+        });
+        await expectShellTopBarControlsNotToOverlap(page);
+      }
+    }
+  });
+
+  test("runs the Matrix CRT effects, with the rollbar moving only when motion is allowed", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openStory(page, "compositions-shell-2-0--crt-effects", {
+      theme: "matrix",
+      locale: "en",
+      density: "adaptive",
+      motion: "default",
+      freezeAnimations: false,
+    });
+    const html = page.locator("html");
+    await expect(html).toHaveAttribute("data-effect-scanlines", "on");
+    await expect(html).toHaveAttribute("data-effect-phosphor-glow", "on");
+    await expect(html).toHaveAttribute("data-effect-crt-rollbar", "on");
+    expect(await page.evaluate(() => getComputedStyle(document.body, "::after").animationName)).toBe("crt-rollbar-sweep");
+
+    await openStory(page, "compositions-shell-2-0--crt-effects", {
+      theme: "matrix",
+      locale: "en",
+      density: "adaptive",
+      motion: "reduced",
+    });
+    await expect(html).toHaveAttribute("data-effect-scanlines", "on");
+    await expect(html).not.toHaveAttribute("data-effect-crt-rollbar", "on");
+    expect(await page.evaluate(() => getComputedStyle(document.body, "::after").animationName)).toBe("none");
+    await expectNoAccessibilityViolations(page);
+    await expect(page).toHaveScreenshot("shell-2-0-crt-matrix-1440.png", { animations: "disabled" });
   });
 });
 

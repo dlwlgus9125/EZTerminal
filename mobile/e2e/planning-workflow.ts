@@ -1,10 +1,10 @@
 /**
- * Real Android WebView planning + encrypted draft recovery against the real PC.
- * Initial connection uses the standard native one-tap helper. Planning controls
- * deliberately use DOM clicks/controlled input so native hit testing is a
- * separate gate, not silently claimed by this scenario. The reviewed CLI fixture
- * supplies provider metadata and initializes sessions, then answers the turns of one
- * flow run from the phone (I2) and of its 다시 실행.
+ * Real Android WebView flow work against the real PC: a subproject made on the phone, its
+ * encrypted graph draft, one flow run answered from the phone (I2), its 다시 실행 and 반복,
+ * and the run's results opened in the phone's result dialog (I5: what the old planning panel
+ * showed now lives on the flow screen). Initial connection uses the standard native one-tap
+ * helper; flow controls use DOM clicks so native hit testing stays a separate gate. The
+ * reviewed CLI fixture supplies provider metadata and answers the turns.
  * Run: node --experimental-strip-types mobile/e2e/planning-workflow.ts
  */
 import assert from 'node:assert/strict';
@@ -18,19 +18,11 @@ import {
   evaluateWebView, launchDesktop, restartApp, runAdb, runAdbBinary, setTestIdTextValue, sleep,
   waitForTestId, waitForTestIdHidden,
   openProjectList,
-  SHELL_ROOT_TEST_ID,
 } from './lib.ts';
 
 const artifactDir = process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR
   ? path.resolve(process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR)
   : path.resolve(import.meta.dirname, '../../artifacts/g8-android');
-const editor = '.planning-workspace__editor';
-const titleSelector = `${editor} input[maxlength="300"]`;
-const bodySelector = `${editor} textarea[maxlength="200000"]`;
-const saveSelector = `${editor} button[type="submit"]`;
-const title = 'Android planning persistence';
-const firstBody = 'Saved through the Android planning editor.';
-const recoveredBody = 'Offline edit retained through Android force-stop; send only explicitly.';
 
 async function waitForCondition(label: string, expression: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -92,7 +84,7 @@ async function fillSelector(selector: string, value: string): Promise<void> {
   await waitForCondition('controlled input value', `(() => { const node = document.querySelector(${JSON.stringify(selector)}); return !!node && node.value === ${JSON.stringify(value)}; })()`);
 }
 
-async function openProject(name: string, advanced = true): Promise<void> {
+async function openProject(name: string): Promise<void> {
   // I4 layout A: the feed's ▾ opens the project list (every project chosen).
   await openProjectList();
   await waitForTestId('mobile-projects-navigator');
@@ -106,46 +98,15 @@ async function openProject(name: string, advanced = true): Promise<void> {
     node.click(); return true;
   })()`);
   await waitForTestId('workflow-workspace');
-  if (!advanced) return;
-  await clickLabel('[data-testid="workflow-workspace"] button', ['Quick tasks and existing work', '빠른 작업·기존 자료']);
-  await waitForTestId('planning-workspace');
-  await waitForCondition('project document state loaded', `!!document.querySelector('[data-testid="planning-workspace"] .planning-workspace__intro')`);
 }
 
-async function openPlanningDocument(): Promise<void> {
-  await clickLabel('[data-testid="planning-workspace"] [role="tab"]', ['Planning', '기획']);
-  await waitForCondition('visible restored planning editor', `(() => {
-    const node = document.querySelector(${JSON.stringify(bodySelector)});
-    return !!node && node.getBoundingClientRect().width > 0 && !node.disabled;
-  })()`);
-}
-
-async function waitForDeviceDraftIdle(): Promise<void> {
-  await waitForCondition('secure draft write completion', `(() => {
-    const root = document.querySelector('[data-testid="planning-workspace"]');
-    if (!root) return false;
-    const text = root.textContent;
-    if (text.includes('Device draft storage is unavailable') || text.includes('기기 초안 저장소를 사용할 수 없습니다'))
-      throw new Error('Secure planning draft persistence failed');
-    return !text.includes('Saving draft on this device') && !text.includes('기기에 초안 저장 중');
-  })()`);
-  // Observe the settled UI after React has processed the controlled edit.
-  await sleep(400);
-}
-
-async function capturePlanningVisibility(): Promise<unknown> {
+async function captureWorkflowVisibility(): Promise<unknown> {
   return evaluateWebView(`(() => {
-    const root = document.querySelector('[data-testid="planning-workspace"]');
-    const save = document.querySelector(${JSON.stringify(saveSelector)});
+    const root = document.querySelector('[data-testid="workflow-workspace"]');
     const geometry = node => { const rect = node.getBoundingClientRect(); return {width:rect.width,height:rect.height,x:rect.x,y:rect.y}; };
     return {
-      root: root && geometry(root), save: save && {disabled:save.disabled, geometry:geometry(save)},
-      tabs: root && [...root.querySelectorAll('[role="tab"]')].map(node => ({text:node.textContent,selected:node.getAttribute('aria-selected')})),
-      panels: root && [...root.querySelectorAll('[role="tabpanel"]')].map(node => ({id:node.id,hidden:node.hidden,geometry:geometry(node)})),
-      ancestors: save && (() => { const list = []; let node = save; while (node) {
-        list.push({tag:node.tagName,className:typeof node.className === 'string' ? node.className : '',display:getComputedStyle(node).display,hidden:node.hidden});
-        node = node.parentElement;
-      } return list; })(),
+      root: root && geometry(root), view: root && root.getAttribute('data-view'),
+      dialogs: [...document.querySelectorAll('[role="dialog"]')].map(node => ({label:node.getAttribute('aria-label'),geometry:geometry(node)})),
       offline: !!document.querySelector('[data-testid="mobile-reconnect-scrim"]')
     };
   })()`);
@@ -157,8 +118,8 @@ async function main(): Promise<void> {
   const projectRoot = registry.createTempDir('ezterm-mobile-planning-project-');
   const name = 'Android planning E2E';
   const report: Record<string, unknown> = {
-    scenario: 'Android planning manual save / offline encrypted draft / force-stop recovery',
-    inputMethod: 'Initial auth: native tap; planning and restart auth: WebView DOM clicks and input events',
+    scenario: 'Android flow subproject / encrypted graph draft / run from the phone / run results',
+    inputMethod: 'Initial auth: native tap; flow controls: WebView DOM clicks and input events',
     realProviderCalls: 0,
     modelTurns: 'fixture turns only (one conversation and two flow runs)',
     providerFixture: 'Reviewed fake Codex initialization only',
@@ -186,99 +147,13 @@ async function main(): Promise<void> {
     if (!saved.ok) throw new Error(`Project registration failed: ${saved.reason}`);
     const projectId = saved.project.projectId;
     const before = await host.evaluate(() => window.ezterminal.getDaemonSnapshot());
-    const readHost = async () => {
-      const result = await host.evaluate(id => window.ezterminal.getPlanningSnapshot(id), projectId);
-      if (!result.ok) throw new Error(`Host planning read failed: ${result.message}`);
-      return result.snapshot;
-    };
-    assert.equal((await readHost()).revision, 0);
     await connectAndAuth(desktop.token);
     await openProject(name);
-    await clickLabel('[data-testid="planning-workspace"] button', ['Write a requirement', '요구사항 작성']);
-    await fillSelector(titleSelector, title);
-    await fillSelector(bodySelector, firstBody);
-    await clickSelector(saveSelector);
-    const firstDeadline = Date.now() + 20_000;
-    while ((await readHost()).revision !== 1) {
-      if (Date.now() > firstDeadline) throw new Error('Android manual save did not reach the host');
-      await sleep(150);
-    }
-    const initial = await readHost();
-    assert.equal(initial.draft.items.length, 1);
-    assert.equal(initial.draft.items[0].title, title);
-    assert.equal(initial.draft.items[0].body, firstBody);
-    phases.push('Android project entry, manual creation and explicit save reached host revision 1');
-    console.log('[planning-e2e] PASS: Android manual save -> PC revision 1');
-    await waitForDeviceDraftIdle();
-
-    await host.evaluate(() => window.ezterminal.setRemoteEnabled(false));
-    await waitForTestId('mobile-reconnect-scrim', 15_000);
-    await fillSelector(bodySelector, recoveredBody);
-    await waitForCondition('offline save disabled', `(() => { const node = document.querySelector(${JSON.stringify(saveSelector)}); return !!node && node.disabled === true; })()`);
-    await waitForDeviceDraftIdle();
-    assert.equal((await readHost()).revision, 1);
-    assert.equal((await readHost()).draft.items[0].body, firstBody);
-    await writeFile(path.join(artifactDir, 'planning-offline.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
-    phases.push('Offline editing retained locally; save disabled and host unchanged');
-
-    await restartApp();
-    await waitForTestId('connect-screen', 45_000);
-    await clickSelector('[data-testid="connect-submit"]');
-    // This is an intentionally offline reconnect: the encrypted project cache
-    // must restore browsing before the remote bridge returns.
-    await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);
-    await openProject(name);
-    await openPlanningDocument();
-    await waitForCondition('force-stop restored offline draft', `(() => { const node = document.querySelector(${JSON.stringify(bodySelector)}); return !!node && node.value === ${JSON.stringify(recoveredBody)}; })()`);
-    assert.equal((await readHost()).revision, 1);
-    phases.push('Android force-stop restored encrypted offline document body with PC still disconnected');
-    console.log('[planning-e2e] PASS: force-stop restored offline draft');
-    report.beforeReconnect = await capturePlanningVisibility();
-
-    await host.evaluate(() => window.ezterminal.setRemoteEnabled(true));
-    await waitForTestIdHidden('mobile-reconnect-scrim', 30_000);
-    report.afterReconnect = await capturePlanningVisibility();
-    await waitForCondition('visible planning editor remains open after reconnect', `(() => {
-      const node = document.querySelector(${JSON.stringify(bodySelector)});
-      return !!node && node.getBoundingClientRect().width > 0;
-    })()`);
-    await waitForCondition('explicit save enabled after reconnect', `(() => { const node = document.querySelector(${JSON.stringify(saveSelector)}); return !!node && node.disabled === false; })()`);
-    const noAutoSendUntil = Date.now() + 2_000;
-    do {
-      const state = await readHost();
-      assert.equal(state.revision, 1, 'Reconnection must not automatically send a draft');
-      assert.equal(state.draft.items[0].body, firstBody);
-      await sleep(150);
-    } while (Date.now() < noAutoSendUntil);
-    assert.equal(await evaluateWebView(`document.querySelector(${JSON.stringify(bodySelector)}).value`), recoveredBody);
-    phases.push('Reconnect preserved unsent input and host revision 1 for a 2-second observation window');
-    report.beforeFinalSave = await capturePlanningVisibility();
-    await clickSelector(saveSelector);
-    const finalDeadline = Date.now() + 20_000;
-    while ((await readHost()).revision !== 2) {
-      if (Date.now() > finalDeadline) throw new Error('Explicit recovered-draft save did not reach the host');
-      await sleep(150);
-    }
-    const final = await readHost();
-    assert.equal(final.draft.items.length, 1);
-    assert.equal(final.draft.items[0].id, initial.draft.items[0].id);
-    assert.equal(final.draft.items[0].body, recoveredBody);
-    assert.equal(final.history.length, 2);
-    const after = await host.evaluate(() => window.ezterminal.getDaemonSnapshot());
-    assert.deepEqual(after?.turns, before?.turns, 'Planning editing must not start a provider turn');
-    const execution = await host.evaluate(id => window.ezterminal.getPlanningExecutionSnapshot(id), projectId);
-    assert.equal(execution.ok, true);
-    if (execution.ok) assert.deepEqual(execution.snapshot.runs, []);
-    phases.push('Explicit recovered-draft save reached revision 2 exactly once; no provider turns or runs');
-    await writeFile(path.join(artifactDir, 'planning-recovered.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
-    report.finalHostRevision = final.revision;
     // r4: real remote subproject commands, common chat identity, and the device's
     // encrypted graph cache. Provider discovery uses the reviewed CLI fixture. A 2.0
     // conversation starts with its first message, so the deterministic fixture answers
     // exactly one turn; no workflow execution run is started in this scenario.
     await recordWorkflowRuntimeErrors();
-    // Planning replaces the project's item list (Phase 4); subprojects live in the other view.
-    await clickLabel('[data-testid="workflow-workspace"] .workflow-switch button', ['Subprojects and conversations', '소프로젝트·대화']);
     await clickLabel('[data-testid="workflow-workspace"] button', ['New subproject', '새 소프로젝트']);
     await fillSelector('.workflow-create input', 'Android subproject');
     await clickLabel('[role="dialog"] button', ['Create subproject', '소프로젝트 만들기']);
@@ -353,7 +228,7 @@ async function main(): Promise<void> {
     await fillSelector('.workflow-stage textarea', 'Android offline graph draft');
     await waitForCondition('encrypted offline graph receipt', `(async () => { const r = await window.ezterminal.workflowDraftRead(${JSON.stringify(projectId)}); const state = r.ok && r.snapshot.state; const draft = state && state.drafts[${JSON.stringify(subproject.id)}]; const node = draft && draft.graph.nodes.find(n => n.id === ${JSON.stringify(subproject.graph.entryNodeId)}); return !!node && node.document === 'Android offline graph draft'; })()`);
     await restartApp();
-    await waitForTestId('connect-screen', 45_000); await recordWorkflowRuntimeErrors(); await clickSelector('[data-testid="connect-submit"]'); await waitForTestId('mobile-workspace', 30_000); await openProject(name, false);
+    await waitForTestId('connect-screen', 45_000); await recordWorkflowRuntimeErrors(); await clickSelector('[data-testid="connect-submit"]'); await waitForTestId('mobile-workspace', 30_000); await openProject(name);
     await waitForCondition('offline graph cache and draft restored after force-stop', `(document.querySelector('.workflow-stage textarea') || {}).value === 'Android offline graph draft'`);
     await assertWorkflowHealthy('Offline graph recovery');
     assert.equal(await evaluateWebView(`document.querySelectorAll('.workflow-workspace > .workflow-notice').length`), 1, 'Offline recovery has one clear status message');
@@ -441,6 +316,14 @@ async function main(): Promise<void> {
     await clickSelector('[data-testid="mobile-structured-agent-back"]');
     await waitForTestId('workflow-run-bar', 30_000);
     await waitForCondition('run #1 shown as done', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
+    // I5: the run's results open in the flow screen's own dialog (the planning panel is gone).
+    await clickLabel('[data-testid="workflow-run-bar"] button', ['Results', '결과']);
+    await waitForCondition('run results dialog', `[...document.querySelectorAll('[role="dialog"]')].some(node => node.getBoundingClientRect().width > 0 && /통합|Integration/.test(node.textContent || ''))`, 30_000);
+    report.resultsDialog = await captureWorkflowVisibility();
+    await writeFile(path.join(artifactDir, 'i5-run-results.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
+    await clickLabel('[role="dialog"] button', ['Close', '닫기']);
+    await waitForCondition('run results dialog closed', `![...document.querySelectorAll('[role="dialog"]')].some(node => node.getBoundingClientRect().width > 0)`, 15_000);
+    phases.push('I5 run results on the phone: 결과 opens the integration result dialog over the flow and closes back to it');
     await clickSelector('[data-testid="workflow-run-again"]');
     await waitHost('run #2 waits for its approval', async () => (await flowRuns())[1]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
     await approveGate();
@@ -484,12 +367,12 @@ async function main(): Promise<void> {
     await assertWorkflowHealthy('I2 flow run');
     phases.push('I2 flow run from the phone: review AI saved, 실행 → approve → working stage conversation → run #1 completed → 다시 실행 = run #2 with a new stage conversation');
     report.status = 'passed';
-    console.log('[planning-e2e] PASS: explicit recovered draft -> PC revision 2; no automatic send/provider turns');
+    console.log('[planning-e2e] PASS: phone flow run, 다시 실행, 반복 and run results');
   } catch (error) {
     errors.push(error);
     report.status = 'failed';
     report.error = error instanceof Error ? error.message : String(error);
-    try { report.failureVisibility = await capturePlanningVisibility(); } catch { /* Original failure remains authoritative. */ }
+    try { report.failureVisibility = await captureWorkflowVisibility(); } catch { /* Original failure remains authoritative. */ }
     try { await writeFile(path.join(artifactDir, 'failure.png'), runAdbBinary(['exec-out', 'screencap', '-p'])); } catch { /* Preserve the original failure. */ }
   } finally {
     try { runAdb(['shell', 'am', 'force-stop', APP_ID]); } catch (error) { errors.push(error); }
@@ -500,7 +383,7 @@ async function main(): Promise<void> {
     report.cleanupErrors = errors.slice(report.status === 'failed' ? 1 : 0).map(error => String(error));
     await writeFile(path.join(artifactDir, 'planning-workflow-report.json'), JSON.stringify(report, null, 2));
   }
-  if (errors.length) throw new AggregateError(errors, 'Android planning workflow did not complete');
+  if (errors.length) throw new AggregateError(errors, 'Android flow scenario did not complete');
 }
 
 void main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

@@ -46,7 +46,7 @@ function MobileV2Story({ initial = 'home', locale = 'ko', offline = false }: { i
   return <AppI18nProvider locale={locale} languages={[locale]}><div style={{ width: '100vw', height: '100vh' }}>
     <MobileWorkbenchCoordinator terminal={<div role="region" aria-label="Terminal story fixture" />} terminalActive={tab === 'terminal'} destinationActive={false} tabRootActive={tab !== 'terminal'} onRequestTabRoot={() => setTab('terminal')}
       page={tab === 'agents' ? <main className="mob-page"><MobileDaemonNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} flatConversations projectFilter={projectId} onProjectFilterChange={setProjectId} onRetry={() => undefined} onSelectSession={() => undefined} /></main>
-        : tab !== 'terminal' ? <MobilePlanningNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} connected={!offline} transport={transport} mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={projectId} onSelectProject={setProjectId} onOpenChat={() => setTab('agents')} onOpenFiles={() => undefined} onOpenPcControl={() => undefined} onOpenTerminal={() => setTab('terminal')} /> : undefined}
+        : tab !== 'terminal' ? <MobilePlanningNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} connected={!offline} transport={transport} mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={projectId} onSelectProject={setProjectId} onOpenChat={() => setTab('agents')} onOpenPcControl={() => undefined} onOpenTerminal={() => setTab('terminal')} /> : undefined}
     />
   </div></AppI18nProvider>;
 }

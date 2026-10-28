@@ -4,7 +4,6 @@ import { createDaemonCommand, type DaemonCommand, type DaemonSnapshot, type Daem
 import { MobileChatStateStore, type MobileChatScope } from './mobile-chat-state-store';
 import { MobileOfflineChatCacheStore } from './mobile-offline-chat-cache';
 import type { SecureStorageLike } from './mobile-agent-create-recovery-store';
-import { mobilePlanningDraftStorage } from './mobile-planning-draft-store';
 
 const NOW = '2026-10-13T00:00:00.000Z';
 const AUTHORITY = `sha256:${'a'.repeat(64)}`;
@@ -103,25 +102,5 @@ describe('encrypted offline transcript cache', () => {
     const stored = JSON.parse(secure.values.get(key)!) as { snapshot: DaemonSnapshot };
     secure.values.set(key, JSON.stringify({ ...stored, snapshot: { ...stored.snapshot, agentUsage, providerUsage } }));
     expect((await store.load(AUTHORITY))?.snapshot).toEqual(snapshot);
-  });
-});
-
-describe('Android planning draft recovery', () => {
-  it('preserves project drafts only in secure storage and rejects a record copied from another PC', async () => {
-    localStorage.clear();
-    const secure = new SecureMemory();
-    const draft = { version: 1 as const, projectId: 'project', snapshot: null, selectedId: null, edits: {}, uncertain: null, entityDrafts: { scenes: {}, components: {}, profiles: {}, tasks: {} } };
-    const store = mobilePlanningDraftStorage('project', async () => 'pc-a', secure);
-    await store.saveDraft(draft);
-    expect(await mobilePlanningDraftStorage('project', async () => 'pc-a', secure).loadDraft()).toEqual(draft);
-    const other = mobilePlanningDraftStorage('project', async () => 'pc-b', secure);
-    expect(await other.loadDraft()).toBeNull();
-    const oldRaw = [...secure.values.values()][0];
-    await other.saveDraft(draft);
-    const otherKey = [...secure.values.keys()][1]; secure.values.set(otherKey, oldRaw);
-    await expect(other.loadDraft()).rejects.toThrow('scope');
-    secure.fail = true;
-    await expect(store.saveDraft(draft)).rejects.toThrow('Keystore');
-    expect(localStorage.length).toBe(0);
   });
 });

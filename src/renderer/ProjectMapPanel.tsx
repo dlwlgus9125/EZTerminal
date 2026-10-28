@@ -398,7 +398,7 @@ function ProjectMapCanvas({
           <Glyph name="zoomOut" size={15} />
         </button>
         <button type="button" onClick={fit} aria-label="Fit map">
-          <Glyph name="pointer" size={15} />
+          <Glyph name="expand" size={15} />
           <span>Fit</span>
         </button>
         <button type="button" onClick={() => setZoom((value) => clampZoom(value + 0.15))} aria-label="Zoom in">
@@ -1381,7 +1381,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
             <div className="project-map__chapters">
               <span>{t('projectMap.chapters', 'Chapters')}</span>
               <button type="button" data-active={!chapterId ? 'true' : undefined} onClick={() => setChapterId(undefined)}>
-                <Glyph name="expand" size={14} /> {t('projectMap.fullMap', 'Full map')}
+                <Glyph name="map" size={14} /> {t('projectMap.fullMap', 'Full map')}
               </button>
               {document.spec.chapters.map((chapter) => (
                 <button

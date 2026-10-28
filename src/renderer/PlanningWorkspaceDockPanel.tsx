@@ -8,23 +8,14 @@ import {
   isStructuredDaemonAgentSession,
 } from "../shared/daemon-session-visibility";
 import { rendererCapabilities } from "./capability-access";
-import { desktopPlanningDraftStorage } from "./planning-draft-state";
-import type { PlanningExecutionAccess } from "./PlanningExecutionPanel";
-import type { PlanningAssetApi } from "../shared/planning-asset";
-import type { ProjectArchiveAccess } from "./ProjectArchivePanel";
-import type { PlanningAiAccess } from "./planning/PlanningAiPanel";
 import { WorkflowWorkspacePanel, type WorkflowDaemonAccess } from "./workflow/WorkflowWorkspacePanel";
 import type { WorkflowAccess } from "../shared/workflow";
 import type { WorkflowDraftAccess } from "../shared/workflow-draft";
 import type { AgentCapabilitiesClient } from "../shared/agent-capabilities";
 import { daemonEventAffectsAgentSessionProjection } from "./daemon-session-events";
-import {
-  PlanningWorkspacePanel,
-  type PlanningWorkspaceAccess,
-  type PlanningWorkspaceSection,
-} from "./PlanningWorkspacePanel";
 import type { PlanningConversation } from "./workflow/workflow-conversations";
 import type { WorkflowExecutionAccess } from "./workflow/workflow-execution-access";
+import type { PlanningResultReader } from "./PlanningResultDetails";
 
 export interface PlanningNavigation {
   readonly openHistory?: (projectId?: string) => void;
@@ -42,12 +33,6 @@ export interface PlanningNavigation {
 }
 export const PlanningNavigationContext =
   createContext<PlanningNavigation | null>(null);
-const access: PlanningWorkspaceAccess = {
-  getPlanningSnapshot: (projectId, subprojectId) =>
-    window.ezterminal.getPlanningSnapshot(projectId, subprojectId),
-  executePlanningCommand: (command) =>
-    window.ezterminal.executePlanningCommand(command),
-};
 /** The React Flow canvas is a desktop-only lazy chunk; Android and tests never load it. */
 const workflowCanvasLoader = createFeatureModuleLoader(
   () => import("./workflow/WorkflowFlowCanvas"),
@@ -73,34 +58,12 @@ const workflowCapabilityClient: AgentCapabilitiesClient = {
   list: request => window.ezterminal.agentCapabilitiesList(request),
   manage: request => window.ezterminal.agentCapabilitiesManage(request),
 };
-const executionAccess: PlanningExecutionAccess = {
-  readPlanningResult: (query) => window.ezterminal.readPlanningResult(query),
-  getPlanningExecutionSnapshot: (projectId) =>
-    window.ezterminal.getPlanningExecutionSnapshot(projectId),
-  executePlanningRun: (command) =>
-    window.ezterminal.executePlanningRun(command),
-  getDaemonSnapshot: () => window.ezterminal.getDaemonSnapshot(),
-  listDaemonProviderModels: (providerId) =>
-    window.ezterminal.listDaemonProviderModels(providerId),
-};
+/** Run results for the flow screen: the integration result and each attempt's diff, log and capture. */
+const readPlanningResult: PlanningResultReader = (query) => window.ezterminal.readPlanningResult(query);
 /** The flow screen's execution access: retry a failed independent review in the flow's own scope. */
 const workflowExecutionAccess: WorkflowExecutionAccess = {
   getPlanningExecutionSnapshot: (projectId, subprojectId) => window.ezterminal.getPlanningExecutionSnapshot(projectId, subprojectId),
   executePlanningRun: (command) => window.ezterminal.executePlanningRun(command),
-};
-const assetApi: PlanningAssetApi = {
-  executePlanningAsset: (request) =>
-    window.ezterminal.executePlanningAsset(request),
-};
-const archiveAccess: ProjectArchiveAccess = {
-  executeProjectArchive: (request) =>
-    window.ezterminal.executeProjectArchive(request),
-};
-const aiAccess: PlanningAiAccess = {
-  planningAiRequest: (request) => window.ezterminal.planningAiRequest(request),
-  getDaemonSnapshot: () => window.ezterminal.getDaemonSnapshot(),
-  listDaemonProviderModels: (providerId) =>
-    window.ezterminal.listDaemonProviderModels(providerId),
 };
 
 export function projectPlanningConversations(
@@ -160,14 +123,9 @@ export function PlanningWorkspaceDockPanel(
     typeof props.params.projectName === "string"
       ? props.params.projectName
       : projectId;
-  const draftStores = useMemo(
-    () => ({ projectId, stores: new Map<string, ReturnType<typeof desktopPlanningDraftStorage>>() }),
-    [projectId],
-  ).stores;
   const [conversations, setConversations] = useState<
     readonly PlanningConversation[]
   >([]);
-  const [error, setError] = useState<string>();
   // A hidden dock tab has no size: the canvas fits and the panel polls only while visible.
   const [visible, setVisible] = useState(props.api.isVisible);
   useEffect(() => {
@@ -190,12 +148,9 @@ export function PlanningWorkspaceDockPanel(
       try {
         const snapshot = await rendererCapabilities.daemon.getSnapshot();
         if (disposed || current !== generation) return;
-        if (snapshot) {
-          setConversations(projectPlanningConversations(snapshot, projectId));
-          setError(undefined);
-        }
-      } catch (reason) {
-        if (!disposed && current === generation) setError(String(reason));
+        if (snapshot) setConversations(projectPlanningConversations(snapshot, projectId));
+      } catch {
+        // The list keeps what it last read; the flow itself reports host failures.
       }
     };
     void refresh();
@@ -203,9 +158,7 @@ export function PlanningWorkspaceDockPanel(
       (event) => {
         if (daemonEventAffectsAgentSessionProjection(event)) void refresh();
       },
-      (reason) => {
-        if (!disposed) setError(String(reason));
-      },
+      () => undefined,
     );
     return () => {
       disposed = true;
@@ -223,7 +176,7 @@ export function PlanningWorkspaceDockPanel(
       active={visible}
       canvasRenderer={FlowCanvas}
       onReloadCanvas={() => { workflowCanvasLoader.reset(); setCanvasGeneration((current) => current + 1); }}
-      readPlanningResult={executionAccess.readPlanningResult}
+      readPlanningResult={readPlanningResult}
       executionAccess={workflowExecutionAccess}
       daemonAccess={workflowDaemonAccess}
       capabilityClient={workflowCapabilityClient}
@@ -243,51 +196,6 @@ export function PlanningWorkspaceDockPanel(
       onNewConversation={navigation ? () => navigation.newConversation(projectId, projectName) : undefined}
       onNewTerminal={navigation ? () => navigation.openTerminal(projectId, projectName) : undefined}
       onOpenConversation={navigation ? id => navigation.openConversation(id, conversations.find(item => item.id === id)?.title) : undefined}
-      renderPlanning={(subproject, section, runId) => {
-        const key = subproject?.id ?? '';
-        if (!draftStores.has(key)) draftStores.set(key, desktopPlanningDraftStorage(projectId, subproject?.id));
-        return <PlanningWorkspacePanel
-      embedded
-      projectId={projectId}
-      projectName={subproject?.title ?? projectName}
-      subprojectId={subproject?.id}
-      access={access}
-      draftStorage={draftStores.get(key)}
-      executionAccess={executionAccess}
-      assetApi={assetApi}
-      archiveAccess={archiveAccess}
-      aiAccess={aiAccess}
-      initialSection={
-        section ?? props.params.section as PlanningWorkspaceSection | undefined
-      }
-      initialRunId={runId}
-      conversations={conversations}
-      conversationError={error}
-      onBack={navigation?.openProjects}
-      onNewConversation={
-        navigation
-          ? () => navigation.newConversation(projectId, projectName)
-          : undefined
-      }
-      onOpenConversation={
-        navigation
-          ? (id) =>
-              navigation.openConversation(
-                id,
-                conversations.find((item) => item.id === id)?.title,
-              )
-          : undefined
-      }
-      onOpenFiles={
-        navigation ? () => navigation.openFiles(projectId) : undefined
-      }
-      onOpenTerminal={
-        navigation
-          ? () => navigation.openTerminal(projectId, projectName)
-          : undefined
-      }
-    />;
-      }}
     />
   );
 }

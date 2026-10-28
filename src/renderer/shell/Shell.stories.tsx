@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { useEffect } from 'react';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
+import { applyEffectIntensity, applyEffects } from '../effects';
 import { AppI18nProvider } from '../i18n';
 import { LiveList, type ShellTool } from './LiveList';
 import { ProjectBoard } from './ProjectBoard';
@@ -41,6 +43,8 @@ interface ShellStoryArgs {
   readonly waiting: boolean;
   /** Fill the viewport instead of the fixed 1440×900 frame (approved 2.0 reference stories). */
   readonly fluid?: boolean;
+  /** Turn on Matrix's CRT effects at intensity 7, as the app does for a Matrix profile. */
+  readonly crt?: boolean;
   readonly onDecide: (approvalId: string, decision: 'allow' | 'deny') => void;
   readonly onOpenConversation: (sessionId: string) => void;
 }
@@ -61,6 +65,13 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
     if (owner) waitingByProject[owner] = (waitingByProject[owner] ?? 0) + 1;
   }
   const ko = locale === 'ko';
+  const crt = Boolean(args.crt) && document.documentElement.dataset.theme === 'matrix';
+  useEffect(() => {
+    if (!crt) return undefined;
+    applyEffectIntensity(7);
+    applyEffects(new Set(['scanlines', 'phosphor-glow', 'crt-rollbar', 'flicker']));
+    return () => applyEffects(new Set());
+  }, [crt]);
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <div className="ez-shell" style={args.fluid ? { width: '100vw', height: '100vh' } : { width: 1440, height: 900 }} data-testid="shell-story">
@@ -186,6 +197,12 @@ export const WorkMode: Story = {
     await expect(args.onOpenConversation).toHaveBeenCalledWith('s-pdf');
   },
 };
+
+/**
+ * Matrix's CRT effects over the work mode (scanlines, glow, rollbar, flicker). It pins
+ * neither locale nor theme: the visual contract opens it at four widths and two scales.
+ */
+export const CrtEffects: Story = { args: { mode: 'work', fluid: true, crt: true } };
 
 /**
  * Approved 2.0 references (docs/ux/reference/2.0/manifest.json). They pin neither

@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { gitDiffFileChanges } from "../shared/conversation-changes";
-import type { ExecutionRun } from "../shared/planning-execution";
-import type { PlanningDeviceEvidenceInput } from "../shared/planning-device-evidence";
-import { PlanningDeviceEvidenceForm, type PlanningDeviceEvidenceTarget } from "./PlanningDeviceEvidenceForm";
 import type {
   PlanningIntegrationRecord,
   PlanningResultQuery,
@@ -158,8 +155,6 @@ export function PlanningResultDetails({
   onClose,
   onOpenConversation,
   onRetryReview,
-  executionRuns,
-  onRecordDeviceEvidence,
   retryDisabled,
   actionError,
   disabled,
@@ -169,8 +164,6 @@ export function PlanningResultDetails({
   onClose: () => void;
   onOpenConversation?: (sessionId: string) => void;
   onRetryReview?: (result: PlanningResultRecord) => void;
-  executionRuns?: readonly ExecutionRun[];
-  onRecordDeviceEvidence?: (input: PlanningDeviceEvidenceInput) => Promise<boolean>;
   retryDisabled?: boolean;
   /** Why an action taken from the dialog (a retried review) did not go through. */
   actionError?: string | null;
@@ -190,7 +183,6 @@ export function PlanningResultDetails({
   } | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [capture, setCapture] = useState<{ reference: string; mimeType?: 'image/png' | 'image/jpeg' | 'image/webp'; dataBase64?: string; error?: string } | null>(null);
-  const [deviceTarget, setDeviceTarget] = useState<PlanningDeviceEvidenceTarget | null>(null);
   const [diff, setDiff] = useState<{ text?: string; error?: string } | null>(
     null,
   );
@@ -203,7 +195,6 @@ export function PlanningResultDetails({
     setDiff(null);
     setDiffOpen(false);
     setCapture(null);
-    setDeviceTarget(null);
     if (!selection || disabled) return;
     setLoading(true);
     void read(selection)
@@ -308,24 +299,6 @@ export function PlanningResultDetails({
     return () => { current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capture?.reference, selection?.projectId, selection?.subprojectId, read, disabled]);
-  const deviceEvidenceTarget = (entry: PlanningValidationRecord): PlanningDeviceEvidenceTarget | null => {
-    if (!record || entry.status !== 'not-run' || !onRecordDeviceEvidence) return null;
-    const run = executionRuns?.find(candidate => candidate.runId === record.runId);
-    if (!run) return null;
-    if ('attemptId' in record) {
-      if (record.baselineFingerprint !== run.preparation.baseline.fingerprint || !record.artifacts.length) return null;
-      const task = run.preparation.tasks.find(candidate => candidate.taskId === record.taskId);
-      const validation = task?.validations.find(candidate => candidate.validationId === entry.validationId && candidate.method === 'device');
-      if (!task || !validation) return null;
-      return {scope: 'attempt', runId: run.runId, taskId: task.taskId, validationId: validation.validationId, baselineFingerprint: record.baselineFingerprint, attemptId: record.attemptId, artifactIds: record.artifacts.map(artifact => artifact.artifactId), environment: validation.environment, command: validation.command};
-    }
-    if (record.status !== 'awaiting-evidence') return null;
-    for (const task of run.preparation.tasks) {
-      const validation = task.validations.find(candidate => `${task.taskId}:${candidate.validationId}` === entry.validationId && candidate.method === 'device');
-      if (validation) return {scope: 'integration', runId: run.runId, taskId: task.taskId, validationId: validation.validationId, baselineFingerprint: run.preparation.baseline.fingerprint, candidateCommit: record.candidateCommit, environment: validation.environment, command: validation.command};
-    }
-    return null;
-  };
   const validations = (entries: PlanningValidationRecord[]): JSX.Element => (
     <ul className="planning-workspace__history">
       {entries.map((entry) => (
@@ -347,7 +320,6 @@ export function PlanningResultDetails({
             </dl>}
             <div className="planning-workspace__actions">
               {entry.device && <Button size="sm" disabled={disabled} onClick={() => setCapture({ reference: entry.device!.captureHash })}>{text('저장한 기기 캡처', 'View saved device capture')}</Button>}
-              {deviceEvidenceTarget(entry) && <Button size="sm" disabled={disabled || retryDisabled} onClick={() => setDeviceTarget(deviceEvidenceTarget(entry))}>{text('실기기 증빙 첨부', 'Attach device evidence')}</Button>}
               {entry.logRefs.map((reference, index) => (
                 <Button
                   key={reference}
@@ -598,17 +570,6 @@ export function PlanningResultDetails({
             )}
           </section>
         )}
-        {deviceTarget && onRecordDeviceEvidence && <PlanningDeviceEvidenceForm
-          key={`${deviceTarget.scope}:${deviceTarget.taskId}:${deviceTarget.validationId}`}
-          target={deviceTarget}
-          disabled={disabled || Boolean(retryDisabled)}
-          onCancel={() => setDeviceTarget(null)}
-          onSubmit={async (input) => {
-            const accepted = await onRecordDeviceEvidence(input);
-            if (accepted) { setDeviceTarget(null); setRefresh(value => value + 1); }
-            return accepted;
-          }}
-        />}
         {capture && <section className="planning-workspace__result-log"><h3>{text('사용자가 첨부한 실행 캡처', 'Execution capture supplied by the user')}</h3>{capture.error ? <p role="alert">{capture.error}</p> : capture.dataBase64 && capture.mimeType ? <img className="planning-workspace__evidence-capture" src={`data:${capture.mimeType};base64,${capture.dataBase64}`} alt={text('저장된 실기기 검증 캡처', 'Saved device validation capture')} /> : <LoadingState label={text('캡처 읽는 중', 'Reading capture')} />}</section>}
       </div>
     </Dialog>

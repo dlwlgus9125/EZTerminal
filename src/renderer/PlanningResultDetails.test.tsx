@@ -4,7 +4,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlanningResultRecord } from '../shared/planning-result';
 import { PlanningIntegrationStatus, PlanningResultDetails, type PlanningResultReader } from './PlanningResultDetails';
-import { planningExecutionFixture } from './planning-execution-fixtures';
 
 vi.mock('./i18n', () => ({ useAppTranslation: () => ({ i18n: { language: 'en' } }) }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,19 +19,6 @@ const click = async (name: string): Promise<void> => {
 };
 
 describe('saved planning results', () => {
-  it('offers device evidence only for the frozen device check and binds the exact attempt artifacts', async () => {
-    const run = { ...planningExecutionFixture().execution.runs[0], runId: saved.runId };
-    run.preparation.tasks[0].taskId = saved.taskId;
-    run.preparation.tasks[0].validations = [{validationId: 'device-check', method: 'device', environment: 'Android 15', acceptanceIds: ['acceptance-1']}];
-    const read = vi.fn<PlanningResultReader>(async () => ({ok:true,kind:'attempt',result:{...saved,validations:[{validationId:'device-check',status:'not-run',logRefs:[],summary:'Device evidence required'},{validationId:'not-device',status:'not-run',logRefs:[],summary:'Command pending'}]}}));
-    await act(async () => root.render(<PlanningResultDetails selection={{kind:'attempt',projectId:saved.projectId,attemptId:saved.attemptId}} read={read} executionRuns={[run]} onRecordDeviceEvidence={async () => true} onClose={() => undefined} disabled={false} />));
-    expect([...document.querySelectorAll('button')].filter(entry => entry.textContent === 'Attach device evidence')).toHaveLength(1);
-    await click('Attach device evidence');
-    const form = document.querySelector('form[aria-label="Device validation evidence"]')!;
-    expect(form.textContent).toContain('attempt-test · artifact-test');
-    expect(form.textContent).toContain('Android 15');
-    expect(form.textContent).toContain(saved.baselineFingerprint);
-  });
   it('reads stored device captures by hash and identifies their user supplied provenance', async () => {
     const hash = 'd'.repeat(64);
     const read = vi.fn<PlanningResultReader>(async query => query.kind === 'capture' ? {ok:true,kind:'capture',mimeType:'image/png',dataBase64:'AQID'} : {ok:true,kind:'attempt',result:{...saved,validations:[{...saved.validations[0],device:{provenance:'user-attested',proofId:'c'.repeat(64),principalId:'desktop-user',deviceId:'pixel-8',platformVersion:'Android 15',appVersion:'2.0.0',command:'maestro smoke.yaml',exitCode:0,startedAt:'2026-10-13T00:00:00.000Z',finishedAt:'2026-10-13T00:05:00.000Z',captureRefs:['host-private-path'],captureHash:hash,logHash:'e'.repeat(64)}}]}});

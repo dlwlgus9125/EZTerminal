@@ -96,7 +96,7 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
           <ul className="results-rows">
             {subagents.map((child) => (
               <li key={child.sessionId} className="results-row" data-state={child.state}>
-                <Glyph name="info" className="results-row__dot" />
+                <Glyph name="dot" className="results-row__dot" />
                 <span className="results-row__main" title={child.title}>{child.title}</span>
                 <span className="results-row__meta">{child.providerLabel} · {stateLabel(child.state)}</span>
                 {onOpenSubagent && <Button variant="ghost" size="sm" onClick={() => onOpenSubagent(child.sessionId)}>{copy.openSubagent}</Button>}

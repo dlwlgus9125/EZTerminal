@@ -128,8 +128,6 @@ describe('UI token contract', () => {
     // rule (here, the mobile 48px touch target).
     for (const file of [
       'src/renderer/planning-workspace.css',
-      'src/renderer/planning/planning-ai.css',
-      'src/renderer/planning/scene-designer.css',
       'src/renderer/workflow/workflow.css',
     ]) {
       const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));

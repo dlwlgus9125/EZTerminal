@@ -128,9 +128,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/PlanningWorkspaceDockPanel.tsx",
-          "startLine": 185,
-          "endLine": 214,
-          "lineDigest": "sha256:78c434cc3f51b57a4759cf0c1cc92bde00982b8f2c2818ba72a50abba733fad0",
+          "startLine": 143,
+          "endLine": 167,
+          "lineDigest": "sha256:b121c843bf69e0ca87319ebd41f05b6c0f88d08646a6b4085c1f40e42ae7b557",
           "claim": "The flow screen lists its conversations from one daemon snapshot read and re-reads only on events that change the session projection (transcript-only events are filtered); a newer read supersedes an older one."
         }
       ]

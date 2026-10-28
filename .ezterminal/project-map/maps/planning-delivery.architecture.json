@@ -22,7 +22,7 @@
     {
       "id": "planning-and-recovery",
       "title": "Planning and durable input",
-      "summary": "Shared chat skins and scene/document editors preserve device drafts before authenticated host mutation.",
+      "summary": "Shared chat skins and the flow screen preserve device drafts before authenticated host mutation.",
       "focusIds": [
         "planning-workspace",
         "conversation-skins",
@@ -85,8 +85,8 @@
   "nodes": [
     {
       "id": "planning-workspace",
-      "label": "Planning and scene workspace",
-      "detail": "Documents, flows, tasks, roles, scenes, and AI proposal review use typed saved entities and explicit actions.",
+      "label": "Flow screen and run results",
+      "detail": "Subprojects and their flows share one project screen; a run's integration result and attempt evidence open in its result dialog.",
       "kind": "surface",
       "group": "surfaces",
       "rank": 0,
@@ -94,19 +94,19 @@
       "evidence": [
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1215,
-          "endLine": 1231,
-          "lineDigest": "sha256:d066361a5a960e39b184d5a77779313788bdc1730ccb9e7182db8851351b58d8",
-          "claim": "The planning view selects AI proposal review or typed structure/flow editing with explicit patch callbacks."
+          "relativePath": "src/renderer/workflow/WorkflowWorkspacePanel.tsx",
+          "startLine": 640,
+          "endLine": 653,
+          "lineDigest": "sha256:e791277e9cf5e02855c5cd1b52e2d6a889e4f166bbe7fd5b34ec4df430695f7e",
+          "claim": "The flow screen opens a run's integration result and each attempt's evidence in one result dialog, and asks for an independent review again with one fixed command id per review round."
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1513,
-          "endLine": 1554,
-          "lineDigest": "sha256:15599478468a04598e7f493fad47fdeaa3a8665da3febf50be5add6b8cf817ad",
-          "claim": "The scene editor receives controlled entity drafts, write/readonly gates, assets, AI access, and typed operations from the planning workspace."
+          "relativePath": "src/renderer/PlanningResultDetails.tsx",
+          "startLine": 25,
+          "endLine": 31,
+          "lineDigest": "sha256:facfbe486600265d01fdd8b2582f12a6d4854beee191cda6347896fe07d38799",
+          "claim": "Diff, log and capture reads carry the flow's subproject, so a flow attempt's evidence is read in its own scope."
         }
       ]
     },

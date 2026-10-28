@@ -65,7 +65,7 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
           {props.diverged && <Button size="sm" leadingIcon={<Glyph name="wt" />} onClick={() => props.onRunView(true)}>{ended ? text('최근 실행 보기', 'View last run') : text('진행 중인 실행 보기', 'View running run')}</Button>}
         </div>}
       <div className="workflow-canvas-header__view" role="group" aria-label={text('흐름 보기', 'Workflow view')}>
-        <IconButton icon={glyphIcon('wt')} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
+        <IconButton icon={glyphIcon('flow')} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
         <IconButton icon={glyphIcon('list')} aria-pressed={props.layout === 'list'} aria-label={text('목록', 'List')} onClick={() => props.onLayoutChange('list')} />
         {props.panelToggle && <IconButton icon={props.panelToggle.open ? glyphIcon('panelClose') : glyphIcon('panelOpen')} aria-expanded={props.panelToggle.open} aria-controls={props.panelToggle.controls}
           aria-label={props.panelToggle.open ? text('단계 패널 접기', 'Hide stage panel') : text('단계 패널 펼치기', 'Show stage panel')} onClick={props.panelToggle.onToggle} />}

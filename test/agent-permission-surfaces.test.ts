@@ -22,7 +22,6 @@ const CONVERSATION_SURFACES = [
 /** Scheduled and stage agents run alone: for them plan is a choice of its own, "plan only". */
 const AUTOMATED_SURFACES = [
   'src/renderer/ScheduleSettings.tsx',
-  'src/renderer/PlanningExecutionPanel.tsx',
   'src/renderer/workflow/WorkflowNodeSettings.tsx',
   'src/renderer/workflow/workflow-copy.ts',
   'src/renderer/workflow/WorkflowWorkspacePanel.tsx',

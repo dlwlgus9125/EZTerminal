@@ -98,6 +98,8 @@ const PATHS = {
   plug: 'M6.5 2h2v4h3V2h2v4H16v3a6 6 0 0 1-5 5.92V18H9v-3.08A6 6 0 0 1 4 9V6h2.5z',
   commit: 'M1 9h5.13a4 4 0 0 1 7.74 0H19v2h-5.13a4 4 0 0 1-7.74 0H1zm9-1a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
   map: 'M2 4.5l5-2 6 2 5-2v13l-5 2-6-2-5 2zm4.25-.15v10.4h1.5V4.35zm6 2v10.4h1.5V6.35z',
+  /** A status mark the surrounding stylesheet colours (sub-agent rows). */
+  dot: 'M10 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10z',
 } as const;
 
 /** Extra shapes drawn on top of a path (the request and phone glyphs carry a signal dot). */

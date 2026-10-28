@@ -102,8 +102,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/MobilePlanningNavigator.tsx",
-          "startLine": 55,
-          "endLine": 70,
+          "startLine": 51,
+          "endLine": 66,
           "lineDigest": "sha256:34432147d7979017714bd8e371e2129e42b84a700a7f45a2c7d53ca62f1e2608",
           "claim": "Android derives a nonsecret authority fingerprint and uses the same shared navigation projection for the connected host."
         }

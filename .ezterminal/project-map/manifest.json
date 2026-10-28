@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cf769d4ad284e290db967b9bcab20952f87dbfaf26b922fd64c41e75ded6ca48",
+        "inputDigest": "sha256:39c4a05b8ef632aefe80e8f09f38675d5fc33a8a2181d4924947df0f4c0941e5",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
+        "reason": "Reviewed (I5-9): the flow dock host no longer builds the old planning panel; its conversation list still refreshes only on projection events, now ignoring read failures it used to show only inside that panel."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:11b2f8d0a4fc22ac06696fda7af5330ed34f9985c7984a0c9b5a1509e7be4450",
+        "inputDigest": "sha256:3731280c6bdad312940932ed182d92af4b1d1ef6110f9bc5b82d1bcdde251205",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
+        "reason": "Reviewed (I5-9): the flow screen stopped embedding the old planning panel and the run result dialog dropped the device-evidence form; the anchored approval and session blocks are unchanged."
       }
     },
     {
@@ -649,7 +649,7 @@
         },
         {
           "rootAlias": "app",
-          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx"
+          "relativePath": "src/renderer/PlanningResultDetails.tsx"
         },
         {
           "rootAlias": "app",
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1818f36489e736a452e1f27614eb996f78191f3ff2d347421b5ba4d76b5910d8",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
+        "inputDigest": "sha256:d6db51c6f34a91d63f8e0c1eeb709b366df2f364ff1fbce87b270e36a498cdd5",
+        "decision": "map-updated",
+        "reason": "I5-9: the planning and scene workspace is gone; its surface node is now the flow screen and its run result dialog (integration, attempt evidence in the flow's scope, independent review retry). AI, asset and draft nodes go with I5-10."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:4835f310641503fa72cd0439af455afdd2e24baf3449cad4667bbe6c5b3c9102",
+        "inputDigest": "sha256:833c93383e38cd427e074f0dc0cb359da4d2d00cf74de3678aaa8103de05b042",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-2 AgentHub): the hub keeps only the inbox and the files view; the project navigator, daemon session list and launch picker are gone. The flow screen anchor now carries the projection-event refresh. Icons are glyphs."
+        "reason": "Reviewed (I5-9): the phone project screen no longer embeds the old planning panel or its device draft store; the flow screen, result reader and per-PC backup it keeps are unchanged. Anchors moved."
       }
     }
   ]

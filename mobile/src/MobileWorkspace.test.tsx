@@ -859,7 +859,10 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
   async function openWorkspaceTerminalAction(
     el: HTMLDivElement,
     socket: FakeSocket,
+    transport: WsEzTerminalTransport,
   ): Promise<HTMLButtonElement> {
+    // The project screen draws its toolbar once the flow read settles; this PC has no flows.
+    vi.spyOn(transport, 'getWorkflowSnapshot').mockResolvedValue({ ok: false, error: 'unavailable', message: 'No flows in this test.' });
     await act(async () => {
       socket.triggerMessage({
         kind: 'daemon-snapshot',
@@ -869,9 +872,8 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
     await openProjectsFromFeed(el);
     await tap(el, 'mobile-planning-project');
     await waitForTestId(el, 'workflow-workspace');
-    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Quick tasks and existing work')!.click());
-    await waitForTestId(el, 'planning-workspace');
-    const button = [...el.querySelectorAll<HTMLButtonElement>('[data-testid="planning-workspace"] button')].find(entry => entry.textContent === 'Terminal');
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    const button = [...el.querySelectorAll<HTMLButtonElement>('[data-testid="workflow-workspace"] button')].find(entry => entry.textContent === 'New terminal');
     if (!button) throw new Error('Missing project Terminal action');
     return button;
   }
@@ -901,7 +903,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
       },
     }));
     const el = await renderWorkspace(transport);
-    const openTerminal = await openWorkspaceTerminalAction(el, socket);
+    const openTerminal = await openWorkspaceTerminalAction(el, socket, transport);
     const readsBeforeAction = refresh.mock.calls.length;
 
     await act(async () => {
@@ -928,7 +930,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
     }));
     const open = vi.spyOn(transport, 'openSessionSurface');
     const el = await renderWorkspace(transport);
-    const openTerminal = await openWorkspaceTerminalAction(el, socket);
+    const openTerminal = await openWorkspaceTerminalAction(el, socket, transport);
 
     await act(async () => {
       openTerminal.click();
@@ -937,14 +939,14 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeNull();
-    expect(el.querySelector('[data-testid="planning-workspace"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="workflow-workspace"]')).toBeTruthy();
     expect(el.textContent)
       .toContain('Could not open the project terminal.');
   });
 });
 
 describe('MobileWorkspace - previous work', () => {
-  it('keeps the cached planning panel mounted while authentication awaits the daemon seed', async () => {
+  it('keeps the cached project screen mounted while authentication awaits the daemon seed', async () => {
     const socket = new FakeSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'offline-planning-host', createSocket: () => socket });
     const authority = await mobileAgentCreateAuthorityFingerprint('offline-planning-host');
@@ -956,24 +958,16 @@ describe('MobileWorkspace - previous work', () => {
     });
     await openProjectsFromFeed(el);
     await tap(el, 'mobile-planning-project');
-    await waitForTestId(el, 'workflow-workspace');
-    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Quick tasks and existing work')!.click());
-    const panel = await waitForTestId(el, 'planning-workspace');
-    const planningTab = [...panel.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === 'Planning');
-    expect(planningTab).toBeDefined();
-    await act(async () => planningTab!.click());
-    expect(planningTab?.getAttribute('aria-selected')).toBe('true');
+    const panel = await waitForTestId(el, 'workflow-workspace');
 
     await act(async () => socket.triggerMessage({ kind: 'auth-ok' }));
     expect(transport.isAuthed).toBe(true);
-    expect(el.querySelector('[data-testid="planning-workspace"]')).toBe(panel);
-    expect(planningTab?.getAttribute('aria-selected')).toBe('true');
+    expect(el.querySelector('[data-testid="workflow-workspace"]')).toBe(panel);
 
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot }));
-    expect(el.querySelector('[data-testid="planning-workspace"]')).toBe(panel);
-    expect(planningTab?.getAttribute('aria-selected')).toBe('true');
+    expect(el.querySelector('[data-testid="workflow-workspace"]')).toBe(panel);
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: daemonSnapshot({ revision: 2, eventSequence: 2 }) }));
-    expect(el.querySelector('[data-testid="planning-workspace"]')).toBeNull();
+    expect(el.querySelector('[data-testid="workflow-workspace"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-planning-project"]')).toBeNull();
   });
   it('opens the encrypted cached conversation before reconnect without creating a terminal or sending a command', async () => {
