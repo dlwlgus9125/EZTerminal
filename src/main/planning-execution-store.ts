@@ -27,7 +27,7 @@ import {
 } from '../shared/planning-execution';
 import type { DaemonStore } from './daemon-store';
 import { advanceWorkflowRun } from './workflow-runtime';
-import { validateWorkflowGraph } from '../shared/workflow-graph';
+import { validateWorkflowGraph, workflowApprovalNeedsPerson, workflowPersonAccepts } from '../shared/workflow-graph';
 import { workflowDigest } from './workflow-service';
 import { isRunReviewer } from './planning-review-identity';
 
@@ -293,7 +293,7 @@ export class PlanningExecutionStore {
   }
 
   private checkPrincipal(command: PlanningExecutionCommand): void {
-    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'task.bind', 'run.cancel-reconcile'].includes(command.type);
+    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'task.bind', 'run.cancel-reconcile', 'review.checks'].includes(command.type);
     // The host approves and integrates only for a run frozen with automatic approval (checked in apply).
     const autoApproval = command.principal.kind === 'runtime' && command.principal.id === PLANNING_AUTO_APPROVAL_PRINCIPAL
       && (command.type === 'workflow.approve' || command.type === 'workflow.integrate');
@@ -395,6 +395,8 @@ export class PlanningExecutionStore {
         requireState(command.principal.kind !== 'runtime' || run.preparation.approvalPolicy === 'auto', 'user-required', 'This run waits for a person to approve.');
         const activation = run.workflowRuntime?.activations.find(entry => entry.id === command.payload.activationId);
         requireState(activation?.state === 'awaiting-approval', 'invalid-transition', 'This exact workflow approval is no longer pending.');
+        // The person's acceptance of a stage nothing else verified (review off, no check) is never automatic.
+        requireState(command.principal.kind !== 'runtime' || !workflowApprovalNeedsPerson(run.preparation.workflow!.graph, activation.nodeId), 'user-required', 'Only a person accepts a stage that has no review and no check.');
         requireState(run.preparation.workflow?.graph.nodes.find(node => node.id === activation.nodeId)?.operation === 'approval', 'invalid-reference', 'The stage is not an approval gate.');
         // A note goes back only with a rejection: it reaches the stage the rejection returns to.
         const comment = command.payload.decision === 'reject' ? command.payload.comment : undefined;
@@ -658,6 +660,36 @@ export class PlanningExecutionStore {
           ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }), logRefs: input.logRefs, captureRefs: input.captureRefs,
           baseline: input.baseline, artifacts: input.artifacts, summary: input.summary, recordedAt: now,
         }] };
+      }
+      case 'review.checks': {
+        const input = command.payload;
+        const attempt = run.attempts.find((entry) => entry.attemptId === input.attemptId);
+        const task = run.tasks.find((entry) => entry.currentAttemptId === input.attemptId);
+        requireState(attempt?.state === 'succeeded' && task?.state === 'awaiting-review'
+          && !run.reviews.some((entry) => entry.reviewId === input.reviewId), 'invalid-transition', 'Only the current successful attempt can be accepted.');
+        const node = run.preparation.workflow?.graph.nodes.find((entry) => entry.id === task.taskId);
+        requireState(node?.operation === 'agent' && node.review?.mode === 'off', 'invalid-reference', 'Only a stage with review off is accepted by its checks.');
+        const definition = run.preparation.tasks.find((entry) => entry.taskId === task.taskId)!;
+        const commands = definition.validations.filter((validation) => validation.method === 'command');
+        const evidence = input.evidenceIds.map((id) => run.evidence.find((entry) => entry.evidenceId === id));
+        requireState(new Set(input.evidenceIds).size === input.evidenceIds.length && evidence.every((entry) => entry?.attemptId === attempt.attemptId
+          && canonical(entry.baseline) === canonical(run.preparation.baseline) && sameArtifacts(entry.artifacts, attempt.artifacts)), 'stale-review', 'Checks must come from this exact attempt.');
+        if (input.basis === 'checks') {
+          requireState(commands.length > 0 && commands.length === definition.validations.length, 'invalid-reference', 'This stage is not checked by commands alone.');
+          requireState(input.decision === 'approve'
+            ? commands.every((validation) => evidence.some((entry) => entry?.validationId === validation.validationId && entry.status === 'passed'))
+            : evidence.some((entry) => entry?.status === 'failed' && entry.exitCode !== undefined && entry.exitCode !== 0),
+          'stale-review', 'A check result decides: every check passed to accept, a failing exit code to send it back.');
+        } else {
+          requireState(commands.length === 0 && workflowPersonAccepts(node) && input.decision === 'approve', 'invalid-reference', 'Only a stage with no review and no check is passed on to the person.');
+        }
+        const reviewer = { reviewerSessionId: 'host-checks', reviewerTurnId: `checks-${input.reviewId}`.slice(0, 160) };
+        run = withTask({ ...run, reviews: [...run.reviews, {
+          reviewId: input.reviewId, attemptId: input.attemptId, baseline: run.preparation.baseline, ...reviewer,
+          decidedBy: input.basis === 'checks' ? 'host-checks' : 'person-gate',
+          artifacts: attempt.artifacts, evidenceIds: input.evidenceIds, decision: input.decision, detail: input.detail, decidedAt: now,
+        }] }, task.taskId, { state: input.decision === 'approve' ? 'completed' : 'failed' });
+        return input.decision === 'reject' ? markRepairExhausted(run, task.taskId, now) : run;
       }
       case 'review.decide': {
         const input = command.payload;

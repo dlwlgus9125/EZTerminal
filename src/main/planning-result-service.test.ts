@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonCommand } from '../shared/daemon-protocol';
-import type { ExecutionPreparation, ExecutionRun, PreparedExecutionTask } from '../shared/planning-execution';
+import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionPreparation, type ExecutionRun, type PreparedExecutionTask } from '../shared/planning-execution';
 import type { AgentProviderAdapter, AgentProviderEvent } from './agent-provider-adapter';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
@@ -28,7 +28,8 @@ const validations: PreparedExecutionTask['validations'] = [
   { validationId: 'inspection', acceptanceIds: ['AC'], method: 'inspection', environment: 'read-only review' },
 ];
 
-async function fixture(options: { policy?: ExecutionPreparation['progressPolicy']; validations?: PreparedExecutionTask['validations']; workflow?: boolean } = {}) {
+async function fixture(options: { policy?: ExecutionPreparation['progressPolicy']; validations?: PreparedExecutionTask['validations']; workflow?: boolean;
+  reviewOff?: boolean; approvalPolicy?: 'auto'; commandConsent?: (validationCommand: string, resultRoot: string) => string | undefined } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-result-'));
   const root = path.join(directory, 'repo');
   const userDataDir = path.join(directory, 'data');
@@ -76,7 +77,8 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
   const errors: unknown[] = [];
   const wakeExecution = vi.fn();
   const service = new PlanningResultService({ userDataDir, store, daemon, ledger, git, worktrees, validationRunner: runner,
-    wakeQueuedTurns: () => runtime.wakeQueuedTurns(), reportError: error => errors.push(error), wakeExecution });
+    wakeQueuedTurns: () => runtime.wakeQueuedTurns(), reportError: error => errors.push(error), wakeExecution,
+    ...(options.commandConsent ? { commandConsent: async (_run, _task, validation, resultRoot) => options.commandConsent!(validation.command ?? '', resultRoot) } : {}) });
   await store.applySystemCommit({ mutations: [
     { kind: 'project.upsert', value: { id: 'P', name: 'Project', source: 'native', rootPath: root } },
     { kind: 'workspace.upsert', value: { id: 'W', projectId: 'P', name: 'Worker', kind: 'worktree', rootPath: worker } },
@@ -92,7 +94,10 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
   };
   if (options.workflow) {
     const graph = createWorkflowGraph('research', 'sub'); const task = preparation.tasks[0];
-    graph.nodes[0] = { ...graph.nodes[0], id: 'T', role: 'implementation', providerId: 'codex', model: 'model', permissionPreset: 'standard', allowedPaths: ['src'], instructions: 'Implement', acceptance: ['Correct file'] };
+    graph.nodes[0] = { ...graph.nodes[0], id: 'T', role: 'implementation', providerId: 'codex', model: 'model', permissionPreset: 'standard', allowedPaths: ['src'], instructions: 'Implement', acceptance: ['Correct file'],
+      ...(options.reviewOff ? { review: { mode: 'off' as const } } : {}),
+      ...(options.reviewOff && (options.validations ?? validations).some(entry => entry.method === 'command') ? { checks: [{ id: 'command', command: check }] } : {}) };
+    if (options.approvalPolicy) Object.assign(preparation, { approvalPolicy: options.approvalPolicy });
     graph.entryNodeId = 'T'; graph.edges[0].from = 'T';
     Object.assign(preparation, { subprojectId: 'sub', workflow: { subprojectId: 'sub', revision: 0, fingerprint: workflowDigest(graph), graph } });
     expect(task.taskId).toBe('T');
@@ -138,7 +143,9 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
   };
   const approve = () => service.decideReview({ commandId: 'user-approve', projectId: 'P', expectedRevision: ledger.read('P').revision,
     type: 'review', payload: { runId: 'R', attemptId: 'A', decision: 'approve', detail: 'Accept independently checked result' } }, { kind: 'desktop', id: 'test' });
-  return { root, worker, git, service, current, preparation, capture, review, approve, errors, runner, adapter, send, daemon, baseCommit, worktrees, userDataDir, wakeExecution, revision: () => ledger.read('P').revision };
+  const ledgerExecute = (command: { principal: { kind: string; id: string }; type: string; payload: Record<string, unknown> }) => ledger.execute({ commandId: `command-${++sequence}`, projectId: 'P',
+    expectedRevision: ledger.read('P').revision, principal: command.principal, type: command.type, payload: { runId: 'R', ...command.payload } } as never);
+  return { root, worker, git, service, current, preparation, capture, review, approve, errors, runner, adapter, send, daemon, baseCommit, worktrees, userDataDir, wakeExecution, ledgerExecute, revision: () => ledger.read('P').revision };
 }
 
 describe('planning result authority', () => {
@@ -249,6 +256,43 @@ describe('planning result authority', () => {
     expect(await f.send('workflow.answer', { activationId: activation.id, answer: 'Email' })).toMatchObject({ ok: false, error: 'invalid-transition' });
     expect(await f.send('workflow.approve', { activationId: activation.id, decision: 'reject', comment: 'Keep the old button.' })).toMatchObject({ ok: true });
     expect(f.current().workflowRuntime!.activations.find(value => value.id === activation.id)).toMatchObject({ outcome: 'rejected', comment: 'Keep the old button.' });
+  }, 60_000);
+  it('accepts a stage with review off by its checks alone, and sends it back when a check fails (v18)', async () => {
+    const f = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, validations: [validations[0]] });
+    await f.capture();
+    await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
+    expect(f.adapter.submit).not.toHaveBeenCalled();
+    expect(f.current().tasks[0]).toMatchObject({ state: 'completed' });
+    expect(f.current().reviews.at(-1)).toMatchObject({ decision: 'approve', decidedBy: 'host-checks', reviewerSessionId: 'host-checks' });
+
+    const failing = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, validations: [validations[0]] });
+    await failing.capture('not what the check wants');
+    await failing.service.processReview(failing.current(), failing.preparation.tasks[0], failing.current().attempts[0]); await failing.service.whenIdle();
+    expect(failing.adapter.submit).not.toHaveBeenCalled();
+    expect(failing.current().reviews.at(-1)).toMatchObject({ decision: 'reject', decidedBy: 'host-checks' });
+  }, 60_000);
+  it('passes a stage with no review and no check to the person, whose approval 자동 승인 cannot give (v18)', async () => {
+    const f = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, approvalPolicy: 'auto', validations: [validations[1]] });
+    await f.capture();
+    await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
+    expect(f.adapter.submit).not.toHaveBeenCalled();
+    expect(f.current().reviews.at(-1)).toMatchObject({ decision: 'approve', decidedBy: 'person-gate' });
+    const activation = f.current().workflowRuntime!.activations.find(value => value.state === 'awaiting-approval')!;
+    expect(activation).toBeDefined();
+    const auto = await f.ledgerExecute({ principal: { kind: 'runtime', id: PLANNING_AUTO_APPROVAL_PRINCIPAL }, type: 'workflow.approve', payload: { activationId: activation.id, decision: 'approve' } });
+    expect(auto).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.send('workflow.approve', { activationId: activation.id, decision: 'approve' })).toMatchObject({ ok: true });
+  }, 60_000);
+  it('does not run a check the person has not allowed as it is in the result folder (v18)', async () => {
+    const seen: string[] = [];
+    const f = await fixture({ workflow: true, policy: 'autonomous', reviewOff: true, validations: [validations[0]],
+      commandConsent: (_command, resultRoot) => { seen.push(resultRoot); return 'Allow this check again.'; } });
+    await f.capture();
+    await f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]); await f.service.whenIdle();
+    expect(f.runner.run).not.toHaveBeenCalled();
+    expect(seen.length).toBe(1);
+    expect(f.current().tasks[0]).toMatchObject({ state: 'awaiting-review' });
+    expect((await f.service.readResult('P', 'A'))!.validations).toEqual([expect.objectContaining({ status: 'not-run', summary: 'Allow this check again.' })]);
   }, 60_000);
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();

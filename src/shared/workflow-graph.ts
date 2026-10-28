@@ -20,12 +20,11 @@ export const WorkflowStageReviewSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('agent'), agent: WorkflowAgentSnapshotSchema }).strict(),
 ]);
 export type WorkflowStageReview = z.infer<typeof WorkflowStageReviewSchema>;
-/** A command the host runs in the stage's result folder to check it (v18); its exit code decides, not an AI. */
-export const WorkflowCheckSchema = z.object({
-  id, command: z.string().trim().min(1).max(4_000),
-  /** Relative to the result folder; the folder itself when absent. */
-  cwd: z.string().min(1).max(1_024).optional(),
-}).strict();
+/**
+ * A command the host runs in the stage's result folder to check it (v18); its exit code decides, not an AI.
+ * A person allows each command once on this PC (with the script it calls); a changed script asks again.
+ */
+export const WorkflowCheckSchema = z.object({ id, command: z.string().trim().min(1).max(4_000) }).strict();
 export type WorkflowCheck = z.infer<typeof WorkflowCheckSchema>;
 export const WorkflowNodeSchema = z.object({
   id, title: z.string().trim().min(1).max(300),
@@ -98,7 +97,7 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, c
     if (node.operation === 'answer' && execution && !node.answer?.prompt.trim()) add('answer-prompt', 'Write what this stage asks the person.', node.id);
     if (node.answer?.showResultOf && nodes.get(node.answer.showResultOf)?.operation !== 'agent') add('answer-result', 'An answer stage can show only an AI stage result.', node.id);
     if (new Set((node.checks ?? []).map(check => check.id)).size !== (node.checks ?? []).length) add('duplicate-check', 'A check ID is repeated.', node.id);
-    for (const check of node.checks ?? []) if (check.cwd && (/^(?:[A-Za-z]:|[\\/])/u.test(check.cwd) || check.cwd.split(/[\\/]/u).includes('..'))) add('check-folder', 'A check runs inside the result folder: use a relative folder without "..".', node.id);
+    if (node.checks?.length && node.operation !== 'agent') add('check-stage', 'Only an AI stage has checks.', node.id);
     if (execution && node.operation === 'agent') {
       if (!node.instructions.trim() || !node.acceptance.length) add('incomplete-task', 'An AI stage needs instructions and completion criteria.', node.id);
       if (!node.providerId || !node.model) add('missing-provider', 'Choose an available provider and model for this stage.', node.id);
@@ -134,6 +133,12 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, c
     if (node.operation === 'complete' && outgoing.length) add('complete-output', 'A completion stage cannot have outgoing connections.', node.id);
     if (node.operation === 'condition' && !['passed', 'failed'].every(port => outgoing.filter(edge => edge.outcome === port).length === 1)) add('condition-ports', 'A condition needs exactly one passed and one failed connection.', node.id);
     if (node.operation === 'approval' && outgoing.filter(edge => edge.outcome === 'approved').length !== 1) add('approval-port', 'An approval needs one approved connection.', node.id);
+    // Review off with no check: only the person accepts the result, at an approval right after it (자동 승인 never skips it).
+    const forward = outgoing.filter(edge => !edge.retryLimit);
+    if (execution && node.operation === 'agent' && node.review?.mode === 'off' && !node.checks?.length
+      && (!forward.length || forward.some(edge => nodes.get(edge.to)?.operation !== 'approval'))) {
+      add('review-off-unconfirmed', 'With review off and no check, put an approval right after this stage: the person accepts its result.', node.id);
+    }
     if (node.operation === 'parallel' && outgoing.length < 2) add('parallel-branches', 'A parallel start needs at least two branches.', node.id);
     if (!['parallel', 'condition', 'approval'].includes(node.operation) && new Set(outgoing.map(edge => edge.outcome)).size !== outgoing.length) add('ambiguous-output', 'Use a parallel start to fan out to multiple stages.', node.id);
     if (new Set(incoming.map(edge => edge.from)).size > 1 && node.operation !== 'join') add('ambiguous-join', 'Multiple incoming branches require an explicit join stage.', node.id);
@@ -162,6 +167,17 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, c
   };
   graph.nodes.forEach(node => visit(node.id));
   return issues;
+}
+
+/** An AI stage with review off and no check: nothing verifies it but the person, at the approval right after it. */
+export function workflowPersonAccepts(node: Pick<WorkflowNode, 'operation' | 'review' | 'checks'>): boolean {
+  return node.operation === 'agent' && node.review?.mode === 'off' && !node.checks?.length;
+}
+
+/** True when this approval is a person's acceptance of a stage nothing else verified: 자동 승인 never answers it. */
+export function workflowApprovalNeedsPerson(graph: WorkflowGraph, approvalNodeId: string): boolean {
+  return graph.edges.some(edge => edge.to === approvalNodeId && !edge.retryLimit
+    && graph.nodes.some(node => node.id === edge.from && workflowPersonAccepts(node)));
 }
 
 /** One stage card in scale-free graph units (renderers multiply by the UI scale). */

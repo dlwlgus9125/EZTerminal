@@ -378,6 +378,11 @@ export const PlanningExecutionCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('gate.resolve'), payload: z.object({ ...run, gateId: id, decision: z.enum(['approve', 'reject']), detail: text }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('gate.keep-original'), payload: z.object({ ...run, gateId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('evidence.record'), payload: z.object({ ...attempt, evidenceId: id, validationId: id, acceptanceIds: z.array(id).min(1).max(200), environment: z.string().min(1).max(1_000), command: z.string().max(4_000).optional(), exitCode: z.number().int().optional(), logRefs: z.array(id).max(200).default([]), captureRefs: z.array(id).max(200).default([]), kind: z.enum(['test', 'diff', 'preview', 'artifact']), status: z.enum(['passed', 'failed', 'not-run']), baseline: ExecutionBaselineSchema, artifacts: z.array(ExecutionArtifactSchema).max(256), summary: text }).strict() }).strict(),
+  /**
+   * v18, host only: a stage with review off is accepted by its checks alone (`checks`), or — with no check — passed
+   * on to the person, who accepts it at the approval right after (`person-gate`; 자동 승인 never answers that approval).
+   */
+  z.object({ ...envelope, type: z.literal('review.checks'), payload: z.object({ ...attempt, reviewId: id, basis: z.enum(['checks', 'person-gate']), evidenceIds: z.array(id).max(256), decision: z.enum(['approve', 'reject']), detail: text }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('review.decide'), payload: z.object({ ...attempt, reviewId: id, reviewerSessionId: id, reviewerTurnId: id, baseline: ExecutionBaselineSchema, artifacts: z.array(ExecutionArtifactSchema).max(256), evidenceIds: z.array(id).min(1).max(256), decision: z.enum(['approve', 'reject']), detail: text }).strict() }).strict(),
 ]);
 export type PlanningExecutionCommand = z.infer<typeof PlanningExecutionCommandSchema>;

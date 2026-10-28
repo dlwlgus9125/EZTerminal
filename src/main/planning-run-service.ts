@@ -15,7 +15,7 @@ import { preparePlanningExecution } from './planning-preparation';
 import type { PlanningDraft } from '../shared/planning';
 import type { PlanningEnvironmentService } from './planning-environment-service';
 import { readPlanningFileReference } from './planning-file-reference';
-import { workflowPrincipalIdentity, type WorkflowCommand, type WorkflowPrincipal, type WorkflowSubproject } from '../shared/workflow';
+import { workflowApprovalNeedsPerson, workflowPrincipalIdentity, type WorkflowCommand, type WorkflowPrincipal, type WorkflowSubproject } from '../shared/workflow';
 import { workflowDigest } from './workflow-service';
 import { workflowPlanningInput } from './workflow-preparation';
 import { workflowTaskInputs } from './workflow-runtime';
@@ -95,7 +95,10 @@ export function autoApprovalRefused(getReceipt: (projectId: string, commandId: s
 }
 export function autoApprovalCommands(run: ExecutionRun): Array<{ readonly commandId: string; readonly type: 'workflow.approve' | 'workflow.integrate'; readonly payload: Record<string, unknown> }> {
   if (run.preparation.approvalPolicy !== 'auto' || run.cancelRequested || run.dispatchPaused) return [];
-  const approvals = (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
+  const graph = run.preparation.workflow?.graph;
+  // An approval that is the person's acceptance of a stage with no review and no check stays with the person.
+  const approvals = (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval'
+    && !(graph && workflowApprovalNeedsPerson(graph, activation.nodeId)))
     .map((activation) => ({ commandId: autoApprovalCommandId(run.runId, activation.id), type: 'workflow.approve' as const,
       payload: { activationId: activation.id, decision: 'approve' } }));
   const integrate = run.preparation.workflow && run.state === 'completed' && !run.integrationAuthorized && !run.gates.some((gate) => gate.state === 'pending')
@@ -135,6 +138,8 @@ export interface PlanningRunServiceOptions {
   /** The last committed subproject, read without the workflow gate (this service holds its own gate while asking). */
   readonly committedSubproject?: (projectId: string, subprojectId: string) => Promise<CommittedSubproject>;
   readonly environments?: PlanningEnvironmentService;
+  /** Stage checks a person has not allowed on this PC (as the commands and scripts are now); a run is not prepared until they are. */
+  readonly unconfirmedChecks?: (projectId: string, subproject: WorkflowSubproject) => Promise<readonly { readonly nodeId: string; readonly command: string }[]>;
 }
 
 /** PC-owned dispatch. Navigation/read never starts a provider; an explicit run start does. */
@@ -284,6 +289,9 @@ export class PlanningRunService {
           if (existing) return { ok: false, error: 'command-conflict', message: 'This run ID is already used. Reconcile the original command.' };
           if (!this.options.planning.captureWorkflowBaseline) return { ok: false, error: 'unavailable', message: 'Workflow baseline storage is unavailable.' };
           const baselineId = `workflow-${workflowDigest([command.projectId, subproject.id, request.payload.runId]).slice(0, 32)}`;
+          // Checks run commands on this PC: each needs the person's allowance first (an AI-written or received flow included).
+          const unconfirmed = await this.options.unconfirmedChecks?.(command.projectId, subproject);
+          if (unconfirmed?.length) return { ok: false, error: 'unconfirmed-command', message: `Allow these checks on this PC before running: ${unconfirmed.map(entry => entry.command).join(', ')}`.slice(0, 2_000) };
           const generated = workflowPlanningInput(subproject, baselineId, request.payload.reviewer);
           // A registered provider that is down, or planning storage that cannot be read or written now, leaves
           // the outcome open (the same request is retried); a request whose own inputs are invalid settles.

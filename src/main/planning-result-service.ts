@@ -37,6 +37,8 @@ export interface PlanningResultServiceOptions {
   readonly reportError?: (error: unknown) => void;
   readonly canValidateEnvironment?: (environment: string) => boolean;
   readonly validationTimeoutMs?: number;
+  /** A reason a stage check may not run now (the person allowed a different command or script), or nothing. */
+  readonly commandConsent?: (run: ExecutionRun, task: PreparedExecutionTask, validation: PreparedExecutionTask['validations'][number], resultRoot: string) => Promise<string | undefined>;
 }
 
 /** Captures exact results, gathers host evidence and requests a separate read-only review. */
@@ -206,7 +208,10 @@ export class PlanningResultService {
     for (const validation of task.validations) {
       if (this.stopped) return;
       if (validation.method === 'inspection' || record.validations.some(entry => entry.validationId === validation.validationId)) continue;
-      const checked = await this.validate(run.projectId, root, validation, record.commit);
+      // A stage check runs only as the person allowed it: the script it calls is read again in this result folder.
+      const refused = validation.method === 'command' && run.preparation.workflow ? await this.options.commandConsent?.(run, task, validation, root) : undefined;
+      const checked: PlanningValidationRecord = refused ? { validationId: validation.validationId, status: 'not-run', logRefs: [], summary: refused }
+        : await this.validate(run.projectId, root, validation, record.commit);
       record = { ...record, validations: [...record.validations, checked] };
       await this.repository.saveResult(record);
       await this.recordEvidence(run, attempt, validation, checked);
@@ -216,7 +221,12 @@ export class PlanningResultService {
       const validation = task.validations.find(entry => entry.validationId === checked.validationId);
       if (validation) await this.recordEvidence(run, attempt, validation, checked);
     }
-    const reviewer = run.preparation.reviewer;
+    // A stage's own review choice (v18): off (its checks, or the person after it, decide) or its own reviewer agent.
+    const stage = run.preparation.workflow?.graph.nodes.find(entry => entry.id === task.taskId);
+    if (stage?.operation === 'agent' && stage.review?.mode === 'off') { await this.acceptByChecks(run, task, attempt, record); return; }
+    const runReviewer = run.preparation.reviewer;
+    const ownReviewer = stage?.review?.mode === 'agent' ? stage.review.agent : undefined;
+    const reviewer = runReviewer && ownReviewer ? { ...runReviewer, providerId: ownReviewer.providerId, model: ownReviewer.model ?? runReviewer.model } : runReviewer;
     if (this.current(run.projectId, run.runId).cancelRequested) return;
     if (!reviewer || reviewer.permissionPreset !== 'plan' || reviewer.role !== 'review') throw new Error('An independent read-only reviewer must be configured.');
     if (record.commit) await this.repository.assertCleanRevision(root, record.commit);
@@ -275,6 +285,30 @@ export class PlanningResultService {
     record = { ...record, review: { decision: judgment.decision, summary: judgment.summary, inspections: judgment.inspections } };
     await this.repository.saveResult(record);
     await this.autoDecide(run, attempt, record);
+  }
+  /**
+   * Review off: the checks decide (every one passed accepts, a failing exit code sends it back; a check that could
+   * not run leaves it to the person), and with no check the result goes on to the person at the approval after it.
+   */
+  private async acceptByChecks(run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt, record: PlanningResultRecord): Promise<void> {
+    const current = this.current(run.projectId, run.runId);
+    if (current.cancelRequested || !current.tasks.some(entry => entry.currentAttemptId === attempt.attemptId && entry.state === 'awaiting-review')) return;
+    const reviewId = `checks-review-${resultHash([attempt.attemptId, record.reviewAttempt ?? 0]).slice(0, 32)}`;
+    const commands = task.validations.filter(validation => validation.method === 'command');
+    if (!commands.length) {
+      const receipt = await this.runtimeCommand(current, reviewId, 'review.checks', { attemptId: attempt.attemptId, reviewId, basis: 'person-gate', evidenceIds: [], decision: 'approve',
+        detail: 'Review is off and there is no check: the person accepts this result at the approval after it.' });
+      if (!receipt.ok) throw new Error(receipt.message);
+      return;
+    }
+    const evidence = this.latestEvidence(current, attempt.attemptId).filter(entry => commands.some(validation => validation.validationId === entry.validationId));
+    const failed = evidence.filter(entry => entry.status === 'failed' && entry.exitCode !== undefined && entry.exitCode !== 0);
+    const passed = commands.every(validation => evidence.some(entry => entry.validationId === validation.validationId && entry.status === 'passed'));
+    if (!failed.length && !passed) return;
+    const receipt = await this.runtimeCommand(current, reviewId, 'review.checks', { attemptId: attempt.attemptId, reviewId, basis: 'checks', evidenceIds: evidence.map(entry => entry.evidenceId),
+      decision: failed.length ? 'reject' : 'approve',
+      detail: failed.length ? `A check failed: ${failed.map(entry => entry.command ?? entry.validationId).join(', ')}.` : 'Every check passed (review is off for this stage).' });
+    if (!receipt.ok) throw new Error(receipt.message);
   }
   private async autoDecide(run: ExecutionRun, attempt: ExecutionAttempt, record: PlanningResultRecord): Promise<void> {
     if (run.preparation.progressPolicy !== 'autonomous' || !record.review || !record.reviewerSessionId || !record.reviewerTurnId) return;

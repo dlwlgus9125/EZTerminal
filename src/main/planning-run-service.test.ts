@@ -102,6 +102,24 @@ async function fixture(realResults = false, bindStages = false) {
     restart: async () => { await service.dispose(); service = new PlanningRunService(options); await service.start(); } };
 }
 
+describe('stage checks this PC has not allowed (v18)', () => {
+  it('does not prepare the run, and names the commands to allow', async () => {
+    const f = await fixture();
+    const unconfirmedChecks = vi.fn(async () => [{ nodeId: 'sub:research', command: 'pnpm test' }]);
+    const service = new PlanningRunService({ ...f.options, unconfirmedChecks });
+    await service.start();
+    try {
+      const graph = createWorkflowGraph('research', 'sub');
+      graph.nodes[0] = { ...graph.nodes[0], providerId: 'codex', model: 'model', instructions: 'Check', acceptance: ['Checked'], checks: [{ id: 'test', command: 'pnpm test' }] };
+      const subproject = { id: 'sub', title: 'Checks', goal: '', status: 'active' as const, revision: 1, createdAt: '2026-10-29T00:00:00.000Z', updatedAt: '2026-10-29T00:00:00.000Z', presetId: 'custom', graph, history: [], archivedNodes: [] };
+      const result = await service.executeWorkflow({ projectId: 'project', hostId: 'host', expectedRevision: 0, subprojectId: 'sub', commandId: 'prepare-unallowed', type: 'run.prepare', payload: { runId: 'unallowed', reviewer: { providerId: 'codex', model: 'model' } } }, subproject, { kind: 'desktop', id: 'test' });
+      expect(result).toMatchObject({ ok: false, error: 'unconfirmed-command', message: expect.stringContaining('pnpm test') });
+      expect(unconfirmedChecks).toHaveBeenCalledWith('project', subproject);
+      expect(f.ledger.read('project').runs.some(run => run.runId === 'unallowed')).toBe(false);
+    } finally { await service.dispose(); }
+  });
+});
+
 describe('planning provider dispatch', () => {
   it('delivers an independently accepted planning text to the next actual workflow provider turn', async () => {
     const f = await fixture(true); const root = f.store.getSnapshot().projects[0].rootPath!;
@@ -374,7 +392,7 @@ describe('auto-approval in the dispatch pump', () => {
   it('reports a refused automatic decision once and settles instead of retrying', async () => {
     const run = {
       runId: 'run', projectId: 'project', revision: 3, state: 'awaiting-review', createdAt: 'x', updatedAt: 'x', startedAt: 'x',
-      preparation: { approvalPolicy: 'auto', teamMode: 'division', tasks: [], workflow: { subprojectId: 'sub', graph: { nodes: [] } } },
+      preparation: { approvalPolicy: 'auto', teamMode: 'division', tasks: [], workflow: { subprojectId: 'sub', graph: { nodes: [], edges: [] } } },
       tasks: [], attempts: [], evidence: [], reviews: [], gates: [],
       workflowRuntime: { activations: [{ id: 'gate-1', nodeId: 'approval', iteration: 0, state: 'awaiting-approval', incomingEdgeIds: [] }] },
     };

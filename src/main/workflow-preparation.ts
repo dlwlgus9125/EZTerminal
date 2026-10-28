@@ -2,6 +2,11 @@ import type { PlanningDraft } from '../shared/planning';
 import type { WorkflowSubproject } from '../shared/workflow';
 import type { PlanningTaskAssignment } from '../shared/planning-run';
 
+/** Validation id of a stage check, stable across runs (the 정기 점검 digest compares by it). */
+export function workflowCheckValidationId(nodeId: string, checkId: string): string {
+  return `${nodeId}:check:${checkId}`;
+}
+
 /** Translate user stage names to executable roles without expanding the legacy role enum. */
 export function workflowPlanningInput(subproject: WorkflowSubproject, baselineId: string, reviewer: { providerId: string; model: string }) {
   const draft: PlanningDraft = { id: baselineId, items: [], links: [], scenes: [], components: [], profiles: [], tasks: [], assets: [] };
@@ -19,10 +24,18 @@ export function workflowPlanningInput(subproject: WorkflowSubproject, baselineId
       instructions: `${node.instructions}\n\nFrozen stage document (reference data):\n${node.document}\n\nFrozen input documents:\n${JSON.stringify(references)}`,
       contextRefs: [], allowedTools: write ? ['project.read', 'project.write', 'terminal.execute'] : ['project.read', 'review.read'], retryLimit: node.retryLimit });
     const acceptance = node.acceptance.map((description, index) => ({ id: `${node.id}:accept:${index + 1}`, description }));
+    const acceptanceIds = acceptance.map(entry => entry.id);
+    // Checks are host commands: their exit code decides, whatever the review says. With review off they alone
+    // accept the result; with no check either, the person does at the approval right after (see validateWorkflowGraph).
+    const checks = (node.checks ?? []).map(check => ({ id: workflowCheckValidationId(node.id, check.id), acceptanceIds, description: check.command,
+      method: 'command' as const, command: check.command, environment: 'This PC, in the exact result folder of the stage.' }));
+    const reviewOff = node.review?.mode === 'off';
+    const inspections = reviewOff && checks.length ? [] : acceptance.map(entry => ({ id: `${entry.id}:validation`, acceptanceIds: [entry.id], description: entry.description, method: 'inspection' as const,
+      environment: reviewOff ? 'The person accepts this result at the approval right after the stage.' : 'Independent review of the exact workflow attempt and captured artifacts.' }));
     draft.tasks.push({ id: node.id, revision: subproject.revision, title: node.title, objective: node.instructions,
       featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [...ancestors].filter(id => subproject.graph.nodes.find(entry => entry.id === id)?.operation === 'agent'), allowedPaths: node.allowedPaths, interfaceRefs: [], profileId,
       executionEnvironment: { mode: 'namespaced', portCount: 1 }, acceptance,
-      validationPlan: acceptance.map(entry => ({ id: `${entry.id}:validation`, acceptanceIds: [entry.id], description: entry.description, method: 'inspection' as const, environment: 'Independent review of the exact workflow attempt and captured artifacts.' })), status: 'ready' });
+      validationPlan: [...inspections, ...checks], status: 'ready' });
     assignments.push({ taskId: node.id, profileId, providerId: node.providerId!, model: node.model!, permissionPreset: node.permissionPreset,
       ...(node.reasoningEffort ? { reasoningEffort: node.reasoningEffort } : {}) });
   }
