@@ -20,7 +20,7 @@ export class PlanningAuthority {
     try {
       await this.options.ready;
       if (!this.options.available()) return { ok: false, error: 'unavailable', message: 'Planning authority is unavailable.' };
-      if (subprojectId !== undefined && (typeof subprojectId !== 'string' || !await this.options.ownsSubproject?.(projectId, subprojectId, false))) return { ok: false, error: 'forbidden', message: 'The subproject is unavailable.' };
+      if (subprojectId !== undefined && (typeof subprojectId !== 'string' || !await this.options.ownsSubproject?.(projectId, subprojectId, false))) return { ok: false, error: 'forbidden', message: 'The workflow is unavailable.' };
       return await this.options.service.read(projectId, subprojectId as string | undefined);
     } catch {
       return { ok: false, error: 'unavailable', message: 'Planning could not be loaded.' };
@@ -38,7 +38,7 @@ export class PlanningAuthority {
         await this.options.ready;
         signal.throwIfAborted();
         if (!this.options.available()) return { ok: false, error: 'unavailable', message: 'Planning authority is unavailable.' };
-        if (parsed.data.subprojectId && !await this.options.ownsSubproject?.(parsed.data.projectId, parsed.data.subprojectId, true)) return { ok: false, error: 'forbidden', message: 'The subproject is unavailable or archived.' };
+        if (parsed.data.subprojectId && !await this.options.ownsSubproject?.(parsed.data.projectId, parsed.data.subprojectId, true)) return { ok: false, error: 'forbidden', message: 'The workflow is unavailable or archived.' };
         const result = await this.options.service.execute(parsed.data);
         if (result.ok) await this.options.onChanged?.(parsed.data.projectId);
         return result;

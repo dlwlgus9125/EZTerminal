@@ -383,11 +383,11 @@ export class PlanningRunService {
       if (!parsed.success) return { ok: false, error: 'invalid-command', message: 'Invalid execution request.' };
       if (this.stopped) return { ok: false, error: 'unavailable', message: 'Execution authority is unavailable.' };
       const request = parsed.data;
-      if (request.subprojectId && !await this.options.ownsSubproject?.(request.projectId, request.subprojectId, true)) return { ok: false, error: 'forbidden', message: 'The subproject is unavailable.' };
+      if (request.subprojectId && !await this.options.ownsSubproject?.(request.projectId, request.subprojectId, true)) return { ok: false, error: 'forbidden', message: 'The workflow is unavailable.' };
       const snapshot = this.options.ledger.read(request.projectId);
       if (request.type !== 'prepare') {
         const owner = snapshot.runs.find(run => run.runId === request.payload.runId);
-        if (owner && owner.preparation.subprojectId !== request.subprojectId) return { ok: false, error: 'forbidden', message: 'Explicitly address the subproject that owns this run.' };
+        if (owner && owner.preparation.subprojectId !== request.subprojectId) return { ok: false, error: 'forbidden', message: 'Explicitly address the workflow that owns this run.' };
       }
       const common = { commandId: request.commandId, projectId: request.projectId, expectedRevision: request.expectedRevision, principal };
       try {

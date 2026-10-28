@@ -89,7 +89,7 @@ export function verifyArchive(bytes: Buffer): ProjectArchivePackage {
   for (const entry of archive.entries.filter(entry => entry.kind === 'subproject-planning')) {
     const owner = entry.metadata?.subprojectId; const scoped = PlanningSnapshotSchema.parse(parseArchiveJson(entry));
     if (!owner || scopedIds.has(owner) || !workflow?.subprojects.some(project => project.id === owner) || scoped.projectId !== manifest.projectId
-      || scoped.baselines.some(baseline => archiveObjectHash(baseline.draft) !== baseline.hash)) throw new Error('Archive subproject planning references are invalid.');
+      || scoped.baselines.some(baseline => archiveObjectHash(baseline.draft) !== baseline.hash)) throw new Error('Archive workflow planning references are invalid.');
     scopedIds.add(owner);
   }
   const turnIds = new Set(history.turns.map(turn => turn.id));

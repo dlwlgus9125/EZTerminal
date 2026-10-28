@@ -252,7 +252,7 @@ export class WorkflowService {
         const target = this.options.session(sessionId);
         const owner = registry.subprojects.find(item => item.id === source.subprojectId);
         if (!target || target.projectId !== projectId || target.managed || !owner || owner.status === 'archived'
-          || (source.nodeId && !owner.graph.nodes.some(node => node.id === source.nodeId))) return { ok: false, error: 'not-found', message: 'Restore the original subproject and stage before continuing.' };
+          || (source.nodeId && !owner.graph.nodes.some(node => node.id === source.nodeId))) return { ok: false, error: 'not-found', message: 'Restore the original workflow and stage before continuing.' };
         registry.sessionLinks.push({ ...structuredClone(source), sessionId, linkedAt: (this.options.now?.() ?? new Date()).toISOString() });
         registry.registryRevision += 1;
         await this.write(loaded.target, wrap(registry, loaded.file.receipts), loaded.bytesHash);
@@ -350,20 +350,20 @@ export class WorkflowService {
         const registry = structuredClone(loaded.file.registry);
         const subproject = registry.subprojects.find(entry => entry.id === command.subprojectId);
         const expected = command.type === 'subproject.create' ? registry.registryRevision : subproject?.revision;
-        if (expected === undefined) return failure('not-found', 'Choose an existing subproject explicitly.');
+        if (expected === undefined) return failure('not-found', 'Choose an existing workflow explicitly.');
         if (!previous?.pending && command.expectedRevision !== expected) return failure('revision-conflict', 'The workflow changed. Read the latest changes before applying this edit.', expected);
         // The repeat schedule only runs the saved flow (under the host's own launch, see PlanningRunService).
         if (principal.kind === 'schedule' && command.type !== 'run.launch') return failure('user-required', 'A repeat schedule can only run a flow.');
         if (principal.kind === 'ai') {
           const source = principal.sessionId && this.options.session(principal.sessionId);
           if (!source || source.projectId !== command.projectId || source.managed) return failure('forbidden', 'An ordinary conversation in this project is required for flow editing.');
-          if (this.previewForSession(principal.sessionId!)) return failure('preview-only', 'This conversation is editing a creation preview. Use preview_workflow; the user will explicitly create the subproject.');
+          if (this.previewForSession(principal.sessionId!)) return failure('preview-only', 'This conversation is editing a creation preview. Use preview_workflow; the user will explicitly create the workflow.');
           const linked = registry.sessionLinks.find(entry => entry.sessionId === principal.sessionId);
-          if (linked && (linked.scope !== 'flow-edit' || linked.subprojectId !== command.subprojectId)) return failure('forbidden', 'Use a flow editing conversation for this subproject. Stage discussions do not grant graph editing authority.');
+          if (linked && (linked.scope !== 'flow-edit' || linked.subprojectId !== command.subprojectId)) return failure('forbidden', 'Use a workflow editing conversation for this workflow. Stage discussions do not grant graph editing authority.');
           // An agent may also run the flow; approvals, integration, ownership and archive stay with the person.
           if (!['subproject.create', 'workflow.patch', 'workflow.undo', 'run.prepare', 'run.launch', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) return failure('user-required', 'Approvals, integration, ownership and archive decisions require an explicit user command.');
         }
-        if (subproject?.status === 'archived' && !(command.type === 'subproject.update' && command.payload.status === 'active') && command.type !== 'subproject.copy' && command.type !== 'session.unlink') return failure('archived', 'Restore the subproject before editing it.');
+        if (subproject?.status === 'archived' && !(command.type === 'subproject.update' && command.payload.status === 'active') && command.type !== 'subproject.copy' && command.type !== 'session.unlink') return failure('archived', 'Restore the workflow before editing it.');
         const now = (this.options.now?.() ?? new Date()).toISOString();
         let lockedEdit: (() => WorkflowResult | null) | undefined;
         const actor = { kind: principal.kind === 'ai' ? 'ai' as const : 'user' as const, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };
@@ -379,13 +379,13 @@ export class WorkflowService {
               || !confirmed(command.payload.graph)) return failure('preview-conflict', 'The creation preview changed or was discarded. Review the current preview before creating.');
             createdGraph = structuredClone(preview.graph);
           }
-          if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'This subproject ID is already reserved.');
+          if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'This workflow ID is already reserved.');
           registry.subprojects.push({ id: command.payload.id, title: command.payload.title, goal: command.payload.goal, status: 'active', revision: 0,
             createdAt: now, updatedAt: now, presetId: command.payload.presetId,
             graph: createdGraph ?? createWorkflowGraph(command.payload.presetId, command.payload.id), history: [], archivedNodes: [] });
           registry.registryRevision += 1;
         } else if (command.type === 'subproject.copy') {
-          if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'Choose a new subproject identity.');
+          if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'Choose a new workflow identity.');
           if (!this.options.planning.importSnapshot) return failure('unavailable', 'Planning copy storage is unavailable.');
           const source = previous?.runSubproject ?? subproject!;
           let copyPlanning = previous?.copyPlanning;
@@ -408,7 +408,7 @@ export class WorkflowService {
           registry.registryRevision += 1;
         } else if (command.type === 'subproject.update') {
           if (command.payload.status && command.payload.status !== 'active' && this.options.runs(command.projectId).some(run => (run.preparation.subprojectId ?? run.preparation.workflow?.subprojectId) === subproject!.id && !['completed', 'cancelled'].includes(run.state))) {
-            return failure('active-run', 'Finish or resolve the active execution before completing or archiving this subproject.');
+            return failure('active-run', 'Finish or resolve the active execution before completing or archiving this workflow.');
           }
           // 반복 names an IANA zone (kept canonical) and, to be on, the review AI it runs with.
           let repeat = command.payload.repeat;
@@ -468,13 +468,13 @@ export class WorkflowService {
           const session = this.options.session(command.payload.sessionId);
           if (!session || session.projectId !== command.projectId || session.managed) return failure('forbidden', 'Only ordinary conversations in this project can be linked. Execution and reviewer ownership is immutable.');
           const previousLink = registry.sessionLinks.find(link => link.sessionId === command.payload.sessionId);
-          if (previousLink && previousLink.subprojectId !== subproject!.id) return failure('conflict', 'This conversation already belongs to another subproject. Reference it without moving its history.');
+          if (previousLink && previousLink.subprojectId !== subproject!.id) return failure('conflict', 'This conversation already belongs to another workflow. Reference it without moving its history.');
           if (command.type === 'session.refresh') {
             if (!previousLink?.nodeId || previousLink.scope !== 'stage' || !subproject!.graph.nodes.some(node => node.id === previousLink.nodeId)) return failure('not-found', 'This conversation has no active stage references to refresh.');
             previousLink.referenceSnapshot = this.stageReferences(command.projectId, subproject!, previousLink.nodeId); previousLink.graphRevision = subproject!.revision;
           } else if (command.type === 'session.link') {
             if (command.payload.scope === 'stage' && !subproject!.graph.nodes.some(node => node.id === command.payload.nodeId)) return failure('not-found', 'Select an existing stage.');
-            if (command.payload.scope === 'flow-edit' && command.payload.nodeId) return failure('invalid-command', 'Flow editing targets the whole subproject.');
+            if (command.payload.scope === 'flow-edit' && command.payload.nodeId) return failure('invalid-command', 'Workflow editing targets the whole workflow.');
             registry.sessionLinks = [...registry.sessionLinks.filter(link => link.sessionId !== command.payload.sessionId), {
               ...command.payload, subprojectId: subproject!.id, linkedAt: now, graphRevision: subproject!.revision,
               ...(command.payload.scope === 'stage' ? { referenceSnapshot: this.stageReferences(command.projectId, subproject!, command.payload.nodeId!) } : {}),
@@ -494,7 +494,7 @@ export class WorkflowService {
           } else {
             const run = this.options.runs(command.projectId).find(entry => entry.runId === command.payload.runId);
             const ownerId = command.type === 'run.cancel' ? run?.preparation.subprojectId ?? run?.preparation.workflow?.subprojectId : run?.preparation.workflow?.subprojectId;
-            if (ownerId !== subproject!.id) return failure('wrong-run', 'This execution belongs to another subproject.');
+            if (ownerId !== subproject!.id) return failure('wrong-run', 'This execution belongs to another workflow.');
           }
           // One unfinished run per flow (checked again where the run starts). A retry of the same request
           // is answered by what it already did, so only new requests are checked here.
@@ -657,7 +657,7 @@ export class WorkflowService {
     }
     for (const link of registry.sessionLinks) {
       const owner = registry.subprojects.find(entry => entry.id === link.subprojectId);
-      if (!owner || (link.nodeId && ![...owner.graph.nodes, ...owner.archivedNodes].some(node => node.id === link.nodeId))) throw new WorkflowFailure('corrupt', 'A conversation link points to a missing subproject or stage.');
+      if (!owner || (link.nodeId && ![...owner.graph.nodes, ...owner.archivedNodes].some(node => node.id === link.nodeId))) throw new WorkflowFailure('corrupt', 'A conversation link points to a missing workflow or stage.');
     }
   }
   private async load(projectId: string, navigation = false): Promise<{ file: WorkflowFile; target: string; bytesHash: string | null }> {

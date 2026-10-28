@@ -53,7 +53,7 @@ export class PlanningRunAuthority {
     try {
       await this.options.ready;
       if (!this.options.available()) throw new Error('Execution authority is unavailable.');
-      if (subprojectId !== undefined && (typeof subprojectId !== 'string' || !await this.options.ownsSubproject?.(projectId, subprojectId))) throw new Error('The subproject is unavailable.');
+      if (subprojectId !== undefined && (typeof subprojectId !== 'string' || !await this.options.ownsSubproject?.(projectId, subprojectId))) throw new Error('The workflow is unavailable.');
       const result = this.options.service.read(projectId);
       return result.ok ? { ...result, snapshot: { ...result.snapshot, runs: result.snapshot.runs.filter(run => (run.preparation.subprojectId ?? 'legacy-default') === (subprojectId ?? 'legacy-default')) } } : result;
     } catch (error) { return { ok: false, error: 'unavailable', message: error instanceof Error ? error.message : 'Execution authority is unavailable.' }; }

@@ -1807,7 +1807,7 @@ export function attachConnection(
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowSource && clientIdentity
           ? msg.kind === 'workflow-read' ? options.workflowSource.read(msg.projectId) : options.workflowSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}`,
             ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? { reducedFlowView: true as const, flowViewProtocol: flowReader() } : {}) })
-          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use workflows.' } as const);
         void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? legacyWorkflowResult(value, flowReader()) : value }); });
         break;
       }
@@ -1858,7 +1858,7 @@ export function attachConnection(
       case 'planning-read': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningSource
           ? msg.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a subproject.' } as const)
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a workflow.' } as const)
             : options.planningSource.read(msg.projectId, msg.subprojectId)
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the host and client to use planning.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-read-reply', requestId: msg.requestId, result: value }); });
@@ -1893,10 +1893,10 @@ export function attachConnection(
       case 'planning-run-execute': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningRunSource && clientIdentity
           ? msg.kind === 'planning-run-read' ? msg.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a subproject execution.' } as const)
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a workflow execution.' } as const)
             : options.planningRunSource.read(msg.projectId, msg.subprojectId)
             : msg.command.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-              ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to execute a subproject.' } as const)
+              ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to execute a workflow.' } as const)
               : options.planningRunSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}` })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Planning execution requires a compatible authenticated connection.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-run-reply', requestId: msg.requestId, result: value.ok && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
@@ -1907,7 +1907,7 @@ export function attachConnection(
       case 'planning-result-read': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningRunSource && clientIdentity
           ? msg.query.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-            ? Promise.resolve({ ok: false, message: 'Update the client to read a subproject result.' } as const)
+            ? Promise.resolve({ ok: false, message: 'Update the client to read a workflow result.' } as const)
             : options.planningRunSource.readResult(msg.query)
           : Promise.resolve({ ok: false, message: 'Connect to an updated PC to read results.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-result-reply', requestId: msg.requestId, result: value }); });
@@ -1916,7 +1916,7 @@ export function attachConnection(
       case 'planning-execute': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningSource && clientIdentity
           ? msg.command.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to edit a subproject.' } as const)
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to edit a workflow.' } as const)
             : options.planningSource.execute(msg.command, `android:${clientIdentity.clientId}`)
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the host and client to use planning.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-execute-reply', requestId: msg.requestId, result: value }); });

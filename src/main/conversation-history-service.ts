@@ -325,7 +325,7 @@ export class ConversationHistoryService implements ConversationHistoryClient {
     if (!reason && entry.subprojectId && navigation?.ok) {
       const owner = navigation.snapshot.subprojects.find(item => item.id === entry.subprojectId);
       if (!owner || owner.status === 'archived' || (entry.nodeId && !owner.stages.some(node => node.id === entry.nodeId && !node.archived)))
-        block('archived-project', 'Restore the conversation’s original subproject and stage before continuing.');
+        block('archived-project', 'Restore the conversation’s original workflow and stage before continuing.');
     }
     const action = session && !stoppedSessions.has(session.state) && agent && !stoppedAgents.has(agent.state) ? 'open' : 'resume';
     if (action === 'resume' && !reason) {

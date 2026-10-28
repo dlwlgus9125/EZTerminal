@@ -99,7 +99,7 @@ export class PlanningService {
   read(projectId: string, subprojectId?: string): Promise<PlanningReadResult> {
     if (subprojectId && subprojectId !== 'legacy-default' && subprojectId !== this.options.subprojectId) {
       const service = this.scope(subprojectId);
-      return service ? service.read(projectId) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+      return service ? service.read(projectId) : Promise.resolve(failure('invalid', 'Invalid workflow identity.'));
     }
     return this.exclusive(projectId, async () => {
       const loaded = await this.load(projectId);
@@ -111,7 +111,7 @@ export class PlanningService {
   importSnapshot(projectId: string, source: unknown, subprojectId?: string): Promise<PlanningReadResult> {
     if (subprojectId && subprojectId !== 'legacy-default' && subprojectId !== this.options.subprojectId) {
       const service = this.scope(subprojectId);
-      return service ? service.importSnapshot(projectId, source) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+      return service ? service.importSnapshot(projectId, source) : Promise.resolve(failure('invalid', 'Invalid workflow identity.'));
     }
     return this.exclusive(projectId, async () => {
       const parsed = PlanningSnapshotSchema.safeParse(source);
@@ -145,7 +145,7 @@ export class PlanningService {
   captureWorkflowBaseline(projectId: string, subprojectId: string, baselineId: string, title: string, draft: PlanningDraft): Promise<PlanningReadResult> {
     if (subprojectId !== 'legacy-default' && subprojectId !== this.options.subprojectId) {
       const service = this.scope(subprojectId);
-      return service ? service.captureWorkflowBaseline(projectId, subprojectId, baselineId, title, draft) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+      return service ? service.captureWorkflowBaseline(projectId, subprojectId, baselineId, title, draft) : Promise.resolve(failure('invalid', 'Invalid workflow identity.'));
     }
     return this.exclusive(projectId, async () => {
       const loaded = await this.load(projectId);
@@ -176,7 +176,7 @@ export class PlanningService {
     if (subprojectId === 'legacy-default') return Promise.resolve({ ok: true, removed: [] });
     if (subprojectId !== this.options.subprojectId) {
       const service = this.scope(subprojectId);
-      return service ? service.pruneWorkflowBaselines(projectId, subprojectId, targets, protectedIds, options) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+      return service ? service.pruneWorkflowBaselines(projectId, subprojectId, targets, protectedIds, options) : Promise.resolve(failure('invalid', 'Invalid workflow identity.'));
     }
     return this.exclusive(projectId, async () => {
       const loaded = await this.load(projectId);
