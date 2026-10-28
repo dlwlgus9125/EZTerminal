@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { PLANNING_REPEAT_PRINCIPAL } from '../shared/planning-execution';
 import {
-  WorkflowIdSchema, type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowRepeat, type WorkflowRepeatStatus, type WorkflowResult,
+  WorkflowIdSchema, WorkflowSubprojectSchema, type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowRepeat, type WorkflowRepeatStatus, type WorkflowResult, type WorkflowSubproject,
 } from '../shared/workflow';
 import { RecordFile } from './atomic-record-file';
 import { nextRepeatAt, occurrenceKey, repeatConfigDigest } from './workflow-repeat-time';
@@ -40,6 +40,11 @@ const EntrySchema = z.object({
    * never runs until someone turns it on here; edits made through this host move the consent along.
    */
   consent: z.object({ contentDigest: z.string().regex(/^[0-9a-f]{64}$/u), at: instant }).strict().optional(),
+  /**
+   * The flow the consent is for (decision 8): the schedule runs it, edits saved after it wait until a person confirms
+   * again. Checked against `consent.contentDigest` when read.
+   */
+  pinned: WorkflowSubprojectSchema.optional(),
   /** Occurrences before this (turned on, its time changed, restored, automation turned on) never run. */
   armed: z.object({ configDigest: z.string().regex(/^[0-9a-f]{32}$/u), armedAt: instant }).strict().optional(),
   occurrences: z.array(OccurrenceSchema),
@@ -63,7 +68,7 @@ export interface WorkflowRepeatServiceOptions {
   /** What the flow service recorded for this command (it does so before any effect). */
   readonly launchReceipt: (projectId: string, commandId: string) => Promise<WorkflowLaunchReceipt>;
   /** WorkflowService.execute: `expected.launchIntent` is checked under its gate right before anything is recorded or run. */
-  readonly launch: (command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string }) => Promise<WorkflowResult>;
+  readonly launch: (command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string; readonly pinned?: WorkflowSubproject }) => Promise<WorkflowResult>;
   /** keepRunning && startAtLogin: repeats run only while the host keeps running from login. */
   readonly automationEnabled: () => boolean;
   /** A subproject's repeat record changed (screens read the flow again). */
@@ -137,16 +142,22 @@ export class WorkflowRepeatService {
   async consent(projectId: string, subprojectId: string, change: WorkflowRepeatConsentChange): Promise<void> {
     const at = this.now().toISOString();
     await this.update(projectId, subprojectId, entry => {
-      const follows = !change.set && !!entry.consent && entry.consent.contentDigest === change.before;
-      if (!change.set && !follows) return entry;
-      const consent = change.after ? { contentDigest: change.after, at: change.set ? at : entry.consent!.at } : undefined;
-      // An edit of a confirmed flow, or the same flow saved again, keeps its arming; anything newly confirmed (turned
-      // on, its time changed, a flow that came from outside confirmed) counts from this save.
-      const continuing = follows || entry.consent?.contentDigest === change.after;
+      // Decision 8: only a person's 반복 save confirms (and pins) a flow; other edits leave the schedule on what they
+      // confirmed, shown as "예약은 vN · 편집본 vM" until they confirm again.
+      if (!change.set) return entry;
+      const consent = change.after ? { contentDigest: change.after, at } : undefined;
+      // The same flow saved again keeps its arming; anything newly confirmed counts from this save.
+      const continuing = entry.consent?.contentDigest === change.after;
       const armed = !consent || !change.runnable || !change.config ? undefined
         : continuing && entry.armed?.configDigest === change.config ? entry.armed : { configDigest: change.config, armedAt: at };
-      return { ...entry, consent, armed };
+      const { pinned: _previous, ...rest } = entry;
+      return { ...rest, ...(consent ? { consent } : { consent: undefined }), ...(consent && change.pinned ? { pinned: change.pinned } : {}), armed };
     });
+  }
+
+  /** The confirmed flow this entry runs, when its pin still matches its consent. */
+  private pinnedFlow(entry: Entry | undefined): WorkflowSubproject | undefined {
+    return entry?.consent && entry.pinned && repeatContentDigest(entry.pinned) === entry.consent.contentDigest ? entry.pinned : undefined;
   }
 
   async dispose(): Promise<void> {
@@ -166,14 +177,15 @@ export class WorkflowRepeatService {
       if (!repeat) continue;
       const entry = this.entries.get(entryKey(registry.projectId, subproject.id));
       const last = latest(entry);
+      const pinned = this.pinnedFlow(entry);
       const blocked = !repeat.enabled ? undefined
         : this.state === 'unreadable' ? 'unreadable' as const
-          : this.state === 'ready' && entry?.consent?.contentDigest !== repeatContentDigest(subproject) ? 'unconfirmed' as const
+          : this.state === 'ready' && !pinned && entry?.consent?.contentDigest !== repeatContentDigest(subproject) ? 'unconfirmed' as const
             : !auto ? 'automation-off' as const
               : !subproject.runSettings?.reviewer ? 'missing-reviewer' as const : undefined;
       const nextAt = repeat.enabled && !blocked && subproject.status === 'active' ? this.nextAt(repeat, entry, now) : undefined;
       result[subproject.id] = {
-        ...(nextAt ? { nextAt } : {}), ...(blocked ? { blocked } : {}),
+        ...(nextAt ? { nextAt } : {}), ...(blocked ? { blocked } : {}), ...(pinned && repeat.enabled && pinned.revision !== subproject.revision ? { pinnedRevision: pinned.revision } : {}),
         ...(last ? { last: { key: last.key, occurrenceAt: last.occurrenceAt, state: last.state, at: last.at, runId: last.runId,
           ...(last.detail ? { detail: last.detail } : {}), ...(last.missedCount ? { missedCount: last.missedCount } : {}) } } : {}),
       };
@@ -259,7 +271,11 @@ export class WorkflowRepeatService {
     const auto = this.sampleAutomation();
     const digest = repeatConfigDigest(source.repeat);
     let entry = this.entries.get(id) ?? { projectId, subprojectId: source.subprojectId, occurrences: [] };
-    const eligible = auto && source.repeat.enabled && source.status === 'active' && entry.consent?.contentDigest === source.contentDigest;
+    // A consent from before pinning existed, still for the saved flow: pin that flow now.
+    if (entry.consent && !entry.pinned && entry.consent.contentDigest === source.contentDigest && entry === seen) {
+      entry = await this.update(projectId, source.subprojectId, current => (current !== seen ? current : { ...current, pinned: source.pinnable }));
+    }
+    const eligible = auto && source.repeat.enabled && source.status === 'active' && !!this.pinnedFlow(entry);
     // Off in the saved flow: the consent goes too, so the file alone can never turn it back on. Off, not confirmed here,
     // completed, archived or automation off: what comes before turning it back on never runs. Either only if nothing
     // was saved for this flow since the read (then the next look decides from a fresh read).
@@ -348,8 +364,9 @@ export class WorkflowRepeatService {
    */
   private async run(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, config?: string): Promise<number> {
     if (this.disposed) return RETRY_MS;
-    if (config !== undefined && source.reviewer) {
-      const intent = launchIntentDigest(source.contentDigest, { runId: claim.runId, reviewer: source.reviewer });
+    const pinned = this.pinnedFlow(this.entries.get(entryKey(projectId, source.subprojectId)));
+    if (config !== undefined && source.reviewer && pinned) {
+      const intent = launchIntentDigest(repeatContentDigest(pinned), { runId: claim.runId, reviewer: source.reviewer });
       if (claim.intent !== intent) claim = await this.record(projectId, source.subprojectId, { ...claim, intent });
     }
     // Checked after the last save and right before the send (nothing awaited in between): automation can be switched
@@ -359,7 +376,7 @@ export class WorkflowRepeatService {
       // A first send: still confirmed, still armed for this occurrence, automation on since before it (else missed later).
       const entry = this.entries.get(entryKey(projectId, source.subprojectId));
       const occurrenceAt = Date.parse(claim.occurrenceAt);
-      if (entry?.consent?.contentDigest !== source.contentDigest || entry.armed?.configDigest !== config
+      if (!this.pinnedFlow(entry) || entry?.armed?.configDigest !== config
         || Date.parse(entry.armed.armedAt) > occurrenceAt || (this.automationOnSince ?? Number.POSITIVE_INFINITY) > occurrenceAt || !source.reviewer) return RETRY_MS;
     }
     let result: WorkflowResult;
@@ -367,7 +384,7 @@ export class WorkflowRepeatService {
       // What this host claimed is checked again where it runs (a change in the project folder after this check is refused there).
       result = await this.options.launch({ type: 'run.launch', hostId: this.options.hostId, projectId, subprojectId: source.subprojectId,
         commandId: claim.commandId, expectedRevision: source.revision, payload: { runId: claim.runId } }, REPEAT_SCHEDULE_PRINCIPAL,
-      claim.intent ? { launchIntent: claim.intent } : undefined);
+      { ...(claim.intent ? { launchIntent: claim.intent } : {}), ...(pinned ? { pinned } : {}) });
     } catch (error) {
       result = { ok: false, error: 'execution-unavailable', message: error instanceof Error ? error.message : String(error) };
     }

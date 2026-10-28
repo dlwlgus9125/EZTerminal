@@ -64,6 +64,8 @@ export interface WorkflowRepeatConsentChange {
   /** repeatConfigDigest of the saved 반복, and whether it can run now (on and active): it arms at this commit. */
   readonly config?: string;
   readonly runnable?: boolean;
+  /** The flow the person confirmed (with `set`): what the schedule runs from now on. */
+  readonly pinned?: WorkflowSubproject;
 }
 export function workflowDigest(value: unknown): string {
   const canonical = (entry: unknown): string => Array.isArray(entry) ? `[${entry.map(canonical).join(',')}]`
@@ -104,6 +106,12 @@ export interface WorkflowRepeatSource {
   readonly reviewer?: { readonly providerId: string; readonly model: string };
   /** repeatContentDigest of the saved subproject: what this host's consent must match. */
   readonly contentDigest: string;
+  /** The saved flow as the schedule would pin it (no edit history). */
+  readonly pinnable: WorkflowSubproject;
+}
+/** The flow a person confirmed for 반복 (decision 8): what the schedule runs until they confirm a newer one. */
+export function repeatPin(subproject: WorkflowSubproject): WorkflowSubproject {
+  return { ...structuredClone(subproject), history: [], archivedNodes: [] };
 }
 export interface WorkflowServiceOptions {
   readonly hostId: string;
@@ -319,7 +327,7 @@ export class WorkflowService {
    * the fixed run id and review AI, launchIntentDigest) is exactly that, checked here under the project gate right
    * before its receipt is written or replayed. Otherwise nothing is recorded or run ('flow-changed').
    */
-  execute(value: unknown, principal: WorkflowPrincipal, required?: { readonly launchIntent?: string }): Promise<WorkflowResult> {
+  execute(value: unknown, principal: WorkflowPrincipal, required?: { readonly launchIntent?: string; readonly pinned?: WorkflowSubproject }): Promise<WorkflowResult> {
     const parsed = WorkflowCommandSchema.safeParse(value);
     if (!parsed.success) return Promise.resolve(failure('invalid-command', 'The workflow command is invalid.'));
     const command = parsed.data;
@@ -470,8 +478,12 @@ export class WorkflowService {
         } else {
           if (!this.options.executeRun) return failure('unavailable', 'The execution authority is unavailable.');
           let launch = previous?.launch;
+          // 반복 runs the flow a person confirmed (decision 8), not edits saved after it.
+          const runSource = previous?.runSubproject ?? (command.type === 'run.launch' && principal.kind === 'schedule' && required?.pinned?.id === subproject!.id
+            ? { ...repeatPin(required.pinned), revision: subproject!.revision, history: subproject!.history, archivedNodes: subproject!.archivedNodes, repeat: subproject!.repeat }
+            : subproject!);
           if (command.type === 'run.prepare' || command.type === 'run.launch') {
-            const issues = validateWorkflowGraph((previous?.runSubproject ?? subproject!).graph, true);
+            const issues = validateWorkflowGraph(runSource.graph, true);
             if (issues.length) return { ok: false, error: 'invalid-graph', message: 'Resolve the highlighted stages before preparing this execution.', issues };
           } else {
             const run = this.options.runs(command.projectId).find(entry => entry.runId === command.payload.runId);
@@ -492,19 +504,19 @@ export class WorkflowService {
             launch = { runId: command.payload.runId, reviewer: structuredClone(reviewer) };
           }
           if (command.type === 'run.launch' && required?.launchIntent !== undefined
-            && launchIntentDigest(repeatContentDigest(previous?.runSubproject ?? subproject!), launch!) !== required.launchIntent) {
+            && launchIntentDigest(repeatContentDigest(runSource), launch!) !== required.launchIntent) {
             return failure('flow-changed', 'The flow changed after this run was decided, so nothing was run.');
           }
           if (!previous?.pending) {
             // Persist exact intent before crossing the execution ledger boundary. A lost response
             // can only retry this fingerprint and frozen graph, even after another draft edit.
-            await this.write(loaded.target, wrap(registry, [...loaded.file.receipts, { commandId: command.commandId, fingerprint, revision: subproject!.revision, pending: true, runSubproject: structuredClone(subproject!), ...(launch ? { launch } : {}) }]), loaded.bytesHash);
+            await this.write(loaded.target, wrap(registry, [...loaded.file.receipts, { commandId: command.commandId, fingerprint, revision: subproject!.revision, pending: true, runSubproject: structuredClone(runSource), ...(launch ? { launch } : {}) }]), loaded.bytesHash);
             loaded = await this.load(command.projectId);
           }
           // A launch always carries its fixed intent: the same revision and review AI on every retry.
           const sent: WorkflowCommand = command.type === 'run.launch'
             ? { ...command, expectedRevision: previous?.revision ?? subproject!.revision, payload: { runId: launch!.runId, reviewer: launch!.reviewer } } : command;
-          const result = await this.options.executeRun(sent, previous?.runSubproject ?? subproject!, principal);
+          const result = await this.options.executeRun(sent, runSource, principal);
           if (!result.ok) {
             if (command.type === 'run.launch' && !result.transient) {
               const settled = await this.load(command.projectId);
@@ -573,7 +585,7 @@ export class WorkflowService {
       const target = await this.target(projectId);
       if (!await fs.stat(target).then(() => true, error => { if (missing(error)) return false; throw error; })) return [];
       return (await this.load(projectId, true)).file.registry.subprojects.flatMap(entry => entry.repeat ? [{
-        subprojectId: entry.id, revision: entry.revision, status: entry.status, repeat: structuredClone(entry.repeat), contentDigest: repeatContentDigest(entry),
+        subprojectId: entry.id, revision: entry.revision, status: entry.status, repeat: structuredClone(entry.repeat), contentDigest: repeatContentDigest(entry), pinnable: repeatPin(entry),
         ...(entry.runSettings?.reviewer ? { reviewer: structuredClone(entry.runSettings.reviewer) } : {}) }] : []);
     });
   }
@@ -588,7 +600,7 @@ export class WorkflowService {
     if (!set && (!beforeDigest || beforeDigest === afterDigest)) return;
     try {
       await this.options.repeatConsent(command.projectId, command.subprojectId, { set, ...(beforeDigest ? { before: beforeDigest } : {}),
-        ...(next?.repeat?.enabled && afterDigest ? { after: afterDigest } : {}),
+        ...(next?.repeat?.enabled && afterDigest ? { after: afterDigest, ...(set && next ? { pinned: repeatPin(next) } : {}) } : {}),
         ...(next?.repeat ? { config: repeatConfigDigest(next.repeat), runnable: next.repeat.enabled && next.status === 'active' } : {}) });
     } catch { /* The flow is saved; its 반복 shows as not confirmed on this host until turned on again. */ }
   }

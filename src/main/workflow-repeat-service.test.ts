@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowCommand, WorkflowPrincipal, WorkflowRegistry, WorkflowRepeat, WorkflowResult } from '../shared/workflow';
 import { REPEAT_FILE, REPEAT_HISTORY_LIMIT, WorkflowRepeatService, repeatOccurrenceIds } from './workflow-repeat-service';
 import { repeatConfigDigest as configOf } from './workflow-repeat-time';
-import { launchIntentDigest, repeatContentDigest, type WorkflowLaunchReceipt, type WorkflowRepeatSource } from './workflow-service';
+import { launchIntentDigest, repeatContentDigest, repeatPin, type WorkflowLaunchReceipt, type WorkflowRepeatSource } from './workflow-service';
 
 const seoulNine: WorkflowRepeat = { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true };
 const at = (iso: string) => new Date(iso);
-type TestSource = Omit<WorkflowRepeatSource, 'contentDigest'>;
+type TestSource = Omit<WorkflowRepeatSource, 'contentDigest' | 'pinnable'>;
 
 describe('WorkflowRepeatService', () => {
   let directory: string;
@@ -22,7 +22,7 @@ describe('WorkflowRepeatService', () => {
   /** The flow service's receipts: written before any effect, left pending when the outcome is unknown. */
   let receipts: Map<string, { pending: boolean; intent?: string }>;
   let respond: (command: WorkflowCommand) => WorkflowResult;
-  let launch: ReturnType<typeof vi.fn<(command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string }) => Promise<WorkflowResult>>>;
+  let launch: ReturnType<typeof vi.fn<(command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string; readonly pinned?: { readonly goal: string } }) => Promise<WorkflowResult>>>;
   let timers: number[];
   let changed: string[];
   let onSaved: (() => void) | undefined;
@@ -62,7 +62,7 @@ describe('WorkflowRepeatService', () => {
   function service(): WorkflowRepeatService {
     const created = new WorkflowRepeatService({
       directory, hostId: 'host', projectIds: () => ['project'],
-      sources: async () => { const read = [{ ...structuredClone(source), contentDigest: contentOf() }]; await readSources(); return read; },
+      sources: async () => { const read = [{ ...structuredClone(source), contentDigest: contentOf(), pinnable: repeatPin(registry().subprojects[0]!) }]; await readSources(); return read; },
       launchReceipt: async (_projectId, commandId) => receiptOf(commandId), launch,
       automationEnabled: () => auto, now: () => clock, onChanged: projectId => { changed.push(projectId); onSaved?.(); },
       setTimer: (_run, ms) => { timers.push(ms); return ms; }, clearTimer: () => undefined,
@@ -77,7 +77,8 @@ describe('WorkflowRepeatService', () => {
   };
   /** What the flow service tells the schedule after saving: a person's 반복 save (no `before`) or another edit. */
   const saved = (repeat: WorkflowRepeatService, before?: string) => repeat.consent('project', 'flow', { set: before === undefined, ...(before ? { before } : {}),
-    ...(source.repeat.enabled ? { after: contentOf() } : {}), config: configOf(source.repeat), runnable: source.repeat.enabled && source.status === 'active' });
+    ...(source.repeat.enabled ? { after: contentOf(), ...(before === undefined ? { pinned: repeatPin(registry().subprojects[0]!) } : {}) } : {}),
+    config: configOf(source.repeat), runnable: source.repeat.enabled && source.status === 'active' });
   /** A person turns the repeat on through this host at `iso`. */
   async function armedAt(iso: string): Promise<WorkflowRepeatService> {
     const now = clock; clock = at(iso);
@@ -111,7 +112,8 @@ describe('WorkflowRepeatService', () => {
       { kind: 'schedule', id: 'workflow-schedule' }]);
     expect(ids.commandId).toMatch(/^schedule-[0-9a-f]{40}$/u);
     // It names what it decided to run, and the flow service checks that where it runs.
-    expect(launch.mock.calls[0]![2]).toEqual({ launchIntent: launchIntentDigest(contentOf(), { runId: ids.runId, reviewer: source.reviewer! }) });
+    // It runs the flow the person confirmed (decision 8), named by the same intent.
+    expect(launch.mock.calls[0]![2]).toEqual({ launchIntent: launchIntentDigest(contentOf(), { runId: ids.runId, reviewer: source.reviewer! }), pinned: expect.objectContaining({ id: 'flow', goal: '' }) });
     expect(status(repeat)).toEqual({ nextAt: '2026-10-26T00:00:00.000Z', last: { key: '2026-10-25', occurrenceAt: '2026-10-25T00:00:00.000Z', state: 'started', at: '2026-10-25T00:00:05.000Z', runId: ids.runId } });
     clock = at('2026-10-25T00:10:00.000Z');
     await repeat.wake();
@@ -300,7 +302,7 @@ describe('WorkflowRepeatService', () => {
     await fs.writeFile(file, '{"version":1,"entries":[{"broken"');
     const reportError = vi.fn();
     const repeat = new WorkflowRepeatService({ directory, hostId: 'host', projectIds: () => ['project'],
-      sources: async () => [{ ...source, contentDigest: contentOf() }], launchReceipt: async () => ({ state: 'none' }), launch, automationEnabled: () => true, now: () => clock, reportError,
+      sources: async () => [{ ...source, contentDigest: contentOf(), pinnable: repeatPin(registry().subprojects[0]!) }], launchReceipt: async () => ({ state: 'none' }), launch, automationEnabled: () => true, now: () => clock, reportError,
       setTimer: () => 0, clearTimer: () => undefined });
     services.push(repeat);
     clock = at('2026-10-25T00:00:05.000Z'); await repeat.start(); await repeat.wake();
@@ -395,25 +397,24 @@ describe('WorkflowRepeatService', () => {
     expect(status(repeat)?.blocked).toBe('unconfirmed');
   });
 
-  it('stops when the flow changed outside this host, follows edits made here, and never revives from a stale consent', async () => {
+  it('keeps running the flow the person confirmed: an edit here or a pull waits for a new confirmation (decision 8)', async () => {
     const repeat = await armedAt('2026-10-24T23:00:00.000Z');
-    // An edit through this host (here: the goal) moves the consent along: it still runs.
+    // An edit through this host (here: the goal) does not reach the schedule: it runs what was confirmed.
     await edit(repeat, () => { goal = 'Ship the login fix'; });
     clock = at('2026-10-25T00:00:05.000Z'); await repeat.wake();
     expect(launch).toHaveBeenCalledOnce();
-    // A pull changes the flow in the project folder: what runs is no longer what the person confirmed.
+    expect(launch.mock.calls[0]![2]?.pinned).toMatchObject({ goal: '' });
+    // A pull changes the flow in the project folder: still only the confirmed flow runs.
     goal = 'Delete everything';
     clock = at('2026-10-26T00:00:05.000Z'); await repeat.wake();
-    expect(launch).toHaveBeenCalledOnce();
-    expect(status(repeat)?.blocked).toBe('unconfirmed');
-    // A later edit here moves only a consent that matched the content before it: the pulled flow stays unconfirmed.
-    await edit(repeat, () => { source = { ...source, reviewer: { providerId: 'codex', model: 'other' } }; });
-    clock = at('2026-10-27T00:00:05.000Z'); await repeat.wake();
-    expect(launch).toHaveBeenCalledOnce();
-    // Turned on again here (켜기): it repeats the flow as it is now.
-    await saved(repeat);
-    clock = at('2026-10-28T00:00:05.000Z'); await repeat.wake();
     expect(launch).toHaveBeenCalledTimes(2);
+    expect(launch.mock.calls[1]![2]?.pinned).toMatchObject({ goal: '' });
+    expect(status(repeat)?.blocked).toBeUndefined();
+    // Confirmed again here (켜기): it repeats the flow as it is now.
+    await saved(repeat);
+    clock = at('2026-10-27T00:00:05.000Z'); await repeat.wake();
+    expect(launch).toHaveBeenCalledTimes(3);
+    expect(launch.mock.calls[2]![2]?.pinned).toMatchObject({ goal: 'Delete everything' });
   });
 
   it('keeps a person’s consent and a tick’s claim when they are saved at the same moment', async () => {

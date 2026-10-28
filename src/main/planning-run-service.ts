@@ -678,6 +678,8 @@ export class PlanningRunService {
   private async bindStage(run: ExecutionRun, taskId: string): Promise<ExecutionRun | null> {
     const workflow = run.preparation.workflow;
     if (!workflow || !this.options.committedSubproject || run.stageBindings?.[taskId] || run.attempts.some((attempt) => attempt.taskId === taskId)) return run;
+    // 반복 runs the flow a person confirmed (decision 8): later stage edits wait for their next confirmation.
+    if (run.runId.startsWith('repeat-')) return run;
     const committed = await this.options.committedSubproject(run.projectId, workflow.subprojectId)
       .catch((): CommittedSubproject => ({ ok: false, reason: 'unreadable' }));
     const decision = await decideStageBinding(run, taskId, committed, {

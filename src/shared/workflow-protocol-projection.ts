@@ -22,6 +22,8 @@ export const FLOW_V17_RUN_FIELDS = ['stageBindings'] as const;
 export const FLOW_V18_NODE_FIELDS = ['agent', 'session', 'review', 'checks', 'answer', 'skipWhenUnchanged'] as const;
 export const FLOW_V18_ACTIVATION_FIELDS = ['answer', 'comment', 'skipped'] as const;
 export const FLOW_V18_RUN_FIELDS: readonly string[] = [];
+/** v18 fields inside each repeatStatus entry (v17 readers parse it strictly). */
+export const FLOW_V18_REPEAT_STATUS_FIELDS = ['pinnedRevision'] as const;
 export const FLOW_V18_SUBPROJECT_FIELDS: readonly string[] = [];
 /** The protocol a reduced reader speaks: 16 (no v17 or v18 fields) or 17 (no v18 fields). */
 export type FlowReaderProtocol = 16 | 17;
@@ -127,7 +129,8 @@ function legacyExecutionSnapshot(snapshot: PlanningExecutionSnapshot, reader: Fl
 }
 
 export function legacyWorkflowSnapshot(snapshot: WorkflowSnapshot, reader: FlowReaderProtocol = 16): WorkflowSnapshot {
-  const base = reader === 16 ? without(snapshot, FLOW_V17_SNAPSHOT_FIELDS) : snapshot;
+  const base = reader === 16 ? without(snapshot, FLOW_V17_SNAPSHOT_FIELDS)
+    : snapshot.repeatStatus ? { ...snapshot, repeatStatus: Object.fromEntries(Object.entries(snapshot.repeatStatus).map(([id, status]) => [id, without(status, FLOW_V18_REPEAT_STATUS_FIELDS)])) } : snapshot;
   return { ...legacyWorkflowRegistry(base, reader), runs: base.runs.map((run) => legacyExecutionRun(run, reader)) };
 }
 

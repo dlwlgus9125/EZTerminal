@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkflowService, launchIntentDigest, repeatContentDigest, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
+import { WorkflowService, launchIntentDigest, repeatContentDigest, repeatPin, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
 import { repeatConfigDigest } from './workflow-repeat-time';
 import { PlanningService } from './planning-service';
 import { seedPlanning } from './planning-seed.fixture';
 import type { TaskDefinition } from '../shared/planning';
-import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
+import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot, type WorkflowSubproject } from '../shared/workflow';
 import { legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
 
 let directory: string; let planning: PlanningService; let service: WorkflowService;
@@ -160,7 +160,9 @@ describe('workflow authority and storage', () => {
     // Right after saving, the host records the person's consent for exactly the saved flow, and arms it then.
     const savedFlow = (await snapshot()).subprojects[0]!;
     expect(repeatConsent).toHaveBeenCalledOnce();
-    expect(repeatConsent).toHaveBeenCalledWith('project', 'a', { set: true, after: repeatContentDigest(savedFlow), config: repeatConfigDigest(savedFlow.repeat!), runnable: true });
+    // The person confirmed this flow: the schedule runs it (pinned) until they confirm another (decision 8).
+    expect(repeatConsent).toHaveBeenCalledWith('project', 'a', { set: true, after: repeatContentDigest(savedFlow), config: repeatConfigDigest(savedFlow.repeat!), runnable: true,
+      pinned: expect.objectContaining({ id: 'a', revision: savedFlow.revision, history: [], archivedNodes: [] }) });
     // Any other edit through this host moves that consent from the flow before it to the flow after it.
     expect(await update('rename', 1, { title: 'Renamed' })).toMatchObject({ ok: true });
     const renamed = (await snapshot()).subprojects[0]!;
@@ -195,7 +197,7 @@ describe('workflow authority and storage', () => {
     expect(saved).toMatchObject({ ok: true, snapshot: { repeatStatus: { a: { nextAt: '2026-10-26T00:00:00.000Z' } } } });
     expect(onCommitted).toHaveBeenCalledTimes(2);
     expect(await service.repeatSources('project')).toEqual([{ subprojectId: 'a', revision: 1, status: 'active', repeat: daily, reviewer: { providerId: 'codex', model: 'm' },
-      contentDigest: repeatContentDigest((await snapshot()).subprojects[0]!) }]);
+      contentDigest: repeatContentDigest((await snapshot()).subprojects[0]!), pinnable: expect.objectContaining({ id: 'a', history: [], archivedNodes: [] }) }]);
     // A refused command saves nothing and tells nobody.
     await service.execute({ ...base, commandId: 'stale', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { title: 'Stale' } }, user);
     expect(onCommitted).toHaveBeenCalledTimes(2);
@@ -226,6 +228,25 @@ describe('workflow authority and storage', () => {
     const next = { ...launch, commandId: 'schedule-2', expectedRevision: 1, payload: { runId: 'repeat-2' } } as WorkflowCommand;
     expect(await service.execute(next, schedule, { launchIntent: 'e'.repeat(64) })).toMatchObject({ ok: false, error: 'flow-changed' });
     expect(await service.launchReceipt('project', 'schedule-2')).toEqual({ state: 'none' });
+  });
+  it('runs the confirmed flow for the repeat schedule, not an edit saved after it (decision 8)', async () => {
+    const executeRun = vi.fn(async (..._args: unknown[]) => ({ ok: true as const }));
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, executeRun, repeatConsent: async () => undefined });
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research the confirmed thing', acceptance: ['Report evidence'] };
+    await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);
+    const reviewer = { providerId: 'claude', model: 'model' };
+    await service.execute({ ...base, commandId: 'settings', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { runSettings: { reviewer } } }, user);
+    const confirmed = repeatPin((await snapshot()).subprojects[0]!);
+    const edited = structuredClone(graph); edited.nodes[0] = { ...edited.nodes[0]!, instructions: 'Something else entirely' };
+    expect(await service.execute({ ...base, commandId: 'later-edit', subprojectId: 'a', expectedRevision: 1, type: 'workflow.patch', payload: { graph: edited, summary: 'Edit' } }, user)).toMatchObject({ ok: true });
+    const schedule = { kind: 'schedule' as const, id: 'workflow-schedule' };
+    const launch = { ...base, commandId: 'schedule-pinned', subprojectId: 'a', expectedRevision: 2, type: 'run.launch', payload: { runId: 'repeat-pinned' } } as WorkflowCommand;
+    expect(await service.execute(launch, schedule, { launchIntent: launchIntentDigest(repeatContentDigest(confirmed), { runId: 'repeat-pinned', reviewer }), pinned: confirmed })).toMatchObject({ ok: true });
+    const ran = executeRun.mock.calls[0]![1] as WorkflowSubproject;
+    expect(ran.graph.nodes[0]!.instructions).toBe('Research the confirmed thing');
+    // A person's own launch runs the flow as saved now.
+    expect(await service.execute({ ...launch, commandId: 'person-launch', payload: { runId: 'person-run' } } as WorkflowCommand, user)).toMatchObject({ ok: true });
+    expect((executeRun.mock.calls[1]![1] as WorkflowSubproject).graph.nodes[0]!.instructions).toBe('Something else entirely');
   });
   it('lets the repeat schedule run a flow and nothing else', async () => {
     await service.execute(create('a'), user);

@@ -39,6 +39,8 @@ export const WorkflowRepeatStatusSchema = z.object({
   nextAt: z.string().datetime().optional(),
   /** `unconfirmed`: on in the flow file, but the flow came or changed outside this host (with the project folder). */
   blocked: z.enum(['automation-off', 'missing-reviewer', 'unreadable', 'unconfirmed']).optional(),
+  /** v18: the revision the schedule runs (the one a person confirmed), when edits were saved after it: they wait for a new confirmation. */
+  pinnedRevision: z.number().int().nonnegative().optional(),
   last: z.object({
     key: z.string().min(1).max(32), occurrenceAt: z.string().datetime(),
     state: z.enum(['claimed', 'started', 'skipped-running', 'missed', 'failed']), at: z.string().datetime(),
