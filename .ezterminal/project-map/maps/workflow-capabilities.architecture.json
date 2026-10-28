@@ -102,8 +102,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/MobilePlanningNavigator.tsx",
-          "startLine": 51,
-          "endLine": 66,
+          "startLine": 50,
+          "endLine": 65,
           "lineDigest": "sha256:34432147d7979017714bd8e371e2129e42b84a700a7f45a2c7d53ca62f1e2608",
           "claim": "Android derives a nonsecret authority fingerprint and uses the same shared navigation projection for the connected host."
         }
@@ -129,8 +129,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/use-agent-completion.tsx",
-          "startLine": 15,
-          "endLine": 85,
+          "startLine": 14,
+          "endLine": 84,
           "lineDigest": "sha256:a29d646b236be6522ef4a61da8744b900862a716f2adb133115178ef67482076",
           "claim": "The shared controller keeps the keyboard-selected option in the completion list, preserves draft context, respects IME composition, offers @ workspace files where the host can search, and runs history and app commands without submitting."
         },

@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { AgentCapabilityCatalog } from '../shared/agent-capabilities';
 import type { ChatComposerDraft } from '../shared/chat-message';
-import { agentCompletions, completionToken, insertCompletion, type AgentCompletion } from './agent-completion';
+import { agentCompletions, completionToken, insertCompletion, type AgentCompletion, type AppCommand } from './agent-completion';
 import { useAppTranslation } from './i18n';
-import type { AppCommand } from './agent-completion';
 import { Button } from './ui';
 import './agent-completion.css';
 

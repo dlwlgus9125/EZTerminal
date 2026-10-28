@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { MobileDaemonNavigator } from '../../../mobile/src/MobileDaemonNavigator';
 import { MobilePlanningNavigator } from '../../../mobile/src/MobilePlanningNavigator';
 /** The roots this story switches between (the shell itself has no tab bar since I4). */
-type MobileShellTab = 'home' | 'tasks' | 'agents' | 'terminal';
+type MobileShellTab = 'home' | 'agents' | 'terminal';
 import { MobileWorkbenchCoordinator } from '../../../mobile/src/MobileWorkbenchCoordinator';
 import type { WsEzTerminalTransport } from '../../../mobile/src/transport/ws-ezterminal';
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
@@ -42,7 +42,7 @@ function MobileV2Story({ initial = 'home', locale = 'ko', offline = false }: { i
   return <AppI18nProvider locale={locale} languages={[locale]}><div style={{ width: '100vw', height: '100vh' }}>
     <MobileWorkbenchCoordinator terminal={<div role="region" aria-label="Terminal story fixture" />} terminalActive={tab === 'terminal'} destinationActive={false} tabRootActive={tab !== 'terminal'} onRequestTabRoot={() => setTab('terminal')}
       page={tab === 'agents' ? <main className="mob-page"><MobileDaemonNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} flatConversations projectFilter={projectId} onProjectFilterChange={setProjectId} onRetry={() => undefined} onSelectSession={() => undefined} /></main>
-        : tab !== 'terminal' ? <MobilePlanningNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} connected={!offline} transport={transport} mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={projectId} onSelectProject={setProjectId} onOpenChat={() => setTab('agents')} onOpenPcControl={() => undefined} onOpenTerminal={() => setTab('terminal')} /> : undefined}
+        : tab !== 'terminal' ? <MobilePlanningNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} connected={!offline} transport={transport} projectId={projectId} onSelectProject={setProjectId} onOpenChat={() => setTab('agents')} onOpenPcControl={() => undefined} onOpenTerminal={() => setTab('terminal')} /> : undefined}
     />
   </div></AppI18nProvider>;
 }
@@ -50,7 +50,6 @@ const meta = { title: 'Workbench/Mobile v2', component: MobileV2Story, parameter
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const Projects: Story = { args: { locale: 'ko' } };
-export const Tasks: Story = { args: { initial: 'tasks', locale: 'ko' } };
 export const Conversations: Story = { args: { initial: 'agents', locale: 'ko' } };
 export const ConversationsEnglish: Story = { args: { initial: 'agents', locale: 'en' } };
 export const OfflineProjects: Story = { args: { locale: 'en', offline: true } };

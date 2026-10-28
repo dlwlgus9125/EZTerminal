@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e1ecb780eb2cf044903603ab2723dedc1c17a4cf9ba8c40cc9c5b6058cf666f5",
+        "inputDigest": "sha256:1ee84de1dd2aa50c9c63922a1636a88191e4a5f06b6abb2a1f3001cc53752f1e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5): the phone project screen offline note now says flow changes (the planning editor is gone); navigation, results, backup and the authority fingerprint are unchanged."
+        "reason": "Reviewed (I5 follow-ups): the phone project navigator dropped its unused 'tasks' mode and the completion hook merged a duplicate import; the anchored flow and completion blocks are unchanged. Anchors moved."
       }
     }
   ]

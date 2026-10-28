@@ -22,7 +22,6 @@ export interface MobilePlanningNavigatorProps {
   readonly state: DaemonRuntimeViewState;
   readonly transport: Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'uploadFile' | 'downloadFile' | 'readPlanningResult'> & Partial<Pick<WsEzTerminalTransport, 'getWorkflowSnapshot' | 'executeWorkflowCommand' | 'sendDaemonCommand' | 'agentCapabilitiesList' | 'agentCapabilitiesManage' | 'workflowPreview' | 'listConversations' | 'getWorkflowNavigation'>>;
   readonly connected: boolean;
-  readonly mode: 'projects' | 'tasks';
   readonly projectId: string | null;
   readonly onSelectProject: (projectId: string | null) => void;
   readonly onOpenChat: (sessionId?: string) => void;
@@ -39,7 +38,7 @@ export interface MobilePlanningNavigatorProps {
 }
 
 /** One project list, then the same project workspace used on Windows. */
-export function MobilePlanningNavigator({ state, transport, connected, mode, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenPcControl, active = true, navigationTarget, onBack, onProjectExit }: MobilePlanningNavigatorProps): JSX.Element {
+export function MobilePlanningNavigator({ state, transport, connected, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenPcControl, active = true, navigationTarget, onBack, onProjectExit }: MobilePlanningNavigatorProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const projects = state.snapshot?.projects.filter(project => project.archivedAt === undefined) ?? [];
@@ -101,7 +100,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
     try { const result = await onOpenTerminal(workspace.id); if (result && !result.ok) setTerminalError(true); }
     catch { setTerminalError(true); }
   };
-  if (project) return <main className="mob-page mobile-v2" data-testid={`mobile-${mode}-workspace`}>
+  if (project) return <main className="mob-page mobile-v2" data-testid="mobile-projects-workspace">
     {terminalError && <p role="alert">{ko ? '프로젝트의 터미널을 열지 못했습니다. PC의 프로젝트 상태를 확인하고 다시 시도하세요.' : 'Could not open the project terminal. Check the project on the PC and retry.'}</p>}
     <WorkflowWorkspacePanel projectId={project.id} projectName={project.name} access={workflowAccess} daemonAccess={daemonAccess} mobile active={active}
       navigationTarget={treeTarget?.projectId === project.id ? treeTarget : navigationTarget}
@@ -120,8 +119,8 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined && !attachedChildSessionIds(state.snapshot?.agentRelations ?? []).has(session.id)).map(session => ({ id: session.id, title: session.title, status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state, workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name }))}
     />
   </main>;
-  return <main className="mob-page mobile-v2" data-testid={`mobile-${mode}-navigator`}>
-    <MobilePageHeader title={mode === 'tasks' ? (ko ? '작업' : 'Tasks') : t('agentHub.projects.title')} backLabel={t('common.back')} onBack={onBack ?? (() => { void onOpenTerminal(); })}
+  return <main className="mob-page mobile-v2" data-testid="mobile-projects-navigator">
+    <MobilePageHeader title={t('agentHub.projects.title')} backLabel={t('common.back')} onBack={onBack ?? (() => { void onOpenTerminal(); })}
       actions={<button type="button" className="mob-icon-btn" aria-label={t('common.retry')} disabled={!connected} onClick={() => { void transport.getDaemonSnapshot(); }}><Glyph name="refresh" /></button>} />
     <div className="mob-page__body mobile-v2__body" ref={projectListBody}
       onWheel={() => { scrollRestore.current.target = null; }} onTouchMove={() => { scrollRestore.current.target = null; }}

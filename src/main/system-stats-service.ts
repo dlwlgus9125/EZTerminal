@@ -68,6 +68,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/** A TCP/UDP connection with a numeric local port (not a header line parsed as one). */
+function isConnectionRow(c: { protocol: string; localPort: string }): boolean {
+  return /^(tcp|udp)6?$/i.test(c.protocol) && /^\d+$/.test(c.localPort);
+}
+
 export class SystemStatsService {
   private readonly log: LogFile | null;
   private readonly onSnapshot: (snapshot: SystemStatsSnapshot) => void;
@@ -78,6 +83,8 @@ export class SystemStatsService {
   private latestProcs: SystemStatsSnapshot['procs'] = null;
   private latestMemDetail: SystemStatsSnapshot['memDetail'] = null;
   private latestConns: SystemStatsSnapshot['conns'] = null;
+  /** Every process name from the last process read, for connections Windows reports with a pid only. */
+  private processNames = new Map<number, string>();
   private lastCpuPct = 0;
   private lastCores: number[] = [];
   private netWarmedUp = false;
@@ -258,6 +265,7 @@ export class SystemStatsService {
   private async procTick(): Promise<void> {
     try {
       const result = await withTimeout(si.processes(), PROC_TIMEOUT_MS);
+      this.processNames = new Map(result.list.map((p) => [p.pid, p.name]));
       this.latestProcs = result.list
         .slice()
         .sort((a, b) => b.cpu - a.cpu)
@@ -315,12 +323,14 @@ export class SystemStatsService {
   private async connTick(): Promise<void> {
     try {
       const result = await withTimeout(si.networkConnections(), CONN_TIMEOUT_MS);
-      this.latestConns = result.slice(0, TOP_CONN_COUNT).map((c) => ({
+      // On a localized Windows (Korean), systeminformation also returns netstat's translated header line as
+      // a "connection" with garbled text and no port; only real TCP/UDP rows are shown.
+      this.latestConns = result.filter(isConnectionRow).slice(0, TOP_CONN_COUNT).map((c) => ({
         proto: c.protocol,
         local: `${c.localAddress}:${c.localPort}`,
         peer: `${c.peerAddress}:${c.peerPort}`,
         state: c.state,
-        process: c.process,
+        process: c.process || this.processNames.get(c.pid) || '',
       }));
     } catch (err) {
       this.log?.line(`SystemStatsService: networkConnections() failed, keeping last value: ${String(err)}`);

@@ -171,7 +171,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-settings.png",
-        "sha256": "6cf2a0f1c48ccb9c9d3084c72230f0fdebaf9e937bd257a3561dc900b3ada91e"
+        "sha256": "deb79735dbd1b1fec6fdb96661d9695bf88365fc32b26040ae093e9d660db99d"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -192,7 +192,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-monitor.png",
-        "sha256": "c8fb47a1043a310149f5a57ef180637663382d4dfec41bd942d75c0635acd1f6"
+        "sha256": "b36ef3787ebe80be42b07c2ab1c589c735e8f6b42916a74418974f38b6f1179e"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -213,7 +213,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-remote.png",
-        "sha256": "655fdf3088aa0fe1894533523ca64ab43a61706ead7e2aa7cddeafa7f33bdd5f"
+        "sha256": "55b791afbad5988a88a6f0bb1734d84a52579ea7a8b6e1d8351d108aa8506075"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -234,7 +234,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-pairing-qr.png",
-        "sha256": "d45ae0aa0d93d87f4f09f1933618634680f77bb2bd910603070fb714e2bbb595"
+        "sha256": "8bbe0b227613970bec45bdcb6495c12162648622769eaa5ee285949dbab4901d"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -255,7 +255,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-pairing-detected.png",
-        "sha256": "f2de3cd3b0bfc42b95ad7fa1bfe05caa92a35f857a303d4d55ed713a69a9ff43"
+        "sha256": "803053388928e803ed3ccf325bed8fc2cdd0747b98887c11fbf10c73a0f3ee82"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -276,7 +276,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-openclaw.png",
-        "sha256": "0c1eaf4a8acfbf79420ea5016ab6a015ff0c21fb9b5552f9213e5094b921822b"
+        "sha256": "5bdf860163dc8fdbb13d7bd83763b6a95a123bc5b5d6f289bc31e3b15e9c5034"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -318,7 +318,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-files.png",
-        "sha256": "d660ccab9c7002cbfe3725ccfa21f3b518ddba3f06fb983b835d35e748ee79ca"
+        "sha256": "0e5d568bec86310b0752faeadc43a381832b651e69c6d6252a9386dd16e7c4d8"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -339,7 +339,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-command-center.png",
-        "sha256": "5d57772539192802bca0648cf3573db6c824138a9a747ece9f3f3c3676abda98"
+        "sha256": "23b1e4334c48bfc79392cc864cd24478f27a657db4dd2f7489dbd284bb13bca2"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -360,7 +360,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-boot.png",
-        "sha256": "230cc6c19fe47f0cb6c0544a7683a51ef141722d7b8b4f9b5d5a202bbe16e354"
+        "sha256": "8d6c66e6f49adecb677d5b773a1aa5a8bd4a282877ab56973cdc3f881cca2734"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -381,7 +381,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-paste-warning.png",
-        "sha256": "fb6518363a9cf600092cfcb974865287f4a32d0420e3bbfdcabd86cc2b568e64"
+        "sha256": "3428d7a7f57146cf0aaea74d6a61d81f78608a35121e5f4bb4232287d8acfb44"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
@@ -402,7 +402,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/desk-risky-close.png",
-        "sha256": "8e4e644c7946c733269f7dae0f2209f2d5b7a33b70f1acfedd06434326c2b3a8"
+        "sha256": "111196322f78087270c227bcb487c2e96cdb5e983ad5cc3139e192c9f5b97cbc"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",

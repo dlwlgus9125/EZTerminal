@@ -662,4 +662,33 @@ describe('SystemStatsService — connections (Phase 2A, si.networkConnections())
 
     service.stop();
   });
+
+  it('drops the translated netstat header a Korean Windows returns as a row, and names pid-only rows from the process list', async () => {
+    mocks.currentLoad.mockResolvedValue({ currentLoad: 1, cpus: [] });
+    mocks.networkStats.mockResolvedValue([]);
+    mocks.processes.mockResolvedValue({ list: [{ pid: 42, name: 'svchost.exe', cpu: 0, memRss: 1 }] });
+    mocks.fsSize.mockResolvedValue([]);
+    mocks.mem.mockResolvedValue({ available: 1, cached: 1, swapused: 0, swaptotal: 0 });
+    mocks.networkConnections.mockResolvedValue([
+      { protocol: '����', localAddress: '��', localPort: '', peerAddress: '��', peerPort: '', state: '��', pid: 0, process: '' },
+      { protocol: 'tcp', localAddress: '0.0.0.0', localPort: '135', peerAddress: '0.0.0.0', peerPort: '0', state: 'LISTEN', pid: 42, process: '' },
+      { protocol: 'udp', localAddress: '127.0.0.1', localPort: '5353', peerAddress: '*', peerPort: '*', state: '', pid: 7, process: 'node' },
+    ]);
+
+    const pushed: SystemStatsSnapshot[] = [];
+    const service = new SystemStatsService(null, (s) => pushed.push(s));
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    service.setPanelVisible(true);
+    await vi.advanceTimersByTimeAsync(0);
+    // A second connection read runs after the first process read, whichever of the two ran first.
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(pushed[pushed.length - 1].conns).toEqual([
+      { proto: 'tcp', local: '0.0.0.0:135', peer: '0.0.0.0:0', state: 'LISTEN', process: 'svchost.exe' },
+      { proto: 'udp', local: '127.0.0.1:5353', peer: '*:*', state: '', process: 'node' },
+    ]);
+
+    service.stop();
+  });
 });

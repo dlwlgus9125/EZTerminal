@@ -1418,7 +1418,7 @@ export function MobileWorkspace({
             <MobilePlanningNavigator state={daemonRuntimeState} transport={transport} connected={connected}
               active={subPage === null && tab === 'home'}
               navigationTarget={workflowNavigationTarget}
-              mode="projects" projectId={selectedProjectId}
+              projectId={selectedProjectId}
               onSelectProject={(projectId) => { setSelectedProjectId(projectId); setProjectDirect(false); }}
               onBack={() => selectTab('feed')}
               {...(projectDirect ? { onProjectExit: () => selectTab('feed') } : {})}
