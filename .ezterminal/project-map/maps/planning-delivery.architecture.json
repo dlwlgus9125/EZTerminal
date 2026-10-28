@@ -85,8 +85,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/workflow/WorkflowWorkspacePanel.tsx",
-          "startLine": 749,
-          "endLine": 762,
+          "startLine": 752,
+          "endLine": 765,
           "lineDigest": "sha256:e791277e9cf5e02855c5cd1b52e2d6a889e4f166bbe7fd5b34ec4df430695f7e",
           "claim": "The flow screen opens a run's integration result and each attempt's evidence in one result dialog, and asks for an independent review again with one fixed command id per review round."
         },
@@ -309,24 +309,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 280,
-          "endLine": 350,
+          "startLine": 297,
+          "endLine": 367,
           "lineDigest": "sha256:6ef55684e4ce87c01e81eec6a35d1469d1fc6f64637dcdf74608baab5b9e2b5a",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 354,
-          "endLine": 378,
+          "startLine": 371,
+          "endLine": 395,
           "lineDigest": "sha256:067601ae19915986aeeaef128ff9ab4e91b4014914b2022362d59c1ee54757da",
           "claim": "The reviewer output must identify the same baseline and artifact set; missing inspection evidence is recorded as not run."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 531,
-          "endLine": 591,
+          "startLine": 548,
+          "endLine": 608,
           "lineDigest": "sha256:1ff7fccb937c261bc88a5ca296cd7e8a7f04361e00f16a9c2791690eb6214439",
           "claim": "User-attested device evidence is bound to the exact current attempt or integration candidate and a durable command identity; attempt evidence triggers a new independent review generation."
         }
@@ -344,8 +344,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 605,
-          "endLine": 658,
+          "startLine": 622,
+          "endLine": 675,
           "lineDigest": "sha256:c154e19b4ef963f3eec099153aa6074a30705f541ee6e2601b8b86d27fa31298",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         },
@@ -483,8 +483,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 280,
-          "endLine": 350,
+          "startLine": 297,
+          "endLine": 367,
           "lineDigest": "sha256:6ef55684e4ce87c01e81eec6a35d1469d1fc6f64637dcdf74608baab5b9e2b5a",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         }
@@ -500,8 +500,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 605,
-          "endLine": 658,
+          "startLine": 622,
+          "endLine": 675,
           "lineDigest": "sha256:c154e19b4ef963f3eec099153aa6074a30705f541ee6e2601b8b86d27fa31298",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         }

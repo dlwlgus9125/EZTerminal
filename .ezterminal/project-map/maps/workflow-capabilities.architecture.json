@@ -156,8 +156,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 336,
-          "endLine": 422,
+          "startLine": 337,
+          "endLine": 423,
           "lineDigest": "sha256:2609c13c9dd38bd9987c290dd8778aceee1899f2c754c2dc83e12e9b8f406c31",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and run flows; it cannot approve, integrate, archive or set auto-approve or 반복; the repeat schedule launches only what it claimed."
         }
@@ -194,16 +194,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 284,
-          "endLine": 330,
+          "startLine": 285,
+          "endLine": 331,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 242,
-          "endLine": 263,
+          "startLine": 243,
+          "endLine": 264,
           "lineDigest": "sha256:2101d59f520f7092397318f5bf1720e4b0eb8e69d54f7157af147359da1988cc",
           "claim": "Explicit continuation copies the original stage reference snapshot after checking project, ordinary Session ownership and active stage; it does not silently refresh references."
         }
@@ -229,8 +229,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 169,
-          "endLine": 210,
+          "startLine": 170,
+          "endLine": 211,
           "lineDigest": "sha256:72fd534a64cd35281b2ec6711d56ba9807ca5f3f586bd4c747509460efceebc5",
           "claim": "One serialized project boundary binds a creation preview to one ordinary conversation. Exact command receipts and monotonic revisions reject duplicate contents, discarded-preview replies and changed drafts."
         }
@@ -351,8 +351,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 217,
-          "endLine": 241,
+          "startLine": 218,
+          "endLine": 242,
           "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
           "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },
@@ -378,8 +378,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 336,
-          "endLine": 422,
+          "startLine": 337,
+          "endLine": 423,
           "lineDigest": "sha256:2609c13c9dd38bd9987c290dd8778aceee1899f2c754c2dc83e12e9b8f406c31",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and run flows; it cannot approve, integrate, archive or set auto-approve or 반복; the repeat schedule launches only what it claimed."
         }
@@ -531,8 +531,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 284,
-          "endLine": 330,
+          "startLine": 285,
+          "endLine": 331,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -548,8 +548,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 284,
-          "endLine": 330,
+          "startLine": 285,
+          "endLine": 331,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -582,8 +582,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 336,
-          "endLine": 422,
+          "startLine": 337,
+          "endLine": 423,
           "lineDigest": "sha256:2609c13c9dd38bd9987c290dd8778aceee1899f2c754c2dc83e12e9b8f406c31",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and run flows; it cannot approve, integrate, archive or set auto-approve or 반복; the repeat schedule launches only what it claimed."
         }
@@ -599,8 +599,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 217,
-          "endLine": 241,
+          "startLine": 218,
+          "endLine": 242,
           "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
           "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },
