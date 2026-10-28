@@ -78,13 +78,13 @@ export function WorkflowConversationUnavailable({ message, onRetry }: { message:
 export function WorkflowConversationContext({ scope, onReturn, onRefresh, busy, error }: { readonly scope: WorkflowConversationScope; readonly onReturn?: () => void; readonly onRefresh?: () => Promise<void>; readonly busy?: boolean; readonly error?: string }): JSX.Element {
   const text = useWorkflowCopy();
   return <aside className="workflow-conversation-context" aria-label={text('대화의 작업 맥락', 'Conversation context')}>
-    <span><strong>{scope.subprojectTitle}</strong>{scope.nodeTitle ? ` · ${scope.nodeTitle}` : scope.mode === 'flow-edit' ? text(' · 흐름 편집', ' · Flow editing') : ''}</span>
+    <span><strong>{scope.subprojectTitle}</strong>{scope.nodeTitle ? ` · ${scope.nodeTitle}` : scope.mode === 'flow-edit' ? text(' · 워크플로 편집', ' · Workflow editing') : ''}</span>
     <Badge>{scope.mode === 'run' ? text('실행 버전', 'Run version') : text('연결 버전', 'Linked version')} {scope.revision}</Badge>
     {scope.referenceSnapshot && <details><summary>{text('참조 중인 저장 단계 문서', 'Referenced saved stage document')} · v{scope.referenceSnapshot.graphRevision}</summary><p>{scope.referenceSnapshot.title}</p>{scope.referenceSnapshot.document ? <ChatMarkdown markdown={scope.referenceSnapshot.document} /> : <p>{text('저장된 본문 없음', 'No saved document text')}</p>}{scope.referenceSnapshot.references.map((reference, index) => <div key={`${reference.nodeId}-${index}`}><strong>{reference.title} · {reference.kind === 'document' ? text('단계 문서', 'Stage document') : text('실행 결과', 'Execution result')}</strong><pre>{reference.text}</pre></div>)}</details>}
     {scope.stale && !scope.readOnly && <span role="status">{text('저장 문서가 변경되었습니다. 이 대화는 표시된 참조 버전을 사용합니다.', 'The saved document changed. This conversation uses the reference version shown here.')}</span>}
     {scope.mode === 'stage' && !scope.readOnly && onRefresh && <Button disabled={busy} onClick={() => void onRefresh()}>{text('저장본으로 참조 갱신', 'Refresh references from saved version')}</Button>}
     {error && <span role="alert">{error}</span>}
     {scope.readOnly && <span role="status">{text('보관된 기록 · 읽기 전용', 'Archived record · read only')}</span>}
-    {onReturn && <Button leadingIcon={<Glyph name="back" />} onClick={onReturn}>{scope.nodeId ? text('이 단계로 돌아가기', 'Return to this stage') : text('흐름으로 돌아가기', 'Return to flow')}</Button>}
+    {onReturn && <Button leadingIcon={<Glyph name="back" />} onClick={onReturn}>{scope.nodeId ? text('이 단계로 돌아가기', 'Return to this stage') : text('워크플로로 돌아가기', 'Return to workflow')}</Button>}
   </aside>;
 }

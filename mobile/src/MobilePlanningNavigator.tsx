@@ -78,7 +78,7 @@ export function MobilePlanningNavigator({ state, transport, connected, projectId
       if (body.scrollTop >= target) scrollRestore.current.target = null;
     }
   }, [project, authorityScope, conversationNavigation.nodes, active]);
-  const workflowAccess = useMemo(() => ({ workflowPreview: transport.workflowPreview?.bind(transport), getWorkflowSnapshot: (id: string) => transport.getWorkflowSnapshot?.(id) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '소프로젝트를 사용하려면 PC를 업데이트하세요.' : 'Update the PC to use subprojects.' }), executeWorkflowCommand: (command: Parameters<WsEzTerminalTransport['executeWorkflowCommand']>[0]) => transport.executeWorkflowCommand?.(command) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '호스트가 흐름 편집을 지원하지 않습니다.' : 'This host does not support workflow editing.' }) }), [transport, ko]);
+  const workflowAccess = useMemo(() => ({ workflowPreview: transport.workflowPreview?.bind(transport), getWorkflowSnapshot: (id: string) => transport.getWorkflowSnapshot?.(id) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '워크플로를 사용하려면 PC를 업데이트하세요.' : 'Update the PC to use workflows.' }), executeWorkflowCommand: (command: Parameters<WsEzTerminalTransport['executeWorkflowCommand']>[0]) => transport.executeWorkflowCommand?.(command) ?? Promise.resolve({ ok: false as const, error: 'unsupported', message: ko ? '호스트가 워크플로 편집을 지원하지 않습니다.' : 'This host does not support workflow editing.' }) }), [transport, ko]);
   const daemonAccess = useMemo(() => transport.sendDaemonCommand ? { getDaemonSnapshot: () => transport.getDaemonSnapshot(), listDaemonProviderModels: (providerId: string) => transport.listDaemonProviderModels(providerId), sendDaemonCommand: (command: Parameters<NonNullable<typeof transport.sendDaemonCommand>>[0]) => transport.sendDaemonCommand!(command) } : undefined, [transport]);
   const capabilityClient = useMemo(() => transport.agentCapabilitiesList && transport.agentCapabilitiesManage ? { list: transport.agentCapabilitiesList.bind(transport), manage: transport.agentCapabilitiesManage.bind(transport) } : undefined, [transport]);
   const recoveryAccess = useMemo(() => mobileWorkflowDraftAccess(() => transport.getRemoteToken()), [transport]);
@@ -93,7 +93,7 @@ export function MobilePlanningNavigator({ state, transport, connected, projectId
     return navigation.pushLayer({ id: layerId, kind: 'page', onBack: () => (projectExitRef.current ? projectExitRef.current() : onSelectProject(null)) });
   }, [hasProject, active, layerId, navigation, onSelectProject]);
   const workspace = state.snapshot?.workspaces.find(entry => entry.projectId === projectId && entry.archivedAt === undefined && entry.kind === 'local');
-  const offlineReason = ko ? '오프라인 · 마지막으로 받은 내용을 표시합니다. PC에 다시 연결해야 흐름을 저장할 수 있습니다.' : 'Offline · Showing the last received state. Reconnect to the PC to save flow changes.';
+  const offlineReason = ko ? '오프라인 · 마지막으로 받은 내용을 표시합니다. PC에 다시 연결해야 워크플로를 저장할 수 있습니다.' : 'Offline · Showing the last received state. Reconnect to the PC to save workflow changes.';
   const openProjectTerminal = async (): Promise<void> => {
     if (!workspace || !connected) return;
     setTerminalError(false);

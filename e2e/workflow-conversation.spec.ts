@@ -40,7 +40,7 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     await chat.getByTestId('structured-agent-composer-input').fill('Keep this unsent draft');
     await openProjectItems(page, projectId);
     await workspace.locator('.workflow-conversation-row').getByRole('button', { name: 'Link to stage' }).click();
-    await page.getByRole('dialog').getByLabel('Subproject', { exact: true }).selectOption('stage-work');
+    await page.getByRole('dialog').getByLabel('Workflow', { exact: true }).selectOption('stage-work');
     await page.getByRole('dialog').getByLabel('Stage', { exact: true }).selectOption(graph.entryNodeId!);
     await page.getByRole('dialog').getByRole('button', { name: 'Link', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 30_000 });
@@ -53,10 +53,10 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     await writeFile('artifacts/r4-implementation-review/real-app/stage-return-dom.json', JSON.stringify(await page.evaluate(() => ({ roots: document.querySelectorAll('[data-testid=workflow-workspace]').length, fields: [...document.querySelectorAll('textarea')].map(field => ({ label: field.parentElement?.textContent, inWorkspace: !!field.closest('[data-testid=workflow-workspace]'), value: field.value })) })), null, 2));
     await expect(page.getByRole('textbox', { name: 'Stage document', exact: true })).toHaveValue('Saved stage reference');
     const untouched = await page.evaluate(() => window.ezterminal.getDaemonSnapshot()); expect(untouched!.turns).toHaveLength(1);
-    // Back on the board, "New flow" opens the project's items.
+    // Back on the board, "New workflow" opens the project's items.
     await workspace.getByRole('button', { name: 'Back to the board' }).click();
-    await page.getByRole('button', { name: 'New flow', exact: true }).click();
-    await workspace.getByRole('button', { name: 'New subproject' }).click();
+    await page.getByTestId('shell-board-new-flow').click();
+    await workspace.getByRole('button', { name: 'New workflow' }).click();
     await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Preview to cancel');
     await page.getByRole('button', { name: 'Design in conversation' }).click(); await page.getByRole('button', { name: 'Open setup conversation' }).click();
     await expect(page.getByTestId('structured-agent-create')).toBeEnabled(); await page.getByTestId('structured-agent-create').click();

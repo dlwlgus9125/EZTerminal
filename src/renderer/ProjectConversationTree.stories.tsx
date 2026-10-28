@@ -35,7 +35,7 @@ function NavigationStory({ mobile = false, offline = false, empty = false, error
   useState(() => { window.localStorage.removeItem(`ezterminal:project-navigation:v1:${scope}`); });
   const selectedWorkflow = target?.kind === 'stage' || target?.kind === 'subproject' ? target : undefined;
   return <AppI18nProvider locale={locale} languages={[locale]}><div className="project-navigation-story" data-mobile={mobile || undefined}>
-    <aside className="project-navigation-story__navigation"><h2>{ko ? '프로젝트' : 'Projects'}</h2><div className="project-navigation-story__toolbar"><Button size="sm">{ko ? '새 대화' : 'New conversation'}</Button><Button size="sm">{ko ? '새 소프로젝트' : 'New subproject'}</Button></div>
+    <aside className="project-navigation-story__navigation"><h2>{ko ? '프로젝트' : 'Projects'}</h2><div className="project-navigation-story__toolbar"><Button size="sm">{ko ? '새 대화' : 'New conversation'}</Button><Button size="sm">{ko ? '새 워크플로' : 'New workflow'}</Button></div>
       <ProjectConversationTree nodes={nodes} mobile={mobile} offline={offline} persistenceScope={scope}
         projectStatus={error ? { 'project-story': { error: ko ? '이 PC의 목록을 다시 확인해야 합니다.' : 'Reconnect to read this PC’s list.' } } : undefined}
         onOpen={next => { onOpen(next); setTarget(next); }} />
@@ -44,7 +44,7 @@ function NavigationStory({ mobile = false, offline = false, empty = false, error
       {selectedWorkflow ? <WorkflowWorkspacePanel projectId="project-story" projectName="EZTerminal" access={access} disabled={offline}
         navigationTarget={{ subprojectId: selectedWorkflow.subprojectId, nodeId: selectedWorkflow.kind === 'stage' ? selectedWorkflow.nodeId : undefined, key: JSON.stringify(selectedWorkflow) }}
         conversations={[{ id: 'chat-stage', title: ko ? '로그인 요구사항 검토' : 'Review login requirements', providerLabel: 'Codex' }]} />
-        : <><small>{ko ? '프로젝트 / 대화' : 'Project / Conversation'}</small><h1>{target?.kind === 'conversation' && !target.sessionId ? ko ? '이전 CLI 대화 미리보기' : 'Previous CLI conversation preview' : ko ? '현재 작업을 유지하며 탐색' : 'Browse while keeping your current work'}</h1><p>{ko ? '왼쪽의 펼치기는 목록만 바꿉니다. 대화 이름을 선택하면 같은 대화를 열고, 소프로젝트·단계 이름은 해당 작업 화면을 엽니다.' : 'Expand the hierarchy without changing your current work. Select a conversation to open the same session, or a stage to open its workspace.'}</p><p>{ko ? '이 화면은 production 탐색 컴포넌트의 읽기 전용 시안입니다.' : 'This is a read-only preview of the production navigation component.'}</p></>}
+        : <><small>{ko ? '프로젝트 / 대화' : 'Project / Conversation'}</small><h1>{target?.kind === 'conversation' && !target.sessionId ? ko ? '이전 CLI 대화 미리보기' : 'Previous CLI conversation preview' : ko ? '현재 작업을 유지하며 탐색' : 'Browse while keeping your current work'}</h1><p>{ko ? '왼쪽의 펼치기는 목록만 바꿉니다. 대화 이름을 선택하면 같은 대화를 열고, 워크플로·단계 이름은 해당 작업 화면을 엽니다.' : 'Expand the hierarchy without changing your current work. Select a conversation to open the same session, or a stage to open its workspace.'}</p><p>{ko ? '이 화면은 production 탐색 컴포넌트의 읽기 전용 시안입니다.' : 'This is a read-only preview of the production navigation component.'}</p></>}
     </main>}
   </div></AppI18nProvider>;
 }

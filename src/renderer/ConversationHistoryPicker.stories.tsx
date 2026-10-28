@@ -16,8 +16,8 @@ const client: ConversationHistoryClient = {
   readConversation: fn(async (conversationId) => {
     const entry = entries.find((item) => item.conversationId === conversationId)!;
     return { ok: true as const, entry, transcript: { historyId: conversationId, provider: entry.providerId as 'codex' | 'claude', nextCursor: null, turns: [{ id: 'turn-1', status: 'completed', entries: [
-      { type: 'message' as const, id: 'message-user', role: 'user' as const, markdown: '프로젝트 목록에서 이전 대화와 소프로젝트를 바로 확인하고 싶어요.' },
-      { type: 'message' as const, id: 'message-assistant', role: 'assistant' as const, markdown: '대화와 소프로젝트를 같은 깊이에서 표시하고, 이전 CLI 기록은 출처를 함께 보여주겠습니다.\n\n현재 입력과 읽던 위치는 대화를 전환해도 유지됩니다.' },
+      { type: 'message' as const, id: 'message-user', role: 'user' as const, markdown: '프로젝트 목록에서 이전 대화와 워크플로를 바로 확인하고 싶어요.' },
+      { type: 'message' as const, id: 'message-assistant', role: 'assistant' as const, markdown: '대화와 워크플로를 같은 깊이에서 표시하고, 이전 CLI 기록은 출처를 함께 보여주겠습니다.\n\n현재 입력과 읽던 위치는 대화를 전환해도 유지됩니다.' },
     ] }] } };
   }),
   prepareHistoryResume: fn(async ({ conversationId }) => ({ ok: true as const, entry: entries.find((entry) => entry.conversationId === conversationId)!, revision: 'reviewed-revision', workspaceId: 'main', canResume: true, action: 'resume' as const, model: 'Default model', permissionPreset: 'standard' as const })),

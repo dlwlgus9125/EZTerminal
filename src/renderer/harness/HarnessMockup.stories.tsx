@@ -189,17 +189,8 @@ interface CanvasProps {
   readonly periodic?: boolean;
   readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
 }
-/** The 시안 shows the proposed names (rename table, decision 14); production copy changes in development step 1. */
-function renamed(korean: string): string {
-  if (korean === '흐름') return '워크플로';
-  return korean.replace(/흐름 보기/gu, '워크플로 보기').replace(/흐름 편집/gu, '단계 편집').replace(/흐름 v(\d+)/gu, '워크플로 v$1').replace(/흐름 요약/gu, '워크플로 요약').replace(/흐름 캔버스/gu, '워크플로 캔버스').replace(/소프로젝트/gu, '워크플로');
-}
-function useHarnessCopy(): ReturnType<typeof useWorkflowCopy> {
-  const base = useWorkflowCopy();
-  return useMemo(() => ((korean: string, english: string) => base(renamed(korean), english)) as ReturnType<typeof useWorkflowCopy>, [base]);
-}
 function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting, run, extraIssues = [], repeat, panelOpen = true, mobile = false, sheet = false, periodic = false, slot }: CanvasProps): JSX.Element {
-  const text = useHarnessCopy();
+  const text = useWorkflowCopy();
   const runs = useMemo(() => run ? [harnessRun(run)] : [], [run]);
   const graph = periodic ? CHECK_GRAPH : HARNESS_GRAPH;
   const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `${periodic ? 'chk' : 'dev'}:${select}` } : null);
@@ -286,7 +277,7 @@ function Templates({ save = false }: { readonly save?: boolean }): JSX.Element {
   return <Desk><TemplatesInner save={save} /></Desk>;
 }
 function TemplatesInner({ save }: { readonly save: boolean }): JSX.Element {
-  const text = useHarnessCopy();
+  const text = useWorkflowCopy();
   const [selected, setSelected] = useState('tpl-dev');
   const [name, setName] = useState(save ? '개발 절차 (EZTerminal)' : '로그인 오류 안내 개선');
   const [description, setDescription] = useState('설계 담당이 이어서 계획·시안, 구현 후 pnpm test');

@@ -23,7 +23,7 @@ export interface WorkflowStagePanelProps {
   readonly archived: boolean;
   /** Local edits are possible (not archived, no request waiting, recovery ready). */
   readonly editable: boolean;
-  /** "흐름 편집": the stage's place in the flow (kind, connections, start) is editable too. */
+  /** "단계 편집": the stage's place in the flow (kind, connections, start) is editable too. */
   readonly structure: boolean;
   readonly run: ExecutionRun | null;
   readonly runNumber: number;

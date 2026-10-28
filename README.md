@@ -42,11 +42,13 @@ ps | where memory > 100mb | sort-by memory
 
 ## The 2.0 workflow
 
-Open **Projects** to connect requirements, features, information structure, flows, and screen designs.
-Review manual edits or AI proposals, then freeze a version before preparing execution. Select role
-profiles, models, and a team mode; the explicit Start action begins the work. Results retain their
-exact revisions, validation evidence, independent reviews, and separate Git integration candidates.
-Planning alone does not start code execution.
+Each project's board lists its **workflows** (워크플로): a canvas of stages, each run by an AI agent with
+its own instructions, model and permissions, joined by conditions, parallel branches and approval
+stages. Build one from a preset or with an AI in a conversation; edits stay in a draft until you save,
+and editing never starts a run. A run freezes the saved version and is checked by the workflow's saved
+review AI; approval stages and integrating reviewed results stay yours unless you turn on auto-approve.
+A workflow can also repeat daily or weekly while the PC app keeps running. Results retain their exact
+revisions, independent reviews, and separate Git integration candidates.
 
 The same conversation can use a bubble skin or a CLI skin. The **Terminal** surface keeps the existing
 shell and PTY sessions. **Tools** opens files, SSH, remote control, OpenClaw, and other existing tools.

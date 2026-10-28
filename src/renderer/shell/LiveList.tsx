@@ -186,7 +186,7 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
         </button>
         {props.flows.length > 0 && (
           <>
-            <h2 className="ez-shell-live__sec"><Glyph name="flow" size={14} />{text('흐름', 'Flows')}<span className="ez-shell-n">{props.flows.length}</span></h2>
+            <h2 className="ez-shell-live__sec"><Glyph name="flow" size={14} />{text('워크플로', 'Workflows')}<span className="ez-shell-n">{props.flows.length}</span></h2>
             {props.flows.map((flow) => (
               <button key={flow.subprojectId} type="button" className="ez-shell-row" data-need={flow.lamp === 'amber' || undefined}
                 onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-live-flow">

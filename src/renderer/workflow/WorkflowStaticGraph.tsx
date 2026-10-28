@@ -49,7 +49,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
   }, [anchors, onCardSize, scale]);
   const onKey = (event: KeyboardEvent, id: string) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect({ kind: 'node', id }); } };
   return <div className="workflow-canvas" data-renderer="static" role="region" aria-label={label}>
-    <div className="workflow-static" tabIndex={0} aria-label={text('흐름 그래프 · 내부 스크롤', 'Workflow graph · scrollable canvas')}>
+    <div className="workflow-static" tabIndex={0} aria-label={text('워크플로 그래프 · 내부 스크롤', 'Workflow graph · scrollable canvas')}>
       <div className="workflow-static__content" style={{ width: extent.width, height: extent.height }}>
         <svg className="workflow-static__edges" width={extent.width} height={extent.height} aria-hidden="true">
           <defs><marker id={marker} markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,1 L8,5 L0,9" /></marker></defs>

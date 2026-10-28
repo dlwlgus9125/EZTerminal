@@ -79,11 +79,11 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
   useEffect(() => { setProviderId(reviewer?.providerId ?? ''); }, [reviewer?.providerId]);
   const provider = props.providers.find((entry) => entry.id === providerId);
   const archived = subproject.status === 'archived';
-  const launchBlocked = archived ? text('보관된 소프로젝트입니다. 복원한 뒤 실행하세요.', 'This subproject is archived. Restore it to run.')
+  const launchBlocked = archived ? text('보관된 워크플로입니다. 복원한 뒤 실행하세요.', 'This workflow is archived. Restore it to run.')
     : commandsDisabled ? (props.commandsBusy ? text('요청을 처리하는 중입니다. 끝나면 실행할 수 있습니다.', 'A request is being handled. You can run once it is done.')
       : text('호스트에 연결된 뒤 실행할 수 있습니다.', 'Connect to the host to run.'))
       : going ? text(`실행 #${flowRunNumber(runs, going)}이 아직 끝나지 않았습니다. 끝나거나 취소한 뒤 다시 실행할 수 있습니다.`, `Run #${flowRunNumber(runs, going)} has not finished. Run again once it finishes or is cancelled.`)
-        : props.hasLocalDraft ? text('저장하지 않은 변경이 있습니다. 저장한 흐름을 실행합니다.', 'There are unsaved changes. Save them first: a run uses the saved flow.')
+        : props.hasLocalDraft ? text('저장하지 않은 변경이 있습니다. 저장한 워크플로를 실행합니다.', 'There are unsaved changes. Save them first: a run uses the saved workflow.')
           : props.issueCount > 0 ? text('실행 전에 확인할 단계가 있습니다.', 'Some stages need attention before running.')
             : props.savedRunSettings && !reviewer ? text('검토 AI를 먼저 고르세요.', 'Choose the review AI first.') : null;
   const number = run ? flowRunNumber(runs, run) : 0;
@@ -195,11 +195,11 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
   const blockedText = status?.blocked === 'automation-off' ? text('PC 앱이 로그인할 때 시작하고 창을 닫아도 계속 실행되도록 켜야 반복합니다.', 'Repeats run only while the PC app starts at login and keeps running when closed.')
     : status?.blocked === 'missing-reviewer' ? text('검토 AI를 고르면 반복합니다.', 'Choose the review AI to repeat.')
       : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).')
-        : status?.blocked === 'unconfirmed' ? text('이 PC를 거치지 않고(프로젝트 폴더와 함께) 들어오거나 바뀐 흐름이라 아직 반복하지 않습니다. 지금 흐름 그대로 반복하려면 켜기를 누르세요.', 'This flow came or changed outside this PC (with the project folder), so it does not repeat yet. Turn it on to repeat the flow as it is now.') : null;
+        : status?.blocked === 'unconfirmed' ? text('이 PC를 거치지 않고(프로젝트 폴더와 함께) 들어오거나 바뀐 워크플로라 아직 반복하지 않습니다. 지금 워크플로 그대로 반복하려면 켜기를 누르세요.', 'This workflow came or changed outside this PC (with the project folder), so it does not repeat yet. Turn it on to repeat the workflow as it is now.') : null;
   return <span className="workflow-run-bar__group" role="group" aria-label={text('반복', 'Repeat')} data-testid="workflow-repeat">
     <span className="workflow-run-bar__label"><Glyph name="repeat" size={12} /> {text('반복', 'Repeat')}</span>
     <Select aria-label={text('반복', 'Repeat')} value={on ? repeat!.cadence : 'off'} disabled={disabled} data-testid="workflow-repeat-cadence"
-      title={!canTurnOn && !on ? (active ? text('검토 AI를 먼저 고르세요.', 'Choose the review AI first.') : text('진행 중인 소프로젝트만 반복합니다.', 'Only an active subproject repeats.')) : undefined}
+      title={!canTurnOn && !on ? (active ? text('검토 AI를 먼저 고르세요.', 'Choose the review AI first.') : text('진행 중인 워크플로만 반복합니다.', 'Only an active workflow repeats.')) : undefined}
       onChange={(event) => { const value = event.target.value; if (value === 'off') { if (repeat && on) save({ enabled: false }); } else save({ cadence: value as WorkflowRepeat['cadence'], enabled: true }); }}>
       <option value="off">{text('끔', 'Off')}</option>
       <option value="daily" disabled={!canTurnOn}>{text('매일', 'Every day')}</option>
@@ -219,7 +219,7 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
       </Select>
     </>}
     {on && <small className="workflow-run-bar__why" role="status" data-testid="workflow-repeat-status">
-      {!active ? text('완료되거나 보관된 소프로젝트는 반복하지 않습니다. 다시 진행하면 그때부터 반복합니다.', 'A completed or archived subproject does not repeat. It repeats again from when it is reopened.')
+      {!active ? text('완료되거나 보관된 워크플로는 반복하지 않습니다. 다시 진행하면 그때부터 반복합니다.', 'A completed or archived workflow does not repeat. It repeats again from when it is reopened.')
         : blockedText ?? (status?.nextAt ? text(`다음 실행 ${when(status.nextAt, true)}`, `Next run ${when(status.nextAt, true)}`) : text('다음 실행 시각을 계산하는 중입니다.', 'Working out the next run.'))}
       {status?.blocked === 'automation-off' && onOpenAutomationSettings && <> <Button size="sm" variant="ghost" leadingIcon={<Glyph name="set" />} onClick={onOpenAutomationSettings}>{text('설정 열기', 'Open settings')}</Button></>}
       {status?.blocked === 'unconfirmed' && canTurnOn && <> <Button size="sm" variant="ghost" disabled={disabled} onClick={() => save({ enabled: true })} data-testid="workflow-repeat-confirm">{text('켜기', 'Turn on')}</Button></>}

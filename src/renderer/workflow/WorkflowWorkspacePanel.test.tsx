@@ -18,7 +18,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const button = (name: string): HTMLButtonElement => { const node = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === name || item.getAttribute('aria-label') === name); if (!node) throw new Error(`Missing button: ${name}`); return node; };
 const click = async (name: string): Promise<void> => { await act(async () => button(name).click()); };
 const stageDocument = (): string | undefined => document.querySelector<HTMLTextAreaElement>('.workflow-stage textarea')?.value;
-const subprojectMenu = async (item: string): Promise<void> => { await click('Subproject actions'); await click(item); };
+const subprojectMenu = async (item: string): Promise<void> => { await click('Workflow actions'); await click(item); };
 const edit = async (label: string, value: string): Promise<void> => {
   const node = [...document.querySelectorAll('label')].find(item => item.textContent?.replace('*', '').trim() === label || item.firstChild?.textContent?.trim() === label);
   const control = (node?.htmlFor ? document.getElementById(node.htmlFor) : node?.querySelector('input,textarea,select')) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -152,11 +152,11 @@ describe('workflow project workspace', () => {
     expect(state.open).toHaveBeenCalledWith('general'); expect(state.commands).toHaveLength(0);
   });
   it('cancels subproject creation without writing a command', async () => {
-    const state = fixture(); await state.render(); await click('New subproject'); await edit('Name', 'Cancelled plan'); await click('Cancel'); expect(state.commands).toHaveLength(0);
+    const state = fixture(); await state.render(); await click('New workflow'); await edit('Name', 'Cancelled plan'); await click('Cancel'); expect(state.commands).toHaveLength(0);
   });
   it('preserves node identity and stage document while renaming and switching views', async () => {
-    // The stage's place in the flow (its title among them) is edited in "흐름 편집".
-    const state = fixture(); await state.render(true); await edit('Stage document', 'Document before navigation'); await click('Edit the flow'); await edit('Stage title', 'Renamed stage'); await click('Done editing the flow');
+    // The stage's place in the flow (its title among them) is edited in "단계 편집".
+    const state = fixture(); await state.render(true); await edit('Stage document', 'Document before navigation'); await click('Edit stages'); await edit('Stage title', 'Renamed stage'); await click('Done editing stages');
     expect(stageDocument()).toBe('Document before navigation'); await click('Save draft');
     const command = state.commands[0]; expect(command.type).toBe('workflow.patch'); if (command.type === 'workflow.patch') { expect(command.payload.graph.nodes[0].id).toBe('login:research'); expect(command.payload.graph.nodes[0].title).toBe('Renamed stage'); expect(command.payload.graph.nodes[0].document).toBe('Document before navigation'); }
   });
@@ -168,11 +168,11 @@ describe('workflow project workspace', () => {
     const state = fixture(); await state.render(true); await click('Stage conversation'); expect(state.open).toHaveBeenCalledWith('chat-stage'); expect(state.commands).toHaveLength(0);
   });
   it('links an existing conversation by session ID with no document patch', async () => {
-    const state = fixture(); await state.render(); await click('Link to stage'); await edit('Subproject', 'login'); await edit('Stage', 'login:research'); await click('Link'); expect(state.commands).toHaveLength(1); expect(state.commands[0]).toMatchObject({ type: 'session.link', subprojectId: 'login', payload: { sessionId: 'general', nodeId: 'login:research' } });
+    const state = fixture(); await state.render(); await click('Link to stage'); await edit('Workflow', 'login'); await edit('Stage', 'login:research'); await click('Link'); expect(state.commands).toHaveLength(1); expect(state.commands[0]).toMatchObject({ type: 'session.link', subprojectId: 'login', payload: { sessionId: 'general', nodeId: 'login:research' } });
   });
   it('rebases a dirty document after its own session link without hiding actual graph conflicts', async () => {
     const state = fixture(); await state.render(true); await edit('Stage document', 'Keep my unsaved document');
-    await click('Back to project items'); await click('Link to stage'); await edit('Subproject', 'login'); await edit('Stage', 'login:research'); await click('Link');
+    await click('Back to project items'); await click('Link to stage'); await edit('Workflow', 'login'); await edit('Stage', 'login:research'); await click('Link');
     expect(stageDocument()).toBe('Keep my unsaved document');
     expect(container.textContent).not.toContain('Another window or AI changed');
     await click('Save draft'); expect(state.commands.at(-1)).toMatchObject({ type: 'workflow.patch', expectedRevision: 2 });
@@ -200,10 +200,10 @@ describe('workflow project workspace', () => {
     state.access.workflowPreview = async request => { requests.push(request.action); return { ok: true, preview: request.action === 'open' ? { id: request.previewId, projectId: snapshot.projectId, sessionId: 'setup-session', revision: 0, graph: { ...graph, nodes: graph.nodes.map((node, index) => index === 0 ? { ...node, title: 'AI proposal revision' } : node) } } : null }; };
     await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={state.access} recoveryAccess={recovery} conversations={[]} />));
     await click('Continue setup');
-    expect(button('Create subproject').disabled).toBe(true);
+    expect(button('Create workflow').disabled).toBe(true);
     expect(document.body.textContent).toContain('The host creation draft expired');
     await click('Reconnect saved draft');
-    expect(document.body.textContent).toContain('AI proposal revision'); expect(button('Create subproject').disabled).toBe(false);
+    expect(document.body.textContent).toContain('AI proposal revision'); expect(button('Create workflow').disabled).toBe(false);
     await click('From preset'); expect(requests).toContain('discard');
     await act(async () => new Promise(resolve => setTimeout(resolve, 220)));
     expect(writes.at(-1)?.creation?.previewSessionId).toBeUndefined();
@@ -371,8 +371,8 @@ describe('workflow project workspace', () => {
     const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: () => new Promise(() => undefined) };
     await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
     await act(async () => new Promise(resolve => setTimeout(resolve, 300)));
-    await click('New subproject'); await edit('Name', 'Plan sent');
-    await act(async () => { button('Create subproject').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await click('New workflow'); await edit('Name', 'Plan sent');
+    await act(async () => { button('Create workflow').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
     await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
     // The host creates what was sent: nothing typed now could reach it, so nothing can be typed.
     const goal = [...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')!.querySelector('textarea')!;
@@ -394,10 +394,10 @@ describe('workflow project workspace', () => {
       workflowPreview: async request => { if (request.action === 'discard') await new Promise(resolve => setTimeout(resolve, 400)); return { ok: true, preview: request.action === 'read' ? { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: 1, graph: creation.graph } : null }; } };
     await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
     await click('Continue setup');
-    await act(async () => { button('Create subproject').click(); await new Promise(resolve => setTimeout(resolve, 100)); });
+    await act(async () => { button('Create workflow').click(); await new Promise(resolve => setTimeout(resolve, 100)); });
     // Created and still letting the draft go: the form is gone already, nothing can be typed into it.
-    expect([...document.querySelectorAll('button')].some(item => item.textContent?.trim() === 'Create subproject')).toBe(false);
-    expect(document.body.textContent).not.toContain('A subproject setup is in progress');
+    expect([...document.querySelectorAll('button')].some(item => item.textContent?.trim() === 'Create workflow')).toBe(false);
+    expect(document.body.textContent).not.toContain('A workflow setup is in progress');
     await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
   });
   it('keeps what is typed while a setup change waits for the host', async () => {
@@ -493,7 +493,7 @@ describe('workflow project workspace', () => {
     await click('Continue setup');
     await act(async () => { button('Cancel').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
     // A new setup begun before the old one's cancel is answered.
-    await click('New subproject'); await edit('Name', 'New setup');
+    await click('New workflow'); await edit('Name', 'New setup');
     await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
     expect([...document.querySelectorAll('input')].some(item => item.value === 'New setup')).toBe(true);
   });
@@ -517,11 +517,11 @@ describe('workflow project workspace', () => {
     };
     const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => ({ ok: true, snapshot: created, commandId: command.commandId }) };
     await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
-    expect(document.body.textContent).toContain('A subproject setup is in progress');
+    expect(document.body.textContent).toContain('A workflow setup is in progress');
     await click('Reconcile request');
     await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
     // Created: the setup is not offered again (it would try the same id) and is no longer kept.
-    expect(document.body.textContent).not.toContain('A subproject setup is in progress');
+    expect(document.body.textContent).not.toContain('A workflow setup is in progress');
     expect(stored.creation).toBeUndefined();
     expect(stored.pendingCommand).toBeNull();
   });
@@ -558,7 +558,7 @@ describe('workflow project workspace', () => {
     await click('Use stored draft');
     await click('Continue setup');
     expect(document.body.textContent).not.toContain('The host creation draft expired');
-    expect(button('Create subproject').disabled).toBe(false);
+    expect(button('Create workflow').disabled).toBe(false);
   });
   it('drops a stored recovery read for another host once the host changes', async () => {
     const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
@@ -611,7 +611,7 @@ describe('workflow project workspace', () => {
       await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
       await click('Read stored draft');
       // Only an older app's own place says what happens to its unsent flow save.
-      expect(document.body.textContent?.includes('A flow save an older app could not send comes back as a draft')).toBe(olderPlace);
+      expect(document.body.textContent?.includes('A workflow save an older app could not send comes back as a draft')).toBe(olderPlace);
       await click('Keep current input');
       expect(stageDocument()).toBe('Current edit');
       await click('Save draft');
@@ -777,11 +777,11 @@ describe('WorkflowWorkspacePanel · one canvas', () => {
     function FailingCanvas(): JSX.Element { throw new Error('chunk failed'); }
     await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} canvasRenderer={FailingCanvas} navigationTarget={{ subprojectId: 'login', nodeId: 'login:research', key: 'failed' }} conversations={[]} />));
     expect(document.querySelector('[data-renderer="static"]')).not.toBeNull();
-    await click('Edit the flow');
+    await click('Edit stages');
     expect(button('Move up on canvas')).toBeTruthy();
   });
   it('records a save that only moved stages as a layout change', async () => {
-    const state = fixture(); await state.render(true); await click('Edit the flow');
+    const state = fixture(); await state.render(true); await click('Edit stages');
     await click('Move down on canvas'); await click('Save draft');
     const command = state.commands[0];
     expect(command).toMatchObject({ type: 'workflow.patch', payload: { summary: 'Layout change' } });

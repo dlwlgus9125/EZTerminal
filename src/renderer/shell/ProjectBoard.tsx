@@ -114,7 +114,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
       <div className="ez-shell-boardwrap" data-testid="shell-board">
         <main className="ez-shell-board" aria-label={text('판', 'Board')}>
           <div className="ez-shell-phead"><h1>{text('프로젝트를 고르세요', 'Choose a project')}</h1></div>
-          <p className="ez-shell-empty">{text('작업할 폴더를 프로젝트로 추가하면 대화·흐름·터미널이 여기에 모입니다.', 'Add a folder as a project: its conversations, flows and terminals gather here.')}</p>
+          <p className="ez-shell-empty">{text('작업할 폴더를 프로젝트로 추가하면 대화·워크플로·터미널이 여기에 모입니다.', 'Add a folder as a project: its conversations, workflows and terminals gather here.')}</p>
           <div className="ez-shell-btns"><button type="button" className="ez-shell-btn" data-tone="go" onClick={props.onAddProject} data-testid="shell-board-add-project">{text('프로젝트 추가', 'Add project')}</button></div>
         </main>
         <aside className="ez-shell-side" aria-label={text('나를 기다리는 것', 'Waiting for me')} />
@@ -134,8 +134,8 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
               <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onProjectSettings}><Glyph name="set" size={16} />{text('프로젝트 설정', 'Project settings')}</button>
             </span>
           </div>
-          <Lane glyph="flow" title={text('흐름', 'Flows')} note={text(`소프로젝트 ${props.flows.length}`, `${props.flows.length} subprojects`)}>
-            {props.flows.length === 0 && <p className="ez-shell-empty">{text('소프로젝트 흐름이 없습니다.', 'No subproject flows yet.')}</p>}
+          <Lane glyph="flow" title={text('워크플로', 'Workflows')} note={text(`워크플로 ${props.flows.length}`, `${props.flows.length} workflows`)}>
+            {props.flows.length === 0 && <p className="ez-shell-empty">{text('워크플로가 없습니다.', 'No workflows yet.')}</p>}
             {props.flows.map((flow) => (
               <div key={flow.subprojectId} className="ez-shell-card ez-shell-flowcard" data-need={flow.lamp === 'amber' || undefined} data-testid="shell-flow-card">
                 <button type="button" className="ez-shell-flowcard__name" onClick={() => props.onOpenFlow(flow.subprojectId)}>
@@ -147,7 +147,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
                 <span className="ez-shell-flowcard__actions">
                   {flow.phase === 'awaiting-approval'
                     ? <button type="button" className="ez-shell-btn" data-tone="amber" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('승인 보기', 'Review approval')}</button>
-                    : <button type="button" className="ez-shell-btn" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('흐름 보기', 'Open flow')}</button>}
+                    : <button type="button" className="ez-shell-btn" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('워크플로 보기', 'Open workflow')}</button>}
                   {props.onRunAgain && flow.canRunAgain && <button type="button" className="ez-shell-btn" onClick={() => props.onRunAgain!(flow.subprojectId)} data-testid="shell-flow-run-again">{flow.runNumber > 0 ? text('다시 실행', 'Run again') : text('실행', 'Run')}</button>}
                 </span>
               </div>
@@ -214,7 +214,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
         <div className="ez-shell-launch__composer">{props.startBar}</div>
         <span className="ez-shell-launch__actions">
           <button type="button" className="ez-shell-btn" onClick={props.onNewTerminal}>{text('새 터미널', 'New terminal')}</button>
-          <button type="button" className="ez-shell-btn" onClick={props.onNewFlow} data-testid="shell-board-new-flow">{text('새 흐름', 'New flow')}</button>
+          <button type="button" className="ez-shell-btn" onClick={props.onNewFlow} data-testid="shell-board-new-flow">{text('새 워크플로', 'New workflow')}</button>
         </span>
       </div>
     </>

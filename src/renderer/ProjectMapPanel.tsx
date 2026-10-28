@@ -749,7 +749,7 @@ function ProjectMapCreator({
   ));
   const typeLabels: Readonly<Record<ProjectMapType, string>> = {
     architecture: t('projectMap.types.architecture', 'Architecture'),
-    workflow: t('projectMap.types.workflow', 'Workflow'),
+    workflow: t('projectMap.types.workflow', 'Flow diagram'),
     sequence: t('projectMap.types.sequence', 'Sequence'),
     dataflow: t('projectMap.types.dataflow', 'Dataflow'),
     lifecycle: t('projectMap.types.lifecycle', 'Lifecycle'),

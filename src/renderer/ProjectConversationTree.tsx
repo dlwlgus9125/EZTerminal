@@ -163,7 +163,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
     event.preventDefault();
   };
   const kindLabel = (node: ProjectConversationNode): string => ({
-    project: text('프로젝트', 'Project'), subproject: text('소프로젝트', 'Subproject'),
+    project: text('프로젝트', 'Project'), subproject: text('워크플로', 'Workflow'),
     stage: text('단계', 'Stage'), conversation: node.subagent ? text('서브에이전트', 'Subagent') : node.source === 'native' ? 'CLI' : text('대화', 'Chat'),
     terminal: text('터미널', 'Terminal'),
     workspace: node.target.kind === 'workspace' && node.target.local ? text('로컬', 'Local') : text('워크트리', 'Worktree'),
@@ -187,8 +187,8 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
 
   return <section className="project-conversation-tree" data-mobile={mobile || undefined} aria-label={text('프로젝트와 대화', 'Projects and conversations')} data-testid="project-conversation-tree">
     <div className="project-conversation-tree__search"><Glyph name="search" /><Input value={state.query} maxLength={500}
-      aria-label={text('프로젝트·소프로젝트·대화 제목 검색', 'Search project, subproject and conversation titles')}
-      placeholder={text('프로젝트·소프로젝트·대화 검색', 'Search projects and conversations')}
+      aria-label={text('프로젝트·워크플로·대화 제목 검색', 'Search project, workflow and conversation titles')}
+      placeholder={text('프로젝트·워크플로·대화 검색', 'Search projects and conversations')}
       onChange={event => { pendingScroll.current = 0; setState(current => ({ ...current, query: event.target.value, scrollTop: 0 })); }} /></div>
     <div className="project-conversation-tree__filters" role="group" aria-label={text('목록 보기', 'List view')}>
       <Button size="sm" variant="ghost" aria-pressed={state.view === 'projects'} onClick={() => { pendingScroll.current = 0; setState(current => ({ ...current, view: 'projects', scrollTop: 0 })); }}>{text('프로젝트별', 'By project')}</Button>
@@ -248,9 +248,9 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
               {node.target.kind === 'project' && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderProjectActions?.(node.target.projectId)}</span>}
               {node.target.kind === 'terminal' && !node.archived && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderTerminalActions?.(node.target.sessionId, node.title)}</span>}
             {node.target.kind === 'project' && (row.expanded || flat) && <div className="project-conversation-tree__project-status" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-              {status?.loading && <p role="status" className="project-conversation-tree__notice">{text('대화·소프로젝트 확인 중', 'Loading conversations and subprojects')}</p>}
+              {status?.loading && <p role="status" className="project-conversation-tree__notice">{text('대화·워크플로 확인 중', 'Loading conversations and workflows')}</p>}
               {status?.error && <div role="alert" className="project-conversation-tree__notice"><span>{status.error}</span><Button size="sm" variant="ghost" onClick={() => onInspectProject?.(node.target.projectId)}>{text('다시 시도', 'Retry')}</Button></div>}
-              {!status?.loading && !status?.error && node.children?.length === 0 && <p className="project-conversation-tree__notice">{text('아직 대화나 소프로젝트가 없습니다.', 'No conversations or subprojects yet.')}</p>}
+              {!status?.loading && !status?.error && node.children?.length === 0 && <p className="project-conversation-tree__notice">{text('아직 대화나 워크플로가 없습니다.', 'No conversations or workflows yet.')}</p>}
             </div>}
             </div>
             {!flat && (row.depth > 0 || row.expanded) && rows[index + 1]?.node.target.projectId !== node.target.projectId && projectStatus?.[node.target.projectId]?.hasMore &&

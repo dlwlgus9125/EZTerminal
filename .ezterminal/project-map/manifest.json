@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3731280c6bdad312940932ed182d92af4b1d1ef6110f9bc5b82d1bcdde251205",
+        "inputDigest": "sha256:fd9b8f650abd492fe838612a49ac77fd71165bd5bd60390802226b221414362e",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-9): the flow screen stopped embedding the old planning panel and the run result dialog dropped the device-evidence form; the anchored approval and session blocks are unchanged."
       }
@@ -741,7 +741,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1ee84de1dd2aa50c9c63922a1636a88191e4a5f06b6abb2a1f3001cc53752f1e",
+        "inputDigest": "sha256:616f80ecf70de8877adebb638ea5369b0794af228ca7cfd4c414e864d7750ab2",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5 follow-ups): the phone project navigator dropped its unused 'tasks' mode and the completion hook merged a duplicate import; the anchored flow and completion blocks are unchanged. Anchors moved."
       }

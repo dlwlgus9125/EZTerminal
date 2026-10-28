@@ -16,6 +16,7 @@
 
 ### Changed
 
+- Subprojects are now called workflows (워크플로).
 - A subproject's flow is one canvas for building and running it, like n8n.
   The separate Flow and Runs tabs are merged. On the desktop you drag stages,
   connect them by dragging from a stage's named output ports, zoom, pan, fit

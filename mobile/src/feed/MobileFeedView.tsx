@@ -146,7 +146,7 @@ export function MobileFeedView(props: MobileFeedViewProps): JSX.Element {
             </button>
           )}
         >
-          <MenuLabel>{text('흐름·대화를 볼 프로젝트', 'Show flows and conversations of')}</MenuLabel>
+          <MenuLabel>{text('워크플로·대화를 볼 프로젝트', 'Show workflows and conversations of')}</MenuLabel>
           <MenuRadioItem checked={allProjects} onSelect={() => props.onScopeChange(null)} data-testid="mobile-feed-scope-all">{text('모든 프로젝트', 'All projects')}</MenuRadioItem>
           {props.projects.map((project) => (
             <MenuRadioItem key={project.id} checked={props.scope === project.id} onSelect={() => props.onScopeChange(project.id)} data-testid="mobile-feed-scope-project">{project.name}</MenuRadioItem>
@@ -171,8 +171,8 @@ export function MobileFeedView(props: MobileFeedViewProps): JSX.Element {
         </section>
         {props.flowsAvailable !== false && (props.flows.length > 0 || !allProjects) && (
           <section aria-labelledby="mob-feed-flows" data-testid="mobile-feed-flows">
-            <h2 id="mob-feed-flows" className="mob-feed__h"><Glyph name="flow" size={16} />{text('흐름', 'Flows')}</h2>
-            {props.flows.length === 0 && <p className="mob-feed__none">{text('소프로젝트 흐름이 없습니다.', 'No subproject flows yet.')}</p>}
+            <h2 id="mob-feed-flows" className="mob-feed__h"><Glyph name="flow" size={16} />{text('워크플로', 'Workflows')}</h2>
+            {props.flows.length === 0 && <p className="mob-feed__none">{text('워크플로가 없습니다.', 'No workflows yet.')}</p>}
             {props.flows.map((flow) => (
               <button key={`${flow.projectId}:${flow.subprojectId}`} type="button" className="mob-feed__card" data-need={flow.lamp === 'amber' || undefined}
                 onClick={() => props.onOpenFlow(flow)} data-testid="mobile-feed-flow">

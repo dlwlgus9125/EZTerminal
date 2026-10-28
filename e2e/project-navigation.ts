@@ -23,7 +23,7 @@ export async function openProjectBoard(page: Page, projectId: string): Promise<v
   await expect(page.getByTestId('shell-board')).toBeVisible();
 }
 
-/** A project's flow tab at its items (subprojects and conversations), opened with the board's 새 흐름. */
+/** A project's flow tab at its items (subprojects and conversations), opened with the board's 새 워크플로. */
 export async function openProjectItems(page: Page, projectId: string): Promise<Locator> {
   await openProjectBoard(page, projectId);
   await page.getByTestId('shell-board-new-flow').click();

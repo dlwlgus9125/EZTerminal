@@ -154,9 +154,9 @@ async function main(): Promise<void> {
     // conversation starts with its first message, so the deterministic fixture answers
     // exactly one turn; no workflow execution run is started in this scenario.
     await recordWorkflowRuntimeErrors();
-    await clickLabel('[data-testid="workflow-workspace"] button', ['New subproject', '새 소프로젝트']);
+    await clickLabel('[data-testid="workflow-workspace"] button', ['New workflow', '새 워크플로']);
     await fillSelector('.workflow-create input', 'Android subproject');
-    await clickLabel('[role="dialog"] button', ['Create subproject', '소프로젝트 만들기']);
+    await clickLabel('[role="dialog"] button', ['Create workflow', '워크플로 만들기']);
     const readWorkflow = async () => { const result = await host.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId); if (!result.ok) throw new Error(result.message); return result.snapshot; };
     const createDeadline = Date.now() + 30_000;
     while (!(await readWorkflow()).subprojects.some(item => item.title === 'Android subproject')) { if (Date.now() > createDeadline) throw new Error('Android subproject creation was not acknowledged'); await sleep(150); }

@@ -42,7 +42,7 @@ export interface WorkflowFlowSurfaceProps {
   readonly catalogs?: Readonly<Record<string, readonly ProviderModel[]>>;
   /** The host keeps run settings and has 다시 실행 as one request (see WorkflowRunBar). */
   readonly savedRunSettings?: boolean;
-  /** "흐름 편집": stages and connections can be added, moved and joined. Kept in memory by the workspace. */
+  /** "단계 편집": stages and connections can be added, moved and joined. Kept in memory by the workspace. */
   readonly structure: boolean;
   readonly onStructureChange: (open: boolean) => void;
   /** Local editing is closed (archived subproject, pending command, recovery not ready). */
@@ -120,7 +120,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const view = resolveCanvasView({ savedGraph: props.savedGraph, draftGraph: props.draftGraph, runs: props.runs, pickedRunId: props.pickedRunId, runView: props.runView, shownRunId: shownRun.current });
   shownRun.current = view.run?.runId ?? null;
   const editable = view.editable && !props.editLocked;
-  // Moving, adding and connecting stages on the canvas belong to "흐름 편집"; a stage's settings are edited in its panel.
+  // Moving, adding and connecting stages on the canvas belong to "단계 편집"; a stage's settings are edited in its panel.
   const shaping = editable && props.structure;
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ nodeId: string; key: number } | undefined>();
@@ -206,7 +206,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const staticRenderer = Renderer === WorkflowStaticGraph;
   const rendererProps: WorkflowCanvasRendererProps = {
     graph: view.graph, overlay: view.overlay, editable: shaping, selection, onSelect: select, onGraphChange: change, text, issueCounts,
-    label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: cameras[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
+    label: text('워크플로 캔버스', 'Workflow canvas'), active, initialViewport: cameras[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
     onViewportChange: viewport => { cameras[cameraKey] = viewport; }, onRequestDeleteNode: shaping ? setRemoveId : undefined, reveal, onTidy: shaping ? tidy : undefined,
     decorations: props.decorations, edgeDecorations: props.edgeDecorations,
   };
@@ -216,7 +216,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     ? text('아직 단계가 없습니다. 위에서 단계 종류를 고르고 "단계 추가"를 누르세요.', 'No stages yet. Pick a stage type above and choose "Add stage".')
     : !staticRenderer && !canvasFailed && props.layout === 'graph' && shaping
       ? text('단계를 누르면 설정·문서·실행 상태를 여기서 봅니다. 오른쪽 동그라미(출력)를 다른 단계의 왼쪽 동그라미로 끌면 연결됩니다.', 'Select a stage to see its settings, document and run status here. Drag from a right-side output circle to another stage\'s left circle to connect.')
-      : text('단계를 누르면 그 단계의 대화·설정·실행 상태를 여기서 봅니다. 단계를 더하거나 잇으려면 "흐름 편집"을 누르세요.', 'Select a stage to see its conversation, settings and run status here. To add or connect stages, choose "Edit the flow".');
+      : text('단계를 누르면 그 단계의 대화·설정·실행 상태를 여기서 봅니다. 단계를 더하거나 잇으려면 "단계 편집"을 누르세요.', 'Select a stage to see its conversation, settings and run status here. To add or connect stages, choose "Edit stages".');
 
   return <div className="workflow-flow" data-mode={view.mode} data-mobile={props.mobile || undefined}>
     <VisuallyHidden role="status" aria-live="polite">{announcement}</VisuallyHidden>
@@ -239,7 +239,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
         </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer key={cameraKey} {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
           : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} decorations={props.decorations} />}
       </div>
-      <aside ref={panel} id={panelId} hidden={!panelOpen} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('흐름 요약', 'Flow summary')}>
+      <aside ref={panel} id={panelId} hidden={!panelOpen} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('워크플로 요약', 'Workflow summary')}>
         {props.panelTop}
         {node ? <>
           <WorkflowStagePanel key={node.id} text={text} graph={view.graph} node={node} archived={archived} editable={editable} structure={props.structure && view.mode !== 'run-view'}
@@ -253,13 +253,13 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
             onStartChat={() => props.onStartStageChat(node.id)} onOpenConversation={props.onOpenConversation}
             settingsSlot={slots?.settings} topSlot={slots?.top} kindLabel={slots?.kindLabel} instructionsLabel={slots?.instructionsLabel} conversationHint={slots?.conversationHint} statusLabel={slots?.statusLabel}
             onOpenAttemptResult={props.onOpenAttemptResult && view.run ? attemptId => props.onOpenAttemptResult!(view.run!.runId, attemptId) : undefined} />
-          {view.run && !view.overlay && <div className="workflow-node-run"><p className="workflow-hint">{text('편집 중인 흐름의 단계나 연결이 실행에 고정된 흐름과 달라 상태를 겹쳐 보이지 않습니다.', 'The stages or connections being edited differ from the flow this run froze, so its state is not overlaid.')}</p>
+          {view.run && !view.overlay && <div className="workflow-node-run"><p className="workflow-hint">{text('편집 중인 워크플로의 단계나 연결이 실행에 고정된 워크플로와 달라 상태를 겹쳐 보이지 않습니다.', 'The stages or connections being edited differ from the workflow this run froze, so its state is not overlaid.')}</p>
             <Button onClick={() => props.onRunViewChange(true)}>{text('실행에서 이 단계 보기', 'See this stage in the run')}</Button></div>}
         </> : edge ? <>
           <div className="workflow-flow__panel-head"><small>{text('연결', 'Connection')}</small><h3>{workflowOutcomeLabel(edge.outcome, text)}</h3></div>
           <WorkflowEdgeInspector graph={view.graph} edge={edge} text={text} readOnly={!shaping} taken={view.overlay?.edges[edge.id]?.taken} onChange={change} onSelectNode={id => select({ kind: 'node', id })} />
         </> : <div className="workflow-flow__summary">
-          <h3>{text('흐름 요약', 'Flow summary')}</h3>
+          <h3>{text('워크플로 요약', 'Workflow summary')}</h3>
           {controls?.blocked && <p className="workflow-notice">{text('실행이 멈췄습니다. 더 진행할 수 있는 단계가 없습니다. 아래 단계의 기록을 확인하고 초안을 고쳐 새 실행을 준비하세요.', 'The run stopped: no stage can proceed. Check the stages below, fix the draft and prepare a new run.')}</p>}
           {view.run && view.overlay && <ul className="workflow-flow__states">{view.graph.nodes.filter(item => view.overlay!.nodes[item.id] && !['pending', 'not-reached'].includes(view.overlay!.nodes[item.id].status)).map(item => {
             const status = workflowRunStatusPresentation(view.overlay!.nodes[item.id], text);

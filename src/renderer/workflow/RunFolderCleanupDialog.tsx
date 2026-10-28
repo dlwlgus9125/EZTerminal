@@ -85,8 +85,8 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
     : value === 'validation' ? text('검증 폴더', 'Validation folder') : text('통합 폴더', 'Integration folder'));
   return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }} dismissible={!busy} size="lg" icon={<Glyph name="trash" />}
     title={text('작업 폴더 정리', 'Clean up work folders')} closeLabel={text('닫기', 'Close')}
-    description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리하고, 폴더가 모두 정리된 실행이 만든 기획 기준본도 지웁니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
-      'Each flow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up, and the planning baselines of runs whose folders are all gone go too. Results, changes and stage conversations stay readable afterwards.')}
+    description={text('워크플로마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리하고, 폴더가 모두 정리된 실행이 만든 기획 기준본도 지웁니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
+      'Each workflow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up, and the planning baselines of runs whose folders are all gone go too. Results, changes and stage conversations stay readable afterwards.')}
     footer={<><Button disabled={busy} onClick={() => onOpenChange(false)} data-testid="run-folder-cleanup-close">{text('닫기', 'Close')}</Button>
       <Button variant="primary" disabled={busy || (removable.length === 0 && baselines === 0)} onClick={() => void clean()} data-testid="run-folder-cleanup-confirm">
         {busy ? text('정리하는 중…', 'Cleaning up…') : removable.length === 0 && baselines > 0 ? text(`기획 기준본 ${baselines}개 정리`, `Clean up ${baselines} planning baseline${baselines === 1 ? '' : 's'}`)

@@ -19,7 +19,7 @@ import { ProjectArchiveResultSchema, type ProjectArchiveRequest, type ProjectArc
 import { WorkflowResultSchema, WorkflowPreviewResultSchema, WorkflowNavigationResultSchema, type WorkflowNavigationResult, type WorkflowCommand, type WorkflowResult, type WorkflowPreviewRequest, type WorkflowPreviewResult } from '../../../src/shared/workflow';
 import { flowCommandNeedsV17, flowPreviewNeedsV17 } from '../../../src/shared/workflow-protocol-projection';
 
-const OLDER_PC_FLOW = 'The connected PC is older and cannot save these flow settings. Your draft is kept here; update the PC to save it.';
+const OLDER_PC_FLOW = 'The connected PC is older and cannot save these workflow settings. Your draft is kept here; update the PC to save it.';
 import { PlanningResultQueryResultSchema, type PlanningResultQuery, type PlanningResultQueryResult } from '../../../src/shared/planning-result';
 /**
  * WsEzTerminalTransport — implements the desktop's `EzTerminalApi` (see
@@ -1254,14 +1254,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   private requestWorkflow(message: Exclude<WorkflowRequest, { kind: 'workflow-preview' | 'workflow-navigation' }>, projectId: string, commandId?: string, hostId?: string): Promise<WorkflowResult> {
-    if (this.connectionState === 'protocol-incompatible') return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC and mobile app to compatible versions to use subprojects.' });
+    if (this.connectionState === 'protocol-incompatible') return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC and mobile app to compatible versions to use workflows.' });
     if (!this.authed || this.negotiatedProtocolVersion === null) return Promise.resolve({ ok: false, error: 'unavailable', message: 'PC connection is unavailable. Reconnect to continue.' });
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC to use subprojects and workflow editing.' });
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC to use workflows and workflow editing.' });
     return this.requestPlanningExtension(message, `${message.kind}-reply`, value => {
       const parsed = WorkflowResultSchema.safeParse(value);
       // A read this app cannot parse comes from a newer PC: say so, and do not hold conversations waiting
       // for it. A write stays unconfirmed so its exact pending command is kept for reconciliation.
-      if (!parsed.success && value !== undefined && message.kind === 'workflow-read') return { ok: false, error: 'unsupported', message: 'Update the Android app to read the flows of this project from the connected PC.' };
+      if (!parsed.success && value !== undefined && message.kind === 'workflow-read') return { ok: false, error: 'unsupported', message: 'Update the Android app to read the workflows of this project from the connected PC.' };
       return parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === projectId && (!commandId || parsed.data.commandId === commandId) && (!hostId || parsed.data.snapshot.hostId === hostId))
         ? parsed.data : { ok: false, error: 'unavailable', message: 'The workflow receipt could not be verified. Reconcile the same command after reconnecting.' };
     });

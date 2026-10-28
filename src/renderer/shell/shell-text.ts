@@ -52,7 +52,7 @@ export function waitingKindText(kind: WaitingItem['kind'], text: ShellText): str
     case 'question': return text('질문', 'Question');
     case 'plan': return text('계획 승인', 'Approve the plan');
     case 'other': return text('승인', 'Approval');
-    case 'flow-approval': return text('흐름 승인', 'Flow approval');
+    case 'flow-approval': return text('워크플로 승인', 'Workflow approval');
     case 'terminal-agent': return text('터미널 에이전트', 'Terminal agent');
   }
 }

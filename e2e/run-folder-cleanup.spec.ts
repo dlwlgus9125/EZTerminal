@@ -85,7 +85,7 @@ test('작업 폴더 정리: the oldest run’s folders go, its conversation and 
     await expect(workspace.locator('.react-flow__node[data-id="build"]')).toBeVisible({ timeout: 30_000 });
 
     // ⋯ → 작업 폴더 정리…: only run #1 (past the newest three) is offered, and its folders hold nothing of the person's.
-    await workspace.getByRole('button', { name: /소프로젝트 작업|Subproject actions/u }).click();
+    await workspace.getByRole('button', { name: /워크플로 작업|Workflow actions/u }).click();
     await page.getByRole('menuitem', { name: /작업 폴더 정리|Clean up work folders/u }).click();
     const dialog = page.getByTestId('run-folder-cleanup');
     await expect(dialog.locator('li[data-state="removable"]').first()).toBeVisible({ timeout: 60_000 });

@@ -43,7 +43,7 @@ interface FlowStoryProps {
   readonly paneHeight?: number;
   /** Start with the stage panel hidden (the header toggle brings it back). */
   readonly panelCollapsed?: boolean;
-  /** Start in "흐름 편집" (stages can be added, moved and connected). */
+  /** Start in "단계 편집" (stages can be added, moved and connected). */
   readonly structure?: boolean;
   readonly autoApprove?: boolean;
   /** 반복 on a host that runs it (workflow-repeat-v1): the saved setting and what the host says about it. */
@@ -236,7 +236,7 @@ export const EmptyFlowAddFirstStage: Story = {
     await userEvent.click(await canvas.findByRole('button', { name: /첫 AI 작업 단계 추가|Add a first AI task/u }));
     await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(1));
     await expect(canvas.findByTestId('workflow-stage-panel')).resolves.toBeVisible();
-    // Adding the first stage opens "흐름 편집" (its structure is editable).
+    // Adding the first stage opens "단계 편집" (its structure is editable).
     await expect(canvas.findByTestId('workflow-stage-structure')).resolves.toBeVisible();
   },
 };
@@ -342,7 +342,7 @@ export const MoveStageByKeyboard: Story = {
     await waitFor(() => expect(node.style.transform).not.toBe(before));
     await expect(canvas.findByText(/미저장 변경|Unsaved changes/u)).resolves.toBeVisible();
     await userEvent.keyboard('{Escape}');
-    await expect(canvas.findByRole('heading', { name: /흐름 요약|Flow summary/u })).resolves.toBeVisible();
+    await expect(canvas.findByRole('heading', { name: /워크플로 요약|Workflow summary/u })).resolves.toBeVisible();
   },
 };
 /** Choosing a connection after a stage shows the connection, not an empty panel (selection order). */

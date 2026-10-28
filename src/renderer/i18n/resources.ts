@@ -1195,7 +1195,7 @@ export const appResources = {
         },
         types: {
           architecture: 'Architecture',
-          workflow: 'Workflow',
+          workflow: 'Flow diagram',
           sequence: 'Sequence',
           dataflow: 'Dataflow',
           lifecycle: 'Lifecycle',
@@ -3011,7 +3011,7 @@ export const appResources = {
         },
         types: {
           architecture: '아키텍처',
-          workflow: '워크플로',
+          workflow: '흐름도',
           sequence: '시퀀스',
           dataflow: '데이터 흐름',
           lifecycle: '수명주기',
