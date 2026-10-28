@@ -264,6 +264,29 @@ export class PlanningResultRepository {
       return boundary === '.' || compare === boundary || compare.startsWith(`${boundary}/`);
     });
   }
+  /**
+   * '앞 대화 이어서': the next stage of a chain works in the folder of the stage before it, from that stage's accepted
+   * result. HEAD moves to the result commit when the folder still holds exactly that result (staged, as the capture
+   * left it); anything else answers false and the stage starts in a folder of its own.
+   */
+  async continueChain(root: string, predecessor: { readonly baseCommit: string; readonly commit: string }): Promise<boolean> {
+    if (!commitPattern.test(predecessor.baseCommit) || !commitPattern.test(predecessor.commit)) return false;
+    const head = await this.head(root);
+    const clean = async () => !(await this.runGit(root, ['status', '--porcelain'])).trim();
+    if (head === predecessor.commit) return clean();
+    if (head !== predecessor.baseCommit) return false;
+    const staged = (await this.runGit(root, ['write-tree'])).trim();
+    const accepted = (await this.runGit(root, ['rev-parse', `${predecessor.commit}^{tree}`])).trim();
+    if (staged !== accepted || (await this.runGit(root, ['diff', '--name-only'])).trim()
+      || (await this.runGit(root, ['ls-files', '--others', '--exclude-standard'])).trim()) return false;
+    await this.runGit(root, ['reset', '--soft', predecessor.commit]);
+    return clean();
+  }
+  /** A retried chain stage continues in place only while its folder still starts from where it began. */
+  async chainStageIntact(runId: string, taskId: string, root: string): Promise<boolean> {
+    const prepared = await this.read<PreparedWorkspace>('workspace-base', [runId, taskId, path.resolve(root)]);
+    return Boolean(prepared && !prepared.repairPending && await this.head(root) === prepared.baseCommit);
+  }
   async capture(run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt): Promise<PlanningResultRecord> {
     const previous = await this.readResult(run.projectId, attempt.attemptId);
     if (previous) {

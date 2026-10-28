@@ -4832,6 +4832,29 @@ describe('settings queued for the next request', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
+  it('gives a chain conversation the permission of the workflow stage about to run', async () => {
+    let stageAccess: 'plan' | 'standard' = 'plan';
+    const h = await harness({ preparedSessionSettings: (sessionId) => (sessionId === 'agent-1' ? { managedExecution: true, permissionPreset: stageAccess } : undefined) });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Stage', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan.' });
+      expect(h.codex.setSettings).not.toHaveBeenCalled();
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      // The next stage of the chain writes: the host switches the conversation before sending its turn.
+      stageAccess = 'standard';
+      const order: string[] = [];
+      const originalSetSettings = vi.mocked(h.codex.setSettings).getMockImplementation()!;
+      vi.mocked(h.codex.setSettings).mockImplementationOnce(async (input) => { order.push(`settings:${input.permissionPreset}`); return originalSetSettings(input); });
+      vi.mocked(h.codex.submit).mockImplementationOnce(async () => { order.push('submit'); });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Build it.' }, { kind: 'desktop', id: 'planning-runtime' });
+      expect(order).toEqual(['settings:standard', 'submit']);
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')?.permissionPreset).toBe('standard');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
   it('says in the conversation that queued settings were dropped by a restart', async () => {
     const saved: unknown[] = [];
     const h = await harness({ pendingSettingsStore: { load: async () => undefined, save: async (value) => { saved.push(value); } } });

@@ -294,6 +294,22 @@ describe('planning result authority', () => {
     expect(f.current().tasks[0]).toMatchObject({ state: 'awaiting-review' });
     expect((await f.service.readResult('P', 'A'))!.validations).toEqual([expect.objectContaining({ status: 'not-run', summary: 'Allow this check again.' })]);
   }, 60_000);
+  it('moves a chain folder to the accepted result only while it holds exactly that result (앞 대화 이어서)', async () => {
+    const f = await fixture({ workflow: true });
+    await f.capture();
+    const record = (await f.service.readResult('P', 'A'))!;
+    // Something changed after the capture: the next stage starts in a folder of its own.
+    await fs.writeFile(path.join(f.worker, 'src/a.txt'), 'edited after capture');
+    expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.worker)).toBe(false);
+    await fs.writeFile(path.join(f.worker, 'src/a.txt'), 'updated');
+    expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.worker)).toBe(true);
+    expect((await f.git.run(f.worker, ['rev-parse', 'HEAD'])).trim()).toBe(record.commit);
+    expect((await f.git.run(f.worker, ['status', '--porcelain'])).trim()).toBe('');
+    // Asked again (a retried dispatch), it stays where it is.
+    expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.worker)).toBe(true);
+    // Another folder is never moved.
+    expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.root)).toBe(false);
+  }, 60_000);
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();
     await f.capture();

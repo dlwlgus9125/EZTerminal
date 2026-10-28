@@ -43,7 +43,7 @@ async function fixture(realResults = false, bindStages = false) {
   const adapter: AgentProviderAdapter = {
     providerId: 'codex',
     probe: vi.fn(),
-    listModels: vi.fn(async () => [{ id: 'model', displayName: 'Model', supportsReasoning: true, reasoningEfforts: ['high'], isDefault: true }]),
+    listModels: vi.fn(async () => [{ id: 'model', displayName: 'Model', supportsReasoning: true, reasoningEfforts: ['low', 'high'], isDefault: true }]),
     createSession: vi.fn(async (context) => ({ sessionId: context.sessionId, providerSessionId: `provider-${context.sessionId}`, model: context.model, permissionPreset: context.permissionPreset })),
     resumeSession: vi.fn(async (context) => ({ sessionId: context.sessionId, providerSessionId: context.providerSessionId, model: context.model, permissionPreset: context.permissionPreset })),
     submit: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined),
@@ -70,6 +70,8 @@ async function fixture(realResults = false, bindStages = false) {
     worktrees: { execute: vi.fn() }, git: { run: vi.fn(async () => { throw new Error('No Git repository'); }) },
     wakeQueuedTurns: () => runtime.wakeQueuedTurns(), captureResult: vi.fn<PlanningRunServiceOptions['captureResult']>(async (...args) => results ? results.captureResult(...args) : [{ artifactId: 'result', revision: 1 }]),
     workflowResultContext: async (...args: Parameters<PlanningResultService['workflowResultContext']>) => results ? results.workflowResultContext(...args) : '',
+    continueChain: async (...args: Parameters<PlanningResultService['continueChain']>) => results ? results.continueChain(...args) : false,
+    chainStageIntact: async (...args: Parameters<PlanningResultService['chainStageIntact']>) => results ? results.chainStageIntact(...args) : false,
     processReview: vi.fn<PlanningRunServiceOptions['processReview']>(async (...args) => { await results?.processReview(...args); }), decideReview: vi.fn(), reportError: (error: unknown) => errors.push(error),
     processIntegration: vi.fn(async () => undefined),
   };
@@ -151,6 +153,40 @@ describe('planning provider dispatch', () => {
     expect(sent.prompt).toContain(output);
     const durable = f.store.getTranscript(second.sessionId, 0, 500).find(item => item.kind === 'user-message');
     expect(durable?.text).toContain(output);
+    expect(f.errors).toEqual([]);
+  }, 30_000);
+  it('continues the same conversation when the next stage has the same agent (앞 대화 이어서), with that stage settings', async () => {
+    const f = await fixture(true); const root = f.store.getSnapshot().projects[0].rootPath!;
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => root, planning: f.options.planning, runs: () => f.ledger.read('project').runs, session: () => undefined, executeRun: (...args) => f.service.executeWorkflow(...args) });
+    const graph = createWorkflowGraph('research', 'sub');
+    const agent = { profileId: 'designer', name: 'Designer', providerId: 'codex', model: 'model', capturedAt: '2026-10-29T00:00:00.000Z' };
+    graph.nodes[0] = { ...graph.nodes[0], providerId: 'codex', model: 'model', reasoningEffort: 'high', agent, instructions: 'Write a planning result', acceptance: ['Concrete plan'] };
+    graph.nodes[1] = { ...graph.nodes[1], operation: 'agent', role: 'design', providerId: 'codex', model: 'model', reasoningEffort: 'low', agent, instructions: 'Design from the plan above', acceptance: ['Concrete design'] };
+    graph.edges[1].outcome = 'next';
+    const base = { projectId: 'project', hostId: 'host', expectedRevision: 0 }; const principal = { kind: 'desktop' as const, id: 'test' };
+    expect(await workflows.execute({ ...base, commandId: 'chain-create', type: 'subproject.create', payload: { id: 'sub', title: 'Chain', goal: '', presetId: 'research', graph } }, principal)).toMatchObject({ ok: true });
+    const prepared = await workflows.execute({ ...base, subprojectId: 'sub', commandId: 'chain-prepare', type: 'run.prepare', payload: { runId: 'chain-run', reviewer: { providerId: 'codex', model: 'model' } } }, principal); expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+    expect(await workflows.execute({ ...base, subprojectId: 'sub', commandId: 'chain-start', type: 'run.start', payload: { runId: 'chain-run' } }, principal)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    const first = f.ledger.read('project').runs[0].attempts[0];
+    expect(vi.mocked(f.adapter.submit).mock.calls[0]![0]).toMatchObject({ sessionId: first.sessionId, reasoningEffort: 'high' });
+    const output = 'PLAN OUTPUT ALREADY IN THE CONVERSATION';
+    f.emit({ kind: 'transcript', item: { id: 'chain-output', sessionId: first.sessionId, turnId: first.turnId, sequence: 1, kind: 'assistant-message', text: output, isDelta: false, isSensitive: false, createdAt: new Date().toISOString() } });
+    f.emit({ kind: 'turn-finished', sessionId: first.sessionId, turnId: first.turnId, outcome: 'completed' });
+    await vi.waitFor(async () => expect((await f.results!.readResult('project', first.attemptId))?.reviewerTurnId).toBeTruthy(), { timeout: 5_000 });
+    const record = (await f.results!.readResult('project', first.attemptId))!;
+    const current = f.ledger.read('project').runs[0]; const task = current.preparation.tasks[0];
+    const review = `EZTERMINAL_REVIEW_JSON\n${JSON.stringify({ schemaVersion: 1, baselineFingerprint: current.preparation.baseline.fingerprint, artifactIds: record.artifacts.map(artifact => artifact.artifactId), decision: 'approve', summary: 'Checked', inspections: task.validations.map(validation => ({ validationId: validation.validationId, status: 'passed', summary: 'Checked' })) })}`;
+    f.emit({ kind: 'transcript', item: { id: 'chain-review', sessionId: record.reviewerSessionId!, turnId: record.reviewerTurnId!, sequence: 1, kind: 'assistant-message', text: review, isDelta: false, isSensitive: false, createdAt: new Date().toISOString() } });
+    f.emit({ kind: 'turn-finished', sessionId: record.reviewerSessionId!, turnId: record.reviewerTurnId!, outcome: 'completed' });
+    await vi.waitFor(() => expect(f.ledger.read('project').runs[0].attempts.some(attempt => attempt.taskId === graph.nodes[1].id)).toBe(true), { timeout: 10_000 });
+    const second = f.ledger.read('project').runs[0].attempts.find(attempt => attempt.taskId === graph.nodes[1].id)!;
+    // The same conversation, at the second stage's own effort, without quoting the first stage's output again.
+    expect(second.sessionId).toBe(first.sessionId);
+    const sent = vi.mocked(f.adapter.submit).mock.calls.at(-1)![0];
+    expect(sent).toMatchObject({ sessionId: first.sessionId, reasoningEffort: 'low' });
+    expect(sent.prompt).toContain('Continue in this conversation');
+    expect(sent.prompt).not.toContain(output);
     expect(f.errors).toEqual([]);
   }, 30_000);
   it('cancels an accepted queued workflow turn before attempt binding without dispatching it later', async () => {

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { z } from 'zod';
 
 import { createDaemonCommand, type DaemonCommand, type DaemonTranscriptItem } from '../shared/daemon-protocol';
@@ -125,8 +126,8 @@ export class PlanningResultService {
     }
     return [...new Map(artifacts.map(artifact => [artifact.artifactId, artifact])).values()];
   }
-  async workflowResultContext(run: ExecutionRun, task: PreparedExecutionTask, maximumCharacters: number): Promise<string> {
-    const selected = workflowTaskInputs(run, task).acceptedResults;
+  async workflowResultContext(run: ExecutionRun, task: PreparedExecutionTask, maximumCharacters: number, continued: readonly string[] = []): Promise<string> {
+    const selected = workflowTaskInputs(run, task, continued).acceptedResults;
     const outputs: unknown[] = [];
     for (const input of selected) {
       const attempt = run.attempts.find(entry => entry.attemptId === input.attemptId && entry.taskId === input.nodeId);
@@ -169,6 +170,18 @@ export class PlanningResultService {
       }
     }
     await this.repository.prepareWorkspace(run, task, workspaceRoot, this.dependencies(run, task), repair);
+  }
+  /** '앞 대화 이어서': moves the chain folder to the accepted result of the stage before (see the repository). */
+  async continueChain(run: ExecutionRun, predecessor: ExecutionAttempt, root: string): Promise<boolean> {
+    // Without Git every stage works in the project folder itself: only the conversation continues.
+    if (!run.preparation.baseCommit) return true;
+    const record = await this.repository.readResult(run.projectId, predecessor.attemptId);
+    if (!record?.commit || !record.baseCommit || !sameArtifacts(record.artifacts, predecessor.artifacts)
+      || path.resolve(record.rootPath).toLowerCase() !== path.resolve(root).toLowerCase()) return false;
+    return this.repository.continueChain(root, { baseCommit: record.baseCommit, commit: record.commit });
+  }
+  async chainStageIntact(run: ExecutionRun, task: PreparedExecutionTask, root: string): Promise<boolean> {
+    return !run.preparation.baseCommit || this.repository.chainStageIntact(run.runId, task.taskId, root);
   }
   async captureResult(run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt): Promise<readonly ExecutionArtifact[]> {
     return (await this.repository.capture(run, task, attempt)).artifacts;

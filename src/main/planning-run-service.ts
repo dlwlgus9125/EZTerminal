@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonTurn,
+  createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonTurn, type PermissionPreset,
 } from '../shared/daemon-protocol';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, PLANNING_LAUNCH_PRINCIPAL, PLANNING_REPEAT_PRINCIPAL, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
 import { PlanningRunRequestSchema, type PlanningRunRequest, type PlanningRunResult } from '../shared/planning-run';
@@ -15,7 +15,7 @@ import { preparePlanningExecution } from './planning-preparation';
 import type { PlanningDraft } from '../shared/planning';
 import type { PlanningEnvironmentService } from './planning-environment-service';
 import { readPlanningFileReference } from './planning-file-reference';
-import { workflowApprovalNeedsPerson, workflowPrincipalIdentity, type WorkflowCommand, type WorkflowPrincipal, type WorkflowSubproject } from '../shared/workflow';
+import { workflowApprovalNeedsPerson, workflowChainPredecessor, workflowPrincipalIdentity, type WorkflowCommand, type WorkflowPrincipal, type WorkflowSubproject } from '../shared/workflow';
 import { workflowDigest } from './workflow-service';
 import { workflowPlanningInput } from './workflow-preparation';
 import { workflowTaskInputs } from './workflow-runtime';
@@ -112,6 +112,29 @@ export function planningAttemptIdentity(runId: string, taskId: string, number: n
   return { attemptId: `attempt-${suffix}`, dispatchId: `dispatch-${suffix}`, sessionId: `planning-${suffix}`, workspaceId: `planning-workspace-${suffix}` };
 }
 
+/**
+ * '앞 대화 이어서': the conversation and folder a chain stage would continue — its own earlier chained attempt (a retry
+ * goes on where it was), or the accepted attempt of the stage before it in this activation. Pure, so the dispatch and
+ * the lookup of a queued turn's stage agree after a restart. Whether the folder still allows it is checked at dispatch.
+ */
+export function planningChainCandidate(run: ExecutionRun, task: PreparedExecutionTask): {
+  readonly sessionId: string; readonly workspaceId: string; readonly predecessorId: string;
+  readonly own?: ExecutionAttempt; readonly predecessor?: ExecutionAttempt;
+} | undefined {
+  const graph = run.preparation.workflow?.graph;
+  const predecessorId = graph ? workflowChainPredecessor(graph, task.taskId) : undefined;
+  if (!predecessorId) return undefined;
+  const own = run.attempts.filter((attempt) => attempt.taskId === task.taskId).at(-1);
+  if (own) {
+    const fresh = planningAttemptIdentity(run.runId, task.taskId, own.number).sessionId;
+    return own.sessionId !== fresh ? { sessionId: own.sessionId, workspaceId: own.workspaceId, predecessorId, own } : undefined;
+  }
+  const active = run.workflowRuntime?.activations.find((entry) => entry.nodeId === task.taskId && entry.state === 'active');
+  const source = active?.inputResults[predecessorId];
+  const predecessor = source?.outcome === 'passed' ? run.attempts.find((attempt) => attempt.attemptId === source.attemptId) : undefined;
+  return predecessor ? { sessionId: predecessor.sessionId, workspaceId: predecessor.workspaceId, predecessorId, predecessor } : undefined;
+}
+
 export interface PlanningRunServiceOptions {
   readonly planning: Pick<PlanningService, 'read'> & Partial<Pick<PlanningService, 'captureWorkflowBaseline' | 'pruneWorkflowBaselines'>>;
   readonly ledger: PlanningExecutionStore;
@@ -124,7 +147,11 @@ export interface PlanningRunServiceOptions {
   readonly captureResult: (run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt) => Promise<readonly ExecutionArtifact[]>;
   readonly capturePartialResult?: (run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt) => Promise<readonly ExecutionArtifact[]>;
   readonly prepareWorkspace?: (run: ExecutionRun, task: PreparedExecutionTask, workspaceRoot: string) => Promise<void>;
-  readonly workflowResultContext?: (run: ExecutionRun, task: PreparedExecutionTask, maximumCharacters: number) => Promise<string>;
+  readonly workflowResultContext?: (run: ExecutionRun, task: PreparedExecutionTask, maximumCharacters: number, continued?: readonly string[]) => Promise<string>;
+  /** '앞 대화 이어서': moves the chain folder to the stage before's accepted result; false keeps the stage in its own folder. */
+  readonly continueChain?: (run: ExecutionRun, predecessor: ExecutionAttempt, root: string) => Promise<boolean>;
+  /** A retried chain stage continues in place only while its folder still starts where it began. */
+  readonly chainStageIntact?: (run: ExecutionRun, task: PreparedExecutionTask, root: string) => Promise<boolean>;
   readonly processReview: (run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt) => Promise<void>;
   readonly processIntegration?: (run: ExecutionRun) => Promise<void>;
   readonly cancelReviews?: (run: ExecutionRun) => Promise<boolean>;
@@ -406,9 +433,10 @@ export class PlanningRunService {
     });
   }
 
-  preparedSessionSettings(sessionId: string): { reasoningEffort?: string; environment?: Readonly<Record<string, string>>; managedExecution: true } | undefined {
+  preparedSessionSettings(sessionId: string): { reasoningEffort?: string; permissionPreset?: PermissionPreset; environment?: Readonly<Record<string, string>>; managedExecution: true } | undefined {
     const binding = this.bindingForSession(sessionId);
-    return binding ? { reasoningEffort: binding.task.profile.reasoningEffort, managedExecution: true,
+    // A chain conversation runs each stage with that stage's effort and permission (the host applies them between turns).
+    return binding ? { reasoningEffort: binding.task.profile.reasoningEffort, permissionPreset: binding.task.profile.permissionPreset, managedExecution: true,
       ...(this.options.environments?.read(sessionId) ? { environment: this.options.environments.read(sessionId)!.environment } : {}) } : undefined;
   }
 
@@ -517,15 +545,30 @@ export class PlanningRunService {
       .flatMap((project) => this.options.ledger.read(project.id).runs);
   }
 
+  /**
+   * The stage a planning session works for now: the attempt running in it, else the ready stage it is about to run
+   * (its own next attempt, or a chain stage continuing it), else the last attempt it ran. A chain conversation is
+   * shared by its stages in turn, one attempt at a time.
+   */
   private bindingForSession(sessionId: string) {
     if (!/^planning-[a-f0-9]{32}$/u.test(sessionId)) return undefined;
+    type Binding = { run: ExecutionRun; task: PreparedExecutionTask; identity: ReturnType<typeof planningAttemptIdentity> };
+    let latest: (Binding & { readonly at: string }) | undefined;
     for (const run of this.allRuns()) for (const task of run.preparation.tasks) {
-      const existing = run.attempts.find((attempt) => attempt.sessionId === sessionId);
-      const number = existing?.number ?? run.attempts.filter((attempt) => attempt.taskId === task.taskId).length + 1;
-      const identity = planningAttemptIdentity(run.runId, task.taskId, number);
-      if (identity.sessionId === sessionId) return { run, task, identity };
+      const attempts = run.attempts.filter((attempt) => attempt.taskId === task.taskId);
+      const running = attempts.find((attempt) => attempt.sessionId === sessionId && (attempt.state === 'running' || attempt.state === 'delivery-uncertain'));
+      if (running) return { run, task, identity: { ...planningAttemptIdentity(run.runId, task.taskId, running.number), sessionId, workspaceId: running.workspaceId } };
+      const next = planningAttemptIdentity(run.runId, task.taskId, attempts.length + 1);
+      if (run.tasks.find((entry) => entry.taskId === task.taskId)?.state === 'ready') {
+        if (next.sessionId === sessionId) return { run, task, identity: next };
+        const chain = planningChainCandidate(run, task);
+        if (chain?.sessionId === sessionId) return { run, task, identity: { ...next, sessionId, workspaceId: chain.workspaceId } };
+      }
+      const finished = attempts.filter((attempt) => attempt.sessionId === sessionId).at(-1);
+      if (finished && (!latest || finished.startedAt > latest.at)) latest = { run, task, at: finished.startedAt, identity: { ...planningAttemptIdentity(run.runId, task.taskId, finished.number), sessionId, workspaceId: finished.workspaceId } };
+      else if (!finished && !latest && next.sessionId === sessionId) latest = { run, task, at: '', identity: next };
     }
-    return undefined;
+    return latest ? { run: latest.run, task: latest.task, identity: latest.identity } : undefined;
   }
 
   private wake(): void {
@@ -655,12 +698,37 @@ export class PlanningRunService {
     })}` : '';
   }
 
+  /**
+   * '앞 대화 이어서': continue the chain conversation and folder when the session and folder are still there and the
+   * folder holds exactly the result the chain stands on (decided the same way on a retried dispatch).
+   */
+  private async continuedChain(run: ExecutionRun, task: PreparedExecutionTask) {
+    const candidate = planningChainCandidate(run, task);
+    if (!candidate) return undefined;
+    const snapshot = this.options.daemon.getSnapshot();
+    const workspace = snapshot.sessions.some((entry) => entry.id === candidate.sessionId && !entry.archivedAt)
+      ? snapshot.workspaces.find((entry) => entry.id === candidate.workspaceId && !entry.archivedAt) : undefined;
+    if (!workspace?.rootPath) return undefined;
+    const continued = candidate.own ? await this.options.chainStageIntact?.(run, task, workspace.rootPath)
+      : await this.options.continueChain?.(run, candidate.predecessor!, workspace.rootPath);
+    return continued ? candidate : undefined;
+  }
+
   private async dispatch(run: ExecutionRun, task: PreparedExecutionTask): Promise<void> {
-    const inputs = workflowTaskInputs(run, task);
+    const chain = await this.continuedChain(run, task);
+    const continued = chain ? [chain.predecessorId] : [];
+    const inputs = workflowTaskInputs(run, task, continued);
     const number = run.attempts.filter((entry) => entry.taskId === task.taskId).length + 1;
-    const identity = planningAttemptIdentity(run.runId, task.taskId, number);
+    const fresh = planningAttemptIdentity(run.runId, task.taskId, number);
+    const identity = chain ? { ...fresh, sessionId: chain.sessionId, workspaceId: chain.workspaceId } : fresh;
     const root = this.projectRoot(run.projectId);
     let workspace = this.options.daemon.getSnapshot().workspaces.find((entry) => entry.id === identity.workspaceId && !entry.archivedAt);
+    // Dependencies are the accepted activations actually selected by this frozen graph.
+    const inputRun = run.preparation.workflow ? { ...run,
+      tasks: run.tasks.map(state => { const source = inputs.acceptedResults.find(entry => entry.nodeId === state.taskId); return source ? { ...state, state: 'completed' as const, currentAttemptId: source.attemptId } : state; }),
+      preparation: { ...run.preparation, tasks: run.preparation.tasks.map(definition => ({ ...definition, dependsOn: definition.taskId === task.taskId ? inputs.task.dependsOn : [] })) } } : run;
+    // A chain stage's first attempt starts from the stage before's accepted result, already in the folder.
+    if (workspace && chain && !chain.own) await this.options.prepareWorkspace?.(inputRun, inputs.task, workspace.rootPath!);
     if (!workspace) {
       let workspaceRoot = root;
       if (run.preparation.baseCommit) {
@@ -677,10 +745,6 @@ export class PlanningRunService {
         }
       }
       if (this.stopped) throw new Error('Execution authority is stopping.');
-      // Dependencies are the accepted activations actually selected by this frozen graph.
-      const inputRun = run.preparation.workflow ? { ...run,
-        tasks: run.tasks.map(state => { const source = inputs.acceptedResults.find(entry => entry.nodeId === state.taskId); return source ? { ...state, state: 'completed' as const, currentAttemptId: source.attemptId } : state; }),
-        preparation: { ...run.preparation, tasks: run.preparation.tasks.map(definition => ({ ...definition, dependsOn: definition.taskId === task.taskId ? inputs.task.dependsOn : [] })) } } : run;
       await this.options.prepareWorkspace?.(inputRun, inputs.task, workspaceRoot);
       await this.daemonCommand(`${identity.dispatchId}-workspace`, 'workspace.create', {
         workspaceId: identity.workspaceId, projectId: run.projectId, name: task.title,
@@ -697,11 +761,13 @@ export class PlanningRunService {
         providerId: task.profile.providerId, model: task.profile.model, permissionPreset: task.profile.permissionPreset,
       });
     }
-    const handoff = this.handoff(run, task);
+    // In a chain conversation the stage before's work is already above and in the folder: only this stage's task follows.
+    const handoff = chain?.own ? '' : this.handoff(run, task);
+    const chainBrief = chain ? 'Continue in this conversation and folder: the previous stage\'s accepted work is above and already in this folder. Now do this stage.\n\n' : '';
     const environmentBrief = environment ? `\n\nExecution environment: ${JSON.stringify(environment.environment)}\nUse the assigned PORT and output/temp directories. When namespaced parallel execution is enabled, use EZTERMINAL_TEST_NAMESPACE for test databases and fixtures. If a tool cannot isolate its shared resources, stop and report the conflict. Never terminate processes you did not start. Stop your temporary preview/test servers before submitting the result.` : '';
-    const prompt = `${task.profile.prompt}\n\n${task.brief}${inputs.context}${environmentBrief}${handoff}`;
+    const prompt = `${chainBrief}${task.profile.prompt}\n\n${task.brief}${inputs.context}${environmentBrief}${handoff}`;
     if (inputs.acceptedResults.length && !this.options.workflowResultContext) throw new Error('The captured workflow result authority is unavailable. No stage was submitted.');
-    const outputContext = inputs.acceptedResults.length ? await this.options.workflowResultContext!(run, task, 100_000 - prompt.length) : '';
+    const outputContext = inputs.acceptedResults.length ? await this.options.workflowResultContext!(run, task, 100_000 - prompt.length, continued) : '';
     if (prompt.length + outputContext.length > 100_000) throw new Error('The exact stage prompt exceeds the 100,000 character turn limit. All source documents and results were preserved; no truncated prompt was submitted.');
     await this.daemonCommand(`${identity.dispatchId}-submit`, 'agent.submit', {
       sessionId: identity.sessionId, prompt: `${prompt}${outputContext}`,
@@ -756,6 +822,13 @@ export class PlanningRunService {
       const identity = planningAttemptIdentity(runId, taskId, run.attempts.filter((entry) => entry.taskId === taskId).length + 1);
       if (this.options.daemon.getSnapshot().sessions.some(session => session.id === identity.sessionId)) await this.daemonCommand(`cancel-${identity.attemptId}`, 'agent.cancel', { sessionId: identity.sessionId });
       await this.options.environments?.release(identity.sessionId);
+      // A chain stage queued in the conversation it continues: that queued turn is cancelled there.
+      const task = run.preparation.tasks.find((entry) => entry.taskId === taskId);
+      const chain = task ? planningChainCandidate(run, task) : undefined;
+      if (chain && this.options.daemon.getSnapshot().turns.some((turn) => turn.sessionId === chain.sessionId && ['queued', 'submitting', 'working', 'blocked'].includes(turn.state))) {
+        await this.daemonCommand(`cancel-${identity.attemptId}-chain`, 'agent.cancel', { sessionId: chain.sessionId });
+        await this.options.environments?.release(chain.sessionId);
+      }
     }
   }
 

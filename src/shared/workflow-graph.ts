@@ -169,6 +169,43 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, c
   return issues;
 }
 
+/**
+ * '앞 대화 이어서': the AI stage whose conversation (and result folder) this stage continues, or nothing. It is the AI
+ * stage right before it on a single line — person stages (answer, approval) in between keep the line — when both
+ * have the same agent, provider and model. A parallel start, a join, a condition, a review stage or `session:
+ * 'fresh'` starts a new conversation.
+ */
+export function workflowChainPredecessor(graph: WorkflowGraph, nodeId: string): string | undefined {
+  const nodes = new Map(graph.nodes.map(node => [node.id, node]));
+  const node = nodes.get(nodeId);
+  if (!node || node.operation !== 'agent' || node.session === 'fresh' || node.role === 'review' || !node.agent) return undefined;
+  const forwardIn = (id: string) => graph.edges.filter(edge => edge.to === id && !edge.retryLimit);
+  const forwardOut = (id: string) => graph.edges.filter(edge => edge.from === id && !edge.retryLimit);
+  let current = nodeId;
+  for (let steps = 0; steps < graph.nodes.length; steps += 1) {
+    const incoming = forwardIn(current);
+    if (incoming.length !== 1) return undefined;
+    const previous = nodes.get(incoming[0]!.from);
+    if (!previous || forwardOut(previous.id).length !== 1) return undefined;
+    if (previous.operation === 'answer' || previous.operation === 'approval') { current = previous.id; continue; }
+    if (previous.operation !== 'agent' || previous.role === 'review' || !previous.agent) return undefined;
+    return previous.agent.profileId === node.agent.profileId && previous.providerId === node.providerId && previous.model === node.model ? previous.id : undefined;
+  }
+  return undefined;
+}
+
+/** Every chain of two or more AI stages continuing one conversation, in order (for the canvas band and the run). */
+export function workflowChains(graph: WorkflowGraph): readonly (readonly string[])[] {
+  const next = new Map<string, string>();
+  for (const node of graph.nodes) { const previous = workflowChainPredecessor(graph, node.id); if (previous) next.set(previous, node.id); }
+  const continued = new Set(next.values());
+  return [...next.keys()].filter(id => !continued.has(id)).map(first => {
+    const chain = [first];
+    for (let id = next.get(first); id && !chain.includes(id); id = next.get(id)) chain.push(id);
+    return chain;
+  });
+}
+
 /** An AI stage with review off and no check: nothing verifies it but the person, at the approval right after it. */
 export function workflowPersonAccepts(node: Pick<WorkflowNode, 'operation' | 'review' | 'checks'>): boolean {
   return node.operation === 'agent' && node.review?.mode === 'off' && !node.checks?.length;

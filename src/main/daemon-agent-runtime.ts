@@ -77,7 +77,8 @@ export interface DaemonAgentRuntimeOptions {
   /** Host task binding must commit before a prepared turn reaches a provider. */
   readonly beforeProviderDispatch?: (turn: DaemonTurn) => Promise<boolean | void>;
   readonly canDispatchTurn?: (turn: DaemonTurn) => boolean;
-  readonly preparedSessionSettings?: (sessionId: string) => Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled'> | undefined;
+  /** A prepared (workflow) session's fixed settings; a chain conversation's permission follows its current stage. */
+  readonly preparedSessionSettings?: (sessionId: string) => (Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled'> & { readonly permissionPreset?: DaemonAgent['permissionPreset'] }) | undefined;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -2250,6 +2251,12 @@ export class DaemonAgentRuntime {
         if (!queuedApplied) {
           providerSessionId = await this.applyQueuedSettings(provider.value, selected.agent, providerSessionId, queuedModel, queuedAccess, queuedEffort);
           queuedApplied = true;
+        }
+        // A chain conversation ('앞 대화 이어서') changes permission between stages: the stage about to run fixes it.
+        const stageAccess = this.options.preparedSessionSettings?.(selected.session.id)?.permissionPreset;
+        const recorded = this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.session.id);
+        if (stageAccess && recorded && stageAccess !== recorded.permissionPreset) {
+          providerSessionId = await this.applyQueuedSettings(provider.value, recorded, providerSessionId, undefined, stageAccess, undefined);
         }
         if (queued && (queuedModel || queuedAccess || queuedEffort)) {
           const left = this.pendingSettings.get(selected.session.id);
