@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import {
-  assertCanonicalPng,
   validateApprovedSurface,
   validateDesignReferenceManifest,
-  validateDesktopHandoffContract,
+  validateHandoffArchive,
 } from './design-reference-guard-core.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -46,15 +45,12 @@ for (const [name, expected] of Object.entries(manifest.extractedFiles ?? {})) {
   );
 }
 
-// 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
-const { approved, legacy, retired, checker } = validateDesignReferenceManifest(reference, manifest);
-// The handoff story and Electron spec are only a reference while a 1.0 surface is still legacy.
-const legacySource = (path) => legacy.length > 0 ? readFile(resolve(root, path), 'utf8') : Promise.resolve('');
-const [designContract, referenceIndex, e2eSource, storySource, visualSource] = await Promise.all([
+// The archive stays complete; every one of its surfaces is retired by an approved 2.0 surface.
+validateHandoffArchive(manifest);
+const { approved, retired, checker } = validateDesignReferenceManifest(reference, manifest);
+const [designContract, referenceIndex, visualSource] = await Promise.all([
   readFile(resolve(root, 'docs/ux/frontend-design.md'), 'utf8'),
   readFile(resolve(root, 'docs/ux/reference/README.md'), 'utf8'),
-  legacySource('e2e/workbench-shell.spec.ts'),
-  legacySource('src/renderer/workbench/DesktopHandoff.stories.tsx'),
   readFile(resolve(root, 'visual/storybook.visual.spec.ts'), 'utf8'),
 ]);
 const snapshotEntries = await readdir(snapshotRoot, { withFileTypes: true });
@@ -89,26 +85,7 @@ for (const entry of approved) {
   });
 }
 
-// Legacy 1.0 surfaces keep their story, visual, accessibility and Electron contracts.
-const { canonicalSnapshots } = validateDesktopHandoffContract({
-  availableSnapshots,
-  e2eSource,
-  manifest,
-  retiredSurfaceIds: retired,
-  storySource,
-  visualSource,
-});
-for (const snapshot of canonicalSnapshots) {
-  const snapshotPath = resolve(snapshotRoot, snapshot);
-  const [metadata, bytes] = await Promise.all([
-    stat(snapshotPath),
-    readFile(snapshotPath),
-  ]);
-  assert(metadata.isFile(), `Canonical snapshot is not a regular file: ${snapshot}.`);
-  assertCanonicalPng(bytes, snapshot);
-}
-
 console.log(
-  `guard:design-reference OK: ${approved.length} approved 2.0 surfaces; ${legacy.length} legacy 1.0 surfaces / `
-  + `${Object.keys(manifest.extractedFiles ?? {}).length} pinned source files still map to real stories and executable visual/accessibility contracts.`,
+  `guard:design-reference OK: ${approved.length} approved 2.0 surfaces map to real stories and executable visual/accessibility `
+  + `contracts; ${retired.length} 1.0 surfaces retired, ${Object.keys(manifest.extractedFiles ?? {}).length} archived sources byte-identical.`,
 );

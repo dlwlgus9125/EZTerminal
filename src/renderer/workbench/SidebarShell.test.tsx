@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RiskyCloseDialog } from '../RiskyCloseDialog';
 import { isolateModalBackground, registerModalLayer } from '../ui/modal-isolation';
-import { ACTIVITY_RAIL_ID, ActivityRail } from './ActivityRail';
+import { ACTIVITY_RAIL_ID } from '../shell/shell-ids';
 import { SidebarShell } from './SidebarShell';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -178,56 +178,6 @@ describe('SidebarShell Escape ownership', () => {
 });
 
 describe('SidebarShell narrow overlay focus contract', () => {
-  it('lets Tools consume Escape and restore its trigger while the sidebar stays open', () => {
-    function ToolsHarness(): JSX.Element {
-      const [open, setOpen] = useState(true);
-      return <>
-        <ActivityRail projectNavigation active={open ? 'explorer' : null} attentionCount={0} openclawVisible onSelect={() => setOpen(true)} />
-        {open && <SidebarShell destination="explorer" title="Explorer" width={320} onClose={() => setOpen(false)} onWidthChange={vi.fn()}><button>Sidebar action</button></SidebarShell>}
-      </>;
-    }
-    act(() => root.render(<ToolsHarness />));
-    const tools = container.querySelector<HTMLButtonElement>('[data-testid="rail-tools"]')!;
-    act(() => tools.click());
-    const menu = container.querySelector<HTMLElement>('[role="menu"]')!;
-    expect(menu.contains(document.activeElement)).toBe(true);
-    expect(tools.closest('[inert]')).toBeNull();
-    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-    act(() => menu.dispatchEvent(escape));
-    expect(escape.defaultPrevented).toBe(true);
-    expect(container.querySelector('[role="menu"]')).toBeNull();
-    expect(container.querySelector('[data-testid="workbench-sidebar"]')).not.toBeNull();
-    expect(document.activeElement).toBe(tools);
-    pressEscape();
-    expect(container.querySelector('[data-testid="workbench-sidebar"]')).toBeNull();
-  });
-
-  it('restores the stable Tools trigger after selecting a transient menu destination', () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      frames.push(callback);
-      return frames.length;
-    });
-    const flushFrames = (): void => { act(() => { while (frames.length) frames.shift()!(0); }); };
-    function ToolsHarness(): JSX.Element {
-      const [open, setOpen] = useState(false);
-      return <>
-        <ActivityRail projectNavigation active={open ? 'explorer' : null} attentionCount={0} openclawVisible={false} onSelect={() => setOpen(true)} />
-        {open && <SidebarShell destination="explorer" title="Explorer" width={320} onClose={() => setOpen(false)} onWidthChange={vi.fn()}><button>Sidebar action</button></SidebarShell>}
-      </>;
-    }
-    act(() => root.render(<ToolsHarness />));
-    const tools = container.querySelector<HTMLButtonElement>('[data-testid="rail-tools"]')!;
-    act(() => { tools.focus(); tools.click(); });
-    const item = container.querySelector<HTMLButtonElement>('[data-testid="btn-toggle-files"]')!;
-    act(() => { item.focus(); item.click(); });
-    flushFrames();
-    expect(container.querySelector('[data-testid="workbench-sidebar"]')).not.toBeNull();
-    pressEscape();
-    flushFrames();
-    expect(document.activeElement).toBe(tools);
-  });
-
   it('keeps Project persistent from 1024px while ordinary sidebars still overlay below 1200px', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: query === '(max-width: 1199px)',

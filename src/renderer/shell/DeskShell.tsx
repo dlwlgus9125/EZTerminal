@@ -12,7 +12,7 @@ import { LiveList, type ShellTerminal, type ShellTool } from './LiveList';
 import { ProjectBoard } from './ProjectBoard';
 import { ShellTopBar } from './ShellTopBar';
 import { projectTabs, type ShellNavigation } from './navigation-store';
-import { flattenConversations, hostWaitingItems, knownProjects, otherProjects, projectConversations, projectFlows, type WaitingItem } from './shell-model';
+import { DESK_TOOL_IDS, flattenConversations, hostWaitingItems, knownProjects, otherProjects, projectConversations, projectFlows, type DeskToolId, type WaitingItem } from './shell-model';
 import { useShellText } from './shell-text';
 import './shell.css';
 
@@ -299,13 +299,16 @@ export function useDeskShell(props: DeskShellProps): DeskShell {
     }
   }, [text]);
 
-  const tools = useMemo<ShellTool[]>(() => [
-    { id: 'explorer', label: text('파일', 'Files'), glyph: 'file', testId: 'btn-toggle-files' },
-    { id: 'monitor', label: text('모니터', 'Monitor'), glyph: 'mon', testId: 'btn-toggle-stats' },
-    ...(props.openclawVisible ? [{ id: 'openclaw', label: 'OpenClaw', glyph: 'claw' as const, testId: 'btn-toggle-openclaw' }] : []),
-    { id: 'remote', label: text('원격 · 폰', 'Remote · phone'), glyph: 'phone', testId: 'rail-remote' },
-    { id: 'settings', label: text('설정', 'Settings'), glyph: 'set', testId: 'shell-tool-settings' },
-  ], [props.openclawVisible, text]);
+  const tools = useMemo<ShellTool[]>(() => {
+    const row: Record<DeskToolId, ShellTool> = {
+      explorer: { id: 'explorer', label: text('파일', 'Files'), glyph: 'file', testId: 'btn-toggle-files' },
+      monitor: { id: 'monitor', label: text('모니터', 'Monitor'), glyph: 'mon', testId: 'btn-toggle-stats' },
+      openclaw: { id: 'openclaw', label: 'OpenClaw', glyph: 'claw', testId: 'btn-toggle-openclaw' },
+      remote: { id: 'remote', label: text('원격 · 폰', 'Remote · phone'), glyph: 'phone', testId: 'rail-remote' },
+      settings: { id: 'settings', label: text('설정', 'Settings'), glyph: 'set', testId: 'shell-tool-settings' },
+    };
+    return DESK_TOOL_IDS.filter((id) => id !== 'openclaw' || props.openclawVisible).map((id) => row[id]);
+  }, [props.openclawVisible, text]);
 
   const wiring = useConversationStartWiring(snapshot, projectId ?? undefined);
   const [startRounds, setStartRounds] = useState<Readonly<Record<string, number>>>(readStartRounds);

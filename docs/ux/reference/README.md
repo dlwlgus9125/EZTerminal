@@ -28,4 +28,5 @@
   한다(그 case story를 case 언어와 다른 언어로 렌더하고 각각 axe, case screenshot, Tab/Shift+Tab, case viewport마다
   `expect`로 가로 넘침 검사). helper를 바꾸면 고정값이 깨지므로 검토를 거쳐 다시 고정한다. 정적 검사는 드리프트를 막는
   장치이고, 실제 실행 증거는 CI의 `pnpm test:visual`이다.
-- 1.0 surface는 그것을 대체하는 2.0 승인 항목의 `replaces`에 들어갈 때만 `legacy`에서 빠진다.
+- 1.0 surface는 그것을 대체하는 2.0 승인 항목의 `replaces`로만 `legacy`에서 빠진다. I5에서 14개 모두 대체돼 `legacy`는 비었고,
+  가드는 1.0 surface가 다시 `legacy`로 돌아오면 실패한다(보관 원본은 byte 그대로 검사).

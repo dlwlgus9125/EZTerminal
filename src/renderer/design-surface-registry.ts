@@ -1,7 +1,7 @@
 /**
  * Traceability from production navigation destinations to deterministic
  * Storybook evidence. This is not a second IA definition: tests compare these
- * keys with the runtime registries exported by ActivityRail and MobileWorkspace. A new destination therefore needs evidence in the same
+ * keys with the runtime registries (the desk tool row DESK_TOOL_IDS plus the inbox, and MobileWorkspace). A new destination therefore needs evidence in the same
  * change that makes it reachable.
  */
 
@@ -10,13 +10,14 @@ export interface DesignSurfaceEvidence {
   readonly readySelector: string;
 }
 
+/** The work list's tool row and the inbox the top bar's 기다리는 것 opens, on the 2.0 tool-screen stories. */
 export const DESKTOP_DESTINATION_STORIES = {
-  agents: { storyId: 'compositions-desktop-handoff--workbench-agent-hub', readySelector: '[data-testid="agent-hub"]' },
-  monitor: { storyId: 'compositions-desktop-handoff--monitor', readySelector: '[data-testid="status-panel"]' },
-  remote: { storyId: 'compositions-desktop-handoff--remote', readySelector: '[data-testid="remote-topology"]' },
-  explorer: { storyId: 'compositions-desktop-handoff--explorer-breadcrumb', readySelector: '[data-testid="file-list"]' },
-  openclaw: { storyId: 'compositions-desktop-handoff--openclaw-console', readySelector: '[data-testid="openclaw-panel"]' },
-  settings: { storyId: 'compositions-desktop-handoff--settings', readySelector: '[data-testid="settings-panel"]' },
+  agents: { storyId: 'production-desk-tool-screens--inbox', readySelector: '[data-testid="agent-hub"]' },
+  monitor: { storyId: 'production-desk-tool-screens--monitor-reference', readySelector: '[data-testid="status-panel"]' },
+  remote: { storyId: 'production-desk-tool-screens--remote-reference', readySelector: '[data-testid="remote-topology"]' },
+  explorer: { storyId: 'production-desk-tool-screens--files-reference', readySelector: '[data-testid="file-list"]' },
+  openclaw: { storyId: 'production-desk-tool-screens--open-claw-console-reference', readySelector: '[data-testid="openclaw-panel"]' },
+  settings: { storyId: 'production-desk-tool-screens--settings-reference', readySelector: '[data-testid="settings-panel"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 /** I4 layout A: the feed is the root; the terminal, a project and the conversations open from it. */
 export const MOBILE_PRIMARY_STORIES = {

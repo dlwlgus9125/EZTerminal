@@ -945,10 +945,11 @@ mobile root가 한 번만 소유한다.
 - 시안 데이터, 가짜 AI 응답, 자동 캡처는 실제 provider·PTY·Android 복구 검증으로 인정하지 않는다. 그런 검증은
   실제 앱(격리 프로필)과 실제 기기·에뮬레이터에서 따로 남긴다.
 - 시각 비교 기준 화면은 [2.0 reference manifest](reference/2.0/manifest.json)가 고정한다. 승인된 2.0 화면은
-  production story·visual snapshot·실앱 capture를, 아직 대체되지 않은 1.0 surface(`legacy` 목록)는
-  [`DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)의 실제 product
-  component와 deterministic adapter를 쓴다.
-- 각 기준 화면 story(1.0 legacy와 2.0 승인 모두)는 axe 검사와 1920 reference를 가진다.
+  production story·visual snapshot·capture를 쓴다. 데스크톱 도구 화면 12개는
+  [`ToolScreens.stories.tsx`](../../src/renderer/shell/ToolScreens.stories.tsx)의 Reference story다. 1.0 handoff
+  surface 14개는 I5에서 모두 대체돼 `legacy` 목록이 비었고, 보관 원본은
+  [desktop handoff manifest](reference/desktop-handoff/manifest.json)가 byte 그대로 고정한다.
+- 각 기준 화면 story는 axe 검사를 가진다.
 - 기준 화면 story는 한국어·영어 product content를 검증한다.
 - Pairwise visual matrix는 800×600/1024×720 overlay와 1200×800/1440×900 reflow를 포함한다.
 - Pairwise visual matrix는 100%/150% scale의 shell, sidebar와 dialog를 포함한다.
@@ -1127,7 +1128,7 @@ mobile root가 한 번만 소유한다.
   종류를 전달한다.
 - 의미는 색 하나에 의존하지 않는다.
 - Create/rename, loading, empty, error와 parent entry에서도 기존 keyboard·pointer 동작을 유지한다.
-- 외부 normative mock은 없으며 `ProjectWorkspaceComposition`의 wide/narrow story와 `DesktopHandoff` Explorer
+- 외부 normative mock은 없으며 `ProjectWorkspaceComposition`의 wide/narrow story와 `ToolScreens` FilesReference
   story가 visual oracle이다.
 - Visual oracle은 대표 folder/code/config/document/test/media/generic entry와 High Contrast를 포함한다.
 - 검증 gate는 resolver unit test, 두 Explorer의 component test, Storybook axe/visual, lint, typecheck와
@@ -1789,7 +1790,7 @@ mobile root가 한 번만 소유한다.
 - [`scripts/chrome-bands.mjs`](../../scripts/chrome-bands.mjs)
 - [`mobile/e2e/chrome-probe.ts`](../../mobile/e2e/chrome-probe.ts)
 - [`scripts/capture-ux-overhaul.mjs`](../../scripts/capture-ux-overhaul.mjs)
-- [`src/renderer/workbench/DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)
+- [`src/renderer/shell/ToolScreens.stories.tsx`](../../src/renderer/shell/ToolScreens.stories.tsx)
 - [`e2e/workbench-shell.spec.ts`](../../e2e/workbench-shell.spec.ts)
 - [`e2e/popout-window.spec.ts`](../../e2e/popout-window.spec.ts)
 - [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)

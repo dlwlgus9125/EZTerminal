@@ -4,7 +4,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppHeader } from './AppHeader';
+import { ShellLayoutMenu } from '../shell/ShellLayoutMenu';
 import { WorkspaceMenu } from './WorkspaceMenu';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,17 +15,10 @@ let root: Root;
 function Harness(): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
-    <AppHeader
-      attentionCount={0}
-      commandCenterOpen={false}
-      effectIntensity={7}
-      onNewTerminal={vi.fn()}
-      onOpenAttention={vi.fn()}
-      onOpenCommandCenter={vi.fn()}
-      onOpenEffectSettings={vi.fn()}
-      onWorkspaceOpenChange={setOpen}
-      workspaceOpen={open}
-      workspaceMenu={open ? (
+    <ShellLayoutMenu
+      open={open}
+      onOpenChange={setOpen}
+      menu={open ? (
         <WorkspaceMenu
           names={['Daily']}
           onApply={vi.fn()}
@@ -61,17 +54,6 @@ afterEach(() => {
 });
 
 describe('WorkspaceMenu accessibility', () => {
-  it('keeps four product zones while exposing the full brand and one effect-intensity control', () => {
-    expect(container.querySelectorAll('.workbench-header > .workbench-header-zone')).toHaveLength(4);
-    expect(container.querySelector('h1')?.textContent).toBe('EZTerminal');
-
-    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="btn-effect-profile"]')!;
-    expect(trigger.dataset.effectIntensity).toBe('7');
-    expect(trigger.textContent).toContain('NEON 7');
-    act(() => trigger.click());
-    expect(container.querySelector('[role="menu"]')).toBeNull();
-  });
-
   it('uses a non-modal dialog model for mixed actions and form controls', () => {
     const trigger = container.querySelector<HTMLButtonElement>('[data-testid="btn-workspace-menu"]')!;
     expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');

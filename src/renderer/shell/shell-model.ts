@@ -12,6 +12,13 @@ import { projectRunOverlay, type WorkflowNodeRunStatus } from '../workflow/workf
  */
 
 /** A lamp's colour: on = working, amber = waits for the person, red = stopped on an error. */
+/**
+ * The work list's tool row, in order (OpenClaw shows only when enabled). Each opens a sidebar destination;
+ * test/design-surface-coverage.test.ts keys its Storybook evidence on this list.
+ */
+export const DESK_TOOL_IDS = ['explorer', 'monitor', 'openclaw', 'remote', 'settings'] as const;
+export type DeskToolId = typeof DESK_TOOL_IDS[number];
+
 export type Lamp = 'on' | 'amber' | 'red' | 'ok' | 'idle';
 
 export type ConversationState = 'working' | 'approval' | 'question' | 'failed' | 'stopped' | 'done' | 'new';

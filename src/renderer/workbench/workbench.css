@@ -94,25 +94,10 @@
   min-block-size: 36px;
 }
 
-.workbench-header-zone {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.workbench-header-zone--new {
-  min-inline-size: max-content;
-  gap: var(--ui-space-3);
-}
-
 /* The one primary action in the chrome: taller than the secondary controls
    beside it, and breathing so the eye finds it without reading. The glow is a
    box-shadow rather than a transform, so nothing here becomes a containing
    block for anything positioned. */
-.workbench-new-terminal {
-  min-block-size: 2rem;
-  animation: workbench-pulse 3s ease-in-out infinite;
-}
 
 @keyframes workbench-pulse {
   0%,
@@ -129,99 +114,9 @@
    centring gives an item a negative offset once the track is narrower than the
    item, which at the tightest scaled widths pushed the field back over New
    Terminal; auto margins clamp to zero instead of going negative. */
-.workbench-header-zone--search {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.workbench-header-zone--attention {
-  justify-self: end;
-  gap: var(--ui-space-2);
-}
-
-.workbench-version-chip {
-  flex: 0 0 auto;
-  padding: 2px var(--ui-space-2);
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-text-dim);
-  font-family: var(--ui-font-display);
-  font-size: var(--ui-font-size-13);
-  line-height: var(--ui-line-height-tight);
-  white-space: nowrap;
-}
-
-.workbench-header-divider {
-  flex: 0 0 auto;
-  inline-size: 1px;
-  block-size: 1.75rem;
-  background: var(--ui-border-mid);
-}
 
 /* The Command Center's search anchor. A button, not an input: it owns no query
    state and must hand every keystroke to the modal (frontend-design 4.5). */
-.workbench-command-field {
-  inline-size: 100%;
-  min-inline-size: 0;
-  max-inline-size: 37.5rem;
-  margin-inline: auto;
-  block-size: var(--ui-control-height-md);
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-  padding-inline: var(--ui-space-3);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-text-muted);
-  background: var(--ui-surface-inset);
-  font-family: inherit;
-  font-size: var(--ui-font-size-14);
-  text-align: start;
-  cursor: pointer;
-}
-
-.workbench-command-field:hover {
-  border-color: var(--ui-border-strong);
-}
-
-.workbench-command-field:focus-visible {
-  outline: none;
-  border-color: var(--ui-focus);
-  box-shadow: var(--ui-focus-ring);
-}
-
-.workbench-command-field__icon {
-  flex: 0 0 auto;
-  inline-size: 1rem;
-  block-size: 1rem;
-  color: var(--ui-accent);
-}
-
-.workbench-command-field__label {
-  min-inline-size: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.workbench-command-field__keys {
-  flex: 0 0 auto;
-  margin-inline-start: auto;
-  display: flex;
-  gap: var(--ui-space-1);
-}
-
-.workbench-command-field__keys kbd {
-  padding: 1px var(--ui-space-1);
-  border: 1px solid var(--ui-border-focus-soft);
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-text-secondary);
-  font-family: var(--ui-font-heading);
-  font-size: var(--ui-font-size-12);
-  line-height: var(--ui-line-height-tight);
-}
 
 /* Code-native signal wordmark: bars and letters sitting directly on the header,
    with light doing the work. It used to be wrapped in an inset panel with its
@@ -241,56 +136,10 @@
 }
 
 /* 6px bars rising 10/17/24px, expressed in rem so the mark tracks UI scale. */
-.workbench-brand-mark__signal {
-  block-size: 1.125rem;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 0.1875rem;
-  color: var(--ui-accent);
-}
-
-.workbench-brand-mark__signal-bar {
-  inline-size: 0.375rem;
-  border-radius: 1px 1px 0 0;
-  background: currentColor;
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--ui-accent) 60%, transparent));
-}
-
-.workbench-brand-mark__signal-bar:nth-child(1) {
-  block-size: 41.7%;
-}
-
-.workbench-brand-mark__signal-bar:nth-child(2) {
-  block-size: 70.8%;
-}
-
-.workbench-brand-mark__signal-bar:nth-child(3) {
-  block-size: 100%;
-}
-
-.workbench-brand-mark__name {
-  color: var(--ui-text-primary);
-}
-
-[data-theme='matrix'] .workbench-brand-mark__name {
-  font-family: var(--ui-font-display);
-  letter-spacing: 0.075em;
-}
 
 /* This local layer makes the brand panel read like the supplied CRT crop. It
    follows the same effect attributes as the global renderer and never catches
    pointer input. */
-html[data-effect-phosphor-glow='on'] .workbench-brand-mark__name {
-  text-shadow:
-    0 0 2px color-mix(in srgb, var(--ui-text-primary) 32%, transparent),
-    0 0 7px color-mix(in srgb, var(--ui-accent) 42%, transparent);
-}
-
-html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
-  box-shadow: 0 0 5px color-mix(in srgb, var(--ui-accent) 48%, transparent);
-}
 
 .effect-profile-trigger.ez-ui-button {
   flex: 0 0 auto;
@@ -310,33 +159,11 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
 /* Informational, not primary. The header already has exactly one accent-green
    action; this read-out opens the one advanced effects surface. */
-.effect-profile-trigger[data-effect-intensity]:not([data-effect-intensity='0']) {
-  color: var(--ui-info);
-  border-color: color-mix(in srgb, var(--ui-info) 45%, var(--ui-border-subtle));
-}
 
 .effect-profile-trigger .ez-ui-button__label {
   display: inline-flex;
   align-items: baseline;
   gap: var(--ui-space-1);
-}
-
-.effect-profile-trigger__fx {
-  font-size: var(--ui-font-size-12);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.effect-profile-trigger__separator {
-  color: var(--ui-border-strong);
-}
-
-.effect-profile-trigger__value {
-  color: var(--ui-text-primary);
-  font-size: var(--ui-font-size-12);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 /* The full product name remains visible throughout the supported desktop
@@ -347,10 +174,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     padding-inline: var(--ui-space-1) var(--ui-space-2);
     letter-spacing: 0.035em;
   }
-
-  .workbench-brand-mark__signal {
-    inline-size: 0.875rem;
-  }
 }
 
 @media (forced-colors: active) {
@@ -359,15 +182,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     color: CanvasText;
     background: Canvas;
     box-shadow: none !important;
-  }
-
-  .workbench-brand-mark__signal {
-    color: Highlight;
-  }
-
-  .workbench-brand-mark__name {
-    color: CanvasText;
-    text-shadow: none !important;
   }
 }
 
@@ -466,10 +280,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   background: var(--ui-surface-inset);
   font: inherit;
   font-size: var(--ui-font-size-12);
-}
-
-.workbench-workspace-menu {
-  position: relative;
 }
 
 .workspace-menu-popover {
@@ -594,59 +404,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   user-select: none;
 }
 
-.workbench-status-bar__item {
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.workbench-status-bar__item--live {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-  color: var(--ui-accent);
-}
-
-.workbench-status-bar__dot {
-  inline-size: 7px;
-  block-size: 7px;
-  border-radius: 50%;
-  background: currentcolor;
-  box-shadow: 0 0 6px currentcolor;
-}
-
-.workbench-status-bar__item--live[data-state='error'] {
-  color: var(--ui-danger);
-}
-
-.workbench-status-bar__item--live[data-state='idle'] {
-  color: var(--ui-text-dim);
-}
-
-.workbench-status-bar__item--attention {
-  color: var(--ui-warning);
-}
-
 /* Pushed to the trailing edge, with FX after it. */
-.workbench-status-bar__toggle {
-  margin-inline-start: auto;
-  padding: 1px var(--ui-space-2);
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-round);
-  color: var(--ui-text-secondary);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.workbench-status-bar__toggle:hover {
-  color: var(--ui-text-primary);
-  border-color: var(--ui-accent);
-}
-
-.workbench-status-bar__item--fx {
-  color: var(--ui-info);
-}
 
 .activity-rail {
   position: relative;
@@ -679,31 +437,12 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   border-radius: var(--ui-radius-lg);
 }
 
-.activity-rail-item {
-  position: relative;
-}
-
-.activity-rail-item[data-bottom='true'] {
-  margin-top: auto;
-}
-
 .activity-rail-button[aria-pressed='true'] {
   color: var(--ui-focus);
   background: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-canvas));
   box-shadow: inset 3px 0 0 var(--ui-accent);
 }
 
-.activity-rail-badge {
-  position: absolute;
-  inset: -3px -4px auto auto;
-  min-width: 17px;
-  height: 17px;
-  padding-inline: 3px;
-  pointer-events: none;
-  font-size: 10px;
-}
-
-.activity-rail-update-dot,
 .settings-update-dot {
   display: inline-block;
   inline-size: 0.625rem;
@@ -712,12 +451,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   border-radius: 999px;
   background: var(--ui-warning);
   box-shadow: 0 0 8px color-mix(in srgb, var(--ui-warning) 60%, transparent);
-}
-
-.activity-rail-update-dot {
-  position: absolute;
-  inset: -1px -2px auto auto;
-  pointer-events: none;
 }
 
 .workbench-sidebar-scrim {
@@ -947,75 +680,34 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     font-size: 0;
   }
 
-  .effect-profile-trigger__fx,
-  .effect-profile-trigger__separator {
-    display: none;
-  }
-
   /* The version chip and its divider are the first things to go once the header
      is under pressure. They are informational, not navigational, and the same
      value is in Settings. Keeping them costs about 90px, which at 1024px and
      150% scale is the difference between the elastic search column having room
      and collapsing to nothing while zone one overflows its own track. */
-  .workbench-version-chip,
-  .workbench-header-divider {
-    display: none;
-  }
 
   /* The search field collapses to its icon rather than disappearing, so the
      Command Center keeps a stable pointer target at every width. The label
      stays in the accessibility tree — it is the button's accessible name. */
-  .workbench-command-field {
-    max-inline-size: min(var(--ui-control-height-lg), 100%);
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .workbench-command-field__label {
-    inline-size: 0;
-    overflow: hidden;
-    font-size: 0;
-  }
-
-  .workbench-command-field__keys {
-    display: none;
-  }
 }
 
 /* Two session actions need compact labels earlier. Keep single-action hosts at
    their existing breakpoint; a roomy header must not lose its search field. */
 @container workbench-header (max-width: 75em) {
-  .workbench-header--session-actions .workbench-shortcut,
-  .workbench-header--session-actions .effect-profile-trigger__fx,
-  .workbench-header--session-actions .effect-profile-trigger__separator,
-  .workbench-header--session-actions .workbench-version-chip,
-  .workbench-header--session-actions .workbench-header-divider,
-  .workbench-header--session-actions .workbench-command-field__keys {
+  .workbench-header--session-actions .workbench-shortcut {
     display: none;
   }
 
   .workbench-header--session-actions .workbench-new-terminal .ez-ui-button__label,
-  .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button .ez-ui-button__label,
-  .workbench-header--session-actions .workbench-command-field__label {
+  .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button .ez-ui-button__label {
     inline-size: 0;
     overflow: hidden;
     font-size: 0;
   }
-
-  .workbench-header--session-actions .workbench-command-field {
-    max-inline-size: min(var(--ui-control-height-lg), 100%);
-    justify-content: center;
-    padding-inline: 0;
-  }
 }
 
 @container workbench-header (max-width: 61em) {
-  .workbench-header--session-actions .workbench-header-zone--new,
-  .workbench-header--session-actions .workbench-header-zone--attention {
-    gap: var(--ui-space-1);
-  }
 
-  .workbench-header--session-actions .workbench-new-terminal,
   .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button {
     gap: 0;
   }
@@ -1032,10 +724,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workbench-brand-mark,
-  .workbench-brand-mark__name,
-  .workbench-brand-mark__signal-bar,
-  .workbench-new-terminal {
+  .workbench-brand-mark {
     animation: none !important;
     transition: none !important;
   }

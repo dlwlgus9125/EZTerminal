@@ -8,6 +8,8 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 import { useCallback, useState, type ReactNode } from 'react';
 
+import { EMPTY_GIT_DIRECTORY_STATUS } from '../../shared/git-status';
+import { AgentHub } from '../AgentHub';
 import { BootIntroOverlay } from '../BootIntroOverlay';
 import { FileExplorerPanel } from '../FileExplorerPanel';
 import { AppI18nProvider, useAppTranslation } from '../i18n';
@@ -28,7 +30,10 @@ import { ShellTopBar } from './ShellTopBar';
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
 import { otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
 import {
+  AGENT_COORDINATION,
+  AGENTS,
   EN_CAPABILITIES,
+  HANDOFF_AGENT_SESSION_ACCESS,
   KO_CAPABILITIES,
   NOW,
   PairingDialogFixture,
@@ -316,4 +321,42 @@ export const PasteWarningReference: Story = {
 
 export const RiskyCloseReference: Story = {
   render: () => <LocaleFrame><ToolFrame /><RiskyCloseFixture /></LocaleFrame>,
+};
+
+/**
+ * The inbox (top bar 기다리는 것 → sidebar "agents"): waiting approvals and agents at work, and a managed merge
+ * with its candidate diff. Not approved references; they keep the inbox drawn now that the 1.0 frame is gone.
+ */
+export const Inbox: Story = {
+  render: () => (
+    <LocaleFrame>
+      <ToolFrame
+        destination="agents"
+        sidebar={<AgentHub snapshot={AGENTS} daemonAgentSessionAccess={HANDOFF_AGENT_SESSION_ACCESS} currentTime={NOW}
+          onFocusSession={() => undefined} onSendFollowup={async () => ({ ok: true })} onDecideApproval={async () => ({ ok: true })}
+          onLoadDiff={async () => ({ ok: true, text: '+ deterministic diff', truncated: false, omissions: [] })}
+          onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS} />}
+      />
+    </LocaleFrame>
+  ),
+  play: async ({ canvasElement }) => {
+    const target = await within(canvasElement).findByTestId('agent-hub');
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
+  },
+};
+
+export const InboxCoordination: Story = {
+  render: () => (
+    <LocaleFrame>
+      <ToolFrame
+        destination="agents"
+        sidebar={<AgentHub snapshot={AGENTS} daemonAgentSessionAccess={HANDOFF_AGENT_SESSION_ACCESS} coordinationSnapshot={AGENT_COORDINATION} currentTime={NOW}
+          onFocusSession={() => undefined} onSendFollowup={async () => ({ ok: true })} onDecideApproval={async () => ({ ok: true })}
+          onLoadDiff={async () => ({ ok: true, text: '+ working tree diff', truncated: false, omissions: [] })}
+          onLoadManagedMergeDiff={async () => ({ ok: true, text: '+ immutable candidate diff', truncated: false, omissions: [] })}
+          onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
+          onDecideManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })} />}
+      />
+    </LocaleFrame>
+  ),
 };

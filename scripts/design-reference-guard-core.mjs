@@ -171,12 +171,6 @@ function callsWithin(node) {
   return visit(node, ts.isCallExpression);
 }
 
-function stringLiteralsWithin(node) {
-  return new Set(
-    visit(node, ts.isStringLiteralLike).map((literal) => literal.text),
-  );
-}
-
 function identifiersWithin(node) {
   return new Set(visit(node, ts.isIdentifier).map((identifier) => identifier.text));
 }
@@ -190,17 +184,6 @@ function assertSet(actual, expected, label) {
       && expected.every((value) => actualSet.has(value)),
     `Manifest ${label} must be exactly: ${expected.join(', ')}.`,
   );
-}
-
-function callWithTitle(sourceFile, callerName, titleFragment) {
-  return visit(
-    sourceFile,
-    (node) => {
-      if (!ts.isCallExpression(node) || directCallName(node) !== callerName) return false;
-      const title = stringValue(node.arguments[0] ? unwrap(node.arguments[0]) : null);
-      return title?.includes(titleFragment) ?? false;
-    },
-  )[0];
 }
 
 function validateManifest(manifest) {
@@ -282,274 +265,12 @@ function validateManifest(manifest) {
   );
 }
 
-function validateStories(manifest, storySource) {
-  const sourceFile = parseTsx(storySource, 'DesktopHandoff.stories.tsx');
-  const exports = exportedConstNames(sourceFile);
-  for (const surface of manifest.surfaces) {
-    assert(
-      exports.has(surface.storyExport),
-      `Story export ${surface.storyExport} for ${surface.storyId} is missing.`,
-    );
-  }
-
-  const title = storySource.match(
-    /title\s*:\s*(['"])Compositions\/Desktop Handoff\1/u,
-  );
-  assert(title, 'Desktop handoff stories must keep the manifest-bound Storybook title.');
-}
-
-function validateCanonicalCases(manifest, sourceFile, availableSnapshots, retiredStoryIds = new Set()) {
-  assert(
-    availableSnapshots instanceof Set,
-    'Desktop handoff guard requires the availableSnapshots file set.',
-  );
-  // A retired surface's old case may linger until it is deleted; it is no longer the reference.
-  const cases = objectElements(
-    arrayVariable(sourceFile, 'desktopHandoffCases'),
-    'desktopHandoffCases',
-  ).filter((visualCase) => !retiredStoryIds.has(stringValue(propertyValue(visualCase, 'storyId'))));
-  assert(
-    cases.length === manifest.surfaces.length,
-    'Canonical visual cases must map one-to-one to manifest surfaces.',
-  );
-
-  const caseByStoryId = new Map();
-  const screenshots = new Set();
-  for (const visualCase of cases) {
-    const storyId = stringValue(propertyValue(visualCase, 'storyId'));
-    const screenshot = stringValue(propertyValue(visualCase, 'screenshot'));
-    const readySelector = stringValue(propertyValue(visualCase, 'readySelector'));
-    const locale = stringValue(propertyValue(visualCase, 'locale'));
-    assert(storyId, 'Every canonical visual case needs a literal storyId.');
-    assert(
-      !caseByStoryId.has(storyId),
-      `Canonical visual case is duplicated for ${storyId}.`,
-    );
-    assert(
-      screenshot
-        && /^[a-z0-9][a-z0-9._-]*\.png$/u.test(screenshot)
-        && !screenshots.has(screenshot),
-      `Canonical visual case ${storyId} needs a unique PNG screenshot.`,
-    );
-    assert(
-      availableSnapshots.has(screenshot),
-      `Canonical snapshot file is missing: ${screenshot}.`,
-    );
-    assert(
-      typeof readySelector === 'string' && readySelector.length > 0,
-      `Canonical visual case ${storyId} needs a readySelector.`,
-    );
-    assert(
-      locale === 'ko' || locale === 'en',
-      `Canonical visual case ${storyId} needs a supported locale.`,
-    );
-    caseByStoryId.set(storyId, visualCase);
-    screenshots.add(screenshot);
-  }
-  for (const surface of manifest.surfaces) {
-    assert(
-      caseByStoryId.has(surface.storyId),
-      `Canonical visual case for ${surface.storyId} is missing.`,
-    );
-  }
-
-  const loop = findForOf(sourceFile, 'desktopHandoffCases');
-  assert(loop, 'Canonical visual cases must be executed by a for-of test loop.');
-  const calls = callsWithin(loop);
-  const openStoryCalls = calls.filter((call) => directCallName(call) === 'openStory');
-  assert(
-    openStoryCalls.length >= 2,
-    'Each canonical surface must render both its primary and alternate locale.',
-  );
-  const openStoryText = openStoryCalls.map((call) => call.getText(sourceFile));
-  assert(
-    openStoryText.some((text) => /locale\s*:\s*handoffCase\.locale/u.test(text))
-      && openStoryText.some((text) => /locale\s*:\s*alternateLocale/u.test(text)),
-    'Canonical locale coverage must bind both handoffCase.locale and alternateLocale.',
-  );
-
-  const alternateLocale = visit(
-    loop,
-    (node) => ts.isVariableDeclaration(node)
-      && ts.isIdentifier(node.name)
-      && node.name.text === 'alternateLocale',
-  )[0];
-  assert(
-    alternateLocale?.initializer,
-    'Canonical visual loop must declare alternateLocale.',
-  );
-  const alternateValues = stringLiteralsWithin(alternateLocale.initializer);
-  assert(
-    alternateValues.has('ko') && alternateValues.has('en'),
-    'alternateLocale must switch between Korean and English.',
-  );
-
-  const loopStrings = stringLiteralsWithin(loop);
-  assert(
-    loopStrings.has('btn-new-tab')
-      && loopStrings.has('새 터미널')
-      && loopStrings.has('New Terminal'),
-    'Canonical locale coverage must verify localized product content.',
-  );
-  assert(
-    calls.filter(
-      (call) => directCallName(call) === 'expectNoAccessibilityViolations',
-    ).length >= 2,
-    'Each canonical surface must run axe in both locales.',
-  );
-  assert(
-    calls.some((call) => methodCallName(call) === 'toHaveScreenshot'),
-    'Each canonical surface must have a screenshot assertion.',
-  );
-  const identifiers = identifiersWithin(loop);
-  assert(
-    identifiers.has('scrollWidth') && identifiers.has('innerWidth'),
-    'Each canonical surface must assert that it has no horizontal overflow.',
-  );
-  return [...screenshots];
-}
-
-function validateResponsiveAxes(sourceFile) {
-  const cases = objectElements(
-    arrayVariable(sourceFile, 'desktopHandoffAxisCases'),
-    'desktopHandoffAxisCases',
-  );
-  const viewports = new Set();
-  const themes = new Set(['matrix']);
-  const scales = new Set();
-  const sidebarModes = new Set();
-  for (const axisCase of cases) {
-    const viewport = propertyValue(axisCase, 'viewport');
-    assert(
-      viewport && ts.isObjectLiteralExpression(viewport),
-      'Every responsive visual case needs a literal viewport.',
-    );
-    const width = numberValue(propertyValue(viewport, 'width'));
-    const height = numberValue(propertyValue(viewport, 'height'));
-    viewports.add(`${width}x${height}`);
-    themes.add(stringValue(propertyValue(axisCase, 'theme')));
-    scales.add(numberValue(propertyValue(axisCase, 'scale')));
-    sidebarModes.add(stringValue(propertyValue(axisCase, 'sidebarMode')));
-  }
-  for (const viewport of ['800x600', '1024x720', '1200x800', '1440x900']) {
-    assert(viewports.has(viewport), `Responsive visual matrix is missing ${viewport}.`);
-  }
-  for (const theme of EXPECTED_AXES.themes) {
-    assert(themes.has(theme), `Responsive visual matrix is missing ${theme}.`);
-  }
-  for (const scale of EXPECTED_AXES.scalePercent) {
-    assert(scales.has(scale), `Responsive visual matrix is missing ${scale}% scale.`);
-  }
-  assert(
-    sidebarModes.has('overlay') && sidebarModes.has('reflow'),
-    'Responsive visual matrix must cover both overlay and reflow sidebars.',
-  );
-
-  const loop = findForOf(sourceFile, 'desktopHandoffAxisCases');
-  assert(loop, 'Responsive visual cases must be executed by a for-of test loop.');
-  const calls = callsWithin(loop);
-  const strings = stringLiteralsWithin(loop);
-  const identifiers = identifiersWithin(loop);
-  for (const key of ['Shift+Tab', 'Escape', 'aria-modal']) {
-    assert(strings.has(key), `Responsive interaction contract is missing ${key}.`);
-  }
-  for (const method of ['toBeFocused', 'toHaveScreenshot']) {
-    assert(
-      calls.some((call) => methodCallName(call) === method),
-      `Responsive interaction contract is missing ${method}.`,
-    );
-  }
-  assert(
-    calls.some((call) => directCallName(call) === 'expectNoAccessibilityViolations'),
-    'Responsive cases must run axe.',
-  );
-  assert(
-    identifiers.has('scrollWidth')
-      && identifiers.has('scrollHeight')
-      && identifiers.has('innerWidth')
-      && identifiers.has('innerHeight'),
-    'Responsive cases must assert two-dimensional overflow containment.',
-  );
-}
-
-function validateFixtureIntegrity(sourceFile) {
-  const suite = callWithTitle(sourceFile, 'test', 'workbench fixture includes');
-  assert(suite, 'Visual contract is missing the production workbench fixture test.');
-  const source = sourceFile.getFullText();
-  const requiredMarkers = [
-    'quick-command-shelf',
-    'agent-aware-tab',
-    'pane-header-cwd',
-    'desktop handoff fixture integrity',
-    'Command Center fixture contains every production result kind',
-    'Settings fixture follows the selected global theme',
-  ];
-  for (const marker of requiredMarkers) {
-    assert(source.includes(marker), `Fixture integrity contract is missing ${marker}.`);
-  }
-  for (const kind of [
-    'pane',
-    'background-session',
-    'file',
-    'history',
-    'quick-command',
-    'action',
-    'preset',
-    'agent',
-  ]) {
-    assert(source.includes(`"${kind}"`), `Command Center fixture guard is missing ${kind}.`);
-  }
-}
-
-function validateReducedMotion(sourceFile) {
-  const reducedTest = callWithTitle(sourceFile, 'test', 'reduced motion skips');
-  assert(reducedTest, 'Visual contract is missing the reduced-motion behavior test.');
-  const strings = stringLiteralsWithin(reducedTest);
-  const freezeProperty = visit(
-    reducedTest,
-    (node) => ts.isPropertyAssignment(node)
-      && propertyName(node) === 'freezeAnimations',
-  )[0];
-  assert(
-    freezeProperty && freezeProperty.initializer.kind === ts.SyntaxKind.FalseKeyword,
-    'Reduced-motion behavior must run without the visual animation freezer.',
-  );
-  for (const marker of ['boot-intro', 'animation-duration', '0s']) {
-    assert(strings.has(marker), `Reduced-motion behavior is missing ${marker}.`);
-  }
-}
-
-function validateElectronGeometryAndFocus(e2eSource) {
-  const sourceFile = parseTsx(e2eSource, 'workbench-shell.spec.ts');
-  const strings = stringLiteralsWithin(sourceFile);
-  for (const label of [
-    '800x600@100',
-    '800x600@150',
-    '1024x720@100',
-    '1024x720@150',
-  ]) {
-    assert(strings.has(label), `Electron geometry matrix is missing ${label}.`);
-  }
-
-  const focusTest = callWithTitle(sourceFile, 'test', 'focus-restoring overlay sidebar');
-  assert(focusTest, 'Electron contract is missing the real focus-restoring sidebar path.');
-  const focusStrings = stringLiteralsWithin(focusTest);
-  const focusCalls = callsWithin(focusTest);
-  for (const marker of [
-    'btn-command-center',
-    'btn-toggle-files',
-    'Shift+Tab',
-    'Escape',
-    'inert',
-  ]) {
-    assert(focusStrings.has(marker), `Electron focus contract is missing ${marker}.`);
-  }
-  const focusIdentifiers = identifiersWithin(focusTest);
-  assert(
-    focusIdentifiers.has('activeElement')
-      && focusCalls.some((call) => methodCallName(call) === 'toBe'),
-    'Electron focus contract must assert focus restoration.',
-  );
+/**
+ * The archived 1.0 handoff manifest stays complete (fourteen surfaces, nineteen pinned sources). I5 retired
+ * every one of its surfaces, so no handoff story, visual case or Electron spec is a reference any more.
+ */
+export function validateHandoffArchive(manifest) {
+  validateManifest(manifest);
 }
 
 const LEGACY_MANIFEST_PATH = 'docs/ux/reference/desktop-handoff/manifest.json';
@@ -605,6 +326,8 @@ export function validateDesignReferenceManifest(manifest, legacyManifest) {
   for (const id of legacy) {
     assert(handoffIds.has(id), `2.0 reference lists unknown legacy surface ${id}.`);
   }
+  // I5 retired every 1.0 surface: none may come back as a reference.
+  assert(legacy.length === 0, `1.0 surfaces cannot be legacy references again (I5 retired them all): ${legacy.join(', ')}.`);
   assert(new Set(legacy).size === legacy.length, '2.0 reference legacy surfaces are duplicated.');
   for (const id of handoffIds) {
     assert(
@@ -858,42 +581,4 @@ export function validateApprovedSurface(entry, {
   );
   assert(isCalendarDate(entry.approval.decidedAt), `Approved surface ${entry.id}: approval.decidedAt must be a real YYYY-MM-DD date.`);
   assertDecisionRecorded(entry, approvalSource);
-}
-
-/**
- * Validates that the handoff manifest names real Storybook exports and that
- * every promised matrix/accessibility axis is exercised by executable tests.
- */
-export function validateDesktopHandoffContract({
-  availableSnapshots,
-  e2eSource,
-  manifest,
-  retiredSurfaceIds = [],
-  storySource,
-  visualSource,
-}) {
-  // The archived manifest itself is immutable and always complete.
-  validateManifest(manifest);
-  // A 1.0 surface replaced by an approved 2.0 surface retires its story and visual case.
-  const retired = new Set(retiredSurfaceIds);
-  const active = { ...manifest, surfaces: manifest.surfaces.filter((surface) => !retired.has(surface.id)) };
-  // Once every 1.0 surface is retired, the handoff stories and cases are no longer a reference.
-  if (active.surfaces.length === 0) return { canonicalSnapshots: [] };
-  validateStories(active, storySource);
-  const visualFile = parseTsx(visualSource, 'storybook.visual.spec.ts');
-  const retiredStoryIds = new Set(manifest.surfaces.filter((surface) => retired.has(surface.id)).map((surface) => surface.storyId));
-  const canonicalSnapshots = validateCanonicalCases(
-    active,
-    visualFile,
-    availableSnapshots,
-    retiredStoryIds,
-  );
-  // Shell-wide axes stay guarded while any 1.0 surface is still the reference.
-  if (active.surfaces.length > 0) {
-    validateResponsiveAxes(visualFile);
-    validateFixtureIntegrity(visualFile);
-    validateReducedMotion(visualFile);
-    validateElectronGeometryAndFocus(e2eSource);
-  }
-  return { canonicalSnapshots };
 }

@@ -12,10 +12,10 @@ import {
   MOBILE_SUB_PAGE_STORIES,
   type DesignSurfaceEvidence,
 } from '../src/renderer/design-surface-registry';
-import { ACTIVITY_RAIL_DESTINATIONS } from '../src/renderer/workbench/ActivityRail';
+import { DESK_TOOL_IDS } from '../src/renderer/shell/shell-model';
 
 const storySources = [
-  'src/renderer/workbench/DesktopHandoff.stories.tsx',
+  'src/renderer/shell/ToolScreens.stories.tsx',
   'src/renderer/workbench/MobileShell.stories.tsx',
   'src/renderer/workbench/MobileActiveSurfaces.stories.tsx',
   'src/renderer/workbench/MobileV2.stories.tsx',
@@ -41,7 +41,8 @@ function expectStoriesExist(registry: Readonly<Record<string, DesignSurfaceEvide
 
 describe('active design surface coverage', () => {
   it('covers every runtime desktop and mobile destination exactly once', () => {
-    expect(sorted(Object.keys(DESKTOP_DESTINATION_STORIES))).toEqual(sorted(ACTIVITY_RAIL_DESTINATIONS));
+    // The tool row, plus the inbox the top bar's 기다리는 것 opens.
+    expect(sorted(Object.keys(DESKTOP_DESTINATION_STORIES))).toEqual(sorted([...DESK_TOOL_IDS, 'agents']));
     expect(sorted(Object.keys(MOBILE_PRIMARY_STORIES))).toEqual(sorted(MOBILE_PRIMARY_DESTINATIONS));
     expect(sorted(Object.keys(MOBILE_SUB_PAGE_STORIES))).toEqual(sorted(MOBILE_SUB_PAGES));
     expect(sorted(Object.keys(MOBILE_SHEET_STORIES))).toEqual(sorted(MOBILE_SHEETS));

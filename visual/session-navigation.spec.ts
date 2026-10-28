@@ -1,28 +1,6 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test } from './test';
 
-for (const width of [800, 1024, 1200, 1440]) {
-  for (const scale of [100, 150]) {
-    test(`terminal-first header keeps every action reachable at ${width} / ${scale}%`, async ({ page }) => {
-      await page.addInitScript(() => {
-        Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: {
-          getWindowState: async () => ({ maximized: false, fullscreen: false }),
-          performWindowAction: async () => undefined,
-          onWindowStateChanged: () => () => undefined,
-        } });
-      });
-      await page.setViewportSize({ width, height: 720 });
-      const globals = encodeURIComponent(`theme:dark;locale:en;density:adaptive;uiScale:${scale}`);
-      await page.goto(`/iframe.html?id=compositions-app-header--effects-off&viewMode=story&globals=${globals}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('html')).toHaveAttribute('data-story-ready', `compositions-app-header--effects-off|dark|en|adaptive|${scale}`, { timeout: 60000 });
-      await expect(page.getByTestId('btn-new-tab')).toHaveText('New Terminal');
-      await expect(page.getByTestId('window-controls')).toBeVisible();
-      for (const id of ['btn-new-session', 'btn-new-tab', 'btn-command-center', 'btn-workspace-menu', 'btn-toggle-agents']) await page.getByTestId(id).click({ trial: true, timeout: 2000 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    });
-  }
-}
-
 for (const [width, height, locale] of [[1440, 900, 'en'], [800, 600, 'ko'], [390, 844, 'ko']] as const) {
   test(`new-session choices stay accessible at ${width} in ${locale}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
