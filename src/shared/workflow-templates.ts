@@ -85,6 +85,9 @@ function developmentGraph(text: Text): WorkflowGraph {
   ], [
     ['req', 'answer', 'next'], ['answer', 'plan', 'next'], ['plan', 'design', 'next'], ['design', 'review', 'next'], ['review', 'approval', 'next'],
     ['approval', 'implement', 'approved'], ['approval', 'plan', 'rejected', 2], ['implement', 'done', 'next'],
+    // A stage its review rejects (or whose check fails) is done again in its own conversation with the review attached;
+    // without these a rejection would leave the run with no stage to go on with.
+    ['req', 'req', 'failed', 2], ['plan', 'plan', 'failed', 2], ['design', 'design', 'failed', 2], ['review', 'review', 'failed', 2], ['implement', 'implement', 'failed', 2],
   ]);
 }
 
@@ -96,7 +99,8 @@ function routineCheckGraph(text: Text): WorkflowGraph {
       checks: [{ id: 'audit', command: 'pnpm audit' }, { id: 'test', command: 'pnpm test' }],
       instructions: '확인 명령(pnpm audit, pnpm test)은 이 PC가 실행하고 종료 코드로 판정합니다. 이 단계에서는 package.json과 잠금 파일, 최근 변경을 읽고 의존성 경고나 깨질 만한 테스트가 있으면 근거와 함께 정리합니다. 파일은 고치지 않습니다.',
       acceptance: ['의존성과 테스트 상태가 근거(파일·패키지 이름)와 함께 정리되어 있다', '파일을 고치지 않았다'] }),
-    stage(p, 'summary', { title: text('바뀐 점 요약', 'Summary of changes'), operation: 'agent', role: 'planning', permissionPreset: 'plan', skipWhenUnchanged: true,
+    // No second AI reviews the summary: 결과 확인 right after it is the person's own look (and costs no turn).
+    stage(p, 'summary', { title: text('바뀐 점 요약', 'Summary of changes'), operation: 'agent', role: 'planning', permissionPreset: 'plan', skipWhenUnchanged: true, review: { mode: 'off' },
       instructions: '확인 단계의 결과에서 눈여겨볼 점만 다섯 줄 안으로 요약합니다. 실패하거나 새로 경고가 난 항목, 그 원인으로 보이는 변경, 바로 할 일을 나눠 씁니다. 파일은 고치지 않습니다.',
       acceptance: ['다섯 줄 안으로 요약했다', '실패나 경고가 있으면 항목마다 할 일을, 없으면 없다고 적었다'] }),
     stage(p, 'look', { title: text('결과 확인', 'Review findings'), operation: 'approval', role: 'review', instructions: '요약을 보고 할 일을 정합니다.' }),

@@ -38,6 +38,16 @@ describe('frozen workflow execution projection', () => {
     current = finish(current, 'work', false); current = finish(current, 'work', false);
     expect(current.state).toBe('paused'); expect(current.workflowRuntime?.edgeCounts.retry).toBe(2); expect(current.workflowRuntime?.activations.at(-1)?.state).toBe('retry-exhausted');
   });
+  it('redoes a rejected stage in itself along its own failed retry, then goes on when it passes', () => {
+    const graph = runnable({ entryNodeId: 'work', nodes: [WorkflowNodeSchema.parse({ id: 'work', title: 'Work', operation: 'agent' }), WorkflowNodeSchema.parse({ id: 'done', title: 'Done', operation: 'complete' })],
+      edges: [{ id: 'next', from: 'work', to: 'done', outcome: 'next' }, { id: 'again', from: 'work', to: 'work', outcome: 'failed', retryLimit: 2 }] });
+    expect(validateWorkflowGraph(graph, true)).toEqual([]);
+    let current = finish(advanceWorkflowRun(run(graph)), 'work', false);
+    expect(current.tasks[0]).toMatchObject({ state: 'ready', nextAttemptKind: 'repair' });
+    expect(current.workflowRuntime?.activations.find(entry => entry.nodeId === 'work' && entry.iteration === 1)?.state).toBe('active');
+    current = finish(current, 'work');
+    expect(current.state).toBe('completed');
+  });
   it('does not treat an unverified provider failure as a negative condition result', () => {
     const initial = advanceWorkflowRun(run(conditional()));
     const current = advanceWorkflowRun({ ...initial, tasks: initial.tasks.map(task => ({ ...task, state: 'failed', currentAttemptId: 'failed' })), attempts: [{ attemptId: 'failed', taskId: 'work', taskRevision: 0, dispatchId: 'dispatch', workspaceId: 'ws', number: 1, reason: 'initial', sessionId: 's', turnId: 't', state: 'failed', startedAt: 'now', artifacts: [], requestedSettings: { providerId: 'claude', permissionPreset: 'plan' }, effectiveSettings: { providerId: 'claude', permissionPreset: 'plan' } }] });

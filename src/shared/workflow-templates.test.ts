@@ -40,6 +40,20 @@ describe('built-in workflow templates', () => {
     const { graph } = builtinWorkflowTemplates()[1];
     expect(graph.nodes.map(node => node.title)).toEqual(['의존성·테스트 확인', '바뀐 점 요약', '결과 확인', '완료']);
     expect(graph.nodes[0]).toMatchObject({ role: 'review', permissionPreset: 'plan', review: { mode: 'off' }, checks: [{ id: 'audit', command: 'pnpm audit' }, { id: 'test', command: 'pnpm test' }] });
+    // The summary is not reviewed by a second AI: the person's 결과 확인 follows it (found with a real reviewer, 2026-10-29).
+    expect(graph.nodes[1]).toMatchObject({ review: { mode: 'off' }, skipWhenUnchanged: true });
+  });
+
+  it('never leave a run with no stage to go on with when an AI stage is rejected', () => {
+    for (const { graph } of builtinWorkflowTemplates()) {
+      for (const node of graph.nodes.filter(entry => entry.operation === 'agent' && entry.review?.mode !== 'off')) {
+        // Reviewed by an AI: a rejection is redone in the stage itself, a bounded number of times.
+        expect(graph.edges.find(edge => edge.from === node.id && edge.outcome === 'failed'), node.title).toMatchObject({ to: node.id, retryLimit: 2 });
+      }
+      for (const node of graph.nodes.filter(entry => entry.operation === 'agent' && entry.review?.mode === 'off')) {
+        expect(graph.edges.some(edge => edge.from === node.id && (edge.outcome === 'failed' || edge.outcome === 'next')), node.title).toBe(true);
+      }
+    }
   });
 
   it('follow the UI language in titles and prompts', () => {
