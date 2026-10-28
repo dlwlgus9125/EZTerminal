@@ -1,0 +1,105 @@
+import type { ChatAgentPhaseMap, ChatAgentProfile } from '../../shared/chat-agent-profiles';
+import type { WorkflowGraph, WorkflowNode } from '../../shared/workflow-graph';
+import type { WorkflowAgentListItem } from '../workflow/WorkflowAgentList';
+import type { WorkflowEdgeDecoration, WorkflowNodeDecoration } from '../workflow/workflow-canvas-types';
+import type { WorkflowTemplateChoice } from '../workflow/WorkflowTemplateDialog';
+
+/**
+ * Mockup data (2026-10 harness 시안): the "개발 절차" template as a workflow with agents placed on it,
+ * the agents from Settings and the 단계 연결. Storybook only; production code never imports this file.
+ */
+export const HARNESS_PROFILES: readonly ChatAgentProfile[] = [
+  { id: 'agent-design', name: '설계 담당', providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', permissionPreset: 'standard', whenToUse: '요구 정리·계획·시안처럼 판단이 많은 일' },
+  { id: 'agent-build', name: '구현 담당', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'medium', permissionPreset: 'standard', whenToUse: '정해진 계획대로 코드를 바꾸고 테스트를 고칠 때' },
+  { id: 'agent-review', name: '교차 검토', providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'xhigh', permissionPreset: 'plan', whenToUse: '다른 AI가 만든 결과를 고치지 않고 검토만 할 때' },
+  { id: 'agent-quick', name: '빠른 조사', providerId: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'low', permissionPreset: 'plan', whenToUse: '짧은 조사·요약, 정기 점검 요약' },
+];
+export const HARNESS_PHASES: ChatAgentPhaseMap = { plan: { profileId: 'agent-design' }, implement: { profileId: 'agent-build' }, review: { profileId: 'agent-review' }, switchModel: false };
+
+const EFFORT_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
+const PROVIDER: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
+const MODEL: Record<string, string> = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'gpt-6-astra': 'GPT-6-Astra' };
+const PERMISSION_KO: Record<string, string> = { plan: '계획만', standard: '승인 후 실행', 'full-access': '전체 권한' };
+
+export function harnessAgents(usedOn: Readonly<Record<string, number>> = {}): readonly WorkflowAgentListItem[] {
+  return HARNESS_PROFILES.map(profile => ({
+    id: profile.id, name: profile.name, providerLabel: PROVIDER[profile.providerId] ?? profile.providerId, model: MODEL[profile.model ?? ''] ?? profile.model ?? '',
+    effortLabel: EFFORT_KO[profile.reasoningEffort ?? ''], permissionLabel: PERMISSION_KO[profile.permissionPreset] ?? profile.permissionPreset, whenToUse: profile.whenToUse,
+    tone: profile.providerId === 'codex' ? 'codex' : profile.providerId === 'claude' ? 'claude' : 'other', usedOn: usedOn[profile.id],
+  }));
+}
+
+const COLUMN = 344;
+const ROW = 300;
+function stage(id: string, title: string, operation: WorkflowNode['operation'], role: WorkflowNode['role'], column: number, row: number, extra: Partial<WorkflowNode> = {}): WorkflowNode {
+  return { id: `dev:${id}`, title, operation, role, instructions: '', document: '', acceptance: [], allowedPaths: [], retryLimit: 2, permissionPreset: 'plan', inputs: [], position: { x: 40 + column * COLUMN, y: 40 + row * ROW }, ...extra };
+}
+
+/** "개발 절차": requirements → my answer → plan → mockup → cross review → approval → implement (+ check) → done. */
+export const HARNESS_GRAPH: WorkflowGraph = {
+  entryNodeId: 'dev:req',
+  nodes: [
+    stage('req', '요구 정리', 'agent', 'planning', 0, 0, { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', instructions: '요구를 정리하고, 결정이 필요한 점을 한 번에 하나씩 질문으로 씁니다.', acceptance: ['질문 목록과 가정'] }),
+    stage('answer', '내 답변', 'approval', 'planning', 1, 0, { instructions: '요구 정리의 질문에 답합니다.' }),
+    stage('plan', '계획', 'agent', 'planning', 2, 0, { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', instructions: '답을 반영해 단계별 구현 계획을 씁니다.', acceptance: ['파일·검증 방법까지 적힌 계획'] }),
+    stage('mock', '시안', 'agent', 'design', 3, 0, { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'medium', instructions: '계획한 화면을 Storybook 시안으로 만듭니다.', acceptance: ['바뀐 화면마다 시안'], permissionPreset: 'standard', allowedPaths: ['src/renderer/'] }),
+    stage('review', '교차 검토', 'agent', 'review', 0, 1, { providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'xhigh', instructions: '시안과 계획을 고치지 않고 검토합니다.', acceptance: ['문제와 근거 목록'] }),
+    stage('approval', '시안 승인', 'approval', 'review', 1, 1, { instructions: '검토를 거친 시안으로 구현해도 되는지 정합니다.' }),
+    stage('implement', '구현', 'agent', 'implementation', 2, 1, { providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'medium', instructions: '승인된 계획과 시안대로 구현하고 테스트를 고칩니다.', acceptance: ['pnpm test 통과'], permissionPreset: 'standard', allowedPaths: ['src/', 'test/'] }),
+    stage('done', '완료', 'complete', 'integration', 3, 1),
+  ],
+  edges: [
+    { id: 'dev:req-answer', from: 'dev:req', to: 'dev:answer', outcome: 'next' },
+    { id: 'dev:answer-plan', from: 'dev:answer', to: 'dev:plan', outcome: 'approved' },
+    { id: 'dev:plan-mock', from: 'dev:plan', to: 'dev:mock', outcome: 'next' },
+    { id: 'dev:mock-review', from: 'dev:mock', to: 'dev:review', outcome: 'next' },
+    { id: 'dev:review-approval', from: 'dev:review', to: 'dev:approval', outcome: 'passed' },
+    { id: 'dev:review-mock', from: 'dev:review', to: 'dev:mock', outcome: 'failed', retryLimit: 2 },
+    { id: 'dev:approval-implement', from: 'dev:approval', to: 'dev:implement', outcome: 'approved' },
+    { id: 'dev:approval-mock', from: 'dev:approval', to: 'dev:mock', outcome: 'rejected', retryLimit: 2 },
+    { id: 'dev:implement-done', from: 'dev:implement', to: 'dev:done', outcome: 'next' },
+  ],
+};
+
+type DecorationSet = { readonly nodes: Readonly<Record<string, WorkflowNodeDecoration>>; readonly edges: Readonly<Record<string, WorkflowEdgeDecoration>> };
+const design = { name: '설계 담당', tone: 'claude' as const };
+const build = { name: '구현 담당', tone: 'codex' as const };
+/** What the cards show: the design agent runs 요구 정리 → 계획 → 시안 in one conversation (effort per stage). */
+export function harnessDecorations(options: { readonly dropOn?: string; readonly implementWithoutAgent?: boolean; readonly missingOn?: string; readonly answerWaiting?: boolean } = {}): DecorationSet {
+  const nodes: Record<string, WorkflowNodeDecoration> = {
+    'dev:req': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 1/3 · 같은 대화', position: 'first' } },
+    'dev:answer': { kindLabel: '답변 기다림', chain: { label: '대화 유지 · AI 비용 없음', position: 'middle' }, badges: [options.answerWaiting ? '내 답을 기다림 · 지금' : '사람이 답함'], attention: options.answerWaiting, portLabels: { approved: '답함' }, hiddenPorts: ['rejected'] },
+    'dev:plan': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 2/3', position: 'middle' } },
+    'dev:mock': { agent: { ...design, detail: 'Claude · Opus 5.5 · 노력만 낮춤', effort: '보통' }, chain: { label: '이어서 3/3', position: 'last' } },
+    'dev:review': { agent: { name: '교차 검토', tone: 'codex', detail: 'Codex · GPT-6-Astra · 늘 새 대화', effort: '매우 높음' }, badges: ['읽기 전용'] },
+    'dev:approval': { badges: ['사람이 승인 · 의견 남기기'] },
+    'dev:implement': options.implementWithoutAgent ? { badges: ['pnpm test', '검토 끔'] } : { agent: { ...build, detail: 'Codex · GPT-6-Astra', effort: '보통' }, badges: ['pnpm test', '검토 끔'] },
+  };
+  if (options.dropOn) nodes[options.dropOn] = { ...nodes[options.dropOn], dropTarget: true };
+  if (options.missingOn) nodes[options.missingOn] = { ...nodes[options.missingOn], agent: { name: '구현 담당', tone: 'codex', detail: '', missing: true } };
+  return { nodes, edges: { 'dev:req-answer': { chain: true, label: '이어서' }, 'dev:answer-plan': { chain: true, label: '이어서' }, 'dev:plan-mock': { chain: true, label: '이어서' } } };
+}
+
+export const HARNESS_TEMPLATES: readonly WorkflowTemplateChoice[] = [
+  { id: 'tpl-dev', origin: 'builtin', title: '개발 절차', description: '요구를 정리하고 계획·시안을 교차 검토한 뒤, 승인되면 구현하고 테스트로 확인합니다.',
+    steps: [{ label: '요구 정리' }, { label: '내 답변', kind: 'person' }, { label: '계획' }, { label: '시안' }, { label: '교차 검토' }, { label: '시안 승인', kind: 'person' }, { label: '구현' }, { label: 'pnpm test', kind: 'check' }],
+    needs: '에이전트 3개(설계·구현·검토) · 확인 명령 1개' },
+  { id: 'tpl-check', origin: 'builtin', title: '정기 점검', description: '의존성·테스트를 명령으로 확인하고, 결과가 지난번과 다를 때만 AI가 요약합니다.',
+    steps: [{ label: 'pnpm audit', kind: 'check' }, { label: 'pnpm test', kind: 'check' }, { label: '바뀐 점 요약' }, { label: '결과 확인', kind: 'person' }],
+    needs: '에이전트 1개(요약) · 확인 명령 2개 · 반복 매일' },
+  { id: 'tpl-hotfix', origin: 'user', title: '버그 빠르게 고치기', description: '재현 → 수정 → 테스트를 한 에이전트가 같은 대화로 이어서 합니다.',
+    steps: [{ label: '재현' }, { label: '수정' }, { label: 'pnpm test', kind: 'check' }],
+    needs: '에이전트 1개 · 2026-10-20 저장' },
+];
+
+export const STORY_EFFORTS = [
+  { value: '', label: '기본 (높음)' }, { value: 'low', label: '낮음' }, { value: 'medium', label: '보통' }, { value: 'high', label: '높음' }, { value: 'xhigh', label: '매우 높음' }, { value: 'max', label: '최대' },
+];
+/** What the stage panel says about its conversation, per stage of the 설계 담당 chain. */
+export const CHAIN_HINTS: Readonly<Record<string, string>> = {
+  'dev:req': '실행하면 새 대화로 시작하고, 같은 대화에서 계획·시안까지 이어서 합니다.',
+  'dev:plan': '실행하면 요구 정리 대화에서 이어서 합니다. 내 답변도 그 대화로 들어갑니다.',
+  'dev:mock': '실행하면 계획 대화에서 이어서 합니다. 노력만 보통으로 낮춰 같은 대화를 씁니다.',
+};
+export const STORY_PERMISSIONS = [{ value: 'plan', label: '계획만 · 읽기 전용' }, { value: 'standard', label: '승인 후 실행' }];
+export const STORY_REVIEWS = [{ value: 'run', label: '실행 기본 (교차 검토)' }, { value: 'off', label: '끔 · 확인 명령으로만' }, { value: 'agent', label: '다른 에이전트…' }];

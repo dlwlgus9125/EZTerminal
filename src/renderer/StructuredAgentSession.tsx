@@ -140,6 +140,7 @@ interface StructuredAgentCopy {
   readonly planShortcutHint: string;
   readonly usage: UsagePillCopy;
   readonly settingsLockedDuringTurn: string;
+  readonly settingsQueuedDuringTurn: string;
   readonly settingsFailed: string;
   readonly decisionHint: string;
   /** The message box shown away from the conversation (a terminal): the decision is not above it. */
@@ -294,6 +295,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
       contextPart: (percent) => `context ${percent}% used`,
     },
     settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
+    settingsQueuedDuringTurn: 'Settings you change now apply from the next request. Esc stops this turn.',
     settingsFailed: 'The setting was not changed.',
     decisionHint: 'Shift+Tab goes to the waiting decision · Esc stops the turn',
     decisionElsewhereHint: 'This conversation waits for your decision · open it to answer · Esc stops the turn',
@@ -412,6 +414,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
       contextPart: (percent) => `컨텍스트 ${percent}% 사용`,
     },
     settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
+    settingsQueuedDuringTurn: '지금 바꾼 설정은 다음 요청부터 적용됩니다. Esc로 이 작업을 멈춥니다.',
     settingsFailed: '설정을 바꾸지 못했습니다.',
     decisionHint: 'Shift+Tab 기다리는 결정으로 이동 · Esc 멈춤',
     decisionElsewhereHint: '이 대화가 결정을 기다립니다 · 대화를 열어 답하세요 · Esc 멈춤',
@@ -1825,6 +1828,8 @@ export interface StructuredAgentSessionPanelProps {
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
+  /** EZTerminal settings this conversation's AI changed (with undo) and proposed (a person applies them), above the input. */
+  readonly settingsTrack?: ReactNode;
   /** A subagent's parent conversation: the header leads back to it. */
   readonly parent?: { readonly sessionId: string; readonly title: string };
   /** Provider's agent kind for a provider-native subagent, e.g. Claude `Explore`. */
@@ -1861,6 +1866,12 @@ export interface StructuredAgentSessionPanelProps {
   /** Current reasoning effort; the effort pill appears only when the host accepts it. */
   readonly reasoningEffort?: string;
   readonly effortSupported?: boolean;
+  /** Settings chosen while a turn runs: what the turn uses now and what the next request will use (one line above the pills). */
+  readonly pendingSettings?: { readonly current: string; readonly next: string; readonly onCancel?: () => void };
+  /** The effort menu's 이번 요청만 / 이후 계속 choice. */
+  readonly effortScope?: { readonly value: 'once' | 'keep'; readonly onChange: (scope: 'once' | 'keep') => void };
+  /** The host queues model, permission and plan changes made during a turn for the next request (pills stay open). */
+  readonly queueSettings?: boolean;
   readonly fileSearch?: ComposerFileSearch;
   readonly pathForDrop?: (file: File) => string | null;
   readonly onResolveApproval?: (
@@ -1954,6 +1965,9 @@ export function StructuredAgentSessionPanel({
   onLoadEarlier,
   reasoningEffort,
   effortSupported = false,
+  pendingSettings,
+  effortScope,
+  queueSettings = false,
   fileSearch,
   pathForDrop,
   transcriptLoading = false,
@@ -1972,6 +1986,7 @@ export function StructuredAgentSessionPanel({
   historyOnly = false,
   owner = 'managed',
   childTrack,
+  settingsTrack,
   parent,
   subagentType,
   parentApprovalPending = false,
@@ -2173,6 +2188,8 @@ export function StructuredAgentSessionPanel({
   const accessLevel: AccessLevel = isAccessLevel(selectedPermission) ? selectedPermission : planAccess;
   const turnCurrent = CANCELLABLE_AGENT_STATES.has(state);
   const settingsLocked = disabled || settingsBusy || lifecycleBusy !== null;
+  // A host that queues changes for the next request keeps the pills open during a turn.
+  const lockedByTurn = turnCurrent && !queueSettings;
   useEffect(() => {
     setLifecycleBusy(null);
     setLifecycleError(null);
@@ -2370,6 +2387,13 @@ export function StructuredAgentSessionPanel({
 
   const settingsControls = (
 <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
+            {pendingSettings && !settingsReadOnly && <p className="chat-pending-settings" role="status" data-testid="structured-agent-pending-settings">
+              <Glyph name="clock" />
+              <span className="chat-pending-settings__now">{i18n.language.startsWith('ko') ? '지금 차례' : 'This turn'} <strong>{pendingSettings.current}</strong></span>
+              <span className="chat-pending-settings__arrow" aria-hidden="true"><Glyph name="next" /></span>
+              <span className="chat-pending-settings__next">{i18n.language.startsWith('ko') ? '다음 요청' : 'Next request'} <strong>{pendingSettings.next}</strong></span>
+              {pendingSettings.onCancel && <button type="button" className="chat-pending-settings__cancel" onClick={pendingSettings.onCancel}>{i18n.language.startsWith('ko') ? '예약 취소' : 'Cancel change'}</button>}
+            </p>}
             {settingsReadOnly ? (
               <>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-model-value">
@@ -2390,8 +2414,8 @@ export function StructuredAgentSessionPanel({
                   aria-pressed={planOn}
                   aria-keyshortcuts="Shift+Tab"
                   aria-label={permissionText.plan}
-                  title={turnCurrent && !settingsLocked ? copy.settingsAfterTurn : `${permissionText.planHint} (${permissionText.planShortcut})`}
-                  disabled={settingsLocked || turnCurrent}
+                  title={lockedByTurn && !settingsLocked ? copy.settingsAfterTurn : `${permissionText.planHint} (${permissionText.planShortcut})`}
+                  disabled={settingsLocked || lockedByTurn}
                   onClick={togglePlan}
                   data-testid="structured-agent-live-plan"
                 >
@@ -2413,8 +2437,8 @@ export function StructuredAgentSessionPanel({
                       ...(option.disabled ? { disabled: true } : {}), ...(option.description ? { description: option.description } : {}) })),
                     onChange: providerChoices.onSelect,
                   } } : {})}
-                  disabled={settingsLocked || turnCurrent}
-                  {...(turnCurrent && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
+                  disabled={settingsLocked || lockedByTurn}
+                  {...(lockedByTurn && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
                   onChange={(next) => void updateSettings({ model: next })}
                   testId="structured-agent-live-model"
                 />, effortSupported && (
@@ -2426,6 +2450,7 @@ export function StructuredAgentSessionPanel({
                     options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
                     disabled={disabled || settingsBusy}
                     onChange={(next) => void updateSettings({ reasoningEffort: next })}
+                    {...(effortScope ? { scope: { label: i18n.language.startsWith('ko') ? '적용' : 'Apply to', value: effortScope.value, options: [{ value: 'once', label: i18n.language.startsWith('ko') ? '이번 요청만' : 'This request only' }, { value: 'keep', label: i18n.language.startsWith('ko') ? '이후 계속' : 'From now on' }], onChange: (next: string) => effortScope.onChange(next as 'once' | 'keep') } } : {})}
                     testId="structured-agent-live-effort"
                   />
                 ))}
@@ -2434,8 +2459,8 @@ export function StructuredAgentSessionPanel({
                   icon={accessLevel === 'full-access' ? glyphIcon('warn') : glyphIcon('ok')}
                   value={accessLevel}
                   options={ACCESS_LEVELS.map((level) => ({ value: level, label: permissionText.levels[level].label, description: permissionText.levels[level].hint }))}
-                  disabled={settingsLocked || (turnCurrent && !planOn)}
-                  {...(turnCurrent && !planOn && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
+                  disabled={settingsLocked || (lockedByTurn && !planOn)}
+                  {...(lockedByTurn && !planOn && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
                   onChange={changeAccess}
                   testId="structured-agent-live-permission"
                 />
@@ -2710,6 +2735,7 @@ export function StructuredAgentSessionPanel({
           {childTrack}
         </section>
       )}
+      {full && settingsTrack}
       {full && variant === 'mobile' && heartbeatControl}
       {full && variant !== 'mobile' && heartbeatControl !== undefined && (
         <Dialog open={heartbeatOpen} onOpenChange={setHeartbeatOpen} title={copy.heartbeatOn} ownerDocument={panelRef.current?.ownerDocument} closeLabel={copy.close}>
@@ -2774,7 +2800,7 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
-          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : copy.settingsLockedDuringTurn } : {})}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
           {...(full ? { onFocusDecision: focusDecision } : {})}
           appCommands={appCommands}
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}

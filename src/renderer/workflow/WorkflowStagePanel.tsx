@@ -1,5 +1,5 @@
 import { Glyph } from '../ui/Glyph';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import type { ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowGraph, WorkflowNode } from '../../shared/workflow-graph';
@@ -48,6 +48,15 @@ export interface WorkflowStagePanelProps {
   readonly onStartChat: () => void;
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenAttemptResult?: (attemptId: string) => void;
+  /** The agent placed on the stage with its own effort, permission, checks and review, in place of AI · 모델 · 노력. */
+  readonly settingsSlot?: ReactNode;
+  /** What the stage waits for from the person (an answer), under its run state. */
+  readonly topSlot?: ReactNode;
+  /** The stage's kind as the flow names it (e.g. 답변 기다림), in place of the operation's name. */
+  readonly kindLabel?: string;
+  readonly instructionsLabel?: string;
+  /** Where this stage's conversation comes from (e.g. it continues the previous stage's). */
+  readonly conversationHint?: string;
 }
 
 /** Lines in a text box ↔ a list; the box keeps what is typed (blank lines too) and stores the list. */
@@ -83,12 +92,13 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
     : scope === 'next-run' ? text('이번 실행에서는 이미 정해졌습니다. 바꾸면 다음 실행부터 적용됩니다.', 'This run has already settled this stage: changes apply from the next run.')
       : locked ? text('이 단계가 지금 작업 중이라 설정을 바꿀 수 없습니다. 끝나면 다음 실행용으로 바꿀 수 있습니다.', 'This stage is working now, so its settings are locked. Once it finishes they can change for the next run.') : null;
   return <div className="workflow-stage-panel" data-testid="workflow-stage-panel">
-    <div className="workflow-flow__panel-head"><small>{workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</small><h3>{node.title}</h3></div>
+    <div className="workflow-flow__panel-head"><small>{props.kindLabel ?? workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</small><h3>{node.title}</h3></div>
     {run && <p className="workflow-stage-panel__state" data-testid="workflow-stage-state">
       {/* An element, so WebView 74's flex-gap fallback spaces it too (mobile-shared.css). */}
       <span>{text(`실행 #${props.runNumber}`, `Run #${props.runNumber}`)}</span>
       {status ? <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status> : <span>{text('이 실행에 표시하지 않음', 'Not shown for this run')}</span>}
     </p>}
+    {props.topSlot}
     {awaiting && <div className="workflow-approval" data-testid="workflow-stage-approval">
       <p>{(frozen ?? node).instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
       <div className="workflow-inline">
@@ -102,7 +112,7 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
         {conversation?.working ? text('작업 중인 대화 열기', 'Open the working conversation') : text('이 단계 대화 열기', 'Open this stage’s conversation')}
       </Button>
       {conversation?.reviewSessionId && <Button variant="ghost" leadingIcon={<Glyph name="search" />} onClick={() => props.onOpenConversation?.(conversation.reviewSessionId!)}>{text('검토 대화 열기', 'Open the review conversation')}</Button>}
-      {!conversation && <p className="workflow-hint">{run ? text('이번 실행에서 아직 시작하지 않아 대화가 없습니다.', 'No conversation yet: this stage has not started in this run.') : text('실행하면 단계마다 새 대화가 생깁니다.', 'Each run starts a new conversation for each stage.')}</p>}
+      {!conversation && <p className="workflow-hint">{run ? text('이번 실행에서 아직 시작하지 않아 대화가 없습니다.', 'No conversation yet: this stage has not started in this run.') : props.conversationHint ?? text('실행하면 단계마다 새 대화가 생깁니다.', 'Each run starts a new conversation for each stage.')}</p>}
       {props.runCleaned && <p className="workflow-hint" data-testid="workflow-stage-cleaned">{text('이 단계의 작업 폴더는 정리되었습니다. 대화 기록과 결과는 그대로 볼 수 있습니다.', 'This stage’s work folder was cleaned up. Its conversations and results stay readable.')}</p>}
     </div>}
     {/* Only an AI stage binds its settings when it is first sent; other stages change from the next run. */}
@@ -110,7 +120,8 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
     <fieldset className="workflow-stage-panel__fields" disabled={!editable} data-testid="workflow-stage-fields">
       <legend>{text('이 단계 설정', 'This stage’s settings')}</legend>
       <div className="workflow-stage-panel__grid">
-      {node.operation === 'agent' && <>
+      {props.settingsSlot}
+      {node.operation === 'agent' && !props.settingsSlot && <>
         <Field label={text('AI', 'AI')}><Select value={node.providerId ?? ''} onChange={(event) => update({ providerId: event.target.value || undefined, model: undefined, reasoningEffort: undefined })}>
           <option value="">{text('선택하세요', 'Choose a provider')}</option>
           {node.providerId && !provider && <option value={node.providerId}>{node.providerId} · {text('사용 불가', 'Unavailable')}</option>}
@@ -131,13 +142,14 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
           </Select>
         </Field>
       </>}
-      <label className="workflow-field">{node.operation === 'approval' ? text('승인할 내용', 'What to approve') : text('지시', 'Instructions')}<textarea rows={4} value={node.instructions} onChange={(event) => update({ instructions: event.target.value })} /></label>
+      <label className="workflow-field">{props.instructionsLabel ?? (node.operation === 'approval' ? text('승인할 내용', 'What to approve') : text('지시', 'Instructions'))}<textarea rows={4} value={node.instructions} onChange={(event) => update({ instructions: event.target.value })} /></label>
       {node.operation === 'agent' && <details className="workflow-stage-panel__more" data-testid="workflow-stage-advanced">
         <summary>{text('고급', 'Advanced')}</summary>
-        <Field label={text('권한', 'Permissions')}><Select value={node.permissionPreset} onChange={(event) => update({ permissionPreset: event.target.value as WorkflowNode['permissionPreset'] })}>
+        {/* With an agent placed, permission sits with the agent settings above. */}
+        {!props.settingsSlot && <Field label={text('권한', 'Permissions')}><Select value={node.permissionPreset} onChange={(event) => update({ permissionPreset: event.target.value as WorkflowNode['permissionPreset'] })}>
           <option value="plan">{workflowPermissionLabel('plan', text)}</option><option value="standard">{workflowPermissionLabel('standard', text)}</option>
           {node.permissionPreset === 'full-access' && <option value="full-access" disabled>{`${workflowPermissionLabel('full-access', text)} · ${text('관리형 실행에서 미지원', 'unsupported for managed execution')}`}</option>}
-        </Select></Field>
+        </Select></Field>}
         <label className="workflow-field">{text('완료 조건 · 한 줄에 하나', 'Acceptance criteria · one per line')}<textarea rows={3} value={acceptance} onChange={(event) => update({ acceptance: [...setAcceptance(event.target.value)] })} /></label>
         <label className="workflow-field">{node.permissionPreset === 'plan' ? text('바꿀 수 있는 경로 · 한 줄에 하나', 'Paths it may change · one per line') : text('바꿀 수 있는 경로 · 한 줄에 하나 (필수)', 'Paths it may change · one per line (required)')}
           <textarea rows={2} value={paths} placeholder="src/login/" onChange={(event) => update({ allowedPaths: [...setPaths(event.target.value)] })} /></label>

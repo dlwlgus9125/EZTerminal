@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
 import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, permissionPresetLabel, type AccessLevel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
+import { workflowEffortLabel } from './workflow/workflow-copy';
 import { Button, Field, IconButton, Input, Select, Switch } from './ui';
 import './agent-profiles-settings.css';
 
@@ -42,7 +43,7 @@ export function AgentProfilesSettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const provider = providers.find((entry) => entry.id === draft?.providerId);
-  const providerLabel = (id: string): string => providers.find((entry) => entry.id === id)?.label ?? id;
+  const providerLabel = (id: string): string => providers.find((entry) => entry.id === id)?.label ?? ({ codex: 'Codex', claude: 'Claude' } as Record<string, string>)[id] ?? id;
   const locale = ko ? 'ko' : 'en';
   const permissionText = agentPermissionCopy(locale);
 
@@ -76,16 +77,16 @@ export function AgentProfilesSettings({
         data-testid="agent-profiles-orchestration"
       />
       <div className="agent-profiles-settings__head">
-        <h3>{text('에이전트 프로필', 'Agent profiles')}</h3>
+        <h3>{text('에이전트', 'Agents')}</h3>
         {!draft && providers[0] && (
           <Button size="sm" variant="secondary" leadingIcon={<Glyph name="plus" />} onClick={() => setDraft(emptyDraft(providers[0]!.id))}>
-            {text('프로필 추가', 'Add profile')}
+            {text('에이전트 추가', 'Add agent')}
           </Button>
         )}
       </div>
       <p className="agent-profiles-settings__note">
-        {text('새 대화와 맡기기에서 고릅니다. "언제 쓰나요"는 에이전트가 서브에이전트를 고를 때도 읽습니다.',
-          'Pick one when starting or handing off a conversation. Agents also read "When to use" to choose a profile for a child.')}
+        {text('누가 일할지(AI·모델·노력·권한)만 정합니다. 무엇을 할지는 대화와 워크플로 단계가 정합니다. 새 대화·맡기기·워크플로 단계에서 고르고, "언제 쓰나요"는 에이전트가 다른 에이전트를 고를 때도 읽습니다.',
+          'Who does the work (AI, model, effort, permission); conversations and workflow stages say what. Pick one for a new conversation, a hand-off or a workflow stage; agents also read "When to use" to choose another agent.')}
       </p>
       {profiles.length === 0 && !draft && <p className="agent-profiles-settings__empty">{text('아직 프로필이 없습니다.', 'No profiles yet.')}</p>}
       {profiles.length > 0 && (
@@ -94,7 +95,7 @@ export function AgentProfilesSettings({
             <li key={profile.id} className="agent-profiles-settings__item">
               <div className="agent-profiles-settings__summary">
                 <strong>{profile.name}</strong>
-                <span>{[providerLabel(profile.providerId), profile.model ?? text('기본 모델', 'Default model'), profile.reasoningEffort, permissionPresetLabel(profile.permissionPreset, locale)].filter(Boolean).join(' · ')}</span>
+                <span>{[providerLabel(profile.providerId), profile.model ?? text('기본 모델', 'Default model'), profile.reasoningEffort ? workflowEffortLabel(profile.reasoningEffort, text) : undefined, permissionPresetLabel(profile.permissionPreset, locale)].filter(Boolean).join(' · ')}</span>
                 {profile.whenToUse && <small>{profile.whenToUse}</small>}
               </div>
               <IconButton icon={glyphIcon('edit')} size="sm" variant="ghost" aria-label={`${text('편집', 'Edit')}: ${profile.name}`} onClick={() => setDraft(profile)} />

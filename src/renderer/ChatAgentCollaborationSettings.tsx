@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ChatAgentProfile, ChatAgentProfileAccess } from '../shared/chat-agent-profiles';
+import type { ChatAgentPhaseMap, ChatAgentProfile, ChatAgentProfileAccess } from '../shared/chat-agent-profiles';
 import { createDaemonCommand, type DaemonSnapshot } from '../shared/daemon-protocol';
+import { AgentPhaseSettings } from './AgentPhaseSettings';
 import { AgentProfilesSettings, type AgentProfileProviderOption } from './AgentProfilesSettings';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { structuredAgentEffortOptions, structuredAgentProviderOptions } from './structured-agent-create';
 import { Status } from './ui';
+
+/** Names for the built-in AIs when the host lists none yet (a profile can outlive its provider's enablement). */
+const KNOWN_PROVIDER_LABELS: Readonly<Record<string, string>> = { codex: 'Codex', claude: 'Claude' };
 
 function opaqueId(prefix: string): string {
   const uuid = globalThis.crypto?.randomUUID?.();
@@ -24,7 +28,7 @@ export function ChatAgentCollaborationSettings({
   readonly capabilities?: CapabilityAccess;
   readonly profilesAccess?: ChatAgentProfileAccess;
 }): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
   const [profiles, setProfiles] = useState<readonly ChatAgentProfile[]>([]);
   const [busy, setBusy] = useState(false);
@@ -46,9 +50,11 @@ export function ChatAgentCollaborationSettings({
     }
   }, [capabilities, t]);
 
+  const [phases, setPhases] = useState<ChatAgentPhaseMap | null>(null);
   useEffect(() => {
     void refreshSnapshot();
     void profilesAccess?.list().then(setProfiles).catch(() => undefined);
+    void profilesAccess?.phases?.().then(setPhases).catch(() => undefined);
   }, [refreshSnapshot, profilesAccess]);
 
   const updateOrchestration = async (enabled: boolean): Promise<void> => {
@@ -113,6 +119,9 @@ export function ChatAgentCollaborationSettings({
           return result.ok ? { ok: true } : result;
         }}
       />
+      {phases && profilesAccess?.savePhases && <AgentPhaseSettings ko={i18n.language.startsWith('ko')} profiles={profiles} phases={phases}
+        providerLabel={(id) => providers.find((provider) => provider.id === id)?.label ?? KNOWN_PROVIDER_LABELS[id] ?? id}
+        onChange={(next) => { setPhases(next); void profilesAccess.savePhases?.(next).then((result) => { if (result.ok) setPhases(result.phases); }).catch(() => undefined); }} />}
       {busy && <Status variant="loading" live="polite">{t('agentSettings.runtimeSaving')}</Status>}
       {error && <Status className="agent-settings-error" variant="danger" live="assertive">{error}</Status>}
     </section>

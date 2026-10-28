@@ -13,7 +13,7 @@ const FALLBACK = { width: 248, height: 136 };
  * drawn to the measured handles. Used on Android, in tests, and when the desktop canvas chunk
  * cannot load. Selection only; stages and connections are edited in the panel and the outline.
  */
-export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text, label, issueCounts, reveal, onRevealed, onCardSize }: WorkflowCanvasRendererProps): JSX.Element {
+export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text, label, issueCounts, reveal, onRevealed, onCardSize, decorations, edgeDecorations }: WorkflowCanvasRendererProps): JSX.Element {
   const elements = useRef(new Map<string, HTMLDivElement>());
   const [anchors, setAnchors] = useState<Record<string, Anchors>>({});
   const marker = `workflow-static-arrow-${useId().replace(/:/gu, '')}`;
@@ -29,7 +29,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
       next[id] = { width: box.width || FALLBACK.width, height: box.height || FALLBACK.height, input: centre(element.querySelector('[data-handle-in]')) ?? { x: 0, y: (box.height || FALLBACK.height) / 2 }, outputs };
     }
     setAnchors(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-  }, [graph, overlay, issueCounts, scale]);
+  }, [graph, overlay, issueCounts, scale, decorations]);
   const size = (id: string) => anchors[id] ?? { ...FALLBACK, input: { x: 0, y: FALLBACK.height / 2 }, outputs: {} };
   // Negative stored positions (dragged left/up) shift the drawing so they stay inside the scroll area.
   const origin = { x: Math.min(0, ...graph.nodes.map(node => node.position.x)) * scale - 24, y: Math.min(0, ...graph.nodes.map(node => node.position.y)) * scale - 24 };
@@ -56,13 +56,14 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
           {edges.map(edge => {
             const path = workflowEdgePath(out(edge.from, edge.outcome), into(edge.to), depths[edge.id] ?? 0, scale); const run = overlay?.edges[edge.id];
             return <g key={edge.id}>
-              <path className="workflow-edge-path" d={path.d} markerEnd={`url(#${marker})`} data-retry={edge.retryLimit ? '' : undefined} data-run={run ? (run.taken > 0 ? 'taken' : 'idle') : undefined} data-selected={selection?.kind === 'edge' && selection.id === edge.id ? '' : undefined} />
+              {edgeDecorations?.[edge.id]?.chain && <path className="workflow-edge-chain" d={path.d} />}
+              <path className="workflow-edge-path" d={path.d} markerEnd={`url(#${marker})`} data-chain={edgeDecorations?.[edge.id]?.chain ? '' : undefined} data-retry={edge.retryLimit ? '' : undefined} data-run={run ? (run.taken > 0 ? 'taken' : 'idle') : undefined} data-selected={selection?.kind === 'edge' && selection.id === edge.id ? '' : undefined} />
               <path className="workflow-static__edge-hit" d={path.d} onClick={() => onSelect({ kind: 'edge', id: edge.id })} />
             </g>;
           })}
         </svg>
         {edges.map(edge => {
-          const badge = workflowEdgeBadge(edge, overlay?.edges[edge.id], text); if (!badge) return null;
+          const badge = edgeDecorations?.[edge.id]?.label ?? workflowEdgeBadge(edge, overlay?.edges[edge.id], text); if (!badge) return null;
           const path = workflowEdgePath(out(edge.from, edge.outcome), into(edge.to), depths[edge.id] ?? 0, scale);
           return <span key={edge.id} className="workflow-edge-badge workflow-static__badge" style={{ left: path.labelX, top: path.labelY }}>{badge}</span>;
         })}
@@ -71,7 +72,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
           return <div key={node.id} ref={element => { if (element) elements.current.set(node.id, element); else elements.current.delete(node.id); }} className="workflow-static__node" style={{ left: at(node.id).x, top: at(node.id).y }}
             role="button" tabIndex={0} aria-pressed={chosen} aria-label={[node.title, workflowOperationLabel(node.operation, text), run ? workflowRunStatusPresentation(run, text).label : ''].filter(Boolean).join(', ')}
             onClick={() => onSelect({ kind: 'node', id: node.id })} onKeyDown={event => onKey(event, node.id)}>
-            <WorkflowNodeCard node={node} text={text} entry={graph.entryNodeId === node.id} selected={chosen} run={run} issueCount={issueCounts?.[node.id] ?? 0}
+            <WorkflowNodeCard node={node} text={text} entry={graph.entryNodeId === node.id} selected={chosen} run={run} issueCount={issueCounts?.[node.id] ?? 0} decoration={decorations?.[node.id]}
               inputHandle={<span className="wf-handle" data-handle-in="" aria-hidden="true" />}
               outputHandle={outcome => <span className="wf-handle" data-handle-out={outcome} aria-hidden="true" />} />
           </div>;

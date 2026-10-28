@@ -1,8 +1,9 @@
-import { Glyph, glyphIcon, type GlyphIcon } from '../ui/Glyph';
+import { Glyph, glyphIcon, Led, type GlyphIcon } from '../ui/Glyph';
 import type { ReactNode } from 'react';
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { Status, type SemanticVariant } from '../ui';
 import type { WorkflowNodeRunStatus, WorkflowNodeRunView } from './workflow-canvas-model';
+import type { WorkflowNodeDecoration } from './workflow-canvas-types';
 import { workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from './workflow-copy';
 import './workflow-canvas.css';
 
@@ -46,24 +47,37 @@ export interface WorkflowNodeCardProps {
   /** The renderer owns connection handles; the card only reserves their rows. */
   readonly inputHandle?: ReactNode;
   readonly outputHandle?: (outcome: WorkflowEdge['outcome']) => ReactNode;
+  /** The agent placed on it, its chain and checks (see WorkflowNodeDecoration). */
+  readonly decoration?: WorkflowNodeDecoration;
 }
 
 /** One stage, as both canvas renderers and the outline draw it. */
-export function WorkflowNodeCard({ node, text, entry = false, selected = false, run, issueCount = 0, inputHandle, outputHandle }: WorkflowNodeCardProps): JSX.Element {
-  const Icon = OPERATION_ICONS[node.operation];
+export function WorkflowNodeCard({ node, text, entry = false, selected = false, run, issueCount = 0, inputHandle, outputHandle, decoration }: WorkflowNodeCardProps): JSX.Element {
+  const Icon = decoration?.kindLabel ? glyphIcon('q') : OPERATION_ICONS[node.operation];
   const status = run ? workflowRunStatusPresentation(run, text) : null;
-  const ports = workflowOutcomePorts(node.operation);
-  const detail = node.operation === 'agent'
+  const ports = workflowOutcomePorts(node.operation).filter(outcome => !decoration?.hiddenPorts?.includes(outcome));
+  const agent = decoration?.agent;
+  const detail = agent || decoration?.kindLabel || decoration?.dropTarget ? null : node.operation === 'agent'
     ? [node.providerId, node.model].filter(Boolean).join(' · ') || text('AI 설정 확인', 'Check AI settings')
     : node.operation === 'join' ? (node.joinPolicy === 'any' ? text('하나 이상 도착하면 진행', 'Continues on any input') : text('모두 도착하면 진행', 'Continues when all arrive'))
       : node.operation === 'approval' ? text('사람이 허용/거절', 'A person approves or rejects')
         : node.operation === 'condition' ? text('검토 결과로 분기', 'Branches on a verified result')
           : null;
-  return <div className="workflow-node-card" data-operation={node.operation} data-selected={selected || undefined} data-run-state={run?.status}>
+  return <div className="workflow-node-card" data-operation={node.operation} data-selected={selected || undefined} data-run-state={run?.status}
+    data-chain={decoration?.chain?.position} data-drop-target={decoration?.dropTarget || undefined} data-agent-missing={agent?.missing || undefined} data-attention={decoration?.attention || undefined}>
     {inputHandle && <div className="workflow-node-card__input">{inputHandle}</div>}
     <div className="workflow-node-card__body">
-      <div className="workflow-node-card__kind"><Icon aria-hidden="true" /><span>{workflowOperationLabel(node.operation, text)}</span>{entry && <span className="workflow-node-card__entry">{text('시작', 'Start')}</span>}</div>
+      <div className="workflow-node-card__kind"><Icon aria-hidden="true" /><span>{decoration?.kindLabel ?? workflowOperationLabel(node.operation, text)}</span>{entry && <span className="workflow-node-card__entry">{text('시작', 'Start')}</span>}</div>
       <strong className="workflow-node-card__title">{node.title}</strong>
+      {agent && <span className="workflow-node-card__agent" data-tone={agent.tone ?? 'other'}>
+        {agent.missing ? <Glyph name="warn" /> : <Led tone="on" />}
+        <span className="workflow-node-card__agent-name">{agent.name}</span>
+        {agent.effort && <span className="workflow-node-card__agent-effort">{agent.effort}</span>}
+      </span>}
+      {agent && <span className="workflow-node-card__detail">{agent.missing ? text('이 PC에 없는 에이전트 · 다시 배정 필요', 'Agent not on this PC · reassign') : agent.detail}</span>}
+      {decoration?.chain && <span className="workflow-node-card__chain"><Glyph name="link" />{decoration.chain.label}</span>}
+      {decoration?.badges?.length ? <span className="workflow-node-card__badges">{decoration.badges.map(badge => <span key={badge}>{badge}</span>)}</span> : null}
+      {decoration?.dropTarget && <span className="workflow-node-card__drop" role="status">{text('여기에 놓아 배정', 'Drop to assign here')}</span>}
       {detail && <span className="workflow-node-card__detail">{detail}</span>}
       {status && <span className="workflow-node-card__run">
         <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status>
@@ -73,7 +87,7 @@ export function WorkflowNodeCard({ node, text, entry = false, selected = false, 
       {issueCount > 0 && <span className="workflow-node-card__issues"><Glyph name="warn" />{text(`확인할 점 ${issueCount}`, `${issueCount} to check`)}</span>}
     </div>
     {ports.length > 0 && <ul className="workflow-node-card__ports" aria-label={text('나가는 연결', 'Outputs')}>
-      {ports.map(outcome => <li key={outcome} data-port={outcome}><span>{workflowOutcomeLabel(outcome, text)}</span>{outputHandle?.(outcome)}</li>)}
+      {ports.map(outcome => <li key={outcome} data-port={outcome}><span>{decoration?.portLabels?.[outcome] ?? workflowOutcomeLabel(outcome, text)}</span>{outputHandle?.(outcome)}</li>)}
     </ul>}
   </div>;
 }

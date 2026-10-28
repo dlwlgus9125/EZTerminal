@@ -37,9 +37,25 @@ export type ChatAgentProfileResult =
   | { readonly ok: true; readonly profiles: readonly ChatAgentProfile[] }
   | { readonly ok: false; readonly error: string };
 
+/** A conversation phase an agent can be linked to (Settings › AI › 단계 연결). */
+export type ChatAgentPhaseName = 'plan' | 'implement' | 'review';
+/**
+ * Which agent applies in each phase. A separate file from the profiles (an older build reads a changed
+ * profile file strictly and would overwrite it). `switchModel` off: only effort and permission change.
+ */
+export interface ChatAgentPhaseMap {
+  readonly plan?: { readonly profileId: string };
+  readonly implement?: { readonly profileId: string };
+  readonly review?: { readonly profileId: string };
+  readonly switchModel: boolean;
+}
+
 /** Desktop only: the renderer's view of the saved profiles. */
 export interface ChatAgentProfileAccess {
   list(): Promise<readonly ChatAgentProfile[]>;
   save(profile: ChatAgentProfile): Promise<ChatAgentProfileResult>;
   remove(id: string): Promise<ChatAgentProfileResult>;
+  /** 단계 연결, on hosts that keep it (absent: the section is not shown). */
+  phases?(): Promise<ChatAgentPhaseMap>;
+  savePhases?(phases: ChatAgentPhaseMap): Promise<{ readonly ok: true; readonly phases: ChatAgentPhaseMap } | { readonly ok: false; readonly error: string }>;
 }

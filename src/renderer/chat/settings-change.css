@@ -1,0 +1,34 @@
+/* Settings the conversation's AI changed or proposed (SettingsChangeTrack), above the input box.
+   Proposals are decisions: amber like every "waiting for a person". Margins, not gap (WebView 74). */
+
+/* Same column as the input box under it. */
+.settings-change-track { width: min(calc(100% - 2rem), var(--ui-chat-max-width)); margin: 0 auto var(--ui-space-2); box-sizing: border-box; }
+.settings-change-track > * + * { margin-top: var(--ui-space-2); }
+
+.settings-proposal { padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-warning-border); border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-md); background: var(--ui-warning-muted); }
+.settings-proposal > * + * { margin-top: var(--ui-space-2); }
+.settings-proposal__head { display: flex; flex-wrap: wrap; align-items: center; margin: 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.settings-proposal__head > * + * { margin-left: var(--ui-space-2); }
+.settings-proposal__head strong { color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); }
+.settings-proposal__rows { width: 100%; border-collapse: collapse; font-size: var(--ui-font-size-sm); }
+.settings-proposal__rows th, .settings-proposal__rows td { padding: 2px var(--ui-space-2) 2px 0; text-align: left; vertical-align: top; }
+.settings-proposal__rows thead th { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); font-weight: 500; }
+.settings-proposal__rows tbody th { color: var(--ui-text-secondary); font-weight: 500; }
+.settings-proposal__rows tbody td:last-child { color: var(--ui-text-primary); font-weight: 600; }
+.settings-proposal__risk { display: flex; align-items: flex-start; margin: 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.settings-proposal__risk > svg { flex: none; width: 0.875rem; height: 0.875rem; margin: 1px var(--ui-space-1) 0 0; color: var(--ui-warning); }
+.settings-proposal__actions { display: flex; flex-wrap: wrap; align-items: center; }
+.settings-proposal__actions > * { margin: 0 var(--ui-space-2) 0 0; }
+.settings-proposal__pc { margin: 0 var(--ui-space-2) 0 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+
+.settings-changes { padding: var(--ui-space-1) var(--ui-space-3); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-inset); }
+.settings-changes__head { display: flex; align-items: center; margin: var(--ui-space-1) 0; color: var(--ui-text-muted); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
+.settings-changes__head > svg { flex: none; width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); }
+.settings-changes__list { margin: 0; padding: 0; list-style: none; }
+.settings-changes__list > li { display: flex; align-items: center; min-height: 1.75rem; }
+.settings-changes__list > li > * + * { margin-left: var(--ui-space-2); }
+.settings-changes__list > li + li { border-top: 1px solid var(--ui-border-subtle); }
+.settings-changes__label { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--ui-text-primary); font-size: var(--ui-font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+.settings-changes__list > li[data-undone] .settings-changes__label { color: var(--ui-text-muted); text-decoration: line-through; }
+.settings-changes__at { flex: none; color: var(--ui-text-muted); font-family: var(--ui-font-mono); font-size: var(--ui-font-size-xs); }
+.settings-changes__state { flex: none; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }

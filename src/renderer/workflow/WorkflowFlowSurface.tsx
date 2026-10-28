@@ -1,5 +1,5 @@
 import { Glyph } from '../ui/Glyph';
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import { blockingRunOf, stageEditScope, stageWorking, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
@@ -8,7 +8,7 @@ import { flowRunNumber } from '../../shared/workflow-run-view';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
 import { Button, Dialog, LoadingState, Status, VisuallyHidden } from '../ui';
 import { layoutWorkflowGraph, resolveCanvasView, workflowLayoutOverlaps, workflowRunControls, type WorkflowPanelSection } from './workflow-canvas-model';
-import type { CanvasSelection, WorkflowCanvasRendererProps } from './workflow-canvas-types';
+import type { CanvasSelection, WorkflowCanvasRendererProps, WorkflowEdgeDecoration, WorkflowNodeDecoration } from './workflow-canvas-types';
 import { WorkflowCanvasHeader, type WorkflowRunCommandInput } from './WorkflowCanvasHeader';
 import type { WorkflowStageLink } from './WorkflowNodeSections';
 import { WorkflowEdgeInspector } from './WorkflowNodeSettings';
@@ -94,6 +94,13 @@ export interface WorkflowFlowSurfaceProps {
   /** The stage panel beside the canvas; the workspace keeps the choice. Always open on Android. */
   readonly panelOpen?: boolean;
   readonly onPanelOpenChange?: (open: boolean) => void;
+  /** What each stage card shows beyond the stage (agent, chain, checks); see WorkflowNodeDecoration. */
+  readonly decorations?: Readonly<Record<string, WorkflowNodeDecoration>>;
+  readonly edgeDecorations?: Readonly<Record<string, WorkflowEdgeDecoration>>;
+  /** Above whatever the side panel shows (the agent list). */
+  readonly panelTop?: ReactNode;
+  /** A stage's agent settings and what it waits for, in place of the AI · model · effort fields. */
+  readonly stageSlots?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string } | undefined;
 }
 
 const NO_ISSUES: readonly WorkflowIssue[] = [];
@@ -198,7 +205,9 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     graph: view.graph, overlay: view.overlay, editable: shaping, selection, onSelect: select, onGraphChange: change, text, issueCounts,
     label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: cameras[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
     onViewportChange: viewport => { cameras[cameraKey] = viewport; }, onRequestDeleteNode: shaping ? setRemoveId : undefined, reveal, onTidy: shaping ? tidy : undefined,
+    decorations: props.decorations, edgeDecorations: props.edgeDecorations,
   };
+  const slots = node ? props.stageSlots?.(node) : undefined;
   const removeNode = (id: string) => change({ ...view.graph, nodes: view.graph.nodes.filter(item => item.id !== id), edges: view.graph.edges.filter(item => item.from !== id && item.to !== id), entryNodeId: view.graph.entryNodeId === id ? null : view.graph.entryNodeId });
   const help = view.graph.nodes.length === 0
     ? text('아직 단계가 없습니다. 위에서 단계 종류를 고르고 "단계 추가"를 누르세요.', 'No stages yet. Pick a stage type above and choose "Add stage".')
@@ -225,9 +234,10 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
           <Button size="sm" onClick={retry}>{text('캔버스 다시 불러오기', 'Reload the canvas')}</Button>
           <WorkflowStaticGraph {...rendererProps} />
         </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer key={cameraKey} {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
-          : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} />}
+          : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} decorations={props.decorations} />}
       </div>
       <aside ref={panel} id={panelId} hidden={!panelOpen} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('흐름 요약', 'Flow summary')}>
+        {props.panelTop}
         {node ? <>
           <WorkflowStagePanel key={node.id} text={text} graph={view.graph} node={node} archived={archived} editable={editable} structure={props.structure && view.mode !== 'run-view'}
             run={view.overlay ? view.run : null} runNumber={runNumber} view={view.overlay?.nodes[node.id]} scope={scopeOf(node.id)} recordOpen={section === 'run'}
@@ -238,6 +248,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
             onMove={(staticRenderer || canvasFailed) && shaping ? (id, dy) => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === id ? { ...item, position: { ...item.position, y: Math.max(0, item.position.y + dy) } } : item) }) : undefined}
             onApprove={(activationId, decision) => props.onRunCommand({ type: 'run.approve', payload: { runId: view.run!.runId, activationId, decision } })}
             onStartChat={() => props.onStartStageChat(node.id)} onOpenConversation={props.onOpenConversation}
+            settingsSlot={slots?.settings} topSlot={slots?.top} kindLabel={slots?.kindLabel} instructionsLabel={slots?.instructionsLabel} conversationHint={slots?.conversationHint}
             onOpenAttemptResult={props.onOpenAttemptResult && view.run ? attemptId => props.onOpenAttemptResult!(view.run!.runId, attemptId) : undefined} />
           {view.run && !view.overlay && <div className="workflow-node-run"><p className="workflow-hint">{text('편집 중인 흐름의 단계나 연결이 실행에 고정된 흐름과 달라 상태를 겹쳐 보이지 않습니다.', 'The stages or connections being edited differ from the flow this run froze, so its state is not overlaid.')}</p>
             <Button onClick={() => props.onRunViewChange(true)}>{text('실행에서 이 단계 보기', 'See this stage in the run')}</Button></div>}

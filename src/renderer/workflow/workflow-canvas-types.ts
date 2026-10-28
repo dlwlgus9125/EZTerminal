@@ -6,6 +6,30 @@ import type { WorkflowCopy } from './workflow-copy';
 export type CanvasSelection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
 
 /**
+ * What a stage card shows beyond the stage itself (the agent placed on it, the chain it continues,
+ * its checks). Presentational: the workspace derives it; renderers only pass it to the card.
+ */
+export interface WorkflowNodeDecoration {
+  /** The agent placed on the stage (Settings › AI › 에이전트), with the stage's own effort. `missing`: not on this PC. */
+  readonly agent?: { readonly name: string; readonly detail: string; readonly effort?: string; readonly tone?: 'codex' | 'claude' | 'other'; readonly missing?: boolean };
+  /** Stages one agent does in the same conversation, in order (같은 에이전트 이어서). */
+  readonly chain?: { readonly label: string; readonly position: 'first' | 'middle' | 'last' };
+  /** Short facts under the title, e.g. 확인 명령 · 검토 끔. */
+  readonly badges?: readonly string[];
+  /** Replaces the operation label (e.g. 답변 기다림 for a stage that waits for the person's answer). */
+  readonly kindLabel?: string;
+  /** An agent is being dragged over this stage. */
+  readonly dropTarget?: boolean;
+  /** Waits for the person (an answer stage): amber like an awaiting approval. */
+  readonly attention?: boolean;
+  /** Port names of this kind of stage (e.g. 답함 for an answer stage) and ports it does not have. */
+  readonly portLabels?: Readonly<Partial<Record<'next' | 'passed' | 'failed' | 'approved' | 'rejected', string>>>;
+  readonly hiddenPorts?: readonly ('next' | 'passed' | 'failed' | 'approved' | 'rejected')[];
+}
+/** A connection between two stages of one chain (the same conversation continues). */
+export interface WorkflowEdgeDecoration { readonly chain?: boolean; readonly label?: string }
+
+/**
  * The contract both canvas renderers implement: the React Flow canvas (desktop, lazy chunk) and
  * the static graph (Android, tests, and the fallback when the chunk fails). Nothing here imports
  * React Flow, so the shared panel never pulls it into the mobile bundle.
@@ -36,4 +60,6 @@ export interface WorkflowCanvasRendererProps {
   readonly onRevealed?: () => void;
   /** The largest measured card in graph units (titles wrap), for tidy spacing and overlap checks. */
   readonly onCardSize?: (size: { readonly width: number; readonly height: number }) => void;
+  readonly decorations?: Readonly<Record<string, WorkflowNodeDecoration>>;
+  readonly edgeDecorations?: Readonly<Record<string, WorkflowEdgeDecoration>>;
 }

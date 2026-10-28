@@ -9,7 +9,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
 import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
-import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
+import type { WorkflowCanvasRendererProps, WorkflowNodeDecoration } from './workflow-canvas-types';
 import { WORKFLOW_CARD_UNITS, useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from './workflow-copy';
@@ -18,9 +18,9 @@ import { workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from 
  * Desktop canvas on React Flow. This is the only module that imports @xyflow/react; the panel
  * receives it as an injected renderer so the shared workspace (and Android) never bundles it.
  */
-type StageData = { stage: WorkflowNode; entry: boolean; run?: WorkflowNodeRunView; text: WorkflowCopy; editable: boolean; issues: number };
+type StageData = { stage: WorkflowNode; entry: boolean; run?: WorkflowNodeRunView; text: WorkflowCopy; editable: boolean; issues: number; decoration?: WorkflowNodeDecoration };
 type StageNode = Node<StageData, 'stage'>;
-type FlowEdgeData = { badge: string | null; run?: WorkflowEdgeRunView; retry: boolean; marker: string; depth: number; scale: number };
+type FlowEdgeData = { badge: string | null; run?: WorkflowEdgeRunView; retry: boolean; marker: string; depth: number; scale: number; chain?: boolean };
 type FlowEdge = Edge<FlowEdgeData, 'workflow'>;
 
 function StageNodeView({ id, data, selected }: NodeProps<StageNode>): JSX.Element {
@@ -28,14 +28,15 @@ function StageNodeView({ id, data, selected }: NodeProps<StageNode>): JSX.Elemen
   const updateInternals = useUpdateNodeInternals();
   const ports = workflowOutcomePorts(data.stage.operation).join(' ');
   useEffect(() => { updateInternals(id); }, [id, ports, updateInternals]);
-  return <WorkflowNodeCard node={data.stage} text={data.text} entry={data.entry} selected={selected} run={data.run} issueCount={data.issues}
+  return <WorkflowNodeCard node={data.stage} text={data.text} entry={data.entry} selected={selected} run={data.run} issueCount={data.issues} decoration={data.decoration}
     inputHandle={<Handle type="target" position={Position.Left} id="in" className="wf-handle" isConnectable={data.editable} />}
     outputHandle={outcome => <Handle type="source" position={Position.Right} id={outcome} className="wf-handle" isConnectable={data.editable} />} />;
 }
 function WorkflowEdgeView({ sourceX, sourceY, targetX, targetY, data, selected }: EdgeProps<FlowEdge>): JSX.Element {
   const path = workflowEdgePath({ x: sourceX, y: sourceY }, { x: targetX, y: targetY }, data?.depth ?? 0, data?.scale ?? 1);
   return <>
-    <path className="workflow-edge-path" d={path.d} markerEnd={data ? `url(#${data.marker})` : undefined} data-retry={data?.retry ? '' : undefined}
+    {data?.chain && <path className="workflow-edge-chain" d={path.d} />}
+    <path className="workflow-edge-path" d={path.d} markerEnd={data ? `url(#${data.marker})` : undefined} data-retry={data?.retry ? '' : undefined} data-chain={data?.chain ? '' : undefined}
       data-run={data?.run ? (data.run.taken > 0 ? 'taken' : 'idle') : undefined} data-selected={selected ? '' : undefined} />
     <path className="react-flow__edge-interaction" d={path.d} fill="none" strokeOpacity={0} strokeWidth={16} />
     {data?.badge && <EdgeLabelRenderer><span className="workflow-edge-badge workflow-canvas__badge" style={{ transform: `translate(-50%, -50%) translate(${path.labelX}px, ${path.labelY}px)` }}>{data.badge}</span></EdgeLabelRenderer>}
@@ -92,7 +93,7 @@ function RevealNode({ reveal, onRevealed }: { reveal?: WorkflowCanvasRendererPro
 }
 const DIRECTION_KO: Record<string, string> = { up: '위', down: '아래', left: '왼', right: '오른' };
 
-export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSelect, onGraphChange, text, label, issueCounts, initialViewport, active = true, onRequestDeleteNode, reveal, onViewportChange, onTidy, onRevealed, onCardSize }: WorkflowCanvasRendererProps): JSX.Element {
+export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSelect, onGraphChange, text, label, issueCounts, initialViewport, active = true, onRequestDeleteNode, reveal, onViewportChange, onTidy, onRevealed, onCardSize, decorations, edgeDecorations }: WorkflowCanvasRendererProps): JSX.Element {
   const marker = `workflow-arrow-${useId().replace(/:/gu, '')}`;
   const scale = useWorkflowScale();
   const [dragging, setDragging] = useState<Record<string, XYPosition>>({});
@@ -120,15 +121,15 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
       ...(measured[node.id] ? { measured: measured[node.id] } : {}),
       selected: selection?.kind === 'node' && selection.id === node.id,
       ariaLabel: [node.title, workflowOperationLabel(node.operation, text), run ? workflowRunStatusPresentation(run, text).label : ''].filter(Boolean).join(', '),
-      data: { stage: node, entry: graph.entryNodeId === node.id, run, text, editable, issues: issueCounts?.[node.id] ?? 0 },
+      data: { stage: node, entry: graph.entryNodeId === node.id, run, text, editable, issues: issueCounts?.[node.id] ?? 0, decoration: decorations?.[node.id] },
     };
-  }), [dragging, editable, graph.entryNodeId, graph.nodes, issueCounts, measured, onRequestDeleteNode, overlay, scale, selection, text]);
+  }), [decorations, dragging, editable, graph.entryNodeId, graph.nodes, issueCounts, measured, onRequestDeleteNode, overlay, scale, selection, text]);
   const edges = useMemo<FlowEdge[]>(() => graph.edges.filter(edge => graph.nodes.some(node => node.id === edge.from) && graph.nodes.some(node => node.id === edge.to)).map(edge => ({
     id: edge.id, source: edge.from, target: edge.to, sourceHandle: edge.outcome, targetHandle: 'in', type: 'workflow', deletable: editable, reconnectable: editable,
     selected: selection?.kind === 'edge' && selection.id === edge.id,
     ariaLabel: `${titleOf(edge.from)} · ${workflowOutcomeLabel(edge.outcome, text)} → ${titleOf(edge.to)}`,
-    data: { badge: workflowEdgeBadge(edge, overlay?.edges[edge.id], text), run: overlay?.edges[edge.id], retry: Boolean(edge.retryLimit), marker, depth: depths[edge.id] ?? 0, scale },
-  })), [depths, editable, graph.edges, graph.nodes, marker, overlay, scale, selection, text, titleOf]);
+    data: { badge: edgeDecorations?.[edge.id]?.label ?? workflowEdgeBadge(edge, overlay?.edges[edge.id], text), run: overlay?.edges[edge.id], retry: Boolean(edge.retryLimit), marker, depth: depths[edge.id] ?? 0, scale, chain: edgeDecorations?.[edge.id]?.chain },
+  })), [depths, edgeDecorations, editable, graph.edges, graph.nodes, marker, overlay, scale, selection, text, titleOf]);
 
   const onNodesChange = useCallback((changes: NodeChange<StageNode>[]) => {
     const sizes = changes.flatMap(change => change.type === 'dimensions' && change.dimensions ? [[change.id, change.dimensions] as const] : []);

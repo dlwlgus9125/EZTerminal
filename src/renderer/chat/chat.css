@@ -2234,3 +2234,41 @@
 /* WebView 74 flex-gap fallback (see src/renderer/mobile-shared.css). */
 [data-ui-flex-gap='unsupported'] .chat-usage-item { gap: 0; }
 [data-ui-flex-gap='unsupported'] .chat-usage-item > * + * { margin-left: var(--ui-space-1); }
+
+/* Settings chosen during a turn, queued for the next request: what runs now and what comes next, above the pills.
+   Info tone, not amber: nothing waits for the person. Margins, not gap (WebView 74). */
+.chat-pending-settings {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 var(--ui-space-1);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-left: 3px solid var(--ui-info);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-info-muted);
+  color: var(--ui-text-secondary);
+  font: var(--ui-font-size-xs) / var(--ui-line-height-normal) var(--ui-font-body);
+}
+.chat-pending-settings > * + * { margin-left: var(--ui-space-2); }
+.chat-pending-settings > svg { flex: none; width: 0.875rem; height: 0.875rem; color: var(--ui-info); }
+.chat-pending-settings strong { color: var(--ui-text-primary); font-weight: 600; }
+.chat-pending-settings__now strong { color: var(--ui-text-secondary); }
+.chat-pending-settings__cancel {
+  margin-left: auto;
+  padding: 0 var(--ui-space-1);
+  border: 0;
+  background: none;
+  color: var(--ui-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.chat-pending-settings__arrow { display: inline-flex; color: var(--ui-text-muted); }
+.chat-pending-settings__arrow > svg { width: 0.875rem; height: 0.875rem; }
+/* Phone: what runs now and what comes next on their own lines. */
+.structured-agent[data-variant='mobile'] .chat-pending-settings__arrow { display: none; }
+.structured-agent[data-variant='mobile'] .chat-pending-settings__now,
+.structured-agent[data-variant='mobile'] .chat-pending-settings__next { flex: 1 1 calc(100% - 1.5rem); }
+.structured-agent[data-variant='mobile'] .chat-pending-settings__next { margin-left: 1.375rem; }

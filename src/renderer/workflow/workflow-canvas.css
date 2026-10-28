@@ -174,3 +174,27 @@
 /* WebView 74 flex-gap fallback (the canvas's other fallbacks live in src/renderer/mobile-shared.css). */
 [data-ui-flex-gap='unsupported'] .workflow-folder-cleanup__runs ul > li { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-folder-cleanup__runs ul > li > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-1); }
+
+/* The agent placed on a stage (Settings › AI › 에이전트), the chain it continues and its checks. Margins for WebView 74. */
+.workflow-node-card__agent { display: flex; align-items: center; min-width: 0; padding: 2px var(--ui-space-2); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); font-family: var(--ui-font-label); font-size: var(--ui-font-size-sm); }
+.workflow-node-card__agent > * + * { margin-left: var(--ui-space-1); }
+.workflow-node-card__agent > svg { flex: none; width: 0.875rem; height: 0.875rem; color: var(--ui-warning); }
+.workflow-node-card__agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-text-primary); font-weight: 600; }
+.workflow-node-card__agent-effort { flex: none; margin-left: auto; padding: 0 var(--ui-space-1); border-radius: var(--ui-radius-sm); background: var(--ui-accent-muted); color: var(--ui-text-primary); font-size: var(--ui-font-size-xs); }
+.workflow-node-card[data-agent-missing] .workflow-node-card__agent { border-style: dashed; border-color: var(--ui-warning-border); }
+.workflow-node-card__chain { display: flex; align-items: center; color: var(--ui-accent); font-size: var(--ui-font-size-xs); font-weight: 600; }
+.workflow-node-card__chain > svg { flex: none; width: 0.75rem; height: 0.75rem; margin-right: var(--ui-space-1); }
+.workflow-node-card__badges { display: flex; flex-wrap: wrap; }
+.workflow-node-card__badges > span { margin: 2px var(--ui-space-1) 0 0; padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-size: var(--ui-font-size-2xs); }
+/* A chained stage carries a solid accent edge on the side that continues (first: right, last: left, middle: both). */
+.workflow-node-card[data-chain] { border-color: var(--ui-accent-muted); }
+.workflow-node-card[data-chain='first'] { box-shadow: inset -3px 0 0 var(--ui-accent); }
+.workflow-node-card[data-chain='middle'] { box-shadow: inset 3px 0 0 var(--ui-accent), inset -3px 0 0 var(--ui-accent); }
+.workflow-node-card[data-chain='last'] { box-shadow: inset 3px 0 0 var(--ui-accent); }
+.workflow-node-card[data-drop-target] { border: 2px dashed var(--ui-accent); background: var(--ui-surface-selected); }
+.workflow-node-card__drop { margin-top: var(--ui-space-1); color: var(--ui-accent); font-size: var(--ui-font-size-xs); font-weight: 600; }
+/* The connection between two stages of one chain: a wide accent band under the line. */
+.workflow-edge-chain { fill: none; stroke: var(--ui-accent-muted); stroke-width: 10; stroke-linecap: round; }
+.workflow-edge-path[data-chain] { stroke: var(--ui-accent); stroke-width: 2; }
+/* A stage waiting for the person (an answer): amber like an awaiting approval. */
+.workflow-node-card[data-attention] { border-color: var(--ui-warning); border-width: 2px; box-shadow: 0 0 0 3px var(--ui-warning-ring); }

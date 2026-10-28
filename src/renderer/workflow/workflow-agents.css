@@ -1,0 +1,92 @@
+/* Agents a flow can use (WorkflowAgentList) and a stage's agent settings (WorkflowStageAgent).
+   Instrument look: a plate on the panel floor, lamps in the AI's colour, label face for names.
+   Spacing uses margins, not flex gap, so WebView 74 (Android API 29) lays it out the same. */
+
+.workflow-agents { margin: 0 0 var(--ui-space-3); padding: var(--ui-space-2); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface); }
+.workflow-agents[data-variant='sheet'] { margin: 0; border: 0; padding: 0; background: none; }
+.workflow-agents__head { display: flex; align-items: center; justify-content: space-between; }
+.workflow-agents__toggle { display: flex; align-items: center; min-height: 1.75rem; padding: 0 var(--ui-space-1); border: 0; border-radius: var(--ui-radius-sm); background: none; color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); font-weight: 600; cursor: pointer; }
+.workflow-agents__toggle > * + * { margin-left: var(--ui-space-1); }
+.workflow-agents__toggle > svg { width: 0.875rem; height: 0.875rem; color: var(--ui-text-muted); }
+.workflow-agents__toggle:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.workflow-agents__count { padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); font-weight: 500; }
+.workflow-agents__hint { margin: var(--ui-space-1) 0 var(--ui-space-2); color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-agents__list { margin: 0; padding: 0; list-style: none; }
+.workflow-agents__new { margin-top: var(--ui-space-1); }
+
+.workflow-agent { --agent-tone: var(--ui-text-muted); display: flex; align-items: center; min-height: 2.75rem; margin-top: var(--ui-space-1); padding: var(--ui-space-1) var(--ui-space-2); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); cursor: grab; }
+.workflow-agent > * + * { margin-left: var(--ui-space-2); }
+.workflow-agent[data-tone='codex'] { --agent-tone: var(--ui-agent-codex); }
+.workflow-agent[data-tone='claude'] { --agent-tone: var(--ui-agent-claude); }
+.workflow-agents[data-variant='sheet'] .workflow-agent { cursor: default; min-height: 3.25rem; }
+.workflow-agent:hover { border-color: var(--ui-border-strong); background: var(--ui-surface-hover); }
+.workflow-agent[data-dragging] { opacity: 0.45; border-style: dashed; }
+.workflow-agent__grip { flex: none; width: 0.875rem; height: 0.875rem; color: var(--ui-text-dim); }
+.workflow-agent__lamp { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--agent-tone); box-shadow: 0 0 0 2px var(--ui-surface-inset); }
+.workflow-agent__body { display: grid; min-width: 0; flex: 1 1 auto; }
+.workflow-agent__name { overflow: hidden; color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-agent__detail, .workflow-agent__when { overflow: hidden; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.workflow-agent__when { color: var(--ui-text-secondary); }
+.workflow-agent__used { flex: none; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+
+/* The chip that follows the pointer while an agent is dragged onto a stage (story: drag in progress). */
+.workflow-agent-ghost { position: absolute; z-index: 1; display: inline-flex; align-items: center; padding: var(--ui-space-1) var(--ui-space-2); border: 1px solid var(--ui-accent); border-radius: var(--ui-radius-sm); background: var(--ui-surface-raised); box-shadow: var(--ui-shadow-raised); color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-sm); font-weight: 600; pointer-events: none; }
+.workflow-agent-ghost > * + * { margin-left: var(--ui-space-1); }
+
+/* A stage's agent settings (in place of AI · 모델 · 노력). */
+.workflow-stage-agent { display: grid; }
+.workflow-stage-agent > * + * { margin-top: var(--ui-space-3); }
+.workflow-stage-agent__label { margin: 0 0 var(--ui-space-1); color: var(--ui-text-muted); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
+.workflow-stage-agent__who { --agent-tone: var(--ui-text-muted); display: flex; align-items: center; padding: var(--ui-space-2); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); background: var(--ui-surface); }
+.workflow-stage-agent__who > * + * { margin-left: var(--ui-space-2); }
+.workflow-stage-agent__who[data-tone='codex'] { --agent-tone: var(--ui-agent-codex); }
+.workflow-stage-agent__who[data-tone='claude'] { --agent-tone: var(--ui-agent-claude); }
+.workflow-stage-agent__who[data-missing] { border-style: dashed; border-color: var(--ui-warning-border); }
+.workflow-stage-agent__who-body { display: grid; min-width: 0; flex: 1 1 auto; }
+.workflow-stage-agent__who-body strong { color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); }
+.workflow-stage-agent__who-body small { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-stage-agent__empty { padding: var(--ui-space-3); border: 1px dashed var(--ui-border-strong); border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); font-size: var(--ui-font-size-sm); text-align: center; }
+.workflow-stage-agent__session { display: flex; flex-wrap: wrap; }
+.workflow-stage-agent__session > * { margin: 0 var(--ui-space-1) var(--ui-space-1) 0; }
+.workflow-stage-agent__note { margin: var(--ui-space-1) 0 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-stage-agent__note[data-tone='saving'] { color: var(--ui-success); }
+.workflow-stage-agent__pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.workflow-stage-agent__pair > * + * { margin-left: var(--ui-space-2); }
+.workflow-check { display: flex; align-items: center; margin-top: var(--ui-space-1); padding: var(--ui-space-1) var(--ui-space-2); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); }
+.workflow-check > * + * { margin-left: var(--ui-space-2); }
+.workflow-check code { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--ui-text-primary); font-family: var(--ui-font-mono); font-size: var(--ui-font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+.workflow-check[data-consent='needed'] { border-color: var(--ui-warning-border); background: var(--ui-warning-muted); }
+
+/* A stage that waits for the person's answer: amber, the colour of "waiting for a person". */
+.workflow-answer { display: grid; margin: var(--ui-space-2) 0 var(--ui-space-3); padding: var(--ui-space-3); border: 1px solid var(--ui-warning-border); border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-md); background: var(--ui-warning-muted); }
+.workflow-answer > * + * { margin-top: var(--ui-space-2); }
+.workflow-answer__head { display: flex; align-items: center; color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); font-weight: 600; }
+.workflow-answer__head > * + * { margin-left: var(--ui-space-2); }
+.workflow-answer__question { margin: 0; color: var(--ui-text-primary); white-space: pre-wrap; }
+.workflow-answer__from { margin: 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-answer textarea { width: 100%; min-height: 5rem; box-sizing: border-box; padding: var(--ui-space-2); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); color: var(--ui-text-primary); font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body); resize: vertical; }
+.workflow-answer textarea:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.workflow-answer__actions { display: flex; flex-wrap: wrap; }
+.workflow-answer__actions > * { margin: 0 var(--ui-space-2) 0 0; }
+
+/* Templates: a list of flows to start from, each with its stage chain. */
+.workflow-templates { margin: 0; padding: 0; list-style: none; }
+.workflow-template { margin-top: var(--ui-space-2); }
+.workflow-template > label { display: grid; padding: var(--ui-space-3); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-md); background: var(--ui-surface-inset); cursor: pointer; }
+.workflow-template > label > * + * { margin-top: var(--ui-space-1); }
+.workflow-template > label[data-checked] { border-color: var(--ui-accent); box-shadow: 0 0 0 1px var(--ui-accent); }
+.workflow-template input { position: absolute; opacity: 0; pointer-events: none; }
+.workflow-template > label:focus-within { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.workflow-template__title { display: flex; align-items: center; color: var(--ui-text-primary); font-family: var(--ui-font-label); font-size: var(--ui-font-size-md); font-weight: 600; }
+.workflow-template__title > * + * { margin-left: var(--ui-space-2); }
+.workflow-template__origin { padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-size: var(--ui-font-size-2xs); font-weight: 500; }
+.workflow-template__desc { color: var(--ui-text-secondary); font-size: var(--ui-font-size-sm); }
+.workflow-template__chain { display: flex; flex-wrap: wrap; align-items: center; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-template__chain > span { margin: 2px var(--ui-space-1) 0 0; padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); }
+.workflow-template__chain > span[data-kind='person'] { border-color: var(--ui-warning-border); }
+.workflow-template__chain > span[data-kind='check'] { font-family: var(--ui-font-mono); }
+.workflow-template__needs { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+
+/* The outline (phone list) names the agent placed on each stage. */
+.workflow-outline__agent { color: var(--ui-accent); font-size: var(--ui-font-size-xs); font-weight: 600; }
+.workflow-outline__agent[data-missing] { color: var(--ui-warning); }
