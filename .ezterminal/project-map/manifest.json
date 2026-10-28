@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:90f360c561907a60f22a9a4df9b528792d8b73a0767e749871c7469db8c8d3f2",
+        "inputDigest": "sha256:5e6903cec581f43fea8804e106a12f29f68a94d032fa482cf2d8cf952bc0cdb5",
         "decision": "map-updated",
         "reason": "I5-10: the PC no longer builds the planning AI, scene assets, planning drafts or the renderer's planning read/execute IPC; the preload claim now lists flow-run calls, and stale planning-ai sessions never dispatch."
       }
@@ -369,7 +369,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2b7caac8f9477b8a0ede0e18499f77289cdc1ce6d56723200b53b91903841129",
+        "inputDigest": "sha256:55bf2119db421e68a4a2227a021c7705317866286831ee7d2ef42855863f37a0",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-10): main.ts lost the planning AI, asset and draft services and their shutdown step; the anchored window and authority lifecycle blocks only moved."
       }
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7c4092c9c6b4dcc3ba4c914f016178d8e8967250b50827ece80b079013f63ca7",
+        "inputDigest": "sha256:972b3551bad4d7b84e42299f41090eb9df08748cf58cf1d25ad9dc1c405f8387",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I5-10): the phone transport drops the old planning editor's requests (planning read/execute, AI, assets, device drafts) and the PC stops offering them; the anchored session and command paths only moved."
       }

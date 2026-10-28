@@ -286,8 +286,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2742,
-          "endLine": 2893,
+          "startLine": 2743,
+          "endLine": 2894,
           "lineDigest": "sha256:5c10035d5209b5419c24b23ec5d08b0ba630202d832ef9ff33176fcaa0fdbbbb",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier and its service goes after its coordinator."
         },
@@ -404,8 +404,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2752,
-          "endLine": 2792,
+          "startLine": 2753,
+          "endLine": 2793,
           "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
           "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
         }
@@ -474,8 +474,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2742,
-          "endLine": 2893,
+          "startLine": 2743,
+          "endLine": 2894,
           "lineDigest": "sha256:5c10035d5209b5419c24b23ec5d08b0ba630202d832ef9ff33176fcaa0fdbbbb",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier and its service goes after its coordinator."
         }
