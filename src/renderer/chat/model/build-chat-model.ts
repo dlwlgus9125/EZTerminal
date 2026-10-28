@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
+import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseTranscriptPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import type { ChatActivity, ChatModel, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile, PendingInteraction, TodoChange } from './types';
@@ -530,8 +531,10 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     .filter((approval) => approval.state === 'pending')
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   let pending: PendingInteraction | undefined;
-  if (pendingApprovals[0]) {
-    const approval = pendingApprovals[0];
+  // A settings proposal waits without holding the agent: an approval the agent is blocked on comes first.
+  const first = pendingApprovals.find((approval) => !isSettingsProposalRequest(approval.providerRequestId)) ?? pendingApprovals[0];
+  if (first) {
+    const approval = first;
     const request: ApprovalRequest | undefined = approval.request;
     const tool = request?.callId ? toolsByCallId.get(request.callId) : undefined;
     pending = { approval, ...(request ? { request } : {}), ...(tool ? { tool: { ...tool } } : {}) };

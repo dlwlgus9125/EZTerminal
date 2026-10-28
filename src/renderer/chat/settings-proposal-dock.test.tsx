@@ -74,6 +74,16 @@ describe('a settings proposal in the approval dock', () => {
     expect(resolve).toHaveBeenCalledWith('approval-1', 'deny');
   });
 
+  it('gives the dock to an approval the agent is blocked on before an older settings proposal', () => {
+    const command: DaemonApproval = { id: 'approval-2', sessionId: 'chat-1', turnId: 'turn-1', providerRequestId: 'provider-1', risk: 'write', title: 'Run pnpm test',
+      request: { v: 1, kind: 'command', command: 'pnpm test' }, state: 'pending', revision: 1, createdAt: '2026-10-29T09:32:00.000Z', updatedAt: '2026-10-29T09:32:00.000Z' };
+    render(<StructuredAgentSessionPanel sessionId="chat-1" title="Chat" providerId="codex" providerLabel="Codex" workspace={{ id: 'workspace-1', label: 'App', kind: 'local' }}
+      model="gpt" modelOptions={[{ id: 'gpt', label: 'GPT' }]} permissionPreset="standard" state="blocked" items={[]} approvals={[approval(), command]}
+      onSend={async () => ({ ok: true })} onChangeSettings={async () => ({ ok: true })} onResolveApproval={vi.fn(async () => ({ ok: true as const }))} />);
+    expect(container.querySelector('[data-testid="chat-dock-settings-proposal"]')).toBeNull();
+    expect(container.textContent).toContain('$ pnpm test');
+  });
+
   it('falls back to its readable text where the host gives no rows (an older or other client)', () => {
     render(panel());
     expect(container.querySelector('[data-testid="chat-dock-settings-proposal"]')!.textContent).toContain('원격 접속: 끔 → 켬');
