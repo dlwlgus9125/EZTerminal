@@ -455,6 +455,11 @@ const api: EzTerminalApi = {
     phases: () => ipcRenderer.invoke('chat-agent-profiles:phases'),
     savePhases: (phases: import('../shared/chat-agent-profiles').ChatAgentPhaseMap) => ipcRenderer.invoke('chat-agent-profiles:save-phases', phases),
   },
+  workflowTemplates: {
+    list: () => ipcRenderer.invoke('workflow-templates:list'),
+    save: (template: import('../shared/workflow-templates').WorkflowTemplateInput) => ipcRenderer.invoke('workflow-templates:save', template),
+    remove: (id: string) => ipcRenderer.invoke('workflow-templates:remove', id),
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);

@@ -1516,6 +1516,8 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   runRetention?: import('./run-retention').RunRetentionAccess;
   /** Desktop agent profiles: provider, model, effort, permission and when to use each. */
   chatAgentProfiles?: import('./chat-agent-profiles').ChatAgentProfileAccess;
+  /** Desktop workflow templates saved on this PC (the two built-ins are code, not in this list). */
+  workflowTemplates?: import('./workflow-templates').WorkflowTemplateAccess;
 
   // ── Git working tree (read-only) ────────────────────────────────────────
   /** Branch and per-file change counts for one directory. Returns an untracked

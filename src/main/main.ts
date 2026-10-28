@@ -34,6 +34,7 @@ import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
 import { createWorkspaceWorktree } from './workspace-worktree-actions';
 import { ChatAgentProfileStore, installChatAgentProfileIpc } from './chat-agent-profile-store';
+import { WorkflowTemplateStore, installWorkflowTemplateIpc } from './workflow-template-store';
 import { WorkspaceWorktreeService } from './workspace-worktree-service';
 import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
 import { installAppUpdateIpc } from './app-update-ipc';
@@ -1216,6 +1217,10 @@ app.on('ready', async () => {
   const chatAgentProfilesReady = chatAgentProfileStore.init().catch((err) => {
     console.error('[main] chat agent profiles init failed:', err);
   });
+  const workflowTemplateStore = new WorkflowTemplateStore(app.getPath('userData'));
+  const workflowTemplatesReady = workflowTemplateStore.init().catch((err) => {
+    console.error('[main] workflow templates init failed:', err);
+  });
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
   const agentOrchestrationStore = new AgentOrchestrationStore(app.getPath('userData'));
@@ -2261,6 +2266,7 @@ app.on('ready', async () => {
   };
   const pendingWorktreeActions = new Map<string, AbortController>();
   featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady }));
+  featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady }));
   featureIpcDisposers.push(installWorkflowCheckIpc({
     ipc: ipcMain,
     authorized: (event, clientId) => resolveDesktopSessionPrincipal(event, clientId) !== null,
@@ -2796,6 +2802,11 @@ app.on('ready', async () => {
         name: 'chat agent profiles',
         after: ['local Agent operation ingress', 'main-owned runtime startup'],
         run: () => chatAgentProfileStore.flush(),
+      },
+      {
+        name: 'workflow templates',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => workflowTemplateStore.flush(),
       },
       {
         name: 'project workspace access',

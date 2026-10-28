@@ -6,6 +6,7 @@ import { WorkflowCommandSchema, type WorkflowAccess, type WorkflowCommand } from
 import { WorkflowWorkspacePanel } from './WorkflowWorkspacePanel';
 import { workflowFixture } from './workflow-fixtures';
 import { workflowCanvasFixture } from './workflow-canvas-fixtures';
+import { builtinWorkflowTemplates, instantiateWorkflowTemplate, type WorkflowTemplate, type WorkflowTemplateInput, type WorkflowTemplateResult } from '../../shared/workflow-templates';
 import type { WorkflowDraftAccess, WorkflowDraftState } from '../../shared/workflow-draft';
 import { DAEMON_PROTOCOL_VERSION, parseDaemonCommand, type DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
@@ -837,5 +838,82 @@ describe('WorkflowWorkspacePanel · one canvas', () => {
     await click('History'); await click('Old stage');
     expect(document.querySelector('.workflow-flow__panel')?.getAttribute('aria-label')).toBe('Old stage');
     expect((document.querySelector('.workflow-stage textarea') as HTMLTextAreaElement).value).toBe('Old notes');
+  });
+});
+
+describe('workflow templates (desktop)', () => {
+  const english = (_ko: string, en: string) => en;
+  const inDialog = (name: string): HTMLButtonElement => { const node = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(item => item.textContent?.trim() === name); if (!node) throw new Error(`Missing dialog button: ${name}`); return node; };
+  const templateAccess = (templates: readonly WorkflowTemplate[] = []) => ({
+    list: vi.fn(async () => templates),
+    save: vi.fn(async (template: WorkflowTemplateInput): Promise<WorkflowTemplateResult> => ({ ok: true, templates: [...templates, { ...template, createdAt: '2026-10-29T00:00:00.000Z', updatedAt: '2026-10-29T00:00:00.000Z' }] })),
+    remove: vi.fn(async (): Promise<WorkflowTemplateResult> => ({ ok: true, templates })),
+  });
+  const mine: WorkflowTemplate = { id: 'template-mine', title: 'Quick fix', description: 'Reproduce, fix, test.', createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z',
+    graph: { entryNodeId: 'subproject-old:fix', nodes: [{ ...workflowFixture().subprojects[0]!.graph.nodes[0]!, id: 'subproject-old:fix', title: 'Fix' }, { ...workflowFixture().subprojects[0]!.graph.nodes[2]!, id: 'subproject-old:done' }], edges: [{ id: 'subproject-old:edge:1', from: 'subproject-old:fix', to: 'subproject-old:done', outcome: 'next' }] } };
+
+  it('opens the template picker for 새 워크플로 and creates the chosen template as a custom subproject', async () => {
+    const state = fixture(); const access = templateAccess([mine]);
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} conversations={[]} templateAccess={access} />));
+    await click('New workflow');
+    expect(access.list).toHaveBeenCalled();
+    const titles = [...document.querySelectorAll('.workflow-template__title > span:first-of-type')].map(item => item.textContent);
+    expect(titles).toEqual(['Development process', 'Routine check', 'Quick fix']);
+    await edit('Name', 'Weekly check');
+    const radio = (title: string) => [...document.querySelectorAll<HTMLInputElement>('.workflow-template input[type="radio"]')].find(item => item.closest('label')?.textContent?.includes(title))!;
+    await act(async () => radio('Routine check').click());
+    await click('Create from this template');
+    expect(state.commands).toHaveLength(1);
+    const command = state.commands[0]!;
+    if (command.type !== 'subproject.create') throw new Error('Expected a creation');
+    expect(command.payload).toMatchObject({ title: 'Weekly check', goal: '', presetId: 'custom' });
+    expect(command.payload.graph).toEqual(instantiateWorkflowTemplate(builtinWorkflowTemplates(english)[1].graph, command.payload.id));
+    expect(command.payload.graph!.nodes.every(node => node.id.startsWith(`${command.payload.id}:`))).toBe(true);
+  });
+
+  it('gives a saved template the new workflow’s ids, and can switch to designing it in a conversation and back', async () => {
+    const state = fixture(); const access = templateAccess([mine]);
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} conversations={[]} templateAccess={access} />));
+    await click('New workflow');
+    await edit('Name', 'Hotfix');
+    await click('Design in conversation');
+    expect(inDialog('Open setup conversation')).toBeTruthy();
+    await click('From template');
+    await act(async () => [...document.querySelectorAll<HTMLInputElement>('.workflow-template input[type="radio"]')].find(item => item.closest('label')?.textContent?.includes('Quick fix'))!.click());
+    await click('Create from this template');
+    const command = state.commands[0]!;
+    if (command.type !== 'subproject.create') throw new Error('Expected a creation');
+    expect(command.payload).toMatchObject({ title: 'Hotfix', presetId: 'custom' });
+    expect(command.payload.graph).toMatchObject({ entryNodeId: `${command.payload.id}:fix`, edges: [{ from: `${command.payload.id}:fix`, to: `${command.payload.id}:done` }] });
+  });
+
+  it('saves the flow as a template from ⋯, without its agents when the box is off', async () => {
+    const snapshot = workflowFixture();
+    const agent = { profileId: 'agent-build', name: 'Builder', providerId: 'codex', model: 'model-story', capturedAt: '2026-10-29T00:00:00.000Z' };
+    snapshot.subprojects[0]!.graph.nodes[0] = { ...snapshot.subprojects[0]!.graph.nodes[0]!, agent, document: 'Login notes' };
+    const workflowAccess: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => ({ ok: true, snapshot, commandId: command.commandId }) };
+    const access = templateAccess();
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={workflowAccess} conversations={[]} templateAccess={access}
+      navigationTarget={{ subprojectId: 'login', key: 'test' }} />));
+    await subprojectMenu('Save as template…');
+    await edit('Description', 'Investigate then approve');
+    const keep = document.querySelector<HTMLInputElement>('[role="dialog"] input[type="checkbox"]')!;
+    expect(keep.checked).toBe(true);
+    await act(async () => keep.click());
+    await act(async () => inDialog('Save').click());
+    expect(access.save).toHaveBeenCalledOnce();
+    const saved = access.save.mock.calls[0]![0];
+    expect(saved).toMatchObject({ id: expect.stringMatching(/^template-/), title: 'Login improvements', description: 'Investigate then approve' });
+    expect(saved.graph.nodes.some(node => 'agent' in node)).toBe(false);
+    expect(saved.graph.nodes[0]).toMatchObject({ providerId: 'codex', model: 'model-story', instructions: 'Inspect the assigned project and record evidence.', acceptance: ['Document the evidence.'], document: '' });
+    expect(saved.graph.edges).toEqual(snapshot.subprojects[0]!.graph.edges);
+    // Saved: the form closes.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('keeps the presets where there is no template store (the phone, an older preload)', async () => {
+    const state = fixture(); await state.render(); await click('New workflow');
+    expect(button('From preset').getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector('.workflow-template')).toBeNull();
   });
 });
