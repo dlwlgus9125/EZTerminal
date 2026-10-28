@@ -310,6 +310,20 @@ describe('planning result authority', () => {
     // Another folder is never moved.
     expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.root)).toBe(false);
   }, 60_000);
+  it('records the next chain stage from the accepted result, so its result holds only its own change (앞 대화 이어서)', async () => {
+    const f = await fixture({ workflow: true });
+    await f.capture();
+    const first = (await f.service.readResult('P', 'A'))!;
+    expect(await f.service.continueChain(f.current(), f.current().attempts[0], f.worker)).toBe(true);
+    const next = { ...f.preparation.tasks[0], taskId: 'B', title: 'Next stage' };
+    await f.service.repository.prepareWorkspace(f.current(), next, f.worker, [{ artifactId: `git:${first.commit}`, revision: 0 }]);
+    await fs.writeFile(path.join(f.worker, 'src/b.txt'), 'next stage');
+    const attempt = { ...f.current().attempts[0], attemptId: 'B1', taskId: 'B', dispatchId: 'DB', turnId: 'next-turn' };
+    const record = await f.service.repository.capture(f.current(), next, attempt);
+    expect(record.baseCommit).toBe(first.commit);
+    expect(record.changedPaths).toEqual(['src/b.txt']);
+    await f.git.run(f.worker, ['merge-base', '--is-ancestor', first.commit!, record.commit!]);
+  }, 60_000);
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();
     await f.capture();

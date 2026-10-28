@@ -264,8 +264,12 @@ export class RunWorktreeCleanup {
   private async folders(projectId: string, run: ExecutionRun, snapshot: DaemonSnapshot): Promise<RunFolder[]> {
     const result: RunFolder[] = [];
     const add = (folder: RunFolder): void => {
-      const same = result.find(entry => samePath(entry.path, folder.path));
-      if (same) { for (const owner of folder.owners) same.owners.add(owner); } else result.push(folder);
+      const index = result.findIndex(entry => samePath(entry.path, folder.path));
+      const same = result[index];
+      if (!same) { result.push(folder); return; }
+      for (const owner of same.owners) folder.owners.add(owner);
+      // '앞 대화 이어서': later stages of a chain work in the same folder; it must hold the last attempt's result.
+      result[index] = folder.plan.kind === 'attempt' && same.plan.kind === 'attempt' ? folder : { ...same, owners: folder.owners };
     };
     for (const attempt of run.attempts) {
       const workspace = snapshot.workspaces.find(entry => entry.id === attempt.workspaceId);

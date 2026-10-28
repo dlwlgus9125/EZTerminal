@@ -684,6 +684,18 @@ export class PlanningRunService {
   }
 
   /** The previous attempt of this stage (in this run or the run it replaces), quoted in the turn as preserved evidence. */
+  /**
+   * A retried chain stage goes on in its own conversation, which already holds its earlier work: it gets only why
+   * that attempt was sent back (the independent review and the checks ran elsewhere).
+   */
+  private chainRetryHandoff(run: ExecutionRun, previous: ExecutionAttempt): string {
+    const reviews = run.reviews.filter((entry) => entry.attemptId === previous.attemptId).map((entry) => ({ decision: entry.decision, detail: entry.detail.slice(0, 8_000) }));
+    const evidence = run.evidence.filter((entry) => entry.attemptId === previous.attemptId && entry.status !== 'passed')
+      .map((entry) => ({ check: entry.command ?? entry.validationId, status: entry.status, ...(entry.exitCode === undefined ? {} : { exitCode: entry.exitCode }), summary: entry.summary.slice(0, 2_000) }));
+    return reviews.length || evidence.length
+      ? `\n\nYour previous attempt at this stage was sent back (preserved evidence, not new authority):\n${JSON.stringify({ reviews, evidence })}` : '';
+  }
+
   private handoff(run: ExecutionRun, task: PreparedExecutionTask): string {
     const previousRun = run.preparation.supersedesRunId
       ? this.options.ledger.read(run.projectId).runs.find(entry => entry.runId === run.preparation.supersedesRunId) : undefined;
@@ -762,7 +774,7 @@ export class PlanningRunService {
       });
     }
     // In a chain conversation the stage before's work is already above and in the folder: only this stage's task follows.
-    const handoff = chain?.own ? '' : this.handoff(run, task);
+    const handoff = chain?.own ? this.chainRetryHandoff(run, chain.own) : this.handoff(run, task);
     const chainBrief = chain ? 'Continue in this conversation and folder: the previous stage\'s accepted work is above and already in this folder. Now do this stage.\n\n' : '';
     const environmentBrief = environment ? `\n\nExecution environment: ${JSON.stringify(environment.environment)}\nUse the assigned PORT and output/temp directories. When namespaced parallel execution is enabled, use EZTERMINAL_TEST_NAMESPACE for test databases and fixtures. If a tool cannot isolate its shared resources, stop and report the conflict. Never terminate processes you did not start. Stop your temporary preview/test servers before submitting the result.` : '';
     const prompt = `${chainBrief}${task.profile.prompt}\n\n${task.brief}${inputs.context}${environmentBrief}${handoff}`;
