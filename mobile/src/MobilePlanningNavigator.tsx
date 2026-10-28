@@ -94,7 +94,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
     return navigation.pushLayer({ id: layerId, kind: 'page', onBack: () => (projectExitRef.current ? projectExitRef.current() : onSelectProject(null)) });
   }, [hasProject, active, layerId, navigation, onSelectProject]);
   const workspace = state.snapshot?.workspaces.find(entry => entry.projectId === projectId && entry.archivedAt === undefined && entry.kind === 'local');
-  const offlineReason = ko ? '오프라인 · 마지막으로 받은 내용을 표시합니다. PC에 다시 연결해야 기획을 저장할 수 있습니다.' : 'Offline · Showing the last received state. Reconnect to the PC to save planning changes.';
+  const offlineReason = ko ? '오프라인 · 마지막으로 받은 내용을 표시합니다. PC에 다시 연결해야 흐름을 저장할 수 있습니다.' : 'Offline · Showing the last received state. Reconnect to the PC to save flow changes.';
   const openProjectTerminal = async (): Promise<void> => {
     if (!workspace || !connected) return;
     setTerminalError(false);

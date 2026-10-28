@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:833c93383e38cd427e074f0dc0cb359da4d2d00cf74de3678aaa8103de05b042",
+        "inputDigest": "sha256:e1ecb780eb2cf044903603ab2723dedc1c17a4cf9ba8c40cc9c5b6058cf666f5",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-9): the phone project screen no longer embeds the old planning panel or its device draft store; the flow screen, result reader and per-PC backup it keeps are unchanged. Anchors moved."
+        "reason": "Reviewed (I5): the phone project screen offline note now says flow changes (the planning editor is gone); navigation, results, backup and the authority fingerprint are unchanged."
       }
     }
   ]
