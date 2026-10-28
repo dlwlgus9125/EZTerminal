@@ -207,6 +207,24 @@ describe('the harness canvas in the flow screen', () => {
     expect(container.querySelector('[data-testid="workflow-stage-panel"] h3')?.textContent).toBe('시안');
   });
 
+  it('a narrow window opens the folded panel for a stage asked for by name (a link or a notification)', async () => {
+    document.documentElement.dataset.uiScale = '130';
+    const state = setup({ nodeId: 'dev:mock' });
+    await state.render();
+    expect(container.querySelector<HTMLElement>('.workflow-flow__panel')!.hidden).toBe(false);
+    expect(container.querySelector('[data-testid="workflow-stage-panel"] h3')?.textContent).toBe('시안');
+  });
+
+  it('an approval whose rejection ends the run keeps 승인 · 거부 (no "send back" box)', async () => {
+    const graph = harnessGraph();
+    const stopped: WorkflowGraph = { ...graph, edges: graph.edges.map(edge => edge.from === 'dev:approval' && edge.outcome === 'rejected' ? { ...edge, to: 'dev:done' } : edge) };
+    const run = harnessRun('approval');
+    const state = setup({ graph: stopped, runs: [{ ...run, preparation: { ...run.preparation, workflow: { ...run.preparation.workflow!, graph: stopped } } }], nodeId: 'dev:approval' });
+    await state.render();
+    expect(container.querySelector('[data-testid="workflow-stage-approval"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workflow-stage-approval-comment"]')).toBeNull();
+  });
+
   it('a wide window starts with both open', async () => {
     const state = setup();
     await state.render();

@@ -171,6 +171,24 @@ if (args.includes('--version')) {
                 responseText = 'AI preview updated through the authenticated app tool.';
               } catch (reason) { responseText = `Preview fixture failed: ${String(reason)}`; }
             }
+            // Settings by conversation: one change applied now (a view setting), one only proposed (a new agent
+            // with full access), through the same authenticated app-tool endpoint. The person applies the proposal.
+            const settingsTrigger = /EZTERMINAL_E2E_SETTINGS:([a-z-]+)/u.exec(JSON.stringify(frame.params?.input))?.[1];
+            if (settingsTrigger) {
+              try {
+                const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;
+                if (!descriptor) throw new Error('Missing app-tool descriptor');
+                const call = async (name, args) => {
+                  const response = await fetch(descriptor.url, { method: 'POST', headers: { ...descriptor.http_headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: `${name}-${turnSequence}`, method: 'tools/call', params: { name, arguments: args } }) });
+                  const data = await response.json();
+                  if (data.error || data.result?.isError) throw new Error(JSON.stringify(data.error ?? data.result));
+                  return JSON.parse(data.result.content[0].text);
+                };
+                const applied = await call('settings_apply', { change: { domain: 'ui', set: { theme: settingsTrigger } } });
+                const proposed = await call('settings_propose', { change: { domain: 'agent', profile: { id: 'e2e-builder', name: 'E2E builder', providerId: 'codex', permissionPreset: 'full-access' } } });
+                responseText = `Settings fixture: applied ${String(applied.changes.length)}, proposed ${proposed.proposalId ? 'one' : 'none'}.`;
+              } catch (reason) { responseText = `Settings fixture failed: ${String(reason)}`; }
+            }
             // Results tab: the AI creates a note and edits a file in the working folder, as Codex reports it.
             if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_RESULTS')) {
               const cwd = threadCwds.get(threadId);

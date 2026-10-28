@@ -23,13 +23,16 @@ test('subproject creation and stage edits persist through real IPC and restart w
     await page.getByRole('dialog').getByRole('button', { name: /취소|Cancel/u, exact: true }).click();
     expect(await page.evaluate(async id => { const result = await window.ezterminal.getWorkflowSnapshot(id); return result.ok && result.snapshot.subprojects.some(item => item.title === 'Cancelled setup'); }, projectId)).toBe(false);
     await items.getByRole('button', { name: /새 워크플로|New workflow/u, exact: true }).click();
+    // 새 워크플로 starts from a template (name + template; the first built-in is chosen).
     await page.getByRole('dialog').getByLabel(/이름|Name/u, { exact: true }).fill('Login workflow');
-    await page.getByRole('dialog').getByLabel(/목표|Goal/u, { exact: true }).fill('Keep the stage document and identifiers.');
     await page.screenshot({ path: 'artifacts/r4-implementation-review/real-app/subproject-create.png' });
-    await page.getByRole('dialog').getByRole('button', { name: /워크플로 만들기|Create workflow/u, exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: /이 템플릿으로 만들기|Create from this template/u, exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Login workflow', exact: true })).toBeVisible({ timeout: 30_000 });
     const created = await page.evaluate(async id => { const result = await window.ezterminal.getWorkflowSnapshot(id); if (!result.ok) throw new Error(result.message); return result.snapshot.subprojects.find(item => item.title === 'Login workflow')!; }, projectId);
     expect(created).toBeTruthy();
+    // The 1024 px window starts with the stage panel folded (decision 15): choosing the stage opens it.
+    const entryStage = () => page.locator(`.react-flow__node[data-id="${created.graph.entryNodeId}"] .workflow-node-card__title`);
+    await entryStage().click();
     await page.getByRole('textbox', { name: /^(단계 문서|Stage document)$/u }).fill('This document belongs to the selected node.');
     await page.screenshot({ path: 'artifacts/r4-implementation-review/real-app/stage-document.png' });
     await page.getByRole('button', { name: /초안 저장|Save draft/u, exact: true }).click();
@@ -51,6 +54,7 @@ test('subproject creation and stage edits persist through real IPC and restart w
       if ((await selectedTitle.textContent()) !== 'Login workflow') await restoredItem.click({ timeout: 1_000 });
       await expect(selectedTitle).toHaveText('Login workflow', { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
+    await entryStage().click();
     await expect(page.getByRole('textbox', { name: /^(단계 문서|Stage document)$/u })).toHaveValue('This document belongs to the selected node.');
     const restarted = await page.evaluate(async id => window.ezterminal.getWorkflowSnapshot(id), projectId);
     expect(restarted).toMatchObject({ ok: true, snapshot: { runs: [], subprojects: expect.arrayContaining([expect.objectContaining({ id: created.id, revision: created.revision + 1 })]) } });

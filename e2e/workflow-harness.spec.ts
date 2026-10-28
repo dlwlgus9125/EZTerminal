@@ -53,6 +53,37 @@ function turns(profile: string): readonly TurnLine[] {
   return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as TurnLine);
 }
 
+/** A project in a temp folder, Codex (fake) enabled, and a conversation in that folder started with `first`. */
+async function startConversation(page: Page, projectRoot: string, name: string, first: string) {
+  await resizeWindow(page, { width: 1440, height: 900 });
+  await expect(page.getByTestId('cmd-input')).toBeVisible();
+  const saved = await page.evaluate(([root, title]) => window.ezterminal.saveAgentProject({ name: title, primaryRoot: root, additionalRoots: [], pinned: false }), [projectRoot, name] as const);
+  if (!saved.ok) throw new Error(saved.reason);
+  await enableCodex(page);
+  // The app stores real paths; TEMP may be an 8.3 alias (as on CI).
+  const key = (folder: string): string => folder.replace(/[\\/]+$/u, '').toLowerCase();
+  const root = key(realpathSync.native(projectRoot));
+  const projectWorkspace = async () => (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.find((workspace) => key(workspace.rootPath) === root);
+  await expect.poll(async () => (await projectWorkspace())?.name ?? null, { timeout: 15_000 }).not.toBeNull();
+  const workspaceName = (await projectWorkspace())!.name;
+
+  const draft = await startNewConversation(page);
+  const folders = draft.getByTestId('structured-agent-folders');
+  await folders.click();
+  await page.getByRole('menuitemradio').filter({ has: page.getByText(workspaceName, { exact: true }) }).click();
+  const composer = draft.getByTestId('structured-agent-composer-input');
+  await composer.fill(first);
+  await composer.press('Enter');
+  await expect(page.getByTestId('conversation-start')).toHaveCount(0, { timeout: 30_000 });
+  const session = page.getByTestId('structured-agent-session').first();
+  const sessionId = (await session.getAttribute('data-session-id'))!;
+  const input = session.getByTestId('structured-agent-composer-input');
+  const turnStates = () => page.evaluate(async (id) => (await window.ezterminal.getDaemonSnapshot())?.turns
+    .filter((turn) => turn.sessionId === id).map((turn) => turn.state) ?? [], sessionId);
+  await expect.poll(turnStates, { timeout: 30_000 }).toEqual(['completed']);
+  return { session, sessionId, input, turnStates };
+}
+
 test('an effort changed while the AI works waits for the next request; "next request only" goes back after it', async () => {
   test.setTimeout(240_000);
   const profile = createRegisteredE2eTempDir('ezterm-harness-chat-profile-');
@@ -60,32 +91,7 @@ test('an effort changed while the AI works waits for the next request; "next req
   const app = await launchApp(profile, fakeCodexEnvironment(profile));
   const page = await app.firstWindow();
   try {
-    await resizeWindow(page, { width: 1440, height: 900 });
-    await expect(page.getByTestId('cmd-input')).toBeVisible();
-    const saved = await page.evaluate((root) => window.ezterminal.saveAgentProject({ name: 'Harness chat', primaryRoot: root, additionalRoots: [], pinned: false }), projectRoot);
-    if (!saved.ok) throw new Error(saved.reason);
-    await enableCodex(page);
-    // The app stores real paths; TEMP may be an 8.3 alias (as on CI).
-    const key = (folder: string): string => folder.replace(/[\\/]+$/u, '').toLowerCase();
-    const root = key(realpathSync.native(projectRoot));
-    const projectWorkspace = async () => (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.find((workspace) => key(workspace.rootPath) === root);
-    await expect.poll(async () => (await projectWorkspace())?.name ?? null, { timeout: 15_000 }).not.toBeNull();
-    const workspaceName = (await projectWorkspace())!.name;
-
-    const draft = await startNewConversation(page);
-    const folders = draft.getByTestId('structured-agent-folders');
-    await folders.click();
-    await page.getByRole('menuitemradio').filter({ has: page.getByText(workspaceName, { exact: true }) }).click();
-    const composer = draft.getByTestId('structured-agent-composer-input');
-    await composer.fill('First request.');
-    await composer.press('Enter');
-    await expect(page.getByTestId('conversation-start')).toHaveCount(0, { timeout: 30_000 });
-    const session = page.getByTestId('structured-agent-session').first();
-    const sessionId = (await session.getAttribute('data-session-id'))!;
-    const input = session.getByTestId('structured-agent-composer-input');
-    const turnStates = () => page.evaluate(async (id) => (await window.ezterminal.getDaemonSnapshot())?.turns
-      .filter((turn) => turn.sessionId === id).map((turn) => turn.state) ?? [], sessionId);
-    await expect.poll(turnStates, { timeout: 30_000 }).toEqual(['completed']);
+    const { session, sessionId, input, turnStates } = await startConversation(page, projectRoot, 'Harness chat', 'First request.');
 
     // The second request answers slowly: change the effort while it works.
     const replyConfig = path.join(profile, 'ezterminal-e2e-codex-reply.json');
@@ -126,6 +132,48 @@ test('an effort changed while the AI works waits for the next request; "next req
     await page.screenshot({ path: path.join(evidence, 'effort-back.png') });
   } catch (error) {
     await page.screenshot({ path: path.join(evidence, 'queued-effort-error.png') });
+    console.log((await page.locator('body').innerText()).slice(-6000));
+    throw error;
+  } finally {
+    await app.close();
+  }
+});
+
+test('the AI applies a view setting now (undoable) and only proposes a full-access agent, which the person applies', async () => {
+  test.setTimeout(240_000);
+  const profile = createRegisteredE2eTempDir('ezterm-harness-settings-profile-');
+  const projectRoot = createRegisteredE2eTempDir('ezterm-harness-settings-project-');
+  const app = await launchApp(profile, fakeCodexEnvironment(profile));
+  const page = await app.firstWindow();
+  try {
+    const { session, input, turnStates } = await startConversation(page, projectRoot, 'Harness settings', 'First request.');
+    const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? '');
+    const before = await theme();
+    const target = before === 'high-contrast' ? 'light' : 'high-contrast';
+    const builder = async () => (await page.evaluate(() => window.ezterminal.chatAgentProfiles!.list())).find((entry) => entry.id === 'e2e-builder') ?? null;
+
+    await input.fill(`Change my settings. EZTERMINAL_E2E_SETTINGS:${target}`);
+    await input.press('Enter');
+    await expect.poll(turnStates, { timeout: 30_000 }).toEqual(['completed', 'completed']);
+    await expect(session).toContainText('Settings fixture: applied 1, proposed one.');
+    // Applied now: the window repaints with it, and the conversation lists it with 되돌리기.
+    await expect.poll(theme, { timeout: 15_000 }).toBe(target);
+    const track = session.getByTestId('settings-change-track');
+    await expect(track).toBeVisible();
+    // Proposed only: nothing changes until the person presses 적용 on the card.
+    expect(await builder()).toBeNull();
+    const apply = page.getByTestId('chat-dock-apply-settings');
+    await expect(apply).toBeVisible({ timeout: 15_000 });
+    await page.screenshot({ path: path.join(evidence, 'settings-proposal.png') });
+    await apply.click();
+    await expect.poll(async () => (await builder())?.permissionPreset ?? null, { timeout: 15_000 }).toBe('full-access');
+    await expect(apply).toHaveCount(0);
+    // 되돌리기 puts the view setting back.
+    await track.getByRole('button', { name: /^(Undo|되돌리기)$/u }).first().click();
+    await expect.poll(theme, { timeout: 15_000 }).toBe(before);
+    await page.screenshot({ path: path.join(evidence, 'settings-undone.png') });
+  } catch (error) {
+    await page.screenshot({ path: path.join(evidence, 'settings-error.png') });
     console.log((await page.locator('body').innerText()).slice(-6000));
     throw error;
   } finally {

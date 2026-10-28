@@ -162,6 +162,9 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [narrowStart] = useState(() => !mobile && narrowWindow());
   const [panelOpen, setPanelOpen] = useState(!narrowStart);
   const [agentsOpen, setAgentsOpen] = useState(!narrowStart);
+  // ...and so does a request to show a stage (a linked conversation, a notification): view 'stage' names one.
+  // Opening a workflow only selects its first stage on the 'flow' view, which keeps the panel folded.
+  useEffect(() => { if (narrowStart && view === 'stage' && nodeId) setPanelOpen(true); }, [narrowStart, view, nodeId]);
   /** Why the host last refused a command, when the flow can point at its cause (checks this PC has not allowed). */
   const [refusal, setRefusal] = useState<string | null>(null);
   useEffect(() => { setRefusal(null); }, [selectedId]);

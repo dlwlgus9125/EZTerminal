@@ -196,6 +196,8 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
     <ReactFlow<StageNode, FlowEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
       onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onBeforeDelete={onBeforeDelete} onConnect={onConnect} onReconnect={onReconnect} isValidConnection={isValidConnection}
       onMoveEnd={(_event, viewport) => onViewportChange?.(viewport)}
+      // A click on the stage already selected changes no selection, yet it asks for that stage (a folded panel opens).
+      onNodeClick={(_event, node) => choose({ kind: 'node', id: node.id })}
       onPaneClick={() => choose(null)} nodesDraggable={editable} nodesConnectable={editable} elementsSelectable
       deleteKeyCode={editable ? ['Delete', 'Backspace'] : null} elevateNodesOnSelect={false} minZoom={0.3} maxZoom={2}
       {...(initialViewport ? { defaultViewport: initialViewport } : {})} ariaLabelConfig={ariaLabelConfig}>

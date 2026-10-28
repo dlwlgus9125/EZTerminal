@@ -319,7 +319,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
           )}
           <p className="chat-dock__title">{title}</p>
           {/* A question or a plan is not an access request; its risk label would mislead. */}
-          {!plan && !question && <p className="chat-dock__risk">{copy.approval.risk[approval.risk]}</p>}
+          {!plan && !question && <p className="chat-dock__risk">{settingsProposal ? copy.approval.settingsRisk : copy.approval.risk[approval.risk]}</p>}
         </div>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>

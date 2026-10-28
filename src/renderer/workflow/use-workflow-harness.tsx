@@ -236,7 +236,8 @@ export function useWorkflowHarness(input: WorkflowHarnessInput): WorkflowHarness
     }
     // An approval that sends its rejection back to a stage: approve, or send it back with a note for that stage.
     const back = frozenGraph?.edges.find(edge => edge.from === node.id && edge.outcome === 'rejected');
-    if (node.operation !== 'approval' || !back) return undefined;
+    // A rejection that ends the run (or goes anywhere but an AI stage) keeps the stage panel's own 승인 · 거부.
+    if (node.operation !== 'approval' || !back || frozenGraph?.nodes.find(entry => entry.id === back.to)?.operation !== 'agent') return undefined;
     const source = frozenGraph?.edges.find(edge => edge.to === node.id && !edge.retryLimit)?.from;
     return <WorkflowAnswerBox text={text} question={frozen.instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')} {...(source ? { from: titleOf(source) } : {})}
       value={value} disabled={disabled} onChange={setValue} onOpenResult={resultOf(source)}
