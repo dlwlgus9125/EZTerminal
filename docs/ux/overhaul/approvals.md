@@ -207,6 +207,32 @@ I5에서 먼저 은퇴한 1.0 화면 둘: `workbench-agent-hub`는 `shell-board`
 (두 1.0 화면은 1.0 셸 틀 안의 받은 요청·영어 작업대였고, 그 자리는 I1에서 승인된 판·작업 모드다). 나머지 12개는 도구 화면이
 승인되면 같은 방식으로 은퇴한다.
 
+### 2.0 승인 화면 — I5 도구 화면
+
+데스크톱 도구 화면 12개. 기준 story는 실제 제품 컴포넌트를 작업 모드 틀(위 막대·작업 목록) 위에 그린 `Production/Desk/Tool screens`
+(합성 데이터·고정 시계)이고, 대화상자는 story 안에 열린다. **캡처는 사용자가 승인한 시안 그 자체**(같은 Reference story, Matrix·ko·
+1440×900)다 — 페어링 감지는 실제 폰, OpenClaw 채팅은 OpenClaw 게이트웨이가 있어야 실앱에서 그 상태가 되므로 격리 프로필 실앱 캡처로
+대신할 수 없고, 12개를 같은 방식으로 맞췄다. 실앱 모양은 I5 최종 검증에서 4테마로 따로 본다. 12개 모두 `replaces`로 1.0 화면을
+은퇴시켜 1.0 legacy는 0개가 된다.
+
+| 화면 id | 화면 | story | 캡처 | 대체하는 1.0 | 답 |
+|---|---|---|---|---|---|
+| `desk-settings` | 설정: 범주 목록(초록 막대), 구역 판, 계기판 스위치 | `SettingsReference` | `docs/ux/reference/2.0/captures/desk-settings.png` | `settings` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-monitor` | 모니터: 구역 판과 홈 줄, 숫자는 터미널 글꼴 | `MonitorReference` | `docs/ux/reference/2.0/captures/desk-monitor.png` | `monitor` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-remote` | 원격·폰: 연결 그림·카드·기기 목록 판, 호스트 램프 | `RemoteReference` | `docs/ux/reference/2.0/captures/desk-remote.png` | `remote` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-pairing-qr` | 페어링 QR 대화상자: 코드·남은 시간 터미널 글꼴 | `PairingQrReference` | `docs/ux/reference/2.0/captures/desk-pairing-qr.png` | `pairing-qr` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-pairing-detected` | 페어링 대화상자 "연결됨" 상태 | `PairingDetectedReference` | `docs/ux/reference/2.0/captures/desk-pairing-detected.png` | `pairing-detected` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-openclaw` | OpenClaw 콘솔: 구역 판, 상태·수치 | `OpenClawConsoleReference` | `docs/ux/reference/2.0/captures/desk-openclaw.png` | `openclaw-console` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-openclaw-chat` | OpenClaw 채팅 탭과 콘솔(채팅 본문은 앱 안 OpenClaw 웹 화면) | `OpenClawChatReference` | `docs/ux/reference/2.0/captures/desk-openclaw-chat.png` | `openclaw-chat` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-files` | 파일 탐색기: 경로 판, 목록 판, 파일 종류 글리프 | `FilesReference` | `docs/ux/reference/2.0/captures/desk-files.png` | `explorer-breadcrumb` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-command-center` | 명령 찾기: 판 모양 창, 무리 제목 홈 줄, 고른 줄 초록 막대 | `CommandCenterReference` | `docs/ux/reference/2.0/captures/desk-command-center.png` | `command-center` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-boot` | 부팅: 표지와 자가 점검 판(램프·OK), 고정 프레임 | `BootReference` | `docs/ux/reference/2.0/captures/desk-boot.png` | `boot` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-paste-warning` | 터미널 붙여넣기 경고: 경고 글리프·호박색, 사실 판 | `PasteWarningReference` | `docs/ux/reference/2.0/captures/desk-paste-warning.png` | `paste-warning` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+| `desk-risky-close` | 닫기 경고: 빨간 램프 목록, 위험 띠 | `RiskyCloseReference` | `docs/ux/reference/2.0/captures/desk-risky-close.png` | `risky-close` | 승인 (2026-10-28): 시안 "12개 모두 승인" |
+
+모든 story는 `Production/Desk/Tool screens`에 있다. 시안 이후 바뀐 것은 아이콘이 글리프로 옮겨진 것(I5-5)과, 대화상자가 story 안에
+열리도록 한 Storybook 전용 연결(`DialogPortalContext`, 앱에서는 쓰지 않음)뿐이다.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약

@@ -122,17 +122,22 @@ function approvedEvidence(overrides: Record<string, unknown> = {}) {
 }
 
 describe('2.0 design reference manifest', () => {
-  it('accepts the checked-in manifest: the 2.0 shell retires the 1.0 workbench surfaces, the other 1.0 handoff surfaces are still guarded as legacy', () => {
+  it('accepts the checked-in manifest: every 1.0 handoff surface is retired by the 2.0 surface that replaced it', () => {
     const { manifest, legacyManifest } = readReference();
     const result = validateDesignReferenceManifest(manifest, legacyManifest);
-    expect(result.legacy).toHaveLength(12);
-    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal', 'phone-feed', 'phone-chat', 'phone-terminal']);
-    expect(result.retired).toEqual(['workbench-agent-hub', 'english-workbench']);
+    expect(result.legacy).toHaveLength(0);
+    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual([
+      'shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal', 'phone-feed', 'phone-chat', 'phone-terminal',
+      'desk-settings', 'desk-monitor', 'desk-remote', 'desk-pairing-qr', 'desk-pairing-detected', 'desk-openclaw',
+      'desk-openclaw-chat', 'desk-files', 'desk-command-center', 'desk-boot', 'desk-paste-warning', 'desk-risky-close',
+    ]);
+    expect([...result.retired].sort()).toEqual(legacyManifest.surfaces.map((surface: { id: string }) => surface.id).sort());
   });
 
   it('rejects a 1.0 surface that silently drops out of the guard', () => {
     const { manifest, legacyManifest } = readReference();
-    const next = structuredClone(manifest);
+    const next = withEveryHandoffSurfaceLegacy(manifest, legacyManifest);
+    next.approved = [];
     next.legacy.surfaces = next.legacy.surfaces.filter((id: string) => id !== 'monitor');
     expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('monitor');
   });

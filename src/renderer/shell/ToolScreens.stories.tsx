@@ -6,7 +6,7 @@ import {
   type IDockviewPanelProps,
 } from 'dockview-react';
 import 'dockview-react/dist/styles/dockview.css';
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 
 import { BootIntroOverlay } from '../BootIntroOverlay';
 import { FileExplorerPanel } from '../FileExplorerPanel';
@@ -16,6 +16,7 @@ import { OpenClawPanel } from '../OpenClawPanel';
 import { QuickOpenModal } from '../QuickOpenModal';
 import { StatusPanel } from '../StatusPanel';
 import { ToastProvider } from '../ui';
+import { DialogPortalContext } from '../ui/Dialog';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { RemotePanel } from '../workbench/RemotePanel';
 import { SidebarShell } from '../workbench/SidebarShell';
@@ -156,9 +157,14 @@ function ToolFrame({ destination = null, sidebar, canvas }: {
 
 function LocaleFrame({ children }: { readonly children: ReactNode }): JSX.Element {
   const locale: 'ko' | 'en' = document.documentElement.lang === 'ko' ? 'ko' : 'en';
+  // Dialogs open inside the story root, so the reference checker's keyboard walk stays on the surface.
+  const [portal, setPortal] = useState<HTMLDivElement | null>(null);
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
-      <ToastProvider>{children}</ToastProvider>
+      <ToastProvider>
+        {portal && <DialogPortalContext.Provider value={portal}>{children}</DialogPortalContext.Provider>}
+        <div ref={setPortal} />
+      </ToastProvider>
     </AppI18nProvider>
   );
 }

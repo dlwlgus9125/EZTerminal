@@ -4,20 +4,7 @@
   "authority": "Approved 2.0 design reference. Each approved surface pins a production Storybook story, its visual snapshot and a real-app capture, and links the user's recorded decision. Surfaces of the archived 1.0 desktop handoff stay guarded as legacy until an approved surface replaces them.",
   "legacy": {
     "manifest": "docs/ux/reference/desktop-handoff/manifest.json",
-    "surfaces": [
-      "boot",
-      "command-center",
-      "monitor",
-      "remote",
-      "pairing-qr",
-      "pairing-detected",
-      "openclaw-console",
-      "openclaw-chat",
-      "paste-warning",
-      "risky-close",
-      "settings",
-      "explorer-breadcrumb"
-    ]
+    "surfaces": []
   },
   "approvedChecker": {
     "file": "visual/design-reference-checks.ts",
@@ -170,6 +157,258 @@
         "decidedAt": "2026-10-27"
       },
       "replaces": []
+    },
+    {
+      "id": "desk-settings",
+      "title": "Settings (instrument panel)",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "SettingsReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--settings-reference",
+        "snapshot": "reference-2-0-desk-settings-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-settings.png",
+        "sha256": "6cf2a0f1c48ccb9c9d3084c72230f0fdebaf9e937bd257a3561dc900b3ada91e"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["settings"]
+    },
+    {
+      "id": "desk-monitor",
+      "title": "Monitor (system plates, terminal-font readings)",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "MonitorReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--monitor-reference",
+        "snapshot": "reference-2-0-desk-monitor-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-monitor.png",
+        "sha256": "c8fb47a1043a310149f5a57ef180637663382d4dfec41bd942d75c0635acd1f6"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["monitor"]
+    },
+    {
+      "id": "desk-remote",
+      "title": "Remote and phone (topology, devices, lamps)",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "RemoteReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--remote-reference",
+        "snapshot": "reference-2-0-desk-remote-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-remote.png",
+        "sha256": "655fdf3088aa0fe1894533523ca64ab43a61706ead7e2aa7cddeafa7f33bdd5f"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["remote"]
+    },
+    {
+      "id": "desk-pairing-qr",
+      "title": "Pairing QR dialog",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "PairingQrReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--pairing-qr-reference",
+        "snapshot": "reference-2-0-desk-pairing-qr-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-pairing-qr.png",
+        "sha256": "d45ae0aa0d93d87f4f09f1933618634680f77bb2bd910603070fb714e2bbb595"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["pairing-qr"]
+    },
+    {
+      "id": "desk-pairing-detected",
+      "title": "Pairing dialog, device detected",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "PairingDetectedReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--pairing-detected-reference",
+        "snapshot": "reference-2-0-desk-pairing-detected-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-pairing-detected.png",
+        "sha256": "f2de3cd3b0bfc42b95ad7fa1bfe05caa92a35f857a303d4d55ed713a69a9ff43"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["pairing-detected"]
+    },
+    {
+      "id": "desk-openclaw",
+      "title": "OpenClaw console",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "OpenClawConsoleReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--open-claw-console-reference",
+        "snapshot": "reference-2-0-desk-openclaw-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-openclaw.png",
+        "sha256": "0c1eaf4a8acfbf79420ea5016ab6a015ff0c21fb9b5552f9213e5094b921822b"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["openclaw-console"]
+    },
+    {
+      "id": "desk-openclaw-chat",
+      "title": "OpenClaw chat beside its console",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "OpenClawChatReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--open-claw-chat-reference",
+        "snapshot": "reference-2-0-desk-openclaw-chat-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-openclaw-chat.png",
+        "sha256": "70aaee116d25198ba9ace6e5c0b3f0da879e3d318a5b2d3bfd6e0cd9c25f0539"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["openclaw-chat"]
+    },
+    {
+      "id": "desk-files",
+      "title": "File explorer",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "FilesReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--files-reference",
+        "snapshot": "reference-2-0-desk-files-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-files.png",
+        "sha256": "d660ccab9c7002cbfe3725ccfa21f3b518ddba3f06fb983b835d35e748ee79ca"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["explorer-breadcrumb"]
+    },
+    {
+      "id": "desk-command-center",
+      "title": "Command center (find)",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "CommandCenterReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--command-center-reference",
+        "snapshot": "reference-2-0-desk-command-center-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-command-center.png",
+        "sha256": "5d57772539192802bca0648cf3573db6c824138a9a747ece9f3f3c3676abda98"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["command-center"]
+    },
+    {
+      "id": "desk-boot",
+      "title": "Boot (self-test plate)",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "BootReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--boot-reference",
+        "snapshot": "reference-2-0-desk-boot-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-boot.png",
+        "sha256": "230cc6c19fe47f0cb6c0544a7683a51ef141722d7b8b4f9b5d5a202bbe16e354"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["boot"]
+    },
+    {
+      "id": "desk-paste-warning",
+      "title": "Terminal paste warning",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "PasteWarningReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--paste-warning-reference",
+        "snapshot": "reference-2-0-desk-paste-warning-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-paste-warning.png",
+        "sha256": "fb6518363a9cf600092cfcb974865287f4a32d0420e3bbfdcabd86cc2b568e64"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["paste-warning"]
+    },
+    {
+      "id": "desk-risky-close",
+      "title": "Risky close warning",
+      "story": {
+        "file": "src/renderer/shell/ToolScreens.stories.tsx",
+        "export": "RiskyCloseReference"
+      },
+      "visual": {
+        "storyId": "production-desk-tool-screens--risky-close-reference",
+        "snapshot": "reference-2-0-desk-risky-close-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-risky-close.png",
+        "sha256": "8e4e644c7946c733269f7dae0f2209f2d5b7a33b70f1acfedd06434326c2b3a8"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i5-도구-화면",
+        "decidedAt": "2026-10-28"
+      },
+      "replaces": ["risky-close"]
     }
   ]
 }

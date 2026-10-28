@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -19,6 +21,12 @@ import {
 import { classNames, getFocusableElements } from './utils';
 
 const CLOSE_ICON = glyphIcon('x');
+
+/**
+ * Where dialogs portal to. The app leaves it unset (the owning document's body); a design-reference
+ * story sets a node inside its story root, so the reference checker's keyboard walk stays on the surface.
+ */
+export const DialogPortalContext = createContext<HTMLElement | null>(null);
 
 export interface DialogProps {
   readonly open: boolean;
@@ -84,6 +92,7 @@ export function Dialog({
   if (!open) portalDocumentRef.current = null;
   else portalDocumentRef.current ??= ownerDocument ?? getActiveAppDocument();
   const portalDocument = portalDocumentRef.current ?? ownerDocument ?? document;
+  const portalTarget = useContext(DialogPortalContext);
 
   useEffect(() => {
     if (!open) return;
@@ -198,7 +207,7 @@ export function Dialog({
         {footer && <footer className="ez-ui-dialog__footer">{footer}</footer>}
       </div>
     </div>,
-    portalDocument.body,
+    portalTarget?.ownerDocument === portalDocument ? portalTarget : portalDocument.body,
   );
 }
 
