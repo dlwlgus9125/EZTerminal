@@ -1,4 +1,4 @@
-import type { IpcMain } from 'electron';
+import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 
 import {
   WorkflowTemplateFileSchema,
@@ -84,17 +84,23 @@ export function installWorkflowTemplateIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly store: WorkflowTemplateStore;
   readonly ready: Promise<unknown>;
+  /** The sender is an EZTerminal window with its session-surface id. */
+  readonly authorized: (event: IpcMainInvokeEvent, clientId: unknown) => boolean;
 }): () => void {
-  const { ipc, store, ready } = input;
-  ipc.handle('workflow-templates:list', async () => {
+  const { ipc, store, ready, authorized } = input;
+  const refused = { ok: false as const, error: 'This window cannot change templates.' };
+  ipc.handle('workflow-templates:list', async (event, clientId: unknown) => {
+    if (!authorized(event, clientId)) return [];
     await ready;
     return store.list();
   });
-  ipc.handle('workflow-templates:save', async (_event, template: unknown) => {
+  ipc.handle('workflow-templates:save', async (event, clientId: unknown, template: unknown) => {
+    if (!authorized(event, clientId)) return refused;
     await ready;
     return store.save(template);
   });
-  ipc.handle('workflow-templates:remove', async (_event, id: unknown) => {
+  ipc.handle('workflow-templates:remove', async (event, clientId: unknown, id: unknown) => {
+    if (!authorized(event, clientId)) return refused;
     await ready;
     return store.remove(id);
   });

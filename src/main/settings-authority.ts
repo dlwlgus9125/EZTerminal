@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { IpcMain } from 'electron';
+import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 
 import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatAgentPhaseMap, ChatAgentProfile } from '../shared/chat-agent-profiles';
@@ -809,28 +809,35 @@ export function settingsConversationAllowed(
   return options.turnPrincipal === 'desktop' || options.turnPrincipal === 'android';
 }
 
-/** `settings-changes:conversation|undo|advisor|set-advisor` for the desktop renderer (a person's actions). */
+/** `settings-changes:conversation|undo|advisor|set-advisor` for the desktop renderer (a person's actions, from an app window only). */
 export function installSettingsChangesIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly authority: SettingsAuthority;
   readonly ready: Promise<unknown>;
+  /** The desktop person behind an EZTerminal window's session surface, or null for any other sender. */
+  readonly principal: (event: IpcMainInvokeEvent, clientId: unknown) => string | null;
 }): () => void {
-  const { ipc, authority, ready } = input;
-  ipc.handle('settings-changes:conversation', async (_event, sessionId: unknown) => {
+  const { ipc, authority, ready, principal } = input;
+  ipc.handle('settings-changes:conversation', async (event, clientId: unknown, sessionId: unknown) => {
+    if (!principal(event, clientId)) return { changes: [], proposals: [] };
     await ready;
     return typeof sessionId === 'string' && sessionId ? authority.conversation(sessionId) : { changes: [], proposals: [] };
   });
-  ipc.handle('settings-changes:undo', async (_event, changeId: unknown) => {
+  ipc.handle('settings-changes:undo', async (event, clientId: unknown, changeId: unknown) => {
+    const person = principal(event, clientId);
+    if (!person) return { ok: false, error: 'not-found', message: 'This window cannot undo settings changes.' };
     await ready;
     if (typeof changeId !== 'string' || !changeId) return { ok: false, error: 'not-found', message: 'This change is no longer available.' };
-    return authority.undo(changeId, { kind: 'person', principal: 'desktop', id: 'renderer-settings-track' });
+    return authority.undo(changeId, { kind: 'person', principal: 'desktop', id: person });
   });
-  ipc.handle('settings-changes:advisor', async () => {
+  ipc.handle('settings-changes:advisor', async (event, clientId: unknown) => {
+    if (!principal(event, clientId)) return false;
     await ready;
     return authority.advisorEnabled();
   });
-  ipc.handle('settings-changes:set-advisor', async (_event, enabled: unknown) => {
+  ipc.handle('settings-changes:set-advisor', async (event, clientId: unknown, enabled: unknown) => {
     await ready;
+    if (!principal(event, clientId)) return authority.advisorEnabled();
     return typeof enabled === 'boolean' ? authority.setAdvisor(enabled) : authority.advisorEnabled();
   });
   return () => {

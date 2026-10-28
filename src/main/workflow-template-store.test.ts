@@ -59,11 +59,13 @@ describe('WorkflowTemplateStore', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn((name: string) => { handlers.delete(name); }) };
     const store = new WorkflowTemplateStore(makeDir());
-    const dispose = installWorkflowTemplateIpc({ ipc: ipc as never, store, ready: store.init() });
-    expect(await handlers.get('workflow-templates:save')!({}, routine)).toMatchObject({ ok: true });
-    expect(await handlers.get('workflow-templates:list')!({})).toEqual([expect.objectContaining(routine)]);
-    expect(await handlers.get('workflow-templates:remove')!({}, 'template-routine')).toEqual({ ok: true, templates: [] });
-    expect(await handlers.get('workflow-templates:remove')!({}, 7)).toMatchObject({ ok: false });
+    const dispose = installWorkflowTemplateIpc({ ipc: ipc as never, store, ready: store.init(), authorized: (_event, clientId) => clientId === 'surface-1' });
+    expect(await handlers.get('workflow-templates:save')!({}, 'other', routine)).toMatchObject({ ok: false });
+    expect(await handlers.get('workflow-templates:save')!({}, 'surface-1', routine)).toMatchObject({ ok: true });
+    expect(await handlers.get('workflow-templates:list')!({}, 'other')).toEqual([]);
+    expect(await handlers.get('workflow-templates:list')!({}, 'surface-1')).toEqual([expect.objectContaining(routine)]);
+    expect(await handlers.get('workflow-templates:remove')!({}, 'surface-1', 'template-routine')).toEqual({ ok: true, templates: [] });
+    expect(await handlers.get('workflow-templates:remove')!({}, 'surface-1', 7)).toMatchObject({ ok: false });
     dispose();
     expect(handlers.size).toBe(0);
   });

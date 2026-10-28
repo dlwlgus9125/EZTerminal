@@ -1,4 +1,4 @@
-import type { IpcMain } from 'electron';
+import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 
 import {
   ChatAgentPhaseFileSchema,
@@ -124,30 +124,38 @@ export class ChatAgentProfileStore {
   }
 }
 
-/** `chat-agent-profiles:list|save|remove|phases|save-phases` for the desktop renderer. */
+/** `chat-agent-profiles:list|save|remove|phases|save-phases` for the desktop renderer (an app window's own surface only). */
 export function installChatAgentProfileIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly store: ChatAgentProfileStore;
   readonly ready: Promise<unknown>;
+  /** The sender is an EZTerminal window with its session-surface id (agents can carry full access). */
+  readonly authorized: (event: IpcMainInvokeEvent, clientId: unknown) => boolean;
 }): () => void {
-  const { ipc, store, ready } = input;
-  ipc.handle('chat-agent-profiles:list', async () => {
+  const { ipc, store, ready, authorized } = input;
+  const refused = { ok: false as const, error: 'This window cannot change agents.' };
+  ipc.handle('chat-agent-profiles:list', async (event, clientId: unknown) => {
+    if (!authorized(event, clientId)) return [];
     await ready;
     return store.list();
   });
-  ipc.handle('chat-agent-profiles:save', async (_event, profile: unknown) => {
+  ipc.handle('chat-agent-profiles:save', async (event, clientId: unknown, profile: unknown) => {
+    if (!authorized(event, clientId)) return refused;
     await ready;
     return store.save(profile);
   });
-  ipc.handle('chat-agent-profiles:remove', async (_event, id: unknown) => {
+  ipc.handle('chat-agent-profiles:remove', async (event, clientId: unknown, id: unknown) => {
+    if (!authorized(event, clientId)) return refused;
     await ready;
     return store.remove(id);
   });
-  ipc.handle('chat-agent-profiles:phases', async () => {
+  ipc.handle('chat-agent-profiles:phases', async (event, clientId: unknown) => {
+    if (!authorized(event, clientId)) return EMPTY_CHAT_AGENT_PHASES;
     await ready;
     return store.phases();
   });
-  ipc.handle('chat-agent-profiles:save-phases', async (_event, phases: unknown) => {
+  ipc.handle('chat-agent-profiles:save-phases', async (event, clientId: unknown, phases: unknown) => {
+    if (!authorized(event, clientId)) return refused;
     await ready;
     return store.savePhases(phases);
   });

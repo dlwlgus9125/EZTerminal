@@ -449,17 +449,17 @@ const api: EzTerminalApi = {
     remove: (workspaceId: string) => ipcRenderer.invoke('workspace-worktrees:remove', workspaceId),
   },
   chatAgentProfiles: {
-    list: () => ipcRenderer.invoke('chat-agent-profiles:list'),
-    save: (profile: import('../shared/chat-agent-profiles').ChatAgentProfile) => ipcRenderer.invoke('chat-agent-profiles:save', profile),
-    remove: (id: string) => ipcRenderer.invoke('chat-agent-profiles:remove', id),
-    phases: () => ipcRenderer.invoke('chat-agent-profiles:phases'),
-    savePhases: (phases: import('../shared/chat-agent-profiles').ChatAgentPhaseMap) => ipcRenderer.invoke('chat-agent-profiles:save-phases', phases),
+    list: () => ipcRenderer.invoke('chat-agent-profiles:list', sessionSurfaceClientId),
+    save: (profile: import('../shared/chat-agent-profiles').ChatAgentProfile) => ipcRenderer.invoke('chat-agent-profiles:save', sessionSurfaceClientId, profile),
+    remove: (id: string) => ipcRenderer.invoke('chat-agent-profiles:remove', sessionSurfaceClientId, id),
+    phases: () => ipcRenderer.invoke('chat-agent-profiles:phases', sessionSurfaceClientId),
+    savePhases: (phases: import('../shared/chat-agent-profiles').ChatAgentPhaseMap) => ipcRenderer.invoke('chat-agent-profiles:save-phases', sessionSurfaceClientId, phases),
   },
   settingsChanges: {
-    conversation: (sessionId: string) => ipcRenderer.invoke('settings-changes:conversation', sessionId),
-    undo: (changeId: string) => ipcRenderer.invoke('settings-changes:undo', changeId),
-    advisor: () => ipcRenderer.invoke('settings-changes:advisor'),
-    setAdvisor: (enabled: boolean) => ipcRenderer.invoke('settings-changes:set-advisor', enabled),
+    conversation: (sessionId: string) => ipcRenderer.invoke('settings-changes:conversation', sessionSurfaceClientId, sessionId),
+    undo: (changeId: string) => ipcRenderer.invoke('settings-changes:undo', sessionSurfaceClientId, changeId),
+    advisor: () => ipcRenderer.invoke('settings-changes:advisor', sessionSurfaceClientId),
+    setAdvisor: (enabled: boolean) => ipcRenderer.invoke('settings-changes:set-advisor', sessionSurfaceClientId, enabled),
     onChanged: (listener: (event: import('../shared/settings-changes').SettingsChangedEvent) => void): (() => void) => {
       const handler = (_event: unknown, payload: import('../shared/settings-changes').SettingsChangedEvent): void => listener(payload);
       ipcRenderer.on('settings:changed', handler);
@@ -467,9 +467,9 @@ const api: EzTerminalApi = {
     },
   },
   workflowTemplates: {
-    list: () => ipcRenderer.invoke('workflow-templates:list'),
-    save: (template: import('../shared/workflow-templates').WorkflowTemplateInput) => ipcRenderer.invoke('workflow-templates:save', template),
-    remove: (id: string) => ipcRenderer.invoke('workflow-templates:remove', id),
+    list: () => ipcRenderer.invoke('workflow-templates:list', sessionSurfaceClientId),
+    save: (template: import('../shared/workflow-templates').WorkflowTemplateInput) => ipcRenderer.invoke('workflow-templates:save', sessionSurfaceClientId, template),
+    remove: (id: string) => ipcRenderer.invoke('workflow-templates:remove', sessionSurfaceClientId, id),
   },
 };
 

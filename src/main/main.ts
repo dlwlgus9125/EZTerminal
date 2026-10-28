@@ -2437,9 +2437,10 @@ app.on('ready', async () => {
     }
   };
   const pendingWorktreeActions = new Map<string, AbortController>();
-  featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady }));
-  featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady }));
-  featureIpcDisposers.push(installSettingsChangesIpc({ ipc: ipcMain, authority: settingsAuthority, ready: settingsAuthorityReady }));
+  const desktopWindowSender = (event: IpcMainInvokeEvent, clientId: unknown): boolean => resolveDesktopSessionPrincipal(event, clientId) !== null;
+  featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady, authorized: desktopWindowSender }));
+  featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady, authorized: desktopWindowSender }));
+  featureIpcDisposers.push(installSettingsChangesIpc({ ipc: ipcMain, authority: settingsAuthority, ready: settingsAuthorityReady, principal: resolveDesktopSessionPrincipal }));
   featureIpcDisposers.push(installWorkflowCheckIpc({
     ipc: ipcMain,
     authorized: (event, clientId) => resolveDesktopSessionPrincipal(event, clientId) !== null,

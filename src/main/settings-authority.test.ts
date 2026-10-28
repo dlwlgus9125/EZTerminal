@@ -10,7 +10,7 @@ import { createWorkflowGraph } from '../shared/workflow';
 import type { WorkflowTemplate } from '../shared/workflow-templates';
 import { ADVISOR_CALLS_PER_TURN, AgentAdvisor } from './agent-advisor';
 import { ChatAgentProfileStore } from './chat-agent-profile-store';
-import { SettingsAuthority, settingsConversationAllowed, type SettingsAuthorityOptions, type UiSettingsValues } from './settings-authority';
+import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsAuthorityOptions, type UiSettingsValues } from './settings-authority';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -267,6 +267,26 @@ describe('SettingsAuthority — proposals', () => {
     expect(authority.advisorEnabled()).toBe(false);
     await authority.proposalResolved({ providerRequestId: 'settings-proposal:id-1', decision: 'allow', principal: DESKTOP });
     expect(authority.advisorEnabled()).toBe(true);
+  });
+});
+
+describe('settings-changes IPC — an EZTerminal window only', () => {
+  it('refuses another sender, and records an undo as the person behind the window', async () => {
+    const { authority, dir } = await setup();
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn((name: string) => { handlers.delete(name); }) };
+    const dispose = installSettingsChangesIpc({ ipc: ipc as never, authority, ready: Promise.resolve(), principal: (_event, clientId) => clientId === 'surface-1' ? 'desktop:7:surface-1' : null });
+    expect(await handlers.get('settings-changes:set-advisor')!({}, 'other', true)).toBe(false);
+    expect(authority.advisorEnabled()).toBe(false);
+    expect(await handlers.get('settings-changes:set-advisor')!({}, 'surface-1', true)).toBe(true);
+    const [change] = (await authority.apply(AI, { domain: 'ui', set: { theme: 'light' } })).changes;
+    expect(await handlers.get('settings-changes:undo')!({}, 'other', change!.changeId)).toMatchObject({ ok: false });
+    expect(await handlers.get('settings-changes:conversation')!({}, 'other', 'chat-1')).toEqual({ changes: [], proposals: [] });
+    expect(await handlers.get('settings-changes:undo')!({}, 'surface-1', change!.changeId)).toMatchObject({ ok: true });
+    const file = JSON.parse(await readFile(path.join(dir, 'settings-changes.json'), 'utf8')) as { changes: Array<Record<string, unknown>> };
+    expect(file.changes.at(-1)).toMatchObject({ actor: { kind: 'person', principal: 'desktop', id: 'desktop:7:surface-1' }, undoOf: change!.changeId });
+    dispose();
+    expect(handlers.size).toBe(0);
   });
 });
 

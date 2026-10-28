@@ -47,12 +47,16 @@ describe('ChatAgentProfileStore', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn((name: string) => { handlers.delete(name); }) };
     const store = new ChatAgentProfileStore(makeDir());
-    const dispose = installChatAgentProfileIpc({ ipc: ipc as never, store, ready: store.init() });
-    expect(await handlers.get('chat-agent-profiles:save')!({}, reviewer)).toMatchObject({ ok: true });
-    expect(await handlers.get('chat-agent-profiles:list')!({})).toEqual([reviewer]);
-    expect(await handlers.get('chat-agent-profiles:remove')!({}, 'reviewer')).toEqual({ ok: true, profiles: [] });
-    expect(await handlers.get('chat-agent-profiles:phases')!({})).toEqual({ byProvider: {}, switchModel: false });
-    expect(await handlers.get('chat-agent-profiles:save-phases')!({}, { byProvider: { claude: { plan: { profileId: 'reviewer' } } }, switchModel: false })).toMatchObject({ ok: true });
+    const dispose = installChatAgentProfileIpc({ ipc: ipc as never, store, ready: store.init(), authorized: (_event, clientId) => clientId === 'surface-1' });
+    // Only an EZTerminal window's own surface: another sender changes and reads nothing.
+    expect(await handlers.get('chat-agent-profiles:save')!({}, 'other', reviewer)).toMatchObject({ ok: false });
+    expect(await handlers.get('chat-agent-profiles:save')!({}, 'surface-1', reviewer)).toMatchObject({ ok: true });
+    expect(await handlers.get('chat-agent-profiles:list')!({}, 'other')).toEqual([]);
+    expect(await handlers.get('chat-agent-profiles:list')!({}, 'surface-1')).toEqual([reviewer]);
+    expect(await handlers.get('chat-agent-profiles:remove')!({}, 'surface-1', 'reviewer')).toEqual({ ok: true, profiles: [] });
+    expect(await handlers.get('chat-agent-profiles:phases')!({}, 'surface-1')).toEqual({ byProvider: {}, switchModel: false });
+    expect(await handlers.get('chat-agent-profiles:save-phases')!({}, 'other', { byProvider: {}, switchModel: true })).toMatchObject({ ok: false });
+    expect(await handlers.get('chat-agent-profiles:save-phases')!({}, 'surface-1', { byProvider: { claude: { plan: { profileId: 'reviewer' } } }, switchModel: false })).toMatchObject({ ok: true });
     dispose();
     expect(handlers.size).toBe(0);
   });
