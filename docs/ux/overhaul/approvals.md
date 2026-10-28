@@ -285,7 +285,8 @@ gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허�
 
 승인한 시안 23개 가운데 대표 7개를 2.0 기준으로 고정한다. 기준 story는 시안과 같은 렌더를 Storybook 언어로 그리는
 `Production/Harness/Mockup`의 `…Reference`(대화상자·시트는 story 안에 연다)이고, 데스크톱 캡처는 격리 프로필 실 Electron(Matrix·ko·
-1440×900, 합성 데이터, e2e 가짜 Codex)에서 찍었다(스크립트 `artifacts/harness/capture-real/capture.spec.ts`, 커밋 안 함). 1.0 화면은
+1440×900, 합성 데이터, e2e 가짜 Codex)에서, 폰 캡처는 Android API 35 에뮬레이터(1080×2280, 한국어, 디버그 vc81)가 같은 가짜 Codex의 격리
+데스크톱에 붙어 찍었다(스크립트 `artifacts/harness/capture-real/capture.spec.ts`·`phone.ts`, 커밋 안 함). 1.0 화면은
 대체하지 않는다.
 
 | 화면 id | 화면 | story | 캡처 | 답 |

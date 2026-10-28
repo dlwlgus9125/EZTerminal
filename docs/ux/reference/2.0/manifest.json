@@ -509,6 +509,46 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
         "decidedAt": "2026-10-29"
       }
+    },
+    {
+      "id": "harness-phone-assign",
+      "title": "Phone stage assignment sheet",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "PhoneAssignSheetReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--phone-assign-sheet-reference",
+        "snapshot": "reference-2-0-harness-phone-assign-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-phone-assign.png",
+        "sha256": "8a762c69bb267890e54756cff7f2dab192dca64e2d6fecd1e5116204d6040837"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "harness-phone-queued",
+      "title": "Phone queued conversation settings",
+      "story": {
+        "file": "src/renderer/harness/HarnessMockup.stories.tsx",
+        "export": "PhoneComposerQueuedReference"
+      },
+      "visual": {
+        "storyId": "production-harness-mockup--phone-composer-queued-reference",
+        "snapshot": "reference-2-0-harness-phone-queued-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/harness-phone-queued.png",
+        "sha256": "c478d6176162747c62e4dd97ca1341060092eeea8ff3effe708d75e0e68452fa"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
+        "decidedAt": "2026-10-29"
+      }
     }
   ]
 }
