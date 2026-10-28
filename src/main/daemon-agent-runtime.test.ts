@@ -4762,6 +4762,24 @@ describe('settings queued for the next request', () => {
       } finally { await h.runtime.dispose(); await h.store.close(); }
     });
 
+    it('also ends the plan turn when the person queued an effort during it, so the implementation uses it', async () => {
+      const h = await harness();
+      const approvePlanEndingTurn = vi.fn(async () => undefined);
+      h.claude.approvePlanEndingTurn = approvePlanEndingTurn;
+      try {
+        await h.enable(h.claude, 'claude');
+        await h.prepareWorkspace();
+        await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'claude', permissionPreset: 'plan', reasoningEffort: 'high', initialPrompt: 'Plan a change.' });
+        const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+        await h.execute('agent.set-settings', { sessionId: 'agent-1', reasoningEffort: 'low', scope: 'keep' });
+        h.claude.emit({ kind: 'approval-requested', sessionId: 'agent-1', turnId: turn.id, providerRequestId: 'plan-1', risk: 'write', title: 'Approve plan', request: { v: 1, kind: 'plan', callId: 'call', markdown: '- step' } });
+        await h.runtime.whenIdle();
+        const approvalId = h.router.getSnapshot().approvals.find((approval) => approval.providerRequestId === 'plan-1')!.id;
+        await h.execute('permission.resolve', { approvalId, decision: 'allow', response: { kind: 'plan', mode: 'standard' } });
+        expect(approvePlanEndingTurn).toHaveBeenCalled();
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
     it('sends no implementation when the person stopped the plan turn', async () => {
       const { h, turn, approvePlanEndingTurn } = await claudePlan('medium');
       try {
@@ -4853,6 +4871,37 @@ describe('settings queued for the next request', () => {
       await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Build it.' }, { kind: 'desktop', id: 'planning-runtime' });
       expect(order).toEqual(['settings:standard', 'submit']);
       expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')?.permissionPreset).toBe('standard');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('keeps a downgrade the person queued while a raise is being applied for the turn being sent', async () => {
+    const h = await harness();
+    try {
+      const turn = await workingAgent(h);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'full-access' });
+      await finish(h, turn.id);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const originalSetSettings = vi.mocked(h.codex.setSettings).getMockImplementation()!;
+      vi.mocked(h.codex.setSettings).mockImplementationOnce(async (input) => { await held; return originalSetSettings(input); });
+      await h.executeWithoutSettling('agent.submit', { sessionId: 'agent-1', prompt: 'Next' });
+      await vi.waitFor(() => expect(h.codex.setSettings).toHaveBeenCalledTimes(1));
+      // While the raise is applied, the person asks for 승인 후 실행 again: it waits for the request after.
+      await h.executeWithoutSettling('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'standard' });
+      release();
+      await h.runtime.whenIdle();
+      expect(agentOf(h).permissionPreset).toBe('full-access');
+      expect(h.router.getSnapshot().pendingAgentSettings).toEqual({ 'agent-1': { permissionPreset: 'standard' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('keeps a model the person queued when plan mode brings the plan agent', async () => {
+    const h = await harness({ phaseSettings: (_providerId, phase) => (phase === 'plan' ? { model: 'model-c', reasoningEffort: 'xhigh' } : undefined) });
+    try {
+      await workingAgent(h);
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', model: 'model-b' });
+      await h.execute('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'plan' });
+      expect(h.router.getSnapshot().pendingAgentSettings?.['agent-1']).toMatchObject({ model: 'model-b', permissionPreset: 'plan', reasoningEffort: 'xhigh' });
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 

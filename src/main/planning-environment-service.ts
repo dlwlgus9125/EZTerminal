@@ -98,7 +98,11 @@ export class PlanningEnvironmentService {
     portCount: number, mode: 'serial' | 'namespaced' = 'serial'): Promise<PlanningEnvironmentLease> {
     return this.gate.runExclusive(async () => {
       const existing = this.leases.get(input.sessionId);
-      if (existing) {
+      // '앞 대화 이어서': the next stage of a chain reuses the conversation and folder of the stage before it. Once that
+      // stage's lease was released, the same run, conversation and folder get a fresh lease for the new attempt.
+      const chainContinuation = existing?.status === 'released' && existing.runId === input.runId && existing.workspaceId === input.workspaceId
+        && existing.workspaceRoot === input.workspaceRoot && (existing.taskId !== input.taskId || existing.attemptId !== input.attemptId);
+      if (existing && !chainContinuation) {
         if (Object.entries(input).some(([key, value]) => existing[key as keyof typeof input] !== value)) throw new Error('The environment belongs to a different execution.');
         if (existing.status === 'released') {
           const reserved: PlanningEnvironmentLease = { ...existing, status: 'reserved', updatedAt: new Date().toISOString() };

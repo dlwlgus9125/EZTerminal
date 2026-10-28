@@ -1354,6 +1354,24 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('reports a Stop pressed while an approved plan ends its turn as interrupted, so no implementation follows', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-plan', commandId: 'command-plan', prompt: 'Plan' });
+    const planTurn = (await inputIterator.next()).value as SDKUserMessage;
+    const plan = fixture.query.inputOptions.canUseTool!('ExitPlanMode', { plan: '# Plan' }, { signal: new AbortController().signal, toolUseID: 'toolu_p', requestId: 'p' });
+    await vi.waitFor(() => expect(fixture.events.some((event) => event.kind === 'approval-requested')).toBe(true));
+    await fixture.adapter.approvePlanEndingTurn({ sessionId: context.sessionId, providerSessionId, providerRequestId: 'p', response: { kind: 'plan', mode: 'standard' } });
+    await plan;
+    void fixture.adapter.interrupt(context.sessionId, providerSessionId).catch(() => undefined);
+    fixture.query.emit({ type: 'result', subtype: 'error_during_execution', uuid: 'result-plan', session_id: providerSessionId,
+      user_message_uuid: planTurn.uuid, user_message_uuids: [planTurn.uuid], is_error: true, stop_reason: 'tool_use' });
+    await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-plan' })));
+    expect(fixture.events.filter((event) => event.kind === 'turn-finished')).toEqual([expect.objectContaining({ turnId: 'turn-plan', outcome: 'interrupted' })]);
+    await fixture.adapter.dispose();
+  });
+
   it('lets a plan turn nobody watches finish with its plan instead of waiting for approval', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });

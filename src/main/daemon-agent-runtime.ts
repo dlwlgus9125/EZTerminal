@@ -410,6 +410,8 @@ export class DaemonAgentRuntime {
   private readonly agentUsageTracker = new AgentUsageTracker(() => this.now().getTime());
   /** What each session's next request will use beyond its record (host memory; the snapshot shows it). */
   private readonly pendingSettings = new Map<string, DaemonPendingAgentSettings>();
+  /** Queued settings the pump is applying right now (before the record shows them). */
+  private readonly applyingSettings = new Map<string, Pick<DaemonPendingAgentSettings, 'model' | 'permissionPreset' | 'reasoningEffort'>>();
   /** Plan turns a person approved by ending them, by turn: their implementation is sent once they completed. */
   private readonly approvedPlanFollowUps = new Map<string, { readonly approvalId: string; readonly sessionId: string; readonly principal: DaemonPrincipal }>();
   private unsubscribeProviders: (() => void) | null = null;
@@ -1252,7 +1254,8 @@ export class DaemonAgentRuntime {
     const phase = payload.permissionPreset === undefined || payload.permissionPreset === accessNow ? undefined
       : payload.permissionPreset === 'plan' ? 'plan' as const : accessNow === 'plan' ? 'implement' as const : undefined;
     const linked = phase && !this.options.preparedSessionSettings?.(agent.sessionId) ? this.options.phaseSettings?.(agent.providerId, phase) : undefined;
-    const model = payload.model ?? linked?.model;
+    // A model the person queued wins over the link too.
+    const model = payload.model ?? (pending?.model ? undefined : linked?.model);
     const effort = payload.reasoningEffort ?? (pending?.reasoningEffort ? undefined : linked?.reasoningEffort);
 
     // An effort picked in the input box (sent with a scope) also waits while idle: its scope can still change.
@@ -1264,10 +1267,11 @@ export class DaemonAgentRuntime {
         next.reasoningEffort = effort;
         next.effortScope = once ? 'once' : 'keep';
       }
-      // A value the record already runs with waits for nothing.
-      if (next.model === agent.model) next.model = undefined;
-      if (next.permissionPreset === agent.permissionPreset) next.permissionPreset = undefined;
-      if (next.reasoningEffort === agent.reasoningEffort) {
+      // A value the record already runs with (or is being given right now) waits for nothing.
+      const applying = this.applyingSettings.get(agent.sessionId);
+      if (next.model === (applying?.model ?? agent.model)) next.model = undefined;
+      if (next.permissionPreset === (applying?.permissionPreset ?? agent.permissionPreset)) next.permissionPreset = undefined;
+      if (next.reasoningEffort === (applying?.reasoningEffort ?? agent.reasoningEffort)) {
         next.reasoningEffort = undefined;
         next.effortScope = undefined;
       }
@@ -1714,8 +1718,12 @@ export class DaemonAgentRuntime {
               { kind: 'session.upsert' as const, value: sessionInput(session, 'idle') },
             ]),
     ] }, afterCommit: () => {
-      // Only a plan turn whose implementation now starts with other settings ends at the approval.
-      const endTurn = queueImplement() && planTurnId !== undefined;
+      // Only a plan turn whose implementation now starts with other settings (the link's, or what the person queued)
+      // ends at the approval.
+      queueImplement();
+      const next = this.pendingSettings.get(agent.sessionId);
+      const changes = Boolean(next && ((next.model && next.model !== agent.model) || (next.reasoningEffort && next.reasoningEffort !== agent.reasoningEffort)));
+      const endTurn = changes && planTurnId !== undefined;
       if (endTurn) this.approvedPlanFollowUps.set(planTurnId, { approvalId: approval.id, sessionId: agent.sessionId, principal: command.principal });
       this.runBackground(
         `resolve approval ${approval.id}`,
@@ -2321,7 +2329,10 @@ export class DaemonAgentRuntime {
         if (!this.attachedProviderSessions.has(selected.session.id)) throw new Error('The original provider session could not be attached. Retry after checking its state.');
         if (this.disposed) return;
         if (!queuedApplied) {
-          providerSessionId = await this.applyQueuedSettings(provider.value, selected.agent, providerSessionId, queuedModel, queuedAccess, queuedEffort);
+          this.applyingSettings.set(selected.session.id, { ...(queuedModel ? { model: queuedModel } : {}), ...(queuedAccess ? { permissionPreset: queuedAccess } : {}), ...(queuedEffort ? { reasoningEffort: queuedEffort } : {}) });
+          try {
+            providerSessionId = await this.applyQueuedSettings(provider.value, selected.agent, providerSessionId, queuedModel, queuedAccess, queuedEffort);
+          } finally { this.applyingSettings.delete(selected.session.id); }
           queuedApplied = true;
         }
         // A chain conversation ('앞 대화 이어서') changes permission between stages: the stage about to run fixes it.

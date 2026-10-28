@@ -34,6 +34,20 @@ describe('planning execution environments', () => {
     await f.service.activate('serial');
     expect(f.service.canActivate('b')).toBe(false);
   });
+  it('gives the next stage of a chain a fresh lease on the same conversation once the stage before released it', async () => {
+    const f = await fixture();
+    const first = { runId: 'run', taskId: 'plan', attemptId: 'plan-1', sessionId: 'chain', workspaceId: 'folder', workspaceRoot: f.directory };
+    await f.service.reserve(first, 1);
+    // Still running: another stage cannot take it.
+    await expect(f.service.reserve({ ...first, taskId: 'design', attemptId: 'design-1' }, 1)).rejects.toThrow(/different execution/u);
+    await f.service.release('chain');
+    const next = await f.service.reserve({ ...first, taskId: 'design', attemptId: 'design-1' }, 1);
+    expect(next).toMatchObject({ taskId: 'design', attemptId: 'design-1', status: 'reserved' });
+    expect(next.environment.EZTERMINAL_TASK_ID).toBe('design');
+    // Never across runs or folders.
+    await f.service.release('chain');
+    await expect(f.service.reserve({ ...first, runId: 'other', taskId: 'x', attemptId: 'x' }, 1)).rejects.toThrow(/different execution/u);
+  });
   it('waits for confirmed worker release before validation and cancels a pending validation without running it', async () => {
     const f = await fixture();
     await f.reserve('a'); await f.service.activate('a');

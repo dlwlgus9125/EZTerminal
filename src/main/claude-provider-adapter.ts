@@ -2350,11 +2350,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const terminalReason = asString(message.terminal_reason);
     // A plan approved by ending its turn also ends in error_during_execution (its ExitPlanMode
     // declined with interrupt): that is the turn's normal end.
-    const planApproved = turns.some((turn) => turn.endsWithApprovedPlan);
+    // A Stop the person pressed wins over an approved plan ending at the same moment: no implementation follows.
+    const stopped = turns.some((turn) => turn.interruptRequested);
+    const planApproved = !stopped && turns.some((turn) => turn.endsWithApprovedPlan);
     // A user stop ends in error_during_execution; it is an interruption, not a provider failure.
-    const interrupted = !planApproved && (terminalReason === 'aborted_streaming'
-      || terminalReason === 'aborted_tools'
-      || turns.some((turn) => turn.interruptRequested));
+    const interrupted = stopped || (!planApproved && (terminalReason === 'aborted_streaming' || terminalReason === 'aborted_tools'));
     const isError = !planApproved && !interrupted && (message.is_error === true || message.subtype !== 'success');
     const errorValue = asString(message.error)
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
