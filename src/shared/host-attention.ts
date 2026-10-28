@@ -10,7 +10,8 @@ import type { ExecutionRun } from './planning-execution';
  *   a question request is a `question`.
  * - `flow-approval`: an approval stage awaiting a person in a run that is neither completed nor cancelled. A run
  *   frozen with 자동 승인 counts only once the host's automatic decision was refused (a refusal it recorded),
- *   since otherwise the host decides it.
+ *   since otherwise the host decides it. An answer stage (v18) waiting for the person counts the same way
+ *   (always: 자동 승인 never answers); older phones know this kind, so it keeps it.
  * - `terminal-agent`: a terminal agent blocked on the person; orchestration workers are left to their lead.
  *
  * Finished-work notices (an agent done or failed) stay per device and are not here.
@@ -99,8 +100,8 @@ function flowItems(flows: readonly HostAttentionFlowRun[]): HostAttentionItem[] 
     const workflow = run.preparation.workflow;
     if (!workflow || run.state === 'completed' || run.state === 'cancelled') return [];
     return (run.workflowRuntime?.activations ?? []).flatMap((activation) => {
-      if (activation.state !== 'awaiting-approval') return [];
-      if (run.preparation.approvalPolicy === 'auto' && !autoApprovalRefused(activation.id)) return [];
+      if (activation.state !== 'awaiting-approval' && activation.state !== 'awaiting-answer') return [];
+      if (activation.state === 'awaiting-approval' && run.preparation.approvalPolicy === 'auto' && !autoApprovalRefused(activation.id)) return [];
       const node = workflow.graph.nodes.find((entry) => entry.id === activation.nodeId);
       return [{
         id: itemId('flow-approval', projectId, run.runId, activation.id), kind: 'flow-approval' as const, projectId,

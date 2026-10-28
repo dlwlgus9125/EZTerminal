@@ -2,9 +2,35 @@ import { z } from 'zod';
 
 export const WorkflowIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
 const id = WorkflowIdSchema;
+/**
+ * The saved agent (Settings › AI › 에이전트) a stage was given, as it was when placed (remote protocol v18).
+ * The stage keeps its own provider, model, effort and permission (copied in when placed, effort and
+ * permission changeable on the stage); this names who it is, so a missing agent can be shown and
+ * consecutive stages of the same agent can continue one conversation.
+ */
+export const WorkflowAgentSnapshotSchema = z.object({
+  profileId: z.string().min(1).max(100), name: z.string().trim().min(1).max(200), providerId: id,
+  model: z.string().max(256).optional(), capturedAt: z.string().datetime(),
+}).strict();
+export type WorkflowAgentSnapshot = z.infer<typeof WorkflowAgentSnapshotSchema>;
+/** A stage's independent review (v18): the run's reviewer, none, or its own reviewer agent. */
+export const WorkflowStageReviewSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('run-default') }).strict(),
+  z.object({ mode: z.literal('off') }).strict(),
+  z.object({ mode: z.literal('agent'), agent: WorkflowAgentSnapshotSchema }).strict(),
+]);
+export type WorkflowStageReview = z.infer<typeof WorkflowStageReviewSchema>;
+/** A command the host runs in the stage's result folder to check it (v18); its exit code decides, not an AI. */
+export const WorkflowCheckSchema = z.object({
+  id, command: z.string().trim().min(1).max(4_000),
+  /** Relative to the result folder; the folder itself when absent. */
+  cwd: z.string().min(1).max(1_024).optional(),
+}).strict();
+export type WorkflowCheck = z.infer<typeof WorkflowCheckSchema>;
 export const WorkflowNodeSchema = z.object({
   id, title: z.string().trim().min(1).max(300),
-  operation: z.enum(['agent', 'condition', 'parallel', 'join', 'approval', 'complete']),
+  /** `answer` (v18): waits for the person's answer, which the next stages read. */
+  operation: z.enum(['agent', 'condition', 'parallel', 'join', 'approval', 'complete', 'answer']),
   role: z.enum(['planning', 'design', 'implementation', 'review', 'integration']).default('implementation'),
   instructions: z.string().max(65_536).default(''), document: z.string().max(200_000).default(''),
   providerId: id.optional(), model: z.string().max(256).optional(),
@@ -18,6 +44,16 @@ export const WorkflowNodeSchema = z.object({
   condition: z.object({ sourceNodeId: id, field: z.literal('outcome'), equals: z.enum(['passed', 'failed']) }).strict().optional(),
   joinPolicy: z.enum(['all', 'any']).optional(),
   inputs: z.array(z.object({ nodeId: id, kind: z.enum(['document', 'result']) }).strict()).max(100).default([]),
+  /** v18: who runs this AI stage (see WorkflowAgentSnapshotSchema). */
+  agent: WorkflowAgentSnapshotSchema.optional(),
+  /** v18: `continue` the previous stage's conversation when it is the same agent right before; `fresh` always starts a new one. */
+  session: z.enum(['continue', 'fresh']).optional(),
+  /** v18: this stage's review; the run's reviewer when absent. */
+  review: WorkflowStageReviewSchema.optional(),
+  /** v18: commands the host runs on the stage's result; a failing exit code fails the stage. */
+  checks: z.array(WorkflowCheckSchema).max(20).optional(),
+  /** v18, `answer` stages: what the person is asked, and optionally which stage's result to show. */
+  answer: z.object({ prompt: z.string().trim().min(1).max(4_000), showResultOf: id.optional() }).strict().optional(),
 }).strict();
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
 export const WorkflowEdgeSchema = z.object({
@@ -38,12 +74,16 @@ export function workflowOutcomePorts(operation: WorkflowNode['operation']): read
     case 'condition': return ['passed', 'failed'];
     case 'approval': return ['approved', 'rejected'];
     case 'complete': return [];
+    case 'answer': return ['next'];
     default: return ['next'];
   }
 }
 
+/** What validation may know beyond the graph: the saved agents (a stage naming a missing one cannot run). */
+export interface WorkflowValidationContext { readonly profileIds?: ReadonlySet<string> }
+
 /** Invalid drafts remain editable. Only execution preparation requires a runnable graph. */
-export function validateWorkflowGraph(graph: WorkflowGraph, execution = false): WorkflowIssue[] {
+export function validateWorkflowGraph(graph: WorkflowGraph, execution = false, context: WorkflowValidationContext = {}): WorkflowIssue[] {
   const issues: WorkflowIssue[] = [];
   const add = (code: string, message: string, nodeId?: string, edgeId?: string) => issues.push({ code, message, ...(nodeId ? { nodeId } : {}), ...(edgeId ? { edgeId } : {}) });
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
@@ -54,6 +94,11 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false): 
     if (node.operation === 'condition' && (!node.condition || nodes.get(node.condition.sourceNodeId)?.operation !== 'agent')) add('condition-source', 'Select an AI stage whose verified result controls this condition.', node.id);
     if (node.operation === 'join' && !node.joinPolicy) add('join-policy', 'Choose how incoming branches join.', node.id);
     for (const input of node.inputs) if (!nodes.has(input.nodeId) || input.nodeId === node.id) add('missing-input', 'A referenced input stage is missing or refers to itself.', node.id);
+    if (node.agent && context.profileIds && !context.profileIds.has(node.agent.profileId)) add('missing-agent', 'This stage names an agent that is not in Settings. Place an agent on it again.', node.id);
+    if (node.operation === 'answer' && execution && !node.answer?.prompt.trim()) add('answer-prompt', 'Write what this stage asks the person.', node.id);
+    if (node.answer?.showResultOf && nodes.get(node.answer.showResultOf)?.operation !== 'agent') add('answer-result', 'An answer stage can show only an AI stage result.', node.id);
+    if (new Set((node.checks ?? []).map(check => check.id)).size !== (node.checks ?? []).length) add('duplicate-check', 'A check ID is repeated.', node.id);
+    for (const check of node.checks ?? []) if (check.cwd && (/^(?:[A-Za-z]:|[\\/])/u.test(check.cwd) || check.cwd.split(/[\\/]/u).includes('..'))) add('check-folder', 'A check runs inside the result folder: use a relative folder without "..".', node.id);
     if (execution && node.operation === 'agent') {
       if (!node.instructions.trim() || !node.acceptance.length) add('incomplete-task', 'An AI stage needs instructions and completion criteria.', node.id);
       if (!node.providerId || !node.model) add('missing-provider', 'Choose an available provider and model for this stage.', node.id);
@@ -191,10 +236,15 @@ export const WorkflowFrozenSchema = z.object({
 }).strict();
 export type WorkflowFrozen = z.infer<typeof WorkflowFrozenSchema>;
 export const WorkflowActivationSchema = z.object({
-  id, nodeId: id, iteration: z.number().int().nonnegative(), state: z.enum(['waiting', 'active', 'awaiting-approval', 'completed', 'rejected', 'retry-exhausted']),
+  id, nodeId: id, iteration: z.number().int().nonnegative(),
+  /** `awaiting-answer` (v18): an answer stage waits for the person. */
+  state: z.enum(['waiting', 'active', 'awaiting-approval', 'completed', 'rejected', 'retry-exhausted', 'awaiting-answer']),
   incomingEdgeIds: z.array(id), outcome: z.enum(['passed', 'failed', 'approved', 'rejected', 'next']).optional(),
   inputResults: z.record(id, z.object({ attemptId: id, outcome: z.enum(['passed', 'failed']) }).strict()).default({}),
   attemptId: id.optional(), resolvedBy: id.optional(), resolvedAt: z.string().optional(),
+  /** v18: the person's answer (answer stages) or the note sent back with a rejection (approval stages). */
+  answer: z.string().max(20_000).optional(),
+  comment: z.string().max(20_000).optional(),
 }).strict();
 export type WorkflowActivation = z.infer<typeof WorkflowActivationSchema>;
 export const WorkflowRuntimeSchema = z.object({

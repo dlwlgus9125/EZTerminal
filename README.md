@@ -195,7 +195,7 @@ public distribution requires a separate approval.
 | Platform | Supported system | Release asset |
 | --- | --- | --- |
 | Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
-| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-2.0.0-vc80.apk` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-2.0.0-vc81.apk` |
 
 Release reviewers must inspect both artifacts, `release-manifest.json`, and
 `SHA256SUMS.txt` in the draft before any separate publication decision.

@@ -6,6 +6,7 @@ import type { ProjectArchiveResult } from '../src/shared/project-archive';
 import { WorkflowCommandSchema, WorkflowResultSchema, type WorkflowResult, type WorkflowSnapshot, type WorkflowSubproject } from '../src/shared/workflow';
 import {
   flowCommandNeedsV17,
+  flowCommandNeedsV18,
   flowV17Fields,
   legacyPlanningRunResult,
   legacyProjectArchiveResult,
@@ -145,5 +146,76 @@ describe('commands a newer client keeps for a v17 host (I2-3)', () => {
     expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'subproject.update', payload: { title: 'Renamed' } }))).toBe(false);
     expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'run.prepare', payload: { runId: 'r', reviewer: { providerId: 'codex', model: 'm' } } }))).toBe(false);
     expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'run.start', payload: { runId: 'r' } }))).toBe(false);
+  });
+});
+
+// What an already-installed v17 reader parses with (frozen at the last v17 commit, c74ac76).
+describe('the reduced flow view for remote protocol v17 readers (v18 fields)', () => {
+  async function v17() {
+    return {
+      workflow: await import('./fixtures/protocol-v17/workflow'),
+      run: await import('./fixtures/protocol-v17/planning-run'),
+    };
+  }
+  /** A flow with every v18 field: an agent and checks on a stage, a review choice, '이어서', and an answer stage that waits. */
+  function withV18(snapshot: WorkflowSnapshot): WorkflowSnapshot {
+    const subproject = snapshot.subprojects[0]!;
+    const [first, ...rest] = subproject.graph.nodes;
+    const answer = { ...rest[0]!, id: rest[0]!.id, operation: 'answer' as const, answer: { prompt: 'Which login flow?' } };
+    const graph = { ...subproject.graph, nodes: [
+      { ...first!, agent: { profileId: 'builder', name: 'Builder', providerId: 'codex', capturedAt: AT }, session: 'continue' as const,
+        review: { mode: 'off' as const }, checks: [{ id: 'test', command: 'pnpm test' }] },
+      answer, ...rest.slice(1),
+    ] };
+    const runs = snapshot.runs.map((run) => run.workflowRuntime ? { ...run,
+      preparation: run.preparation.workflow ? { ...run.preparation, workflow: { ...run.preparation.workflow, graph } } : run.preparation,
+      workflowRuntime: { ...run.workflowRuntime, activations: [...run.workflowRuntime.activations,
+        { id: `wf:${answer.id}:0`, nodeId: answer.id, iteration: 0, state: 'awaiting-answer' as const, incomingEdgeIds: [], inputResults: {} },
+        { id: `wf:${answer.id}:x`, nodeId: answer.id, iteration: 1, state: 'completed' as const, incomingEdgeIds: [], inputResults: {}, outcome: 'next' as const, answer: 'Email', comment: 'Again' }] } } : run);
+    return { ...snapshot, subprojects: [{ ...subproject, graph }], runs };
+  }
+
+  it('drops every v18 field and shows an answer stage as an approval the v17 phone cannot resolve', async () => {
+    const { workflow } = await v17();
+    const reply: WorkflowResult = { ok: true, snapshot: withV18(fixture().snapshot) };
+    expect(WorkflowResultSchema.safeParse(reply).success).toBe(true);
+    expect(workflow.WorkflowResultSchema.safeParse(reply).success).toBe(false);
+    const reduced = legacyWorkflowResult(reply, 17);
+    expect(workflow.WorkflowResultSchema.safeParse(reduced).success).toBe(true);
+    const text = JSON.stringify(reduced);
+    expect(text).not.toMatch(/"agent":|"session":|"review":|"checks":|"answer"|awaiting-answer|"comment"/u);
+    const snapshot = (reduced as Extract<WorkflowResult, { ok: true }>).snapshot;
+    expect(snapshot.subprojects[0]!.graph.nodes[1]!.operation).toBe('approval');
+    expect(snapshot.runs.flatMap((run) => run.workflowRuntime?.activations ?? []).some((activation) => activation.state === 'awaiting-approval')).toBe(true);
+    // The v17 field (stage effort) stays for a v17 reader; a v16 reader loses both.
+    const effort = withV17({ ok: true, snapshot: withV18(fixture().snapshot) } as WorkflowResult);
+    expect(JSON.stringify(legacyWorkflowResult(effort, 17))).toMatch(/reasoningEffort":"xhigh/u);
+    expect(V16WorkflowResult.safeParse(legacyWorkflowResult(effort)).success).toBe(true);
+  });
+
+  it('reduces execution replies for v17 the same way', async () => {
+    const { run } = await v17();
+    const snapshot = withV18(fixture().snapshot);
+    const reply = { ok: true, snapshot: { version: 1, projectId: snapshot.projectId, revision: 4, runs: snapshot.runs } } as const;
+    expect(run.PlanningRunResultSchema.safeParse(reply).success).toBe(false);
+    expect(run.PlanningRunResultSchema.safeParse(legacyPlanningRunResult(reply, 17)).success).toBe(true);
+  });
+
+  it('keeps answers, notes and v18 edits for a v18 host', () => {
+    const command = (type: string, payload: Record<string, unknown>) => WorkflowCommandSchema.parse({ commandId: 'c', projectId: 'p', hostId: 'h', expectedRevision: 1, subprojectId: 's', type, payload });
+    expect(flowCommandNeedsV18(command('run.answer', { runId: 'r', activationId: 'a', answer: 'Email' }))).toBe(true);
+    expect(flowCommandNeedsV18(command('run.approve', { runId: 'r', activationId: 'a', decision: 'reject', comment: 'Try again' }))).toBe(true);
+    expect(flowCommandNeedsV18(command('run.approve', { runId: 'r', activationId: 'a', decision: 'approve' }))).toBe(false);
+    const graph = withV18(fixture().snapshot).subprojects[0]!.graph;
+    expect(flowCommandNeedsV18(command('workflow.patch', { graph, summary: 'Edit' }))).toBe(true);
+    expect(flowCommandNeedsV18(command('workflow.patch', { graph: fixture().snapshot.subprojects[0]!.graph, summary: 'Edit' }))).toBe(false);
+  });
+
+  it('notices a v17 edit that would turn an answer stage into an approval or drop a stage agent', () => {
+    const full = withV18(fixture().snapshot).subprojects[0]!;
+    const seen = legacyWorkflowResult({ ok: true, snapshot: withV18(fixture().snapshot) }, 17) as Extract<WorkflowResult, { ok: true }>;
+    const edited = { ...full, graph: seen.snapshot.subprojects[0]!.graph };
+    expect(flowV17Fields(edited, 17)).not.toBe(flowV17Fields(full, 17));
+    expect(flowV17Fields(structuredClone(full), 17)).toBe(flowV17Fields(full, 17));
   });
 });

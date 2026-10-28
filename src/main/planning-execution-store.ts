@@ -396,8 +396,19 @@ export class PlanningExecutionStore {
         const activation = run.workflowRuntime?.activations.find(entry => entry.id === command.payload.activationId);
         requireState(activation?.state === 'awaiting-approval', 'invalid-transition', 'This exact workflow approval is no longer pending.');
         requireState(run.preparation.workflow?.graph.nodes.find(node => node.id === activation.nodeId)?.operation === 'approval', 'invalid-reference', 'The stage is not an approval gate.');
+        // A note goes back only with a rejection: it reaches the stage the rejection returns to.
+        const comment = command.payload.decision === 'reject' ? command.payload.comment : undefined;
         return { ...run, workflowRuntime: { ...run.workflowRuntime!, activations: run.workflowRuntime!.activations.map(entry => entry.id === activation.id
-          ? { ...entry, state: 'active', outcome: command.payload.decision === 'approve' ? 'approved' : 'rejected', resolvedBy: command.principal.id, resolvedAt: now } : entry) } };
+          ? { ...entry, state: 'active', outcome: command.payload.decision === 'approve' ? 'approved' : 'rejected', resolvedBy: command.principal.id, resolvedAt: now, ...(comment ? { comment } : {}) } : entry) } };
+      }
+      case 'workflow.answer': {
+        // Only a person answers: never 자동 승인, never an agent.
+        requireState(command.principal.kind === 'desktop' || command.principal.kind === 'android', 'user-required', 'Only a person answers this stage.');
+        const activation = run.workflowRuntime?.activations.find(entry => entry.id === command.payload.activationId);
+        requireState(activation?.state === 'awaiting-answer', 'invalid-transition', 'This stage no longer waits for an answer.');
+        requireState(run.preparation.workflow?.graph.nodes.find(node => node.id === activation.nodeId)?.operation === 'answer', 'invalid-reference', 'The stage does not ask for an answer.');
+        return { ...run, workflowRuntime: { ...run.workflowRuntime!, activations: run.workflowRuntime!.activations.map(entry => entry.id === activation.id
+          ? { ...entry, state: 'active', outcome: 'next', answer: command.payload.answer, resolvedBy: command.principal.id, resolvedAt: now } : entry) } };
       }
       case 'run.start': {
         requireState(run.state === 'prepared', 'invalid-transition', 'Only a prepared run can start.');

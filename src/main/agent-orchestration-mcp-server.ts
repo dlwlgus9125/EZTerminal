@@ -103,6 +103,9 @@ function workflowRunResults(run: ExecutionRun): JsonObject {
     ...(run.integrationAuthorized ? { integrationAllowedBy: run.integrationAuthorized.by } : {}),
     awaitingApproval: (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
       .map((activation) => nodes.find((node) => node.id === activation.nodeId)?.title ?? activation.nodeId),
+    // Answer stages wait for the person's own words; an agent cannot answer them.
+    awaitingAnswer: (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-answer')
+      .map((activation) => nodes.find((node) => node.id === activation.nodeId)?.title ?? activation.nodeId),
     stages: run.tasks.map((task) => ({
       stage: nodes.find((node) => node.id === task.taskId)?.title ?? run.preparation.tasks.find((entry) => entry.taskId === task.taskId)?.title ?? task.taskId,
       state: task.state,

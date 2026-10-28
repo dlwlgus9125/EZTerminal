@@ -120,14 +120,20 @@ export const WorkflowCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('run.resume'), payload: z.object({ runId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.cancel'), payload: z.object({ runId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.integrate'), payload: z.object({ runId: id }).strict() }).strict(),
-  z.object({ ...envelope, type: z.literal('run.approve'), payload: z.object({ runId: id, activationId: id, decision: z.enum(['approve', 'reject']) }).strict() }).strict(),
+  /** `comment` (v18): a note sent back to the stage a rejection returns to. */
+  z.object({ ...envelope, type: z.literal('run.approve'), payload: z.object({ runId: id, activationId: id, decision: z.enum(['approve', 'reject']), comment: z.string().trim().min(1).max(20_000).optional() }).strict() }).strict(),
+  /** v18: the person answers an answer stage (never automatic). */
+  z.object({ ...envelope, type: z.literal('run.answer'), payload: z.object({ runId: id, activationId: id, answer: z.string().trim().min(1).max(20_000) }).strict() }).strict(),
 ]);
 export type WorkflowCommand = z.infer<typeof WorkflowCommandSchema>;
-/** `reducedFlowView`: a remote reader on protocol v16 or older, which only sees flows without the v17 fields. */
+/**
+ * `reducedFlowView`: a remote reader older than v18, which sees flows without the fields it cannot parse;
+ * `flowViewProtocol` says which view (16: no v17 or v18 fields; 17: no v18 fields; absent reads as 16).
+ */
 /** `schedule`: the host's own repeat schedule, which may only launch a flow (never saved as an author). */
-export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai' | 'schedule'; readonly id: string; readonly sessionId?: string; readonly reducedFlowView?: true };
+export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai' | 'schedule'; readonly id: string; readonly sessionId?: string; readonly reducedFlowView?: true; readonly flowViewProtocol?: 16 | 17 };
 /** Who sent a command, for receipt fingerprints: how it was connected is not part of it, so a phone's retry still matches after an app update. */
-export function workflowPrincipalIdentity(principal: WorkflowPrincipal): Omit<WorkflowPrincipal, 'reducedFlowView'> {
+export function workflowPrincipalIdentity(principal: WorkflowPrincipal): Omit<WorkflowPrincipal, 'reducedFlowView' | 'flowViewProtocol'> {
   return { kind: principal.kind, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };
 }
 export const WorkflowResultSchema = z.union([

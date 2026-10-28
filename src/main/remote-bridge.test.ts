@@ -597,7 +597,7 @@ describe('flow replies for remote protocol v16 readers', () => {
     const legacyReplies = legacy.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply');
     expect(legacyReplies).toHaveLength(2);
     expect(JSON.stringify(legacyReplies)).not.toMatch(/reasoningEffort|runSettings|"repeat"|repeatStatus/u);
-    expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001', reducedFlowView: true });
+    expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001', reducedFlowView: true, flowViewProtocol: 16 });
     legacy.close();
 
     const current = new FakeWs(); await authed(current, options);
@@ -609,6 +609,31 @@ describe('flow replies for remote protocol v16 readers', () => {
     expect(JSON.stringify(currentReplies)).toMatch(/"repeat"/u);
     expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001' });
     current.close();
+  });
+});
+
+describe('flow replies for remote protocol v17 readers (v18 fields)', () => {
+  const v18Snapshot = () => ({ schemaVersion: 1, projectId: 'project', registryRevision: 1, hostId: 'host', runs: [], sessionLinks: [], legacyBaselineOwners: {},
+    subprojects: [{ id: 'sub', title: 'Login', goal: '', status: 'active', revision: 1, createdAt: '2026-10-24T00:00:00.000Z', updatedAt: '2026-10-24T00:00:00.000Z', presetId: 'feature', history: [], archivedNodes: [],
+      graph: { entryNodeId: 'ask', edges: [], nodes: [
+        { id: 'ask', title: 'Ask', operation: 'answer', answer: { prompt: 'Which?' } },
+        { id: 'plan', title: 'Plan', operation: 'agent', reasoningEffort: 'high', agent: { profileId: 'p', name: 'Planner', providerId: 'codex', capturedAt: '2026-10-24T00:00:00.000Z' }, checks: [{ id: 'c', command: 'pnpm test' }] },
+      ] } }] });
+  const workflowCommand = { commandId: 'edit-1', projectId: 'project', hostId: 'host', expectedRevision: 1, subprojectId: 'sub', type: 'workflow.undo', payload: { changeId: 'change-1' } };
+
+  it('sends a v17 phone the flow without v18 fields (an answer stage as an approval) and marks its writes', async () => {
+    const source = { read: vi.fn(async () => ({ ok: true, snapshot: v18Snapshot() })), execute: vi.fn(async () => ({ ok: true, snapshot: v18Snapshot(), commandId: 'edit-1' })) };
+    const { options } = makeOptions({ workflowSource: source as never });
+    const phone = new FakeWs(); attachConnection(phone, options);
+    phone.clientSend({ ...authMessage(), protocolVersion: 17 }); await flush();
+    phone.clientSend({ kind: 'workflow-read', requestId: 'read-17', projectId: 'project' });
+    phone.clientSend({ kind: 'workflow-execute', requestId: 'edit-17', command: workflowCommand }); await flush();
+    const replies = JSON.stringify(phone.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply'));
+    expect(replies).toMatch(/reasoningEffort/u);
+    expect(replies).not.toMatch(/"agent":|"checks"|"answer"/u);
+    expect(replies).toMatch(/"operation":"approval"/u);
+    expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001', reducedFlowView: true, flowViewProtocol: 17 });
+    phone.close();
   });
 });
 

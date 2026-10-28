@@ -58,6 +58,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
+  REMOTE_PROTOCOL_VERSION_FLOW_AGENTS,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
   REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY,
   REMOTE_PROTOCOL_VERSION_PLANNING,
@@ -700,6 +701,8 @@ export function attachConnection(
 ): void {
   let authed = false;
   let negotiatedProtocol: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION;
+  /** The flow view a reader older than v18 parses: v16 (no v17 or v18 fields) or v17 (no v18 fields). */
+  const flowReader = (): 16 | 17 => (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? 16 : 17);
   let clientIdentity: RemoteClientIdentity | null = null;
   let sessionSurfacePrincipalId: string | null = null;
   let authPending = false;
@@ -1760,7 +1763,7 @@ export function attachConnection(
       case 'workflow-preview': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowPreviewSource && clientIdentity
           ? options.workflowPreviewSource.preview(msg.request) : Promise.resolve({ ok: false, message: 'Update the authenticated host and client to use workflow previews.' } as const);
-        void result.then(value => { if (authed) send({ kind: 'workflow-preview-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowPreviewResult(value) : value }); });
+        void result.then(value => { if (authed) send({ kind: 'workflow-preview-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? legacyWorkflowPreviewResult(value, flowReader()) : value }); });
         break;
       }
       case 'conversation-history-resolve':
@@ -1803,9 +1806,9 @@ export function attachConnection(
       case 'workflow-execute': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowSource && clientIdentity
           ? msg.kind === 'workflow-read' ? options.workflowSource.read(msg.projectId) : options.workflowSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}`,
-            ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? { reducedFlowView: true as const } : {}) })
+            ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? { reducedFlowView: true as const, flowViewProtocol: flowReader() } : {}) })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
-        void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowResult(value) : value }); });
+        void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? legacyWorkflowResult(value, flowReader()) : value }); });
         break;
       }
       case 'side-question-ask': {
@@ -1883,7 +1886,7 @@ export function attachConnection(
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.projectArchiveSource && clientIdentity
           ? options.projectArchiveSource.request(msg.request, `android:${clientIdentity.clientId}`)
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated authenticated PC to manage project records.' } as const);
-        void result.then(value => { if (authed) send({ kind: 'project-archive-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyProjectArchiveResult(value) : value }); });
+        void result.then(value => { if (authed) send({ kind: 'project-archive-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? legacyProjectArchiveResult(value, flowReader()) : value }); });
         break;
       }
       case 'planning-run-read':
@@ -1898,7 +1901,7 @@ export function attachConnection(
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Planning execution requires a compatible authenticated connection.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-run-reply', requestId: msg.requestId, result: value.ok && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
           ? { ...value, snapshot: { ...value.snapshot, runs: value.snapshot.runs.filter(run => !run.preparation.subprojectId && !run.preparation.workflow) } }
-          : negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyPlanningRunResult(value) : value }); });
+          : negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS ? legacyPlanningRunResult(value, flowReader()) : value }); });
         break;
       }
       case 'planning-result-read': {

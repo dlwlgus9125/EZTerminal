@@ -11,7 +11,7 @@ describe('new mobile to frozen r4 host wire compatibility', () => {
       clientIdentity: { clientId: '00000000-0000-4000-8000-000000000001', clientName: 'New phone', platform: 'android' },
       createSocket: () => { const socket = new R4RemoteHostSocket(); sockets.push(socket); return socket; } });
     await vi.waitFor(() => expect(transport!.isAuthed).toBe(true));
-    expect(sockets[0].sent[0]).toMatchObject({ kind: 'auth', protocolVersion: 12, supportedProtocolVersions: [17, 16, 15, 14, 13, 12] });
+    expect(sockets[0].sent[0]).toMatchObject({ kind: 'auth', protocolVersion: 12, supportedProtocolVersions: [18, 17, 16, 15, 14, 13, 12] });
     expect(transport.negotiatedRemoteProtocolVersion).toBe(12);
     const list = await transport.listConversations({ source: 'native' }); if (!list.ok) throw new Error(list.message);
     expect(list.items).toHaveLength(1); expect(list.items[0]).toMatchObject({ source: 'native', historyId: 'codex_opaque', action: 'unavailable' });

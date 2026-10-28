@@ -168,10 +168,12 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES = 14 as const;
 export const REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY = 15 as const;
 export const REMOTE_PROTOCOL_VERSION_CONVERSATION_IDENTITY = 16 as const;
 export const REMOTE_PROTOCOL_VERSION_FLOW_RUNS = 17 as const;
-export const REMOTE_PROTOCOL_VERSION = 17 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
+/** Agents on workflow stages, '이어서', per-stage review, checks, answer stages, approval notes. */
+export const REMOTE_PROTOCOL_VERSION_FLOW_AGENTS = 18 as const;
+export const REMOTE_PROTOCOL_VERSION = 18 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [17, 16, 15, 14, 13, 12];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [18, 17, 16, 15, 14, 13, 12];
 /** An older host can accept this first auth without understanding the optional offer. */
 export const REMOTE_PROTOCOL_AUTH_BASELINE = 12 as const;
 

@@ -80,7 +80,7 @@ export class HostAttentionService {
     this.version += 1;
     const runs = this.options.readRuns(projectId).filter((run) => run.state !== 'completed' && run.state !== 'cancelled');
     const waiting = new Set(runs.flatMap((run) => (run.workflowRuntime?.activations ?? [])
-      .filter((activation) => activation.state === 'awaiting-approval').map((activation) => `${projectId}/${run.runId}/${activation.id}`)));
+      .filter((activation) => activation.state === 'awaiting-approval' || activation.state === 'awaiting-answer').map((activation) => `${projectId}/${run.runId}/${activation.id}`)));
     for (const key of [...this.firstSeen.keys()]) if (key.startsWith(`${projectId}/`) && !waiting.has(key)) this.firstSeen.delete(key);
     for (const run of runs) for (const key of waiting) if (key.startsWith(`${projectId}/${run.runId}/`) && !this.firstSeen.has(key)) this.firstSeen.set(key, run.updatedAt);
     if (!runs.length) { this.flows.delete(projectId); return; }

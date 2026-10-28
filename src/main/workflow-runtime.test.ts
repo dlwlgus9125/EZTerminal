@@ -99,3 +99,52 @@ describe('frozen workflow execution projection', () => {
     current = finish(current, 'p:review'); expect(current.state).toBe('awaiting-review');
   });
 });
+
+describe('answer stages and approval notes (v18)', () => {
+  function asking(): WorkflowGraph {
+    return runnable({ entryNodeId: 'ask', nodes: [
+      WorkflowNodeSchema.parse({ id: 'ask', title: 'Ask the person', operation: 'answer', answer: { prompt: 'Which login flow?' } }),
+      WorkflowNodeSchema.parse({ id: 'work', title: 'Work', operation: 'agent' }),
+      WorkflowNodeSchema.parse({ id: 'check', title: 'Check', operation: 'approval' }),
+      WorkflowNodeSchema.parse({ id: 'done', title: 'Done', operation: 'complete' }),
+    ], edges: [
+      { id: 'e1', from: 'ask', to: 'work', outcome: 'next' }, { id: 'e2', from: 'work', to: 'check', outcome: 'next' },
+      { id: 'e3', from: 'check', to: 'done', outcome: 'approved' }, { id: 'back', from: 'check', to: 'work', outcome: 'rejected', retryLimit: 2 },
+    ] });
+  }
+  const resolve = (input: ExecutionRun, nodeId: string, patch: Record<string, unknown>): ExecutionRun => advanceWorkflowRun({ ...input, workflowRuntime: { ...input.workflowRuntime!,
+    activations: input.workflowRuntime!.activations.map(entry => entry.nodeId === nodeId && (entry.state === 'awaiting-answer' || entry.state === 'awaiting-approval') ? { ...entry, state: 'active', ...patch } : entry) } });
+
+  it('waits for the answer with no model, then hands it to the next stage', () => {
+    const graph = asking(); expect(validateWorkflowGraph(graph, true)).toEqual([]);
+    let current = advanceWorkflowRun(run(graph));
+    expect(current.workflowRuntime!.activations[0]!.state).toBe('awaiting-answer');
+    expect(current.state).toBe('awaiting-review');
+    expect(current.tasks.every(task => task.state === 'waiting')).toBe(true);
+    current = resolve(current, 'ask', { outcome: 'next', answer: 'Email and code' });
+    expect(current.tasks.find(task => task.taskId === 'work')!.state).toBe('ready');
+    const inputs = workflowTaskInputs(current, current.preparation.tasks.find(task => task.taskId === 'work')!);
+    expect(inputs.context).toContain('Answers from the person');
+    expect(inputs.context).toContain('Email and code');
+  });
+
+  it('sends a rejection note back to the stage the rejection returns to', () => {
+    let current = resolve(advanceWorkflowRun(run(asking())), 'ask', { outcome: 'next', answer: 'Email' });
+    current = finish(current, 'work');
+    current = resolve(current, 'check', { outcome: 'rejected', comment: 'Keep the old button.' });
+    const inputs = workflowTaskInputs(current, current.preparation.tasks.find(task => task.taskId === 'work')!);
+    expect(inputs.context).toContain('sent this work back with a note');
+    expect(inputs.context).toContain('Keep the old button.');
+    // The answer from before the loop still reaches the retried stage.
+    expect(inputs.context).toContain('Email');
+  });
+
+  it('needs a question and names a missing agent', () => {
+    const graph = asking();
+    graph.nodes[0] = { ...graph.nodes[0]!, answer: undefined };
+    expect(validateWorkflowGraph(graph, true).map(issue => issue.code)).toContain('answer-prompt');
+    graph.nodes[1] = { ...graph.nodes[1]!, agent: { profileId: 'gone', name: 'Builder', providerId: 'claude', capturedAt: '2026-10-29T00:00:00.000Z' } };
+    expect(validateWorkflowGraph(graph, false, { profileIds: new Set(['other']) }).map(issue => issue.code)).toContain('missing-agent');
+    expect(validateWorkflowGraph(graph, false, { profileIds: new Set(['gone']) }).map(issue => issue.code)).not.toContain('missing-agent');
+  });
+});

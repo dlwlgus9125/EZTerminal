@@ -354,7 +354,9 @@ const envelope = {
 const run = { runId: id };
 const attempt = { ...run, attemptId: id };
 export const PlanningExecutionCommandSchema = z.discriminatedUnion('type', [
-  z.object({ ...envelope, type: z.literal('workflow.approve'), payload: z.object({ ...run, activationId: id, decision: z.enum(['approve', 'reject']) }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('workflow.approve'), payload: z.object({ ...run, activationId: id, decision: z.enum(['approve', 'reject']), comment: z.string().trim().min(1).max(20_000).optional() }).strict() }).strict(),
+  /** v18: a person answers an answer stage. */
+  z.object({ ...envelope, type: z.literal('workflow.answer'), payload: z.object({ ...run, activationId: id, answer: z.string().trim().min(1).max(20_000) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.prepare'), payload: z.object({ ...run, preparation: ExecutionPreparationSchema }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.start'), payload: z.object(run).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.pause'), payload: z.object(run).strict() }).strict(),

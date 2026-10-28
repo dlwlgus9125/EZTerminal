@@ -360,7 +360,7 @@ export class WorkflowService {
             // A v16 reader saw the preview without its v17 fields: it confirms that reduced view, and the
             // flow is created from the host's own preview so nothing it could not see is lost.
             const confirmed = (graph: WorkflowGraph | undefined) => Boolean(preview && graph && (workflowDigest(preview.graph) === workflowDigest(graph)
-              || principal.reducedFlowView && workflowDigest(legacyWorkflowGraph(preview.graph)) === workflowDigest(graph)));
+              || principal.reducedFlowView && workflowDigest(legacyWorkflowGraph(preview.graph, principal.flowViewProtocol ?? 16)) === workflowDigest(graph)));
             if (!preview || preview.projectId !== command.projectId || preview.revision !== command.payload.previewRevision
               || !confirmed(command.payload.graph)) return failure('preview-conflict', 'The creation preview changed or was discarded. Review the current preview before creating.');
             createdGraph = structuredClone(preview.graph);
@@ -417,7 +417,7 @@ export class WorkflowService {
               return old && next && changedStageSettings(old, next).length > 0; });
             return locked ? failure('stage-locked', 'This stage is working now. Change its settings after it finishes; they apply from then on.') : null;
           };
-          const v17Before = flowV17Fields(subproject!);
+          const v17Before = flowV17Fields(subproject!, principal.flowViewProtocol ?? 16);
           let graph; let undoOf: string | undefined; let summary: string;
           if (command.type === 'workflow.undo') {
             const change = subproject!.history.find(entry => entry.id === command.payload.changeId);
@@ -446,8 +446,8 @@ export class WorkflowService {
           }
           subproject!.archivedNodes = subproject!.archivedNodes.filter(node => !graph.nodes.some(active => active.id === node.id));
           subproject!.graph = structuredClone(graph);
-          // A v16 reader sees a reduced view without the v17 fields; its edit must not silently drop or change them.
-          if (principal.reducedFlowView && flowV17Fields(subproject!) !== v17Before) return failure('unsupported', 'Update the Android app to edit this flow: it uses settings this app version cannot show.');
+          // An older reader sees a reduced view without the fields it cannot parse; its edit must not silently drop or change them.
+          if (principal.reducedFlowView && flowV17Fields(subproject!, principal.flowViewProtocol ?? 16) !== v17Before) return failure('unsupported', 'Update the Android app to edit this flow: it uses settings this app version cannot show.');
           subproject!.revision += 1; subproject!.updatedAt = now;
           subproject!.history.push({ id: command.commandId, commandId: command.commandId, revision: subproject!.revision, createdAt: now, actor, summary, before, after: structuredClone(graph), ...(undoOf ? { undoOf } : {}) });
         } else if (command.type === 'session.link' || command.type === 'session.unlink' || command.type === 'session.refresh') {

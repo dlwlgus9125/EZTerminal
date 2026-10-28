@@ -11,7 +11,7 @@ export function useWorkflowCopy(): WorkflowCopy {
   return (ko, en) => korean ? ko : en;
 }
 export function workflowOperationLabel(operation: WorkflowNode['operation'], text: WorkflowCopy): string {
-  const labels = { agent: text('AI 작업', 'AI task'), condition: text('조건 분기', 'Condition'), parallel: text('병렬 시작', 'Parallel'), join: text('결과 합류', 'Join'), approval: text('사용자 승인', 'Approval'), complete: text('완료', 'Complete') };
+  const labels = { agent: text('AI 작업', 'AI task'), condition: text('조건 분기', 'Condition'), parallel: text('병렬 시작', 'Parallel'), join: text('결과 합류', 'Join'), approval: text('사용자 승인', 'Approval'), complete: text('완료', 'Complete'), answer: text('내 답변 기다림', 'Waits for my answer') };
   return labels[operation];
 }
 export function workflowOutcomeLabel(outcome: string, text: WorkflowCopy): string {
@@ -69,5 +69,5 @@ export function workflowIssueLabel(issue: { readonly code: string; readonly mess
   return text(ISSUE_KO[issue.code] ?? issue.message, issue.message);
 }
 export function workflowStateLabel(state: string, text: WorkflowCopy): string {
-  return ({ prepared: text('준비됨', 'Prepared'), running: text('실행 중', 'Running'), paused: text('일시정지', 'Paused'), reconciling: text('결과 확인 중', 'Reconciling'), 'awaiting-review': text('검토 대기', 'Awaiting review'), waiting: text('대기', 'Waiting'), active: text('진행 중', 'Active'), 'awaiting-approval': text('승인 대기', 'Awaiting approval'), completed: text('완료', 'Completed'), cancelled: text('취소됨', 'Cancelled'), rejected: text('거절됨', 'Rejected'), 'retry-exhausted': text('재시도 한도 도달', 'Retry limit reached') } as Record<string, string>)[state] ?? state;
+  return ({ prepared: text('준비됨', 'Prepared'), running: text('실행 중', 'Running'), paused: text('일시정지', 'Paused'), reconciling: text('결과 확인 중', 'Reconciling'), 'awaiting-review': text('검토 대기', 'Awaiting review'), waiting: text('대기', 'Waiting'), active: text('진행 중', 'Active'), 'awaiting-approval': text('승인 대기', 'Awaiting approval'), 'awaiting-answer': text('답변 대기', 'Awaiting your answer'), completed: text('완료', 'Completed'), cancelled: text('취소됨', 'Cancelled'), rejected: text('거절됨', 'Rejected'), 'retry-exhausted': text('재시도 한도 도달', 'Retry limit reached') } as Record<string, string>)[state] ?? state;
 }

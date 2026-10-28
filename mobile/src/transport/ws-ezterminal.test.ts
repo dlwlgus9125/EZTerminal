@@ -256,6 +256,21 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect((sockets[0].lastSent() as { kind: string }).kind).toBe('workflow-execute');
     transport.disconnect();
   });
+  it('keeps answers, rejection notes and v18 stage fields on the phone for a v17 PC', async () => {
+    const { createSocket, sockets } = makeCreateSocket(); const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 17 });
+    const before = sockets[0].sent.length;
+    const base = { projectId: 'project', hostId: 'host', expectedRevision: 0, subprojectId: 'sub' };
+    expect(await transport.executeWorkflowCommand({ ...base, commandId: 'answer', type: 'run.answer', payload: { runId: 'r', activationId: 'a', answer: 'Email' } } as never)).toMatchObject({ ok: false, error: 'older-host' });
+    expect(await transport.executeWorkflowCommand({ ...base, commandId: 'reject', type: 'run.approve', payload: { runId: 'r', activationId: 'a', decision: 'reject', comment: 'Again' } } as never)).toMatchObject({ ok: false, error: 'older-host' });
+    const graph = { entryNodeId: 'a', edges: [], nodes: [{ id: 'a', title: 'Plan', operation: 'agent', role: 'planning', instructions: '', document: '', reasoningEffort: 'high', permissionPreset: 'plan', acceptance: [], allowedPaths: [], retryLimit: 2, position: { x: 0, y: 0 }, inputs: [], checks: [{ id: 'c', command: 'pnpm test' }] }] };
+    expect(await transport.executeWorkflowCommand({ ...base, commandId: 'save', type: 'workflow.patch', payload: { graph, summary: 'Save' } } as never)).toMatchObject({ ok: false, error: 'older-host' });
+    expect(sockets[0].sent).toHaveLength(before);
+    // A plain approval and v17 stage effort still go to a v17 PC.
+    void transport.executeWorkflowCommand({ ...base, commandId: 'approve', type: 'run.approve', payload: { runId: 'r', activationId: 'a', decision: 'approve' } } as never);
+    expect((sockets[0].lastSent() as { kind: string }).kind).toBe('workflow-execute');
+    transport.disconnect();
+  });
   it('gates discovery at v14 and sends no legacy mutation', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

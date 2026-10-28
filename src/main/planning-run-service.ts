@@ -272,7 +272,7 @@ export class PlanningRunService {
             const original = this.options.ledger.read(command.projectId).runs.find(run => run.runId === request.payload.runId);
             if (previous.ok && (!original || original.preparation.requestFingerprint !== workflowDigest({ command, principal: workflowPrincipalIdentity(principal) }))) return { ok: false, error: 'command-conflict', message: 'This workflow command ID belongs to different execution inputs.' };
           } else {
-            const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
+            const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.answer': 'workflow.answer', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
             const replay = await this.options.ledger.execute({ ...common, expectedRevision: previous.ok ? previous.revision - 1 : previous.revision, type: types[request.type], payload: request.payload });
             if (!replay.ok) return { ok: false, error: replay.error, message: replay.message };
           }
@@ -319,7 +319,7 @@ export class PlanningRunService {
             workflow: { subprojectId: subproject.id, revision: subproject.revision, fingerprint: workflowDigest(subproject.graph), graph: structuredClone(subproject.graph) },
           } } });
         } else {
-          const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
+          const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.answer': 'workflow.answer', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
           receipt = await this.options.ledger.execute({ ...common, type: types[request.type], payload: request.payload });
         }
         if (!receipt.ok) return { ok: false, error: receipt.error, message: receipt.message };

@@ -8,7 +8,7 @@ import { workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from 
 import './workflow-canvas.css';
 
 const OPERATION_ICONS: Record<WorkflowNode['operation'], GlyphIcon> = {
-  agent: glyphIcon('bot'), condition: glyphIcon('flow'), parallel: glyphIcon('flow'), join: glyphIcon('merge'), approval: glyphIcon('req'), complete: glyphIcon('flag'),
+  agent: glyphIcon('bot'), condition: glyphIcon('flow'), parallel: glyphIcon('flow'), join: glyphIcon('merge'), approval: glyphIcon('req'), complete: glyphIcon('flag'), answer: glyphIcon('q'),
 };
 
 export interface WorkflowRunStatusPresentation { readonly label: string; readonly icon: GlyphIcon; readonly variant: SemanticVariant | 'loading' }

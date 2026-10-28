@@ -240,6 +240,16 @@ describe('planning result authority', () => {
     await f.service.processIntegration(f.current()); await f.service.whenIdle(); expect(adopt).toHaveBeenCalledOnce();
     expect(await f.service.readIntegration('P', 'R')).toMatchObject({ status: 'passed' });
   }, 60_000);
+  it('keeps a rejection note on the approval, and lets only a person answer an answer stage (v18)', async () => {
+    const f = await fixture({ workflow: true });
+    await f.capture(); await f.review(); expect(await f.approve()).toMatchObject({ ok: true });
+    const activation = f.current().workflowRuntime!.activations.find(value => value.state === 'awaiting-approval')!;
+    // Not an answer stage, and never the runtime (자동 승인 does not answer).
+    expect(await f.send('workflow.answer', { activationId: activation.id, answer: 'Email' }, 'runtime')).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.send('workflow.answer', { activationId: activation.id, answer: 'Email' })).toMatchObject({ ok: false, error: 'invalid-transition' });
+    expect(await f.send('workflow.approve', { activationId: activation.id, decision: 'reject', comment: 'Keep the old button.' })).toMatchObject({ ok: true });
+    expect(f.current().workflowRuntime!.activations.find(value => value.id === activation.id)).toMatchObject({ outcome: 'rejected', comment: 'Keep the old button.' });
+  }, 60_000);
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();
     await f.capture();

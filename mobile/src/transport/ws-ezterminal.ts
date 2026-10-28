@@ -17,7 +17,7 @@ import type { ChatStateResult } from '../../../src/shared/chat-state';
 import { PlanningRunResultSchema, type PlanningRunRequest, type PlanningRunResult } from '../../../src/shared/planning-run';
 import { ProjectArchiveResultSchema, type ProjectArchiveRequest, type ProjectArchiveResult } from '../../../src/shared/project-archive';
 import { WorkflowResultSchema, WorkflowPreviewResultSchema, WorkflowNavigationResultSchema, type WorkflowNavigationResult, type WorkflowCommand, type WorkflowResult, type WorkflowPreviewRequest, type WorkflowPreviewResult } from '../../../src/shared/workflow';
-import { flowCommandNeedsV17, flowPreviewNeedsV17 } from '../../../src/shared/workflow-protocol-projection';
+import { flowCommandNeedsV17, flowCommandNeedsV18, flowPreviewNeedsV17, flowPreviewNeedsV18 } from '../../../src/shared/workflow-protocol-projection';
 
 const OLDER_PC_FLOW = 'The connected PC is older and cannot save these workflow settings. Your draft is kept here; update the PC to save it.';
 import { PlanningResultQueryResultSchema, type PlanningResultQuery, type PlanningResultQueryResult } from '../../../src/shared/planning-result';
@@ -167,6 +167,7 @@ import {
   isRemoteProtocolVersion,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
+  REMOTE_PROTOCOL_VERSION_FLOW_AGENTS,
   REMOTE_PROTOCOL_VERSION_PLANNING,
   type AgentCapabilitiesWireRequest,
   type ProviderModelsListRequest,
@@ -1219,6 +1220,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if (!this.authed || this.negotiatedProtocolVersion === null) return Promise.resolve({ ok: false, message: 'PC connection is unavailable. Reconnect to continue.' });
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, message: 'Update the PC to use conversational workflow setup.' });
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_FLOW_RUNS && flowPreviewNeedsV17(request)) return Promise.resolve({ ok: false, message: OLDER_PC_FLOW });
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS && flowPreviewNeedsV18(request)) return Promise.resolve({ ok: false, message: OLDER_PC_FLOW });
     return this.requestPlanningExtension({ kind: 'workflow-preview', requestId: this.newId(), request }, 'workflow-preview-reply', value => {
       const result = WorkflowPreviewResultSchema.safeParse(value);
       return result.success && (!result.data.ok || !result.data.preview || result.data.preview.id === request.previewId && result.data.preview.projectId === request.projectId)
@@ -1247,7 +1249,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   executeWorkflowCommand(command: WorkflowCommand): Promise<WorkflowResult> {
     // An older PC's strict schema would reject settings it does not know: keep the command and its draft here.
     if (this.authed && (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_WORKFLOW
-      && (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_FLOW_RUNS && flowCommandNeedsV17(command)) {
+      && ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_FLOW_RUNS && flowCommandNeedsV17(command)
+        || (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_FLOW_AGENTS && flowCommandNeedsV18(command))) {
       return Promise.resolve({ ok: false, error: 'older-host', message: OLDER_PC_FLOW });
     }
     return this.requestWorkflow({ kind: 'workflow-execute', requestId: this.newId(), command }, command.projectId, command.commandId, command.hostId);
