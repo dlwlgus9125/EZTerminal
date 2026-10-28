@@ -44,7 +44,8 @@ export function flowPhaseText(phase: LiveFlow['phase'], text: ShellText): string
   }
 }
 
-export function waitingKindText(kind: WaitingItem['kind'], text: ShellText): string {
+export function waitingKindText(kind: WaitingItem['kind'], text: ShellText, asks?: WaitingItem['asks']): string {
+  if (kind === 'flow-approval' && asks === 'answer') return text('워크플로 답변', 'Workflow answer');
   switch (kind) {
     case 'command': return text('명령 실행 승인', 'Run a command');
     case 'file-change': return text('파일 변경 승인', 'Change files');

@@ -148,8 +148,8 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
         {props.waiting.map((item) => (
           <button key={item.approvalId} type="button" className="ez-shell-row" data-need="true" onClick={() => props.onOpenWaiting(item)} data-testid="shell-live-waiting">
             <Led tone="amber" />
-            <span className="ez-shell-row__t">{waitingKindText(item.kind, text)} · {item.title}</span>
-            <span className="ez-shell-row__m">{providerName(item.providerId)} · {item.kind === 'question' ? text('답 기다림', 'answer needed') : text('허용 또는 거부', 'allow or deny')}</span>
+            <span className="ez-shell-row__t">{waitingKindText(item.kind, text, item.asks)} · {item.title}</span>
+            <span className="ez-shell-row__m">{providerName(item.providerId)} · {item.kind === 'question' || item.asks === 'answer' ? text('답 기다림', 'answer needed') : text('허용 또는 거부', 'allow or deny')}</span>
           </button>
         ))}
         <button type="button" className="ez-shell-row" data-more="true" onClick={props.onInbox} data-testid="shell-live-all-requests">

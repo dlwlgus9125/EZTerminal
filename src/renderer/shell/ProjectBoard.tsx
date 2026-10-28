@@ -81,8 +81,8 @@ function WaitingCard({ item, onDecide, onOpen }: {
   };
   const decidable = item.kind === 'command' || item.kind === 'file-change' || item.kind === 'tool';
   return (
-    <article className="ez-shell-need" aria-label={`${waitingKindText(item.kind, text)}: ${item.title}`} data-testid="shell-need" data-kind={item.kind}>
-      <div className="ez-shell-need__k"><Glyph name={item.kind === 'question' ? 'q' : 'ok'} size={14} />{waitingKindText(item.kind, text)}{item.providerId ? ` · ${providerName(item.providerId)}` : ''}</div>
+    <article className="ez-shell-need" aria-label={`${waitingKindText(item.kind, text, item.asks)}: ${item.title}`} data-testid="shell-need" data-kind={item.kind}>
+      <div className="ez-shell-need__k"><Glyph name={item.kind === 'question' || item.asks === 'answer' ? 'q' : 'ok'} size={14} />{waitingKindText(item.kind, text, item.asks)}{item.providerId ? ` · ${providerName(item.providerId)}` : ''}</div>
       <p className="ez-shell-need__t">{item.title}</p>
       {item.kind === 'command' ? <pre className="ez-shell-need__c">{item.detail}</pre> : item.detail && <p className="ez-shell-need__q">{item.detail}</p>}
       <div className="ez-shell-btns">
@@ -94,7 +94,7 @@ function WaitingCard({ item, onDecide, onOpen }: {
           </>
         ) : (
           <button type="button" className="ez-shell-btn" onClick={onOpen} data-testid="shell-need-answer">{item.kind === 'question' ? text('답하기', 'Answer')
-            : item.kind === 'flow-approval' ? text('승인 보기', 'Review approval')
+            : item.kind === 'flow-approval' ? (item.asks === 'answer' ? text('답하기', 'Answer') : text('승인 보기', 'Review approval'))
               : item.kind === 'terminal-agent' ? text('받은 요청 보기', 'Open requests') : text('대화 열기', 'Open conversation')}</button>
         )}
       </div>

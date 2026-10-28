@@ -48,14 +48,14 @@ function waitingKicker(item: FeedWaitingItem, text: ShellText): string {
   const kind = item.kind === 'approval' ? waitingKindText(item.requestKind ?? 'other', text)
     : item.kind === 'question' ? waitingKindText('question', text)
       : item.kind === 'plan' ? waitingKindText('plan', text)
-        : waitingKindText(item.kind, text);
+        : waitingKindText(item.kind, text, item.asks);
   return item.providerId ? `${kind} · ${providerName(item.providerId)}` : kind;
 }
 
 function openLabel(item: FeedWaitingItem, text: ShellText): string {
   switch (item.kind) {
     case 'question': return text('답하기', 'Answer');
-    case 'flow-approval': return text('승인 보기', 'Review approval');
+    case 'flow-approval': return item.asks === 'answer' ? text('답하기', 'Answer') : text('승인 보기', 'Review approval');
     case 'terminal-agent': return text('에이전트 보기', 'Open agent');
     default: return text('대화 열기', 'Open conversation');
   }

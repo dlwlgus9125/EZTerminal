@@ -82,6 +82,9 @@ if (args.includes('--version')) {
               id: 'gpt-5.6-fixture',
               model: 'gpt-5.6-fixture',
               displayName: 'GPT 5.6 Fixture',
+              // Like the real app-server's models: the efforts it accepts (workflow stages are checked against them).
+              supportedReasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'].map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })),
+              defaultReasoningEffort: 'medium',
               isDefault: true,
             }],
             nextCursor: null,

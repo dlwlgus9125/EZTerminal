@@ -36,6 +36,8 @@ export interface HostAttentionItem {
   readonly runRevision?: number;
   readonly activationId?: string;
   readonly nodeId?: string;
+  /** A flow stage that waits for the person's answer (내 답변), not an approval. */
+  readonly asks?: 'answer';
   readonly activityId?: string;
 }
 
@@ -107,6 +109,7 @@ function flowItems(flows: readonly HostAttentionFlowRun[]): HostAttentionItem[] 
         id: itemId('flow-approval', projectId, run.runId, activation.id), kind: 'flow-approval' as const, projectId,
         title: node?.title ?? activation.nodeId, since: awaitingSince?.(activation.id) ?? run.updatedAt, subprojectId: workflow.subprojectId,
         runId: run.runId, runRevision: run.revision, activationId: activation.id, nodeId: activation.nodeId,
+        ...(activation.state === 'awaiting-answer' ? { asks: 'answer' as const } : {}),
       }];
     });
   });

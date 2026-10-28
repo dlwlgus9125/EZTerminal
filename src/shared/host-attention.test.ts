@@ -61,6 +61,14 @@ describe('computeHostAttention', () => {
     }
   });
 
+  it('says a stage waits for an answer (내 답변), even under auto-approve, which never answers it', () => {
+    const answering = run({ preparation: { approvalPolicy: 'auto', workflow: { subprojectId: 'login', graph: { nodes: [{ id: 'ask', title: '내 답변' }] } } },
+      workflowRuntime: { activations: [{ id: 'activation-2', nodeId: 'ask', state: 'awaiting-answer' }] } });
+    const [item] = computeHostAttention({ daemon: daemon({ approvals: [] }), flows: [{ projectId: 'project-a', run: answering, autoApprovalRefused: none }], terminalAgents: [], orchestrationWorkers: new Set() }).items;
+    expect(item).toMatchObject({ kind: 'flow-approval', asks: 'answer', nodeId: 'ask', title: '내 답변' });
+    expect(computeHostAttention({ daemon: daemon({ approvals: [] }), flows: [{ projectId: 'project-a', run: run(), autoApprovalRefused: none }], terminalAgents: [], orchestrationWorkers: new Set() }).items[0]).not.toHaveProperty('asks');
+  });
+
   it('leaves out the flow approvals of a project that was archived or removed', () => {
     const flows = [{ projectId: 'project-a', run: run(), autoApprovalRefused: none }, { projectId: 'project-gone', run: run({ runId: 'run-9' }), autoApprovalRefused: none }];
     const projects = [{ id: 'project-a' }, { id: 'project-gone', archivedAt: '2026-10-25T00:00:00.000Z' }];

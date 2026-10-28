@@ -41,6 +41,8 @@ export interface FeedWaitingItem {
   readonly providerId?: string;
   /** A conversation approval's request kind (command, file-change, tool, other). */
   readonly requestKind?: WaitingItem['kind'];
+  /** A flow stage that waits for an answer (내 답변) rather than an approval. */
+  readonly asks?: 'answer';
   readonly sessionId?: string;
   readonly approvalId?: string;
   readonly activityId?: string;
@@ -120,6 +122,7 @@ export function feedWaiting(
       if (item.kind === 'flow-approval' && item.subprojectId && item.nodeId) {
         const flowTitle = item.projectId ? workflows?.get(item.projectId)?.subprojects.find((subproject) => subproject.id === item.subprojectId)?.title : undefined;
         return [{ key: `flow:${item.id}`, kind: 'flow-approval', at: item.since, title: flowTitle ?? item.title, detail: flowTitle ? item.title : '', ...project,
+          ...(item.asks ? { asks: item.asks } : {}),
           flow: { subprojectId: item.subprojectId, nodeId: item.nodeId, ...(item.runId ? { runId: item.runId } : {}) } }];
       }
       if (item.kind === 'terminal-agent' && item.activityId) {
