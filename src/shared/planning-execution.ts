@@ -419,6 +419,8 @@ export const PlanningExecutionSnapshotSchema = z.object({
     dispatchPaused: z.boolean().optional(), selectedCandidates: z.record(id, id).optional(),
     workflowRuntime: WorkflowRuntimeSchema.optional(),
     stageBindings: z.record(id, StageBindingSchema).optional(),
+    /** v18: per AI stage, a digest of its check results (command, exit code, normalized output) for 정기 점검. */
+    checkDigests: z.record(id, z.string().regex(/^[0-9a-f]{64}$/u)).optional(),
     tasks: z.array(z.object({
       taskId: id, state: z.enum(['waiting', 'ready', 'running', 'awaiting-review', 'completed', 'failed', 'cancelled', 'paused', 'reconciling', 'stale']),
       retriesUsed: revision, currentAttemptId: id.optional(), pauseReason: z.string().optional(),

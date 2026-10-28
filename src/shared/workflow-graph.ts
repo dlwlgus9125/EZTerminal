@@ -51,6 +51,11 @@ export const WorkflowNodeSchema = z.object({
   review: WorkflowStageReviewSchema.optional(),
   /** v18: commands the host runs on the stage's result; a failing exit code fails the stage. */
   checks: z.array(WorkflowCheckSchema).max(20).optional(),
+  /**
+   * v18, 정기 점검: skip this AI stage (it runs no model) when the checks of the stages before it gave the same result
+   * as in the last finished run of this workflow; the person still sees "변화 없음" with the check results.
+   */
+  skipWhenUnchanged: z.boolean().optional(),
   /** v18, `answer` stages: what the person is asked, and optionally which stage's result to show. */
   answer: z.object({ prompt: z.string().trim().min(1).max(4_000), showResultOf: id.optional() }).strict().optional(),
 }).strict();
@@ -298,6 +303,8 @@ export const WorkflowActivationSchema = z.object({
   /** v18: the person's answer (answer stages) or the note sent back with a rejection (approval stages). */
   answer: z.string().max(20_000).optional(),
   comment: z.string().max(20_000).optional(),
+  /** v18: the host skipped this AI stage (skipWhenUnchanged): why, in a sentence. It completed with outcome `next`. */
+  skipped: z.string().max(2_000).optional(),
 }).strict();
 export type WorkflowActivation = z.infer<typeof WorkflowActivationSchema>;
 export const WorkflowRuntimeSchema = z.object({
