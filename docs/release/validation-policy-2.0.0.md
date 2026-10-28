@@ -1,7 +1,7 @@
 # EZTerminal 2.0.0 validation policy
 
 - Desktop / Android / native host: `2.0.0`
-- Android versionCode: `79`
+- Android versionCode: `80`
 - Remote protocol: `v17`; v16 clients get a reduced flow view without the v17 fields (stage effort, run settings, repeat, stage bindings) and cannot make flow edits that would drop them; v15/v14/v13/v12 clients retain compatible legacy operations.
 - Native desktop protocol: `v2`
 - Validation profile: `functional-hotfix` (기존 기능 검증 파이프라인 식별자)

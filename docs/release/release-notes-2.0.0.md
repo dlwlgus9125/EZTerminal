@@ -1,6 +1,6 @@
 # EZTerminal 2.0.0 개발 후보
 
-Identity: remote protocol v17, Android versionCode 79. 공개 배포하지 않은 로컬 개발 후보이며,
+Identity: remote protocol v17, Android versionCode 80. 공개 배포하지 않은 로컬 개발 후보이며,
 실제 구현·검증 상태는 [구현 진행 기록](../ezterminal-v2-implementation.md)이 소유한다.
 
 - 프로젝트의 요구사항·기능·정보 구조·흐름·시안을 연결하고 초안·확정본·변경 이력을 보존한다.
