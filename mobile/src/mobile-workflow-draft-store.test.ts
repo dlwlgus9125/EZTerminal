@@ -17,12 +17,12 @@ function fixture() {
   return { access, secure, values, state, token: (value: string) => { token = value; }, getToken: async () => token };
 }
 describe('encrypted mobile workflow recovery', () => {
-  it('keeps an older app v1 recovery for that app and moves saves of this version to the v2 key', async () => {
+  it('keeps an older app v2 recovery for that app and moves saves of this version to the v3 key', async () => {
     const f = fixture();
     expect(await f.access.workflowDraftWrite('project', { expectedRevision: 0, state: f.state })).toMatchObject({ ok: true, snapshot: { revision: 1 } });
-    const [v2Key] = [...f.values.keys()]; expect(v2Key).toMatch(/^ezterminal-workflow-draft-v2:/u);
-    // Pretend an older app saved it: same record under its v1 key, with its own scope.
-    const v1Key = v2Key!.replace('-v2:', '-v1:'); const stored = JSON.parse(f.values.get(v2Key!)!) as { scope: string };
+    const [v2Key] = [...f.values.keys()]; expect(v2Key).toMatch(/^ezterminal-workflow-draft-v3:/u);
+    // Pretend an older app saved it: same record under its v2 key, with its own scope.
+    const v1Key = v2Key!.replace('-v3:', '-v2:'); const stored = JSON.parse(f.values.get(v2Key!)!) as { scope: string };
     f.values.delete(v2Key!); f.values.set(v1Key, JSON.stringify({ ...stored, scope: v1Key })); const v1Value = f.values.get(v1Key);
     // Read from the older app's key, it says so: its graphs are a reduced view to rebase.
     expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 1, olderVersion: true } });

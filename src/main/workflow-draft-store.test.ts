@@ -36,12 +36,12 @@ it('keeps an older build\'s recovery file for that build and moves this version\
   } };
   const graph = createWorkflowGraph('research', 'sub');
   const state = { projectId: 'project', hostId: 'host', drafts: { sub: { baseRevision: 0, graph } }, pendingCommand: null };
-  // An older build saved recovery as <id>.bin.
+  // An older build saved recovery as <id>.v2.bin (v17; <id>.bin before that).
   expect(await new WorkflowDraftStore(options).write('project', { expectedRevision: 0, state })).toMatchObject({ ok: true, snapshot: { revision: 1 } });
-  const [written] = await fs.readdir(directory); expect(written).toMatch(/\.v2\.bin$/u);
-  const legacy = path.join(directory, written!.replace(/\.v2\.bin$/u, '.bin')); await fs.rename(path.join(directory, written!), legacy);
+  const [written] = await fs.readdir(directory); expect(written).toMatch(/\.v3\.bin$/u);
+  const legacy = path.join(directory, written!.replace(/\.v3\.bin$/u, '.v2.bin')); await fs.rename(path.join(directory, written!), legacy);
   const legacyBytes = await fs.readFile(legacy);
-  // This version reads it, then saves to v2 and leaves the older file as it was.
+  // This version reads it, then saves to v3 and leaves the older file as it was.
   const store = new WorkflowDraftStore(options);
   expect(await store.read('project')).toMatchObject({ ok: true, snapshot: { revision: 1, olderVersion: true, state: { drafts: { sub: { baseRevision: 0 } } } } });
   expect(await store.write('project', { expectedRevision: 1, state: { ...state, drafts: {} } })).toMatchObject({ ok: true, snapshot: { revision: 2 } });
