@@ -162,6 +162,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [agentsOpen, setAgentsOpen] = useState(!narrowStart);
   /** Why the host last refused a command, when the flow can point at its cause (checks this PC has not allowed). */
   const [refusal, setRefusal] = useState<string | null>(null);
+  useEffect(() => { setRefusal(null); }, [selectedId]);
   // "단계 편집": add, move and connect stages. In memory only, closed when another subproject opens.
   const [structure, setStructure] = useState(false);
   useEffect(() => { setStructure(false); }, [selectedId]);

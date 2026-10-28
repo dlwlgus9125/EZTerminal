@@ -329,6 +329,18 @@ export const PhoneStageAssign: Story = {
     target.scrollIntoView({ block: 'start' });
   },
 };
+/** Phone (360 px wide): the answer box of a run waiting at 내 답변 (the same component as the PC). */
+export const PhoneAnswer: Story = {
+  parameters: { layout: 'centered' },
+  render: () => <Phone><Canvas mobile select="answer" run="answer" /></Phone>,
+  play: async ({ canvasElement }) => { (await within(canvasElement).findByTestId('workflow-stage-answer')).scrollIntoView({ block: 'start' }); },
+};
+/** Phone (360 px wide): approve, or send it back to 시안 with a note. */
+export const PhoneApproval: Story = {
+  parameters: { layout: 'centered' },
+  render: () => <Phone><Canvas mobile select="approval" run="approval" /></Phone>,
+  play: async ({ canvasElement }) => { (await within(canvasElement).findByTestId('workflow-stage-approval-comment')).scrollIntoView({ block: 'start' }); },
+};
 /** Phone: the same queued line in the conversation's input box. */
 export const PhoneComposerQueued: Story = {
   parameters: { layout: 'centered' },
