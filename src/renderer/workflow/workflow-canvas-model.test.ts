@@ -2,7 +2,8 @@ import { getViewportForBounds } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowLayoutOnlyChange, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, WORKFLOW_FIT_MARGIN, WORKFLOW_MINIMAP_GAP } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowLayoutOnlyChange, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, workflowStartViewport, WORKFLOW_FIT_MARGIN, WORKFLOW_MINIMAP_GAP, WORKFLOW_READABLE_ZOOM } from './workflow-canvas-model';
+import { workflowRunStatusPresentation } from './WorkflowNodeCard';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -64,6 +65,19 @@ describe('projectRunOverlay', () => {
     expect(overlay.awaitingApproval).toEqual([{ nodeId: id('approval'), activationId: 'wf:f:approval:0' }]);
   });
 
+  it('counts an answer stage waiting for the person with the approvals, marked as asking for an answer', () => {
+    const overlay = projectRunOverlay(run('awaiting-review', [activation('approval', 'awaiting-answer')]))!;
+    expect(overlay.nodes[id('approval')]).toMatchObject({ status: 'awaiting-approval', asks: 'answer' });
+    expect(overlay.awaitingApproval).toEqual([{ nodeId: id('approval'), activationId: 'wf:f:approval:0', asks: 'answer' }]);
+    expect(workflowRunStatusPresentation(overlay.nodes[id('approval')], text)).toMatchObject({ label: '답변 대기 · 조치 필요', variant: 'warning' });
+  });
+
+  it('keeps why a stage was skipped (its checks were unchanged) and names it 변화 없음, not cancelled', () => {
+    const overlay = projectRunOverlay(run('running', [activation('plan', 'completed', { outcome: 'next', skipped: 'Same check results as run #3.' })], [task('plan', 'cancelled')]))!;
+    expect(overlay.nodes[id('plan')]).toMatchObject({ status: 'completed', skipped: 'Same check results as run #3.' });
+    expect(workflowRunStatusPresentation(overlay.nodes[id('plan')], text).label).toBe('변화 없음 · 건너뜀');
+  });
+
   it('counts the inputs a join has received', () => {
     const parallel = createWorkflowGraph('parallel', 'f');
     const join = parallel.nodes.find(node => node.operation === 'join')!;
@@ -116,6 +130,38 @@ describe('workflowFitPadding', () => {
       expect(y + (bounds.y + bounds.height) * zoom).toBeLessThanOrEqual(400 - reserve - WORKFLOW_MINIMAP_GAP);
       expect(y).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe('workflowStartViewport (P12: 7 stages at 130% in a 1440×900 window)', () => {
+  // Phase A's measurement: a 645×463 canvas; seven 248-unit stages 344 units apart from x 40, ×1.3 (cards 322px wide).
+  const pane = { width: 645, height: 463 };
+  const bounds = { x: 40 * 1.3, y: 40 * 1.3, width: 6 * 344 * 1.3 + 248 * 1.3, height: 136 * 1.3 };
+  it('centring at the 0.3 floor (React Flow’s fit) hid the first stage left of the canvas, as recorded', () => {
+    const centred = getViewportForBounds(bounds, pane.width, pane.height, 0.3, 1, workflowFitPadding(0));
+    expect(centred.zoom).toBe(0.3);
+    // Recorded: the first stage 96.7px wide at x 270.6 with the canvas at 398.6 (−128 px from its left edge).
+    expect(Math.round(bounds.x * centred.zoom + centred.x)).toBe(-128);
+  });
+  it('starts at the first stage at a readable zoom instead, inside the fit margin', () => {
+    const start = workflowStartViewport(bounds, pane, workflowFitPadding(0))!;
+    expect(start.zoom).toBe(WORKFLOW_READABLE_ZOOM);
+    const left = bounds.x * start.zoom + start.x;
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(pane.width * WORKFLOW_FIT_MARGIN);
+    // Vertically centred within the canvas.
+    const top = bounds.y * start.zoom + start.y; const bottom = top + bounds.height * start.zoom;
+    expect(Math.abs(top - (pane.height - bottom))).toBeLessThan(2);
+  });
+  it('keeps clear of the minimap at the bottom, and aligns a flow taller than the canvas to its top', () => {
+    const reserve = 121;
+    const tall = { ...bounds, height: 2000 };
+    const start = workflowStartViewport(tall, pane, workflowFitPadding(reserve))!;
+    expect(tall.y * start.zoom + start.y).toBeCloseTo(Math.floor((pane.height - pane.height / (1 + WORKFLOW_FIT_MARGIN)) * 0.5), 5);
+  });
+  it('leaves a flow that fits readably to React Flow’s centred fit', () => {
+    expect(workflowStartViewport({ x: 52, y: 52, width: 1200, height: 177 }, { width: 1100, height: 600 }, workflowFitPadding(0))).toBeNull();
+    expect(workflowStartViewport({ x: 0, y: 0, width: 0, height: 0 }, pane, workflowFitPadding(0))).toBeNull();
   });
 });
 

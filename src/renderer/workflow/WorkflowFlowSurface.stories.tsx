@@ -215,6 +215,26 @@ export const RetryEdgeSelected: Story = { args: { scenario: 'retry-running', sel
 export const LegacyOverlappingLayout: Story = { args: { scenario: 'edit', legacyLayout: true, camera: { column: 0, zoom: 0.72 } } };
 export const Narrow: Story = { args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', width: 800, camera: { column: 4, zoom: 0.6 } } };
 export const MobileList: Story = { args: { scenario: 'retry-running', mobile: true, renderer: 'static', width: 390 } };
+/**
+ * P12 (Phase A, 130% · 1440×900): seven stages in a dock-sized pane with no pinned camera. The canvas cannot show
+ * them all at a readable size, so the first fit starts at the flow's first stage instead of centring it off the
+ * left edge; 전체 보기 does the same.
+ */
+export const FitSevenStages: Story = {
+  args: { scenario: 'edit', width: 1050 },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(7));
+    const inside = () => {
+      const pane = canvasElement.querySelector('.react-flow')!.getBoundingClientRect();
+      const first = canvasElement.querySelector('.react-flow__node[data-id="login:plan"]')!.getBoundingClientRect();
+      return first.left >= pane.left && first.right <= pane.right;
+    };
+    await waitFor(() => expect(inside()).toBe(true));
+    await userEvent.click(canvas.getByRole('button', { name: /^(전체 보기|Fit view)$/u }));
+    await waitFor(() => expect(inside()).toBe(true));
+  },
+};
 export const EnglishAwaitingApproval: Story = { args: { scenario: 'awaiting-approval', locale: 'en', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 
 /** The lazy canvas failed once: the static graph keeps the flow usable, and reloading recovers. */

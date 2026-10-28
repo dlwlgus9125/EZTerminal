@@ -13,6 +13,10 @@ export interface WorkflowNodeRunView {
   readonly outcome?: WorkflowActivation['outcome'];
   /** Zero-based round of the latest activation; loops raise it. */
   readonly iteration: number;
+  /** An `awaiting-approval` stage that waits for the person's answer (an answer stage), not a decision. */
+  readonly asks?: 'answer';
+  /** The host skipped this AI stage (its checks before gave the same result): why, in its words. */
+  readonly skipped?: string;
   readonly activationId?: string;
   readonly attemptId?: string;
   readonly arrivals?: { readonly arrived: number; readonly expected: number };
@@ -21,7 +25,8 @@ export interface WorkflowEdgeRunView { readonly taken: number; readonly retryLim
 export interface WorkflowRunOverlay {
   readonly nodes: Readonly<Record<string, WorkflowNodeRunView>>;
   readonly edges: Readonly<Record<string, WorkflowEdgeRunView>>;
-  readonly awaitingApproval: readonly { readonly nodeId: string; readonly activationId: string }[];
+  /** Stages waiting for the person: approvals, and answer stages (`asks: 'answer'`). */
+  readonly awaitingApproval: readonly { readonly nodeId: string; readonly activationId: string; readonly asks?: 'answer' }[];
   /** A completed or cancelled run: stages without an activation were never reached. */
   readonly ended: boolean;
 }
@@ -50,7 +55,7 @@ export function projectRunOverlay(run: ExecutionRun): WorkflowRunOverlay | null 
   const cancelled = run.state === 'cancelled';
   const ended = cancelled || run.state === 'completed';
   const nodes: Record<string, WorkflowNodeRunView> = {};
-  const awaitingApproval: { nodeId: string; activationId: string }[] = [];
+  const awaitingApproval: { nodeId: string; activationId: string; asks?: 'answer' }[] = [];
   for (const node of graph.nodes) {
     const latest = (runtime?.activations ?? []).filter(entry => entry.nodeId === node.id).reduce<WorkflowActivation | undefined>((best, entry) => !best || entry.iteration > best.iteration ? entry : best, undefined);
     if (!latest) { nodes[node.id] = { status: ended ? 'not-reached' : 'pending', iteration: 0 }; continue; }
@@ -58,13 +63,17 @@ export function projectRunOverlay(run: ExecutionRun): WorkflowRunOverlay | null 
     let status: WorkflowNodeRunStatus;
     if (finished) status = latest.state as WorkflowNodeRunStatus;
     else if (cancelled) status = 'cancelled';
-    else if (latest.state === 'awaiting-approval') status = 'awaiting-approval';
+    // An answer stage waits for the person like an approval (the board and the run bar count both).
+    else if (latest.state === 'awaiting-approval' || latest.state === 'awaiting-answer') status = 'awaiting-approval';
     else if (latest.state === 'waiting') status = 'waiting';
     else status = node.operation === 'agent' ? activeTaskStatus(run.tasks.find(task => task.taskId === node.id), run.state === 'paused') : 'working';
-    if (status === 'awaiting-approval') awaitingApproval.push({ nodeId: node.id, activationId: latest.id });
+    const asks = latest.state === 'awaiting-answer' && status === 'awaiting-approval' ? 'answer' as const : undefined;
+    if (status === 'awaiting-approval') awaitingApproval.push({ nodeId: node.id, activationId: latest.id, ...(asks ? { asks } : {}) });
     const expected = node.operation === 'join' ? graph.edges.filter(edge => edge.to === node.id && !edge.retryLimit).length : 0;
     nodes[node.id] = {
       status, iteration: latest.iteration, activationId: latest.id,
+      ...(asks ? { asks } : {}),
+      ...(latest.skipped !== undefined && latest.state === 'completed' ? { skipped: latest.skipped } : {}),
       ...(latest.outcome ? { outcome: latest.outcome } : {}),
       ...(latest.attemptId ? { attemptId: latest.attemptId } : {}),
       ...(node.operation === 'join' ? { arrivals: { arrived: latest.incomingEdgeIds.filter(edgeId => graph.edges.some(edge => edge.id === edgeId && !edge.retryLimit)).length, expected } } : {}),
@@ -147,6 +156,32 @@ export type WorkflowFitPadding = number | { readonly top: number; readonly right
 export function workflowFitPadding(mapReserve: number): WorkflowFitPadding {
   if (!(mapReserve > 0)) return WORKFLOW_FIT_MARGIN;
   return { top: WORKFLOW_FIT_MARGIN, right: WORKFLOW_FIT_MARGIN, left: WORKFLOW_FIT_MARGIN, bottom: `${Math.ceil(mapReserve) + WORKFLOW_MINIMAP_GAP}px` };
+}
+
+/** Below this zoom a card's words cannot be read (P12: 96×44 px cards at the 0.3 floor). */
+export const WORKFLOW_READABLE_ZOOM = 0.5;
+interface WorkflowBounds { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+/** One side's padding in screen pixels, as React Flow reads it (a share of the canvas, or `Npx`). */
+function fitSide(padding: number | `${number}px`, extent: number): number {
+  return typeof padding === 'number' ? Math.floor((extent - extent / (1 + padding)) * 0.5) : Math.floor(parseFloat(padding));
+}
+/**
+ * The camera for a fit when the whole flow cannot be shown at a readable size (P12: seven stages at 130% in a
+ * dock pane): the flow's first column at the left edge (inside the fit padding) at the readable zoom, centred
+ * vertically, so it reads from its start and the rest is a pan away. Null when a centred fit already shows every
+ * stage at the readable zoom or more (React Flow's own fit is used then). Bounds and pane are screen pixels at zoom 1.
+ */
+export function workflowStartViewport(bounds: WorkflowBounds, pane: { readonly width: number; readonly height: number }, padding: WorkflowFitPadding, readableZoom = WORKFLOW_READABLE_ZOOM): { x: number; y: number; zoom: number } | null {
+  if (!(bounds.width > 0) || !(pane.width > 0) || !(pane.height > 0)) return null;
+  const sides = typeof padding === 'number'
+    ? { top: fitSide(padding, pane.height), right: fitSide(padding, pane.width), bottom: fitSide(padding, pane.height), left: fitSide(padding, pane.width) }
+    : { top: fitSide(padding.top, pane.height), right: fitSide(padding.right, pane.width), bottom: fitSide(padding.bottom, pane.height), left: fitSide(padding.left, pane.width) };
+  const room = { width: pane.width - sides.left - sides.right, height: pane.height - sides.top - sides.bottom };
+  const fit = Math.min(room.width / bounds.width, bounds.height > 0 ? room.height / bounds.height : Infinity);
+  if (fit >= readableZoom) return null;
+  const zoom = readableZoom;
+  const tall = bounds.height * zoom > room.height;
+  return { x: sides.left - bounds.x * zoom, y: tall ? sides.top - bounds.y * zoom : sides.top + (room.height - bounds.height * zoom) / 2 - bounds.y * zoom, zoom };
 }
 
 export interface WorkflowNodeSize { readonly width: number; readonly height: number }

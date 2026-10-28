@@ -13,7 +13,10 @@ const OPERATION_ICONS: Record<WorkflowNode['operation'], GlyphIcon> = {
 
 export interface WorkflowRunStatusPresentation { readonly label: string; readonly icon: GlyphIcon; readonly variant: SemanticVariant | 'loading' }
 /** Every run state carries an icon and words; colour only reinforces them. */
-export function workflowRunStatusPresentation(view: Pick<WorkflowNodeRunView, 'status' | 'outcome'>, text: WorkflowCopy): WorkflowRunStatusPresentation {
+export function workflowRunStatusPresentation(view: Pick<WorkflowNodeRunView, 'status' | 'outcome' | 'asks' | 'skipped'>, text: WorkflowCopy): WorkflowRunStatusPresentation {
+  // An answer stage waits for words, not a decision; a skipped stage ran no model (its checks were unchanged).
+  if (view.status === 'awaiting-approval' && view.asks === 'answer') return { label: text('답변 대기 · 조치 필요', 'Awaiting your answer · action needed'), icon: glyphIcon('q'), variant: 'warning' };
+  if (view.status === 'completed' && view.skipped !== undefined) return { label: text('변화 없음 · 건너뜀', 'No change · skipped'), icon: glyphIcon('next'), variant: 'neutral' };
   const table: Record<WorkflowNodeRunStatus, WorkflowRunStatusPresentation> = {
     pending: { label: text('대기 전', 'Not started'), icon: glyphIcon('clock'), variant: 'neutral' },
     'not-reached': { label: text('미도달', 'Not reached'), icon: glyphIcon('clock'), variant: 'neutral' },
@@ -63,7 +66,7 @@ export function WorkflowNodeCard({ node, text, entry = false, selected = false, 
       : node.operation === 'approval' ? text('사람이 허용/거절', 'A person approves or rejects')
         : node.operation === 'condition' ? text('검토 결과로 분기', 'Branches on a verified result')
           : null;
-  return <div className="workflow-node-card" data-operation={node.operation} data-selected={selected || undefined} data-run-state={run?.status}
+  return <div className="workflow-node-card" data-node-id={node.id} data-operation={node.operation} data-selected={selected || undefined} data-run-state={run?.status}
     data-chain={decoration?.chain?.position} data-drop-target={decoration?.dropTarget || undefined} data-agent-missing={agent?.missing || undefined} data-attention={decoration?.attention || undefined}>
     {inputHandle && <div className="workflow-node-card__input">{inputHandle}</div>}
     <div className="workflow-node-card__body">

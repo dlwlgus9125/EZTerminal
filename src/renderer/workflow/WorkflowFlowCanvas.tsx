@@ -8,7 +8,7 @@ import { glyphIcon } from '../ui/Glyph';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
-import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, workflowStartViewport, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps, WorkflowNodeDecoration } from './workflow-canvas-types';
 import { WORKFLOW_CARD_UNITS, useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
@@ -45,15 +45,24 @@ function WorkflowEdgeView({ sourceX, sourceY, targetX, targetY, data, selected }
 const nodeTypes = { stage: StageNodeView };
 const edgeTypes = { workflow: WorkflowEdgeView };
 
-/** Fits the flow above the minimap corner while the map shows (a narrow canvas hides it; see the CSS). */
+/**
+ * Fits the flow above the minimap corner while the map shows (a narrow canvas hides it; see the CSS). A flow too
+ * wide to read whole starts at its first stage instead of being centred off both edges (P12, workflowStartViewport).
+ */
 function useWorkflowFit(): (options?: { maxZoom?: number }) => void {
   const flow = useReactFlow();
   const root = useStore(state => state.domNode);
+  const width = useStore(state => state.width);
+  const height = useStore(state => state.height);
   return useCallback((options = {}) => {
     const map = root?.querySelector('.react-flow__minimap')?.getBoundingClientRect();
     const mapReserve = root && map && map.height > 0 ? root.getBoundingClientRect().bottom - map.top : 0;
-    void flow.fitView({ ...options, padding: workflowFitPadding(mapReserve) });
-  }, [flow, root]);
+    const padding = workflowFitPadding(mapReserve);
+    const nodes = flow.getNodes();
+    const start = nodes.length ? workflowStartViewport(flow.getNodesBounds(nodes), { width, height }, padding) : null;
+    if (start) void flow.setViewport(start);
+    else void flow.fitView({ ...options, padding });
+  }, [flow, root, width, height]);
 }
 function CanvasControls({ text, onTidy }: { text: WorkflowCopy; onTidy?: () => void }): JSX.Element {
   const flow = useReactFlow();
