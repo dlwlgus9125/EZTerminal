@@ -233,6 +233,10 @@ I5에서 먼저 은퇴한 1.0 화면 둘: `workbench-agent-hub`는 `shell-board`
 모든 story는 `Production/Desk/Tool screens`에 있다. 시안 이후 바뀐 것은 아이콘이 글리프로 옮겨진 것(I5-5)과, 대화상자가 story 안에
 열리도록 한 Storybook 전용 연결(`DialogPortalContext`, 앱에서는 쓰지 않음)뿐이다.
 
+실앱 확인 (2026-10-28): 격리 프로필의 실 Electron(합성 데이터, 1440×900)에서 설정·모니터·파일·원격·OpenClaw 콘솔·페어링 QR·명령
+찾기·붙여넣기 경고·닫기 경고를 Matrix·Dark·Light·High Contrast로, 부팅을 Matrix로 찍어 보았고 시안과 다른 곳은 없었다(로컬 캡처
+`artifacts/ux2/i5/capture-i5/out`, 커밋 안 함). 페어링 감지와 OpenClaw 채팅은 실제 폰·게이트웨이가 있어야 해 실앱에서는 보지 못했다.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약
