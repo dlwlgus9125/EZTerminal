@@ -230,7 +230,7 @@ describe('workflow authority and storage', () => {
     expect(await service.launchReceipt('project', 'schedule-2')).toEqual({ state: 'none' });
   });
   it('runs the confirmed flow for the repeat schedule, not an edit saved after it (decision 8)', async () => {
-    const executeRun = vi.fn(async (..._args: unknown[]) => ({ ok: true as const }));
+    const executeRun = vi.fn<NonNullable<ConstructorParameters<typeof WorkflowService>[0]['executeRun']>>(async () => ({ ok: true as const }));
     service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, executeRun, repeatConsent: async () => undefined });
     const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research the confirmed thing', acceptance: ['Report evidence'] };
     await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);

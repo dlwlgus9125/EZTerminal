@@ -150,8 +150,7 @@ export class WorkflowRepeatService {
       const continuing = entry.consent?.contentDigest === change.after;
       const armed = !consent || !change.runnable || !change.config ? undefined
         : continuing && entry.armed?.configDigest === change.config ? entry.armed : { configDigest: change.config, armedAt: at };
-      const { pinned: _previous, ...rest } = entry;
-      return { ...rest, ...(consent ? { consent } : { consent: undefined }), ...(consent && change.pinned ? { pinned: change.pinned } : {}), armed };
+      return { ...entry, consent, pinned: consent ? change.pinned : undefined, armed };
     });
   }
 
