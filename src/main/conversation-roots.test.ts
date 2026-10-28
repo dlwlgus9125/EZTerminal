@@ -77,12 +77,21 @@ describe('createConversationFolderResolver', () => {
 
   it('resolves a workspace of the project', async () => {
     await expect(resolver(snapshot, { projectId: 'project', workspaceId: 'shared' }))
-      .resolves.toEqual({ primary: SHARED, additional: [MAIN, DOCS], missing: [] });
+      .resolves.toEqual({ primary: SHARED, additional: [MAIN], missing: [] });
   });
 
   it('replaces the source folder with the worktree', async () => {
     await expect(resolver(snapshot, { projectId: 'project', workspaceId: 'tree' }))
-      .resolves.toEqual({ primary: 'C:\\Work\\app-trees\\feature', additional: [SHARED, DOCS], missing: [] });
+      .resolves.toEqual({ primary: 'C:\\Work\\app-trees\\feature', additional: [SHARED], missing: [] });
+  });
+
+  it('leaves out a folder whose workspace the snapshot already archived, though the store still lists it', async () => {
+    // A project save archives the removed folder's workspace first and commits the project store after.
+    await expect(resolver(snapshot, { projectId: 'project', workspaceId: 'main' }))
+      .resolves.toEqual({ primary: MAIN, additional: [SHARED], missing: [] });
+    const readded = { ...snapshot, workspaces: [...snapshot.workspaces, workspace('docs-again', DOCS)] };
+    await expect(resolver(readded, { projectId: 'project', workspaceId: 'main' }))
+      .resolves.toEqual({ primary: MAIN, additional: [SHARED, DOCS], missing: [] });
   });
 
   it('answers nothing for an archived or foreign workspace', async () => {

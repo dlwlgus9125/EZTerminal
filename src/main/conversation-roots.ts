@@ -92,8 +92,14 @@ export function createConversationFolderResolver(options: {
     const source: DaemonWorkspace | undefined = workspace.sourceWorkspaceId
       ? snapshot.workspaces.find((entry) => entry.id === workspace.sourceWorkspaceId)
       : undefined;
+    // Answer for the snapshot asked about: saving a project archives a removed folder's daemon workspace
+    // before the project store commits, so a read prompted by that archive must not see the folder still.
+    const projectWorkspaces = snapshot.workspaces.filter((entry) => entry.projectId === workspace.projectId);
+    const active = new Set(projectWorkspaces.filter((entry) => !entry.archivedAt).map((entry) => pathKey(entry.rootPath)));
+    const retired = new Set(projectWorkspaces.filter((entry) => entry.archivedAt && entry.kind === 'local').map((entry) => pathKey(entry.rootPath)));
     return resolveConversationFolders({
-      registeredRoots: options.registeredRoots(workspace.projectId) ?? [],
+      registeredRoots: (options.registeredRoots(workspace.projectId) ?? [])
+        .filter((root) => !retired.has(pathKey(root)) || active.has(pathKey(root))),
       workspaceRoot: workspace.rootPath,
       ...(source ? { sourceRoot: source.rootPath } : {}),
     }, options.isDirectory);
