@@ -277,7 +277,10 @@ export function useWorkflowHarness(input: WorkflowHarnessInput): WorkflowHarness
     decorations: decorationSet?.nodes, edgeDecorations: decorationSet?.edges,
     panelTop: usable && !mobile ? <div ref={listRef}><WorkflowAgentList text={text} agents={items} open={agentsOpen} onOpenChange={openAgents}
       targetStage={target?.title} dragging={dragging ?? undefined} onDragAgent={setDragging} onAssign={target ? agentId => assign(target.id, agentId) : undefined}
-      {...(input.onManageAgents ? { onManage: input.onManageAgents } : {})} /></div> : undefined,
+      {...(input.onManageAgents ? { onManage: input.onManageAgents } : {})} /></div>
+      // A phone whose PC sends no agent list runs an older EZTerminal: stages keep their AI fields until it is updated.
+      : mobile && !usable ? <p className="workflow-stage-note" role="note" data-testid="workflow-agents-need-pc-update">{text('PC의 EZTerminal을 업데이트하면 이 폰에서도 단계에 에이전트를 배정할 수 있습니다.', 'Update EZTerminal on the PC to assign agents to stages from this phone.')}</p>
+        : undefined,
     stageSlots,
     onDropAgent: usable && !mobile ? assign : undefined,
     unallowed: statuses?.filter(entry => !entry.allowed) ?? [],

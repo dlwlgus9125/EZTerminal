@@ -384,13 +384,14 @@ export const ChatSettingsStates: Story = {
     ]} /> }} />,
 };
 /**
- * A phone whose PC sends no agents with the flow (an older EZTerminal, or none saved): no 배정, the stage keeps its
- * AI · 모델 fields. (The two cannot be told apart from the reply, so no "update the PC" line.)
+ * A phone whose PC sends no agents with the flow (an older EZTerminal; a newer one with none saved sends an empty
+ * list): no 배정, the stage keeps its AI · 모델 fields, and the panel says updating the PC brings 배정.
  */
 export const PhoneOldHost: Story = {
   parameters: { layout: 'centered' },
   render: () => <Phone><Canvas mobile noCatalog select="implement" graph={IMPLEMENT_EMPTY} /></Phone>,
   play: async ({ canvasElement }) => {
+    await expect(await within(canvasElement).findByTestId('workflow-agents-need-pc-update')).toHaveTextContent('PC의 EZTerminal을 업데이트하면');
     const target = await within(canvasElement).findByTestId('workflow-stage-panel');
     target.scrollIntoView({ block: 'start' });
   },
