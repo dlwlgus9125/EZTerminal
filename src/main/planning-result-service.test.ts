@@ -12,7 +12,7 @@ import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { PlanningResultService, normalizeCheckOutput } from './planning-result-service';
+import { PlanningResultService, normalizeCheckOutput, withoutCheckFolder } from './planning-result-service';
 import { PlanningResultRepository, resultHash } from './planning-result-repository';
 import { GitRunner, WorktreeService } from './worktree-service';
 import { createWorkflowGraph } from '../shared/workflow';
@@ -376,6 +376,17 @@ describe('planning result authority', () => {
   it('compares check output without colours, times or durations', () => {
     expect(normalizeCheckOutput('\u001b[32m✓\u001b[0m 12 tests passed in 3.2s at 10:31:02')).toBe(normalizeCheckOutput('✓ 12 tests passed in 4.9s at 11:02:59'));
     expect(normalizeCheckOutput('12 tests passed')).not.toBe(normalizeCheckOutput('11 tests passed'));
+  });
+  it('compares check output without the run’s own result folder (found running 정기 점검 with pnpm, 2026-10-29)', () => {
+    const first = '> sample@1.0.0 test C:\\Users\\me\\AppData\\ez\\run-1\\work\n3 tests passed';
+    const second = '> sample@1.0.0 test c:/users/me/appdata/ez/run-2/work\n3 tests passed';
+    expect(withoutCheckFolder(first, 'C:\\Users\\me\\AppData\\ez\\run-1\\work')).toBe('> sample@1.0.0 test <folder>\n3 tests passed');
+    expect(withoutCheckFolder(second, 'C:\\Users\\me\\AppData\\ez\\run-2\\work\\')).toBe('> sample@1.0.0 test <folder>\n3 tests passed');
+    expect(withoutCheckFolder('3 tests passed', '')).toBe('3 tests passed');
+    // Checks run in a validation worktree beside the stage's result folder (a path may hold spaces).
+    const root = 'C:\\Users\\Jo Kim\\Temp\\.ezterminal-worktrees\\proj';
+    expect(withoutCheckFolder(`> sample test ${root}\\ezterminal-validation-6c0e3684-6bc44aa0\r\n3 tests passed`, `${root}\\ezterminal-attempt-fa6bf862`))
+      .toBe('> sample test <folder>\r\n3 tests passed');
   });
   it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
     const f = await fixture();

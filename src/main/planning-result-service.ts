@@ -33,6 +33,22 @@ export function normalizeCheckOutput(output: string): string {
     .replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds|m|min)\b/giu, '<duration>')
     .replace(/[ \t]+/gu, ' ').replace(/\r\n/gu, '\n').trim();
 }
+/**
+ * The run's own folders in a check's output (new ones every run, e.g. pnpm's `> pkg test <folder>`) read as `<folder>`:
+ * the stage's result folder and, when that is a managed worktree, any folder beside it (checks run in a validation
+ * worktree next to it).
+ */
+export function withoutCheckFolder(output: string, folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/u, '');
+  if (!trimmed) return output;
+  const forms = (value: string): string[] => [...new Set([value, value.replace(/\\/gu, '/'), value.replace(/\//gu, '\\')])];
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const managed = /[\\/]\.ezterminal-worktrees[\\/]/u.test(trimmed) ? trimmed.replace(/[\\/][^\\/]+$/u, '') : '';
+  let text = output;
+  if (managed) for (const form of forms(managed)) text = text.replace(new RegExp(`${escape(form)}[\\\\/][^\\\\/\\s"'<>|]+`, 'giu'), '<folder>');
+  for (const form of forms(trimmed)) text = text.replace(new RegExp(escape(form), 'giu'), '<folder>');
+  return text;
+}
 const sameArtifacts = (a: readonly ExecutionArtifact[], b: readonly ExecutionArtifact[]): boolean =>
   resultHash([...a].sort((x, y) => x.artifactId.localeCompare(y.artifactId))) === resultHash([...b].sort((x, y) => x.artifactId.localeCompare(y.artifactId)));
 const errorText = (error: unknown): string => error instanceof Error ? error.message : 'Result verification failed.';
@@ -190,10 +206,10 @@ export class PlanningResultService {
    * The checks of the AI stages before this one in its activation (passed or sent back): command, exit code and the
    * end of the output, from the host's own logs. Nothing when a check did not finish (not run, timed out).
    */
-  private async upstreamChecks(run: ExecutionRun, task: PreparedExecutionTask): Promise<readonly { stage: string; command: string; exitCode: number; output: string; allowance: string }[] | undefined> {
+  private async upstreamChecks(run: ExecutionRun, task: PreparedExecutionTask): Promise<readonly { stage: string; command: string; exitCode: number; output: string; allowance: string; folder: string }[] | undefined> {
     const active = run.workflowRuntime?.activations.find(entry => entry.nodeId === task.taskId && entry.state === 'active');
     if (!active) return undefined;
-    const checks: { stage: string; command: string; exitCode: number; output: string; allowance: string }[] = [];
+    const checks: { stage: string; command: string; exitCode: number; output: string; allowance: string; folder: string }[] = [];
     for (const [nodeId, source] of Object.entries(active.inputResults).sort(([left], [right]) => left.localeCompare(right))) {
       const definition = run.preparation.tasks.find(entry => entry.taskId === nodeId);
       const commands = definition?.validations.filter(validation => validation.method === 'command') ?? [];
@@ -205,7 +221,7 @@ export class PlanningResultService {
         const log = checked.logRefs[0] ? await this.repository.readLog(run.projectId, checked.logRefs[0]) : null;
         const output = log === null ? '' : log.slice(log.indexOf('\n\n') >= 0 ? log.indexOf('\n\n') + 2 : log.length);
         const allowance = /Allowed as ([0-9a-f]{16})\./u.exec(checked.summary)?.[1] ?? '';
-        checks.push({ stage: definition!.title, command: validation.command ?? validation.validationId, exitCode: checked.exitCode, output, allowance });
+        checks.push({ stage: definition!.title, command: validation.command ?? validation.validationId, exitCode: checked.exitCode, output, allowance, folder: record?.rootPath ?? '' });
       }
     }
     return checks;
@@ -234,7 +250,8 @@ export class PlanningResultService {
     if (!previous || !previousTask || !previousActivation) return undefined;
     const earlier = await this.upstreamChecks({ ...previous, workflowRuntime: { ...previous.workflowRuntime!, activations: [{ ...previousActivation, state: 'active' }] } }, previousTask);
     // Same command, same allowance (the script it calls), same exit code and output.
-    const digest = (checks: readonly { command: string; exitCode: number; output: string; allowance: string }[]) => resultHash(checks.map(check => [check.command.trim(), check.allowance, check.exitCode, normalizeCheckOutput(check.output)]));
+    const digest = (checks: readonly { command: string; exitCode: number; output: string; allowance: string; folder: string }[]) =>
+      resultHash(checks.map(check => [check.command.trim(), check.allowance, check.exitCode, normalizeCheckOutput(withoutCheckFolder(check.output, check.folder))]));
     if (!earlier?.length || digest(earlier) !== digest(current)) return undefined;
     return `Same check results as the run started ${previous.startedAt}: ${current.map(check => `${check.command} (exit ${check.exitCode})`).join(', ')}.`;
   }
