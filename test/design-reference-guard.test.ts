@@ -90,6 +90,8 @@ describe('2.0 design reference manifest', () => {
       'shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal', 'phone-feed', 'phone-chat', 'phone-terminal',
       'desk-settings', 'desk-monitor', 'desk-remote', 'desk-pairing-qr', 'desk-pairing-detected', 'desk-openclaw',
       'desk-openclaw-chat', 'desk-files', 'desk-command-center', 'desk-boot', 'desk-paste-warning', 'desk-risky-close',
+      'harness-settings-agents', 'harness-composer-queued', 'harness-canvas-agents', 'harness-canvas-answer', 'harness-settings-proposal',
+      'harness-phone-assign', 'harness-phone-queued',
     ]);
     expect([...result.retired].sort()).toEqual(legacyManifest.surfaces.map((surface: { id: string }) => surface.id).sort());
   });
