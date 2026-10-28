@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import { Glyph } from './Glyph';
 import {
   createContext,
   forwardRef,
@@ -186,7 +186,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       >
         {children}
       </select>
-      <ChevronDown className="ez-ui-select-shell__icon" aria-hidden="true" />
+      <Glyph name="down" className="ez-ui-select-shell__icon" />
     </span>
   );
 });

@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, FolderOpen, RefreshCw } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useRef, useState } from 'react';
 
 import {
@@ -78,7 +78,7 @@ export function AppUpdateCard({
         <Button
           size="sm"
           variant="ghost"
-          leadingIcon={<RefreshCw />}
+          leadingIcon={<Glyph name="refresh" />}
           loading={snapshot.phase === 'checking'}
           loadingLabel={t('settings.update.checking')}
           disabled={snapshot.phase === 'downloading'}
@@ -113,7 +113,7 @@ export function AppUpdateCard({
       {snapshot.phase === 'available' && (
         <Button
           variant="primary"
-          leadingIcon={<Download />}
+          leadingIcon={<Glyph name="download" />}
           onClick={() => void controller.download()}
           data-testid="app-update-download"
         >
@@ -150,7 +150,7 @@ export function AppUpdateCard({
           {canOpen && (
             <Button
               variant="primary"
-              leadingIcon={<FolderOpen />}
+              leadingIcon={<Glyph name="proj" />}
               onClick={openDownloaded}
               data-testid="app-update-open"
             >
@@ -182,7 +182,7 @@ export function AppUpdateCard({
         onOpenChange={setUnsignedDialogOpen}
         title={t('settings.update.unsignedTitle')}
         description={t('settings.update.unsignedDescription')}
-        icon={<AlertTriangle />}
+        icon={<Glyph name="warn" />}
         role="alertdialog"
         tone="warning"
         size="sm"

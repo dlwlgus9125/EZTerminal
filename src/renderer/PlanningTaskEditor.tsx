@@ -1,4 +1,4 @@
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useState } from "react";
 import type {
   PlanningOperation,
@@ -92,7 +92,7 @@ export function PlanningTaskEditor({
         <div className="planning-workspace__list-heading">
           <h2>{text("작업 정의", "Task definitions")}</h2>
           <IconButton
-            icon={Plus}
+            icon={glyphIcon('plus')}
             aria-label={text("작업 정의 추가", "Add task definition")}
             disabled={readOnly}
             onClick={create}
@@ -178,7 +178,7 @@ export function PlanningTaskEditor({
               type="submit"
               variant="primary"
               size="sm"
-              leadingIcon={<Save />}
+              leadingIcon={<Glyph name="save" />}
               disabled={
                 disabled ||
                 !selected.title.trim() ||
@@ -402,7 +402,7 @@ export function PlanningTaskEditor({
                 size="sm"
                 variant="ghost"
                 disabled={readOnly}
-                leadingIcon={<Plus />}
+                leadingIcon={<Glyph name="plus" />}
                 onClick={() =>
                   update({
                     acceptance: [
@@ -441,7 +441,7 @@ export function PlanningTaskEditor({
                   />
                 </Field>
                 <IconButton
-                  icon={Trash2}
+                  icon={glyphIcon('trash')}
                   aria-label={text("완료 기준 삭제", "Remove criterion")}
                   disabled={readOnly}
                   onClick={() =>
@@ -468,7 +468,7 @@ export function PlanningTaskEditor({
                 size="sm"
                 variant="ghost"
                 disabled={readOnly}
-                leadingIcon={<Plus />}
+                leadingIcon={<Glyph name="plus" />}
                 onClick={() =>
                   update({
                     validationPlan: [
@@ -585,7 +585,7 @@ export function PlanningTaskEditor({
                   <Button
                     variant="ghost"
                     size="sm"
-                    leadingIcon={<Trash2 />}
+                    leadingIcon={<Glyph name="trash" />}
                     onClick={() =>
                       update({
                         validationPlan: selected.validationPlan.filter(

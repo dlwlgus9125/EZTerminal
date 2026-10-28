@@ -1,4 +1,4 @@
-import { Activity, ChevronDown, Play, Save } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import type { DaemonHeartbeat } from '../shared/daemon-protocol';
@@ -283,7 +283,7 @@ export function StructuredAgentHeartbeat({
         aria-controls={formId}
         onClick={() => setOpen((current) => !current)}
       >
-        <Activity aria-hidden="true" />
+        <Glyph name="mon" />
         <span className="structured-agent-heartbeat__identity">
           <strong>{copy.title}</strong>
           <small>{copy.description}</small>
@@ -296,7 +296,7 @@ export function StructuredAgentHeartbeat({
               ? <small>{template(copy.next, 'time', displayTime(value.nextRunAt, i18n.language))}</small>
               : null}
         </span>
-        <ChevronDown aria-hidden="true" />
+        <Glyph name="down" />
       </button>
 
       {open && (
@@ -390,7 +390,7 @@ export function StructuredAgentHeartbeat({
                 type="button"
                 variant="ghost"
                 size="sm"
-                leadingIcon={<Play />}
+                leadingIcon={<Glyph name="play" />}
                 loading={busy === 'run'}
                 loadingLabel={copy.running}
                 disabled={disabled || busy !== null}
@@ -404,7 +404,7 @@ export function StructuredAgentHeartbeat({
               type="submit"
               variant="primary"
               size="sm"
-              leadingIcon={<Save />}
+              leadingIcon={<Glyph name="save" />}
               loading={busy === 'save'}
               loadingLabel={copy.saving}
               disabled={disabled || busy !== null || (!dirty && value !== undefined)}

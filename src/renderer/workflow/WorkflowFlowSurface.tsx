@@ -1,4 +1,4 @@
-import { Plus, TriangleAlert } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import { blockingRunOf, stageEditScope, stageWorking, type ExecutionRun } from '../../shared/planning-execution';
@@ -252,11 +252,11 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
             return <li key={item.id}><Button variant="ghost" onClick={() => jumpTo(item.id, 'run')}>{item.title}</Button><Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status></li>;
           })}</ul>}
           {issues.length > 0 && <section className="workflow-validation" aria-label={text('실행 전 확인', 'Before execution')}>
-            <h4><TriangleAlert aria-hidden="true" />{text(`실행 전 확인 · ${issues.length}`, `Before execution · ${issues.length}`)}</h4>
+            <h4><Glyph name="warn" />{text(`실행 전 확인 · ${issues.length}`, `Before execution · ${issues.length}`)}</h4>
             <ul>{issues.map((issue, index) => <li key={`${issue.code}-${index}`}><Button variant="ghost" onClick={() => { if (issue.nodeId) jumpTo(issue.nodeId, 'settings'); else if (issue.edgeId) select({ kind: 'edge', id: issue.edgeId }); }}>{issue.nodeId ? `${view.graph.nodes.find(item => item.id === issue.nodeId)?.title ?? issue.nodeId}: ` : ''}{workflowIssueLabel(issue, text)}</Button></li>)}</ul>
           </section>}
           <p className="workflow-hint">{help}</p>
-          {view.graph.nodes.length === 0 && editable && <Button leadingIcon={<Plus />} onClick={() => { props.onStructureChange(true); addStage('agent'); }}>{text('첫 AI 작업 단계 추가', 'Add a first AI task')}</Button>}
+          {view.graph.nodes.length === 0 && editable && <Button leadingIcon={<Glyph name="plus" />} onClick={() => { props.onStructureChange(true); addStage('agent'); }}>{text('첫 AI 작업 단계 추가', 'Add a first AI task')}</Button>}
         </div>}
       </aside>
     </div>

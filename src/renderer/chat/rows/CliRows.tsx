@@ -1,4 +1,4 @@
-import { Paperclip } from 'lucide-react';
+import { Glyph } from '../../ui/Glyph';
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
@@ -61,7 +61,7 @@ export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
         <div className="chat-cli-user__body">
           {row.context?.replyTo && <blockquote className="chat-cli-user__reply">{row.context.replyTo.text}</blockquote>}
           {row.context?.attachments?.map((attachment) => (
-            <span key={attachment.id} className="chat-cli-attachment"><Paperclip aria-hidden="true" />{attachment.name}</span>
+            <span key={attachment.id} className="chat-cli-attachment"><Glyph name="clip" />{attachment.name}</span>
           ))}
           <p className="chat-cli-user__text">{row.text}</p>
         </div>

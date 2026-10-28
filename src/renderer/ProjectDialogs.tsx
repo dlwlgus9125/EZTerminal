@@ -1,4 +1,4 @@
-import { FolderPlus, X } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useEffect, useRef, useState } from 'react';
 
 import type { AgentProjectFolderSelection, AgentProjectSummary } from '../shared/agent-history';
@@ -179,7 +179,7 @@ export function ProjectEditorDialog({ open, mode, access, onClose, onSaved, onOp
                       {t('agentHub.projects.setPrimary')}
                     </Button>
                     <IconButton
-                      icon={X}
+                      icon={glyphIcon('x')}
                       aria-label={`${t('agentHub.projects.removeFolder')}: ${root}`}
                       onClick={() => applyRoots(roots.filter((candidate) => candidate !== root))}
                     />
@@ -192,7 +192,7 @@ export function ProjectEditorDialog({ open, mode, access, onClose, onSaved, onOp
             <Button
               variant="secondary"
               size="sm"
-              leadingIcon={<FolderPlus aria-hidden="true" />}
+              leadingIcon={<Glyph name="plus" />}
               onClick={() => void chooseFolders()}
               data-testid="agent-project-add-folder"
             >

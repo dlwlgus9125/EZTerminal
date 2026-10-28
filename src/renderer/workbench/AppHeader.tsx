@@ -1,4 +1,4 @@
-import { BellRing, Bot, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import { useAppTranslation } from '../i18n';
@@ -93,14 +93,14 @@ export function AppHeader({
         <Button
           variant="primary"
           className="workbench-new-terminal"
-          leadingIcon={<Plus />}
+          leadingIcon={<Glyph name="plus" />}
           onClick={onNewTerminal}
           data-testid="btn-new-tab"
           title={t('header.newTerminal')}
         >
           {t('header.newTerminal')}
         </Button>
-        {onNewSession && <Button variant="ghost" onClick={onNewSession} data-testid="btn-new-session" title={t('agentHub.newAgentRun')} aria-label={t('agentHub.newAgentRun')}><Bot aria-hidden="true" /></Button>}
+        {onNewSession && <Button variant="ghost" onClick={onNewSession} data-testid="btn-new-session" title={t('agentHub.newAgentRun')} aria-label={t('agentHub.newAgentRun')}><Glyph name="bot" /></Button>}
       </div>
       <div className="workbench-header-zone workbench-header-zone--search">
         {/* Still the Command Center zone, just widened into its search anchor.
@@ -116,7 +116,7 @@ export function AppHeader({
           data-testid="btn-command-center"
           title={t('header.commandCenter')}
         >
-          <Search className="workbench-command-field__icon" aria-hidden="true" />
+          <Glyph name="search" className="workbench-command-field__icon" />
           <span className="workbench-command-field__label">{t('header.commandCenterPlaceholder')}</span>
           <span className="workbench-command-field__keys" aria-hidden="true">
             {COMMAND_CENTER_KEYS.map((key) => (
@@ -133,8 +133,8 @@ export function AppHeader({
         <Button
           ref={workspaceButtonRef}
           variant="ghost"
-          leadingIcon={<PanelsTopLeft />}
-          trailingIcon={<ChevronDown />}
+          leadingIcon={<Glyph name="grid" />}
+          trailingIcon={<Glyph name="down" />}
           aria-expanded={workspaceOpen}
           aria-haspopup="dialog"
           aria-controls={workspaceOpen ? 'workspace-menu' : undefined}
@@ -156,7 +156,7 @@ export function AppHeader({
           size="sm"
           variant="ghost"
           className="effect-profile-trigger"
-          leadingIcon={<ScanLine />}
+          leadingIcon={<Glyph name="qr" />}
           onClick={onOpenEffectSettings}
           aria-label={t('header.effectIntensity', { value: effectIntensity })}
           data-testid="btn-effect-profile"
@@ -168,7 +168,7 @@ export function AppHeader({
         </Button>
         <Button
           variant={attentionCount > 0 ? 'secondary' : 'ghost'}
-          leadingIcon={<BellRing />}
+          leadingIcon={<Glyph name="bell" />}
           onClick={onOpenAttention}
           data-testid="btn-toggle-agents"
           aria-label={`${t('header.agentAttention')}: ${attentionCount}`}

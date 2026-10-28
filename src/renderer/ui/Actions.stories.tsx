@@ -1,4 +1,4 @@
-import { Copy, Play, Plus, Settings, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from './Glyph';
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
@@ -26,10 +26,10 @@ export const Variants: Story = {
       <section className="ez-story-section">
         <h2 className="ez-story-heading">Variants</h2>
         <div className="ez-story-row">
-          <Button variant="primary" leadingIcon={<Play />}>Primary</Button>
-          <Button variant="secondary" leadingIcon={<Plus />}>Secondary</Button>
+          <Button variant="primary" leadingIcon={<Glyph name="play" />}>Primary</Button>
+          <Button variant="secondary" leadingIcon={<Glyph name="plus" />}>Secondary</Button>
           <Button variant="ghost">Ghost</Button>
-          <Button variant="danger" leadingIcon={<Trash2 />}>Danger</Button>
+          <Button variant="danger" leadingIcon={<Glyph name="trash" />}>Danger</Button>
         </div>
       </section>
       <section className="ez-story-section">
@@ -49,8 +49,8 @@ export const DisabledAndLoading: Story = {
     <div className="ez-story-row">
       <Button variant="primary" disabled>Disabled</Button>
       <Button variant="secondary" loading loadingLabel="Saving command">Save command</Button>
-      <IconButton icon={Settings} aria-label="Settings unavailable" disabled />
-      <IconButton icon={Copy} aria-label="Copying output" loading loadingLabel="Copying" />
+      <IconButton icon={glyphIcon('set')} aria-label="Settings unavailable" disabled />
+      <IconButton icon={glyphIcon('copy')} aria-label="Copying output" loading loadingLabel="Copying" />
     </div>
   ),
 };
@@ -58,10 +58,10 @@ export const DisabledAndLoading: Story = {
 export const IconButtons: Story = {
   render: () => (
     <div className="ez-story-row">
-      <IconButton icon={Plus} aria-label="New terminal" variant="primary" />
-      <IconButton icon={Copy} aria-label="Copy output" variant="secondary" />
-      <IconButton icon={Settings} aria-label="Open settings" variant="ghost" />
-      <IconButton icon={Trash2} aria-label="Delete preset" variant="danger" />
+      <IconButton icon={glyphIcon('plus')} aria-label="New terminal" variant="primary" />
+      <IconButton icon={glyphIcon('copy')} aria-label="Copy output" variant="secondary" />
+      <IconButton icon={glyphIcon('set')} aria-label="Open settings" variant="ghost" />
+      <IconButton icon={glyphIcon('trash')} aria-label="Delete preset" variant="danger" />
     </div>
   ),
 };
@@ -77,7 +77,7 @@ function SplitButtonExample(): JSX.Element {
         menuLabel="Choose run mode"
         menuControls="run-mode-menu"
         onClick={() => undefined}
-        leadingIcon={<Play />}
+        leadingIcon={<Glyph name="play" />}
       >
         Run
       </SplitButton>

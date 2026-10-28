@@ -1,4 +1,4 @@
-import { Copy, Maximize2, Minus, X } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useState } from 'react';
 
 import type { DesktopWindowState } from '../../shared/desktop-window';
@@ -59,7 +59,7 @@ export function WindowControls({
         onClick={() => void desktop.performWindowAction('minimize')}
         data-testid="window-minimize"
       >
-        <Minus aria-hidden="true" />
+        <Glyph name="minus" />
       </button>
       <button
         type="button"
@@ -69,7 +69,7 @@ export function WindowControls({
         onClick={() => void desktop.performWindowAction('toggle-maximize')}
         data-testid="window-maximize"
       >
-        {maximized ? <Copy aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+        {maximized ? <Glyph name="copy" /> : <Glyph name="expand" />}
       </button>
       <button
         type="button"
@@ -79,7 +79,7 @@ export function WindowControls({
         onClick={() => void desktop.performWindowAction('close')}
         data-testid="window-close"
       >
-        <X aria-hidden="true" />
+        <Glyph name="x" />
       </button>
     </div>
   );

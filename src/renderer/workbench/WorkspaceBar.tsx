@@ -1,4 +1,4 @@
-import { Columns2, Rows2, Square } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 
 import { useAppTranslation } from '../i18n';
 
@@ -40,7 +40,7 @@ export function WorkspaceBar({
       )}
 
       <span className="workspace-bar__chips">
-        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} aria-label={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
+        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} aria-label={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Glyph name="rows" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
         <button
           type="button"
           className="workspace-bar__chip"
@@ -50,7 +50,7 @@ export function WorkspaceBar({
           aria-label={t('workspace.layoutTwoByOne')}
           data-testid="workspace-bar-layout-two-by-one"
         >
-          <Columns2 aria-hidden="true" />
+          <Glyph name="cols" />
           {t('workspace.layoutTwoByOne')}
         </button>
         <button
@@ -62,7 +62,7 @@ export function WorkspaceBar({
           aria-label={t('workspace.layoutOnePlusTwo')}
           data-testid="workspace-bar-layout-one-plus-two"
         >
-          <Rows2 aria-hidden="true" />
+          <Glyph name="rows" />
           {t('workspace.layoutOnePlusTwo')}
         </button>
         <button
@@ -74,7 +74,7 @@ export function WorkspaceBar({
           aria-label={t('workspace.layoutSingle')}
           data-testid="workspace-bar-layout-single"
         >
-          <Square aria-hidden="true" />
+          <Glyph name="stop" />
           {t('workspace.layoutSingle')}
         </button>
       </span>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link2, Trash2 } from "lucide-react";
+import { Glyph, glyphIcon } from './ui/Glyph';
 import type {
   PlanningLink,
   PlanningOperation,
@@ -67,7 +67,7 @@ export function PlanningLinkEditor({
             {link.note && <p>{link.note}</p>}
           </span>
           <IconButton
-            icon={Trash2}
+            icon={glyphIcon('trash')}
             disabled={disabled}
             aria-label={ko ? "연결 삭제" : "Delete connection"}
             onClick={() =>
@@ -123,7 +123,7 @@ export function PlanningLinkEditor({
           </Field>
           <Button
             disabled={disabled || !targetId}
-            leadingIcon={<Link2 />}
+            leadingIcon={<Glyph name="link" />}
             onClick={() =>
               onPatch(
                 [

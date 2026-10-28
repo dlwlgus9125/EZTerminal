@@ -1,29 +1,19 @@
-import {
-  Brain,
-  FilePenLine,
-  Image,
-  ListChecks,
-  Search,
-  SquareTerminal,
-  Users,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react';
+import { glyphIcon, type GlyphIcon } from './ui/Glyph';
 import { memo } from 'react';
 
 import type { AgentTranscriptEntry } from '../shared/agent-history';
 
 type ActivityEntry = Extract<AgentTranscriptEntry, { readonly type: 'activity' }>;
 
-const ICONS: Record<ActivityEntry['kind'], LucideIcon> = {
-  command: SquareTerminal,
-  tool: Wrench,
-  'file-change': FilePenLine,
-  'web-search': Search,
-  plan: ListChecks,
-  subagent: Users,
-  image: Image,
-  reasoning: Brain,
+const ICONS: Record<ActivityEntry['kind'], GlyphIcon> = {
+  command: glyphIcon('term'),
+  tool: glyphIcon('set'),
+  'file-change': glyphIcon('edit'),
+  'web-search': glyphIcon('search'),
+  plan: glyphIcon('list'),
+  subagent: glyphIcon('kids'),
+  image: glyphIcon('image'),
+  reasoning: glyphIcon('spark'),
 };
 
 export const AgentActivityEntry = memo(function AgentActivityEntry({

@@ -1,4 +1,4 @@
-import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Globe, RefreshCw } from 'lucide-react';
+import { Glyph, glyphIcon, type GlyphIcon } from '../ui/Glyph';
 import { Fragment, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { FilePreviewResult } from '../../shared/file-preview';
@@ -20,7 +20,7 @@ const LIVE: ResultsFolderAccess = { kind: 'live' };
 const HIGHLIGHT_MAX_CHARS = 200_000;
 const HIGHLIGHT_MAX_LINES = 5_000;
 
-const KIND_ICON: Record<FileViewKind, typeof FileText> = { markdown: FileText, html: Globe, pdf: FileText, image: FileImage, code: FileCode2 };
+const KIND_ICON: Record<FileViewKind, GlyphIcon> = { markdown: glyphIcon('file'), html: glyphIcon('globe'), pdf: glyphIcon('file'), image: glyphIcon('image'), code: glyphIcon('code') };
 
 interface FilesState {
   /** Paths opened from chat links or the other sections, most recent first. */
@@ -147,7 +147,7 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
     return (
       <div className="results-files" data-testid="results-files">
         <EmptyState title={copy.noFiles} description={copy.noFilesHint} />
-        {onOpenProjectFiles && <Button variant="ghost" size="sm" leadingIcon={<FolderOpen />} onClick={onOpenProjectFiles}>{copy.openProjectFiles}</Button>}
+        {onOpenProjectFiles && <Button variant="ghost" size="sm" leadingIcon={<Glyph name="proj" />} onClick={onOpenProjectFiles}>{copy.openProjectFiles}</Button>}
       </div>
     );
   }
@@ -212,12 +212,12 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
               </span>
             )}
             {hasChanges && onViewChanges && <Button variant="ghost" size="sm" onClick={() => onViewChanges(selected.path)}>{copy.viewChanges}</Button>}
-            <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={() => { onRefreshFolder?.(); setReload((value) => value + 1); }} />
+            <IconButton size="sm" icon={glyphIcon('refresh')} aria-label={copy.refresh} onClick={() => { onRefreshFolder?.(); setReload((value) => value + 1); }} />
             {absolute && services.openFileInApp && pathOpen && (kind === 'html'
               // Interactive pages run in the person's browser, by their own click (the preview is static).
-              ? <Button variant="ghost" size="sm" leadingIcon={<ExternalLink />} onClick={() => void services.openFileInApp!(absolute)} data-testid="results-open-browser">{copy.openInBrowser}</Button>
-              : <IconButton size="sm" icon={ExternalLink} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />)}
-            {onOpenProjectFiles && <IconButton size="sm" icon={FolderOpen} aria-label={copy.openProjectFiles} onClick={onOpenProjectFiles} />}
+              ? <Button variant="ghost" size="sm" leadingIcon={<Glyph name="external" />} onClick={() => void services.openFileInApp!(absolute)} data-testid="results-open-browser">{copy.openInBrowser}</Button>
+              : <IconButton size="sm" icon={glyphIcon('external')} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />)}
+            {onOpenProjectFiles && <IconButton size="sm" icon={glyphIcon('proj')} aria-label={copy.openProjectFiles} onClick={onOpenProjectFiles} />}
           </span>
         </header>
         {inCleaned && cleaned?.result && <p className="results-note" data-testid="results-files-cleaned">{copy.cleanedFromResult}</p>}

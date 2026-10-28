@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ShieldQuestion, Users } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 
 import type { AppChatInboxEntry } from '../shared/app-chat-inbox';
 import { useAppTranslation } from './i18n';
@@ -26,7 +26,7 @@ export function AppChatInbox({ items, onOpen, onMarkSeen }: AppChatInboxProps): 
   const detail = (item: AppChatInboxEntry): string => item.detail
     ?? (item.kind === 'failed' ? text('응답을 마치지 못했습니다.', 'Stopped before finishing its reply.') : text('응답을 마쳤습니다.', 'Finished its reply.'));
   const row = (item: AppChatInboxEntry): JSX.Element => {
-    const Icon = item.kind === 'approval' ? ShieldQuestion : item.kind === 'failed' ? AlertTriangle : CheckCircle2;
+    const Icon = item.kind === 'approval' ? glyphIcon('q') : item.kind === 'failed' ? glyphIcon('warn') : glyphIcon('check');
     return (
       <article key={item.id} className="agent-row app-chat-inbox__row" data-kind={item.kind} data-testid="app-chat-inbox-item">
         <div className="agent-row-main">
@@ -35,7 +35,7 @@ export function AppChatInbox({ items, onOpen, onMarkSeen }: AppChatInboxProps): 
           <span className="agent-status">{providerLabel(item.providerId)} · {time(item.at)}</span>
         </div>
         <p className="app-chat-inbox__detail">
-          {item.subagentTitle && <span className="app-chat-inbox__subagent"><Users aria-hidden="true" />{item.subagentTitle}</span>}
+          {item.subagentTitle && <span className="app-chat-inbox__subagent"><Glyph name="kids" />{item.subagentTitle}</span>}
           {detail(item)}
         </p>
         <div className="app-chat-inbox__actions">

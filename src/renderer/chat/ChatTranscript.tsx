@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, LoaderCircle } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '../ui';
@@ -70,27 +70,27 @@ export function ChatTranscript({
       {earlier && (
         <div className="chat-earlier">
           <button type="button" className="chat-link-button" disabled={earlier.loading} onClick={earlier.onLoad} data-testid="chat-load-earlier">
-            {earlier.loading ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}
+            {earlier.loading ? <Glyph name="spin" className="chat-spin" /> : null}
             {earlier.loading ? copy.loadingEarlier : copy.loadEarlier}
           </button>
         </div>
       )}
       {error && (
         <div className="structured-agent__banner structured-agent__banner--error" role="alert">
-          <AlertTriangle aria-hidden="true" />
+          <Glyph name="warn" />
           <span>{error}</span>
           {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{retryLabel}</Button>}
         </div>
       )}
       {loading && model.rows.length === 0 && (
         <p className="structured-agent-transcript__state" role="status">
-          <LoaderCircle className="structured-agent__spinner" aria-hidden="true" />
+          <Glyph name="spin" className="structured-agent__spinner" />
           {loadingLabel}
         </p>
       )}
       {!loading && !error && model.rows.length === 0 && (
         <p className="structured-agent-transcript__state" data-testid="structured-agent-empty">
-          <Bot aria-hidden="true" />
+          <Glyph name="bot" />
           {emptyLabel}
         </p>
       )}

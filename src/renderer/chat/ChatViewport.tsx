@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
@@ -343,7 +343,7 @@ export function ChatViewport({
       </div>
       {!atBottom && (
         <button type="button" className="chat-jump" onClick={() => { following.current = true; setNewFrom(undefined); scrollToEnd(); }}>
-          <ArrowDown aria-hidden="true" />
+          <Glyph name="down" />
           <span>{newFrom ? copy.newMessages : copy.jumpToLatest}</span>
         </button>
       )}

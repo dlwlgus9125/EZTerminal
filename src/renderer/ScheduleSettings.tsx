@@ -1,4 +1,4 @@
-import { CalendarClock, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ProviderModel } from '../shared/daemon-provider';
@@ -542,7 +542,7 @@ export function ScheduleSettings({
         {snapshot && (
           <Button
             size="sm"
-            leadingIcon={<Plus size={14} />}
+            leadingIcon={<Glyph name="plus" size={14} />}
             disabled={creating || busyAction !== null}
             onClick={() => {
               setCreating(true);
@@ -564,7 +564,7 @@ export function ScheduleSettings({
           title={t('agentSettings.scheduleLoadFailed')}
           description={loadError}
           action={(
-            <Button size="sm" leadingIcon={<RefreshCw size={14} />} onClick={() => void refreshSnapshot(true)}>
+            <Button size="sm" leadingIcon={<Glyph name="refresh" size={14} />} onClick={() => void refreshSnapshot(true)}>
               {t('agentSettings.scheduleRetry')}
             </Button>
           )}
@@ -815,7 +815,7 @@ export function ScheduleSettings({
 
           {!snapshot.schedules.length && !creating ? (
             <EmptyState
-              icon={CalendarClock}
+              icon={glyphIcon('clock')}
               title={t('agentSettings.scheduleEmptyTitle')}
               description={t('agentSettings.scheduleEmptyDescription')}
             />
@@ -903,7 +903,7 @@ export function ScheduleSettings({
                         </Button>
                         <Button
                           size="sm"
-                          leadingIcon={<Play size={13} />}
+                          leadingIcon={<Glyph name="play" size={13} />}
                           disabled={busyAction !== null || !targetAvailable}
                           loading={running}
                           loadingLabel={t('agentSettings.scheduleStarting')}
@@ -915,7 +915,7 @@ export function ScheduleSettings({
                         <Button
                           size="sm"
                           variant="ghost"
-                          leadingIcon={<Trash2 size={13} />}
+                          leadingIcon={<Glyph name="trash" size={13} />}
                           disabled={busyAction !== null}
                           onClick={() => setConfirmDeleteId(schedule.id)}
                           data-testid={`schedule-delete-${schedule.id}`}

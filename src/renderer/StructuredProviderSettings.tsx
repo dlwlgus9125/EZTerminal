@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -617,7 +617,7 @@ export function StructuredProviderSettings({
                 <div className="structured-provider-card__actions">
                   <Button
                     size="sm"
-                    leadingIcon={<RefreshCw size={14} />}
+                    leadingIcon={<Glyph name="refresh" size={14} />}
                     disabled={busyProviders[providerId] !== null}
                     loading={state.checking}
                     loadingLabel={t('agentSettings.providerChecking')}

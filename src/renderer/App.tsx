@@ -19,7 +19,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { X } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { readSessionViewState, saveSessionViewState, type TerminalSessionViewState } from './session-view-state';
 import {
   DockviewReact,
@@ -3389,7 +3389,7 @@ export function App(): JSX.Element {
             aria-label={t('common.close')}
             data-testid="crash-banner-dismiss"
           >
-            <X aria-hidden="true" size={16} />
+            <Glyph name="x" size={16} />
           </button>
         </div>
       )}

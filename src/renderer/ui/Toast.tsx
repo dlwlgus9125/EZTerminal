@@ -1,11 +1,4 @@
-import {
-  CircleAlert,
-  CircleCheck,
-  Info,
-  TriangleAlert,
-  X,
-  type LucideIcon,
-} from 'lucide-react';
+import { glyphIcon, type GlyphIcon } from './Glyph';
 import {
   createContext,
   useCallback,
@@ -47,11 +40,11 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 let toastSequence = 0;
 
-const TOAST_ICONS: Record<ToastVariant, LucideIcon> = {
-  info: Info,
-  success: CircleCheck,
-  warning: TriangleAlert,
-  danger: CircleAlert,
+const TOAST_ICONS: Record<ToastVariant, GlyphIcon> = {
+  info: glyphIcon('info'),
+  success: glyphIcon('check'),
+  warning: glyphIcon('warn'),
+  danger: glyphIcon('warn'),
 };
 
 export interface ToastProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'>, ToastOptions {
@@ -101,7 +94,7 @@ export function Toast({
         {description && <div className="ez-ui-toast__description">{description}</div>}
         {action && <div className="ez-ui-toast__action">{action}</div>}
       </div>
-      {onDismiss && <IconButton icon={X} aria-label={dismissLabel} size="sm" onClick={onDismiss} />}
+      {onDismiss && <IconButton icon={glyphIcon('x')} aria-label={dismissLabel} size="sm" onClick={onDismiss} />}
     </div>
   );
 }

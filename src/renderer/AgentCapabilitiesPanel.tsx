@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, Sparkles } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem, AgentExtensionAction, AgentExtensionCommand, AgentExtensionReceipt } from '../shared/agent-capabilities';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select, Input as TextInput } from './ui';
@@ -148,9 +148,9 @@ export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessio
     finally { if (activeScope.current.client === client && activeScope.current.scopeKey === scopeKey) setManaging(false); }
   };
   return <details ref={rootDetails} className={compact ? 'agent-capabilities agent-capabilities--compact' : 'agent-capabilities'} data-testid="agent-capabilities">
-    <summary title={ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP'}><Sparkles size={14} aria-hidden="true" />{compact ? (ko ? '확장' : 'Extensions') : (ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP')} <span>{loading ? (ko ? '조회 중' : 'Loading') : catalog ? `${catalog.items.length}` : (ko ? '조회 필요' : 'Unavailable')}</span></summary>
+    <summary title={ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP'}><Glyph name="spark" size={14} />{compact ? (ko ? '확장' : 'Extensions') : (ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP')} <span>{loading ? (ko ? '조회 중' : 'Loading') : catalog ? `${catalog.items.length}` : (ko ? '조회 필요' : 'Unavailable')}</span></summary>
     <div className="agent-capabilities__body">
-      <div className="agent-capabilities__heading"><p>{ko ? '첫 메시지 없이 조회합니다.' : 'Discovery does not send a message.'} {catalog && <>{remote ? (ko ? '연결된 PC' : 'Connected PC') : 'PC'}: {catalog.hostId} · {catalog.workspaceRoot}</>}</p><Button size="sm" onClick={() => void refresh()} disabled={loading || managing}><RefreshCw size={14} aria-hidden="true" />{ko ? '새로고침' : 'Refresh'}</Button></div>
+      <div className="agent-capabilities__heading"><p>{ko ? '첫 메시지 없이 조회합니다.' : 'Discovery does not send a message.'} {catalog && <>{remote ? (ko ? '연결된 PC' : 'Connected PC') : 'PC'}: {catalog.hostId} · {catalog.workspaceRoot}</>}</p><Button size="sm" onClick={() => void refresh()} disabled={loading || managing}><Glyph name="refresh" size={14} />{ko ? '새로고침' : 'Refresh'}</Button></div>
       {error && <p role="alert">{error}</p>}
       {message && <p role="status">{message}</p>}
       {pending && <div role="status"><p>{ko ? '확인 중인 변경' : 'Pending change'}: {LABELS[pending.action][ko ? 0 : 1]} · {pending.target}</p><Button size="sm" disabled={managing || loading} onClick={() => void apply(true)}>{ko ? '같은 요청 결과 확인' : 'Check same request'}</Button><Button size="sm" disabled={managing || loading} onClick={() => void recoverReceipt(pending, 'acknowledge')}>{ko ? 'PC 설정 확인 완료' : 'I checked the PC settings'}</Button></div>}

@@ -1,4 +1,4 @@
-import { Archive, ChevronDown, ChevronUp, CircleStop, GitMerge, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useMemo, useState } from 'react';
 
 import type { AgentApproval, AgentDecision, AgentDecisionResult } from '../shared/agent';
@@ -116,11 +116,11 @@ export function LeadWorkersStrip({
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
-          <LoaderCircle className={active > 0 ? 'lead-workers__spin' : undefined} aria-hidden="true" />
+          <Glyph name="spin" className={active > 0 ? 'lead-workers__spin' : undefined} />
           <strong>{t('leadWorkers.summary', { active, total: tasks.length })}</strong>
-          {attention > 0 && <Badge variant="warning"><TriangleAlert aria-hidden="true" /> {attention}</Badge>}
-          {mergeReady > 0 && <Badge variant="success"><GitMerge aria-hidden="true" /> {mergeReady}</Badge>}
-          {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+          {attention > 0 && <Badge variant="warning"><Glyph name="warn" /> {attention}</Badge>}
+          {mergeReady > 0 && <Badge variant="success"><Glyph name="merge" /> {mergeReady}</Badge>}
+          {expanded ? <Glyph name="up" /> : <Glyph name="down" />}
         </button>
         {!isTerminalCollaborationRun(run.state) && (
           <Button size="sm" variant="ghost" disabled={busyTaskId !== null} onClick={() => void stopRun()}>
@@ -144,7 +144,7 @@ export function LeadWorkersStrip({
                 </div>
                 <Badge variant={taskTone(task)}>{t(`leadWorkers.state.${task.state}`)}</Badge>
                 <IconButton
-                  icon={terminal ? Archive : CircleStop}
+                  icon={terminal ? glyphIcon('archive') : glyphIcon('stop')}
                   aria-label={terminal
                     ? t('leadWorkers.archiveName', { name: task.title })
                     : t('leadWorkers.stopName', { name: task.title })}

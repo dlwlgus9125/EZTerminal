@@ -1,4 +1,4 @@
-import { ChevronDown, type LucideIcon } from 'lucide-react';
+import { Glyph, type GlyphIcon } from '../../ui/Glyph';
 import { useState, type SyntheticEvent } from 'react';
 
 import { Menu, MenuLabel, MenuRadioItem, MenuSeparator } from '../../ui';
@@ -37,7 +37,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
   readonly options: readonly SettingPillOption<T>[];
   readonly onChange: (value: T) => void;
   readonly disabled?: boolean;
-  readonly icon?: LucideIcon;
+  readonly icon?: GlyphIcon;
   readonly testId?: string;
   /** Shown when no option is selected (e.g. the provider default model). */
   readonly placeholder?: string;
@@ -64,7 +64,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
           {Icon && <Icon aria-hidden="true" />}
           {prefix && <span className="chat-pill__prefix">{prefix}</span>}
           <span className="chat-pill__value">{shown}</span>
-          <ChevronDown className="chat-pill__chevron" aria-hidden="true" />
+          <Glyph name="down" className="chat-pill__chevron" />
         </button>
       )}
     >

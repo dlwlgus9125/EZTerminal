@@ -1,4 +1,4 @@
-import { Play, Plus, Search } from 'lucide-react';
+import { Glyph, glyphIcon } from './Glyph';
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
@@ -77,8 +77,8 @@ function WorkbenchSample({ locale }: { readonly locale: keyof typeof COPY }): JS
         actions={
           <div className="ez-story-composition__toolbar">
             <Status variant="success">{copy.connected}</Status>
-            <IconButton icon={Search} aria-label={copy.search} />
-            <Button size="sm" leadingIcon={<Plus />}>{copy.newPane}</Button>
+            <IconButton icon={glyphIcon('search')} aria-label={copy.search} />
+            <Button size="sm" leadingIcon={<Glyph name="plus" />}>{copy.newPane}</Button>
           </div>
         }
         footer={
@@ -104,7 +104,7 @@ function WorkbenchSample({ locale }: { readonly locale: keyof typeof COPY }): JS
                 <Field label={copy.command} labelHidden style={{ flex: '1 1 18rem' }}>
                   <Input placeholder={copy.placeholder} />
                 </Field>
-                <Button type="submit" variant="primary" leadingIcon={<Play />}>{copy.run}</Button>
+                <Button type="submit" variant="primary" leadingIcon={<Glyph name="play" />}>{copy.run}</Button>
               </form>
             </div>
           </TabPanel>

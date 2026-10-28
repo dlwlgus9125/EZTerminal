@@ -1,4 +1,4 @@
-import { Bot, CircleDot, FileDiff, FileText, ListChecks, LoaderCircle, MessageSquareWarning, Route } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useMemo } from 'react';
 
 import { useChatCopy, useChatLocale } from '../chat/copy';
@@ -46,14 +46,14 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
     <div className="results-summary" data-testid="results-summary">
       {derived.pendingDecisions > 0 && (
         <div className="results-banner" role="status">
-          <MessageSquareWarning aria-hidden="true" />
+          <Glyph name="warn" />
           <span>{copy.decisions(derived.pendingDecisions)}</span>
           {onFocusDecision && <Button variant="secondary" size="sm" onClick={onFocusDecision}>{copy.decide}</Button>}
         </div>
       )}
       {derived.running.length > 0 && (
         <section className="results-block" aria-label={copy.running}>
-          <h3 className="results-block__title"><LoaderCircle className="results-spin" aria-hidden="true" />{copy.running}</h3>
+          <h3 className="results-block__title"><Glyph name="spin" className="results-spin" />{copy.running}</h3>
           <ul className="results-rows">
             {derived.running.map((tool) => {
               const started = Date.parse(tool.createdAt);
@@ -73,7 +73,7 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
       )}
       {derived.plan && (
         <section className="results-block" aria-label={copy.plan}>
-          <h3 className="results-block__title"><Route aria-hidden="true" />{copy.plan}</h3>
+          <h3 className="results-block__title"><Glyph name="flow" />{copy.plan}</h3>
           {derived.plan.filePath && (
             <p className="results-note">
               {copy.planFile}: {onOpenFile
@@ -86,17 +86,17 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
       )}
       {todo && todo.length > 0 && (
         <section className="results-block" aria-label={copy.tasks}>
-          <h3 className="results-block__title"><ListChecks aria-hidden="true" />{copy.tasks}<span className="results-block__meta">{copy.tasksProgress(done, todo.length)}</span></h3>
+          <h3 className="results-block__title"><Glyph name="list" />{copy.tasks}<span className="results-block__meta">{copy.tasksProgress(done, todo.length)}</span></h3>
           <TodoList items={todo} />
         </section>
       )}
       {subagents.length > 0 && (
         <section className="results-block" aria-label={copy.subagents}>
-          <h3 className="results-block__title"><Bot aria-hidden="true" />{copy.subagents}</h3>
+          <h3 className="results-block__title"><Glyph name="bot" />{copy.subagents}</h3>
           <ul className="results-rows">
             {subagents.map((child) => (
               <li key={child.sessionId} className="results-row" data-state={child.state}>
-                <CircleDot className="results-row__dot" aria-hidden="true" />
+                <Glyph name="info" className="results-row__dot" />
                 <span className="results-row__main" title={child.title}>{child.title}</span>
                 <span className="results-row__meta">{child.providerLabel} · {stateLabel(child.state)}</span>
                 {onOpenSubagent && <Button variant="ghost" size="sm" onClick={() => onOpenSubagent(child.sessionId)}>{copy.openSubagent}</Button>}
@@ -107,7 +107,7 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
       )}
       {derived.files.length > 0 && (
         <section className="results-block" aria-label={copy.filesTouched}>
-          <h3 className="results-block__title"><FileDiff aria-hidden="true" />{copy.filesTouched}<span className="results-block__meta">{derived.files.length}</span></h3>
+          <h3 className="results-block__title"><Glyph name="diff" />{copy.filesTouched}<span className="results-block__meta">{derived.files.length}</span></h3>
           <ul className="results-rows">
             {derived.files.slice(0, FILES_SHOWN).map((file) => (
               <li key={file.path} className="results-row">
@@ -123,7 +123,7 @@ export function ResultsSummary({ derived, subagents, workspaceRoot, onOpenSubage
                 </span>
                 {onOpenFile && file.kind !== 'delete' && (
                   <button type="button" className="results-icon-link" aria-label={`${copy.viewFile}: ${workspacePath(file.path, workspaceRoot)}`} onClick={() => onOpenFile(file.path)}>
-                    <FileText aria-hidden="true" />
+                    <Glyph name="file" />
                   </button>
                 )}
               </li>

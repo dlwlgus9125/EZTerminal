@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import type { WorkflowAccess } from '../../shared/workflow';
 import type { WorkflowConversationContext as ReferenceSnapshot } from '../../shared/workflow-conversation';
 import { Badge, Button } from '../ui';
@@ -85,6 +85,6 @@ export function WorkflowConversationContext({ scope, onReturn, onRefresh, busy, 
     {scope.mode === 'stage' && !scope.readOnly && onRefresh && <Button disabled={busy} onClick={() => void onRefresh()}>{text('저장본으로 참조 갱신', 'Refresh references from saved version')}</Button>}
     {error && <span role="alert">{error}</span>}
     {scope.readOnly && <span role="status">{text('보관된 기록 · 읽기 전용', 'Archived record · read only')}</span>}
-    {onReturn && <Button leadingIcon={<ArrowLeft />} onClick={onReturn}>{scope.nodeId ? text('이 단계로 돌아가기', 'Return to this stage') : text('흐름으로 돌아가기', 'Return to flow')}</Button>}
+    {onReturn && <Button leadingIcon={<Glyph name="back" />} onClick={onReturn}>{scope.nodeId ? text('이 단계로 돌아가기', 'Return to this stage') : text('흐름으로 돌아가기', 'Return to flow')}</Button>}
   </aside>;
 }

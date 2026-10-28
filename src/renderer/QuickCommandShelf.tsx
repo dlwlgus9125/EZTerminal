@@ -1,4 +1,4 @@
-import { ChevronDown, Terminal } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { QuickCommand } from '../shared/quick-command';
@@ -136,7 +136,7 @@ export function QuickCommandShelf({
           if (primary) choose(primary, 'insert');
         }}
       >
-        <Terminal aria-hidden="true" size={16} />
+        <Glyph name="term" size={16} />
         <span className="quick-command-primary-label">{primary?.name ?? t('quickCommands.shortLabel')}</span>
       </button>
       <button
@@ -149,7 +149,7 @@ export function QuickCommandShelf({
         aria-label={t('quickCommands.browse')}
         onClick={() => setOpen((value) => !value)}
       >
-        <ChevronDown aria-hidden="true" size={14} />
+        <Glyph name="down" size={14} />
       </button>
 
       {open && (

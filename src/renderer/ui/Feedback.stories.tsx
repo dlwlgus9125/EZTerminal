@@ -1,4 +1,4 @@
-import { Bell, RefreshCw, Settings } from 'lucide-react';
+import { Glyph } from './Glyph';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 
@@ -71,7 +71,7 @@ export const StateViews: Story = {
         <ErrorState
           title="Could not connect"
           description="Check the address and try again."
-          action={<Button leadingIcon={<RefreshCw />}>Retry</Button>}
+          action={<Button leadingIcon={<Glyph name="refresh" />}>Retry</Button>}
         />
       </section>
     </div>
@@ -93,7 +93,7 @@ function ToastLauncher(): JSX.Element {
   const { pushToast } = useToast();
   return (
     <Button
-      leadingIcon={<Bell />}
+      leadingIcon={<Glyph name="bell" />}
       onClick={() => pushToast({
         title: 'Preset saved',
         description: 'Workspace layout updated.',
@@ -125,7 +125,7 @@ export const ToastInteraction: Story = {
 export const VisuallyHiddenLabel: Story = {
   render: () => (
     <button type="button" className="ez-ui-icon-button" data-size="md" data-variant="secondary">
-      <Settings aria-hidden="true" />
+      <Glyph name="set" />
       <VisuallyHidden>Open settings</VisuallyHidden>
     </button>
   ),

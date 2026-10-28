@@ -1,4 +1,4 @@
-import { Plus, Save } from "lucide-react";
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useState } from "react";
 import type {
   PlanningOperation,
@@ -92,7 +92,7 @@ export function PlanningProfileEditor({
         <div className="planning-workspace__list-heading">
           <h2>{text("역할 프로필", "Role profiles")}</h2>
           <IconButton
-            icon={Plus}
+            icon={glyphIcon('plus')}
             aria-label={text("역할 프로필 추가", "Add role profile")}
             disabled={readOnly}
             onClick={create}
@@ -169,7 +169,7 @@ export function PlanningProfileEditor({
                 !selected.title.trim() ||
                 !drafts[selected.id]?.dirty
               }
-              leadingIcon={<Save />}
+              leadingIcon={<Glyph name="save" />}
             >
               {text("저장", "Save")}
             </Button>

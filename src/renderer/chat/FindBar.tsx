@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import type { RefObject } from 'react';
 
 import { useChatCopy } from './copy';
@@ -17,7 +17,7 @@ export function FindBar({ inputRef, query, index, count, onQuery, onStep, onClos
   const copy = useChatCopy();
   return (
     <div className="chat-find" role="search" data-testid="chat-find">
-      <Search className="chat-find__icon" aria-hidden="true" />
+      <Glyph name="search" className="chat-find__icon" />
       <input
         ref={inputRef}
         className="chat-find__input"
@@ -43,13 +43,13 @@ export function FindBar({ inputRef, query, index, count, onQuery, onStep, onClos
         {query.trim() ? (count ? copy.findCount(index + 1, count) : copy.findNone) : ''}
       </span>
       <button type="button" className="chat-icon-action" aria-label={copy.findPrevious} title={copy.findPrevious} disabled={!count} onClick={() => onStep(-1)}>
-        <ChevronUp aria-hidden="true" />
+        <Glyph name="up" />
       </button>
       <button type="button" className="chat-icon-action" aria-label={copy.findNext} title={copy.findNext} disabled={!count} onClick={() => onStep(1)}>
-        <ChevronDown aria-hidden="true" />
+        <Glyph name="down" />
       </button>
       <button type="button" className="chat-icon-action" aria-label={copy.findClose} title={copy.findClose} onClick={onClose}>
-        <X aria-hidden="true" />
+        <Glyph name="x" />
       </button>
     </div>
   );

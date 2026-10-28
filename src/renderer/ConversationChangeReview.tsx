@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { FileDiff, X } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { conversationFileChanges, reviewLines } from '../shared/conversation-changes';
 import { Button, Dialog, Select } from './ui';
@@ -42,12 +42,12 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   const content = <div className="conversation-review" data-testid="conversation-change-review">
     <div className="conversation-review__toolbar"><Select aria-label={ko ? '변경 범위' : 'Change scope'} value={state.scope} onChange={event => update({ scope: event.target.value as ReviewState['scope'], selected: undefined, range: undefined })}>
       <option value="latest">{ko ? '최근 변경 턴' : 'Latest changed turn'}</option><option value="all">{ko ? '이 대화 전체' : 'This conversation'}</option>
-    </Select>{wide && <Button variant="ghost" aria-label={ko ? '검토 닫기' : 'Close review'} onClick={() => update({ open: false })}><X /></Button>}</div>
+    </Select>{wide && <Button variant="ghost" aria-label={ko ? '검토 닫기' : 'Close review'} onClick={() => update({ open: false })}><Glyph name="x" /></Button>}</div>
     <p className="conversation-review__notice">{ko ? 'AI가 보고한 변경 기록입니다. 현재 작업 폴더 전체의 변경과 다를 수 있습니다.' : 'Changes reported by the AI. These may differ from the current working tree.'}</p>
     {onOpenProjectFiles && <Button variant="ghost" size="sm" onClick={() => { update({ open: false }); onOpenProjectFiles(); }}>{ko ? '현재 프로젝트 파일 열기' : 'Open current project files'}</Button>}
     {!visible.length && <p role="status">{ko ? '이 대화에서 확인 가능한 변경 패치가 없습니다.' : 'No recorded patches are available in this conversation.'}</p>}
     <ul className="conversation-review__files">{visible.map(change => <li key={change.id}><Button variant="ghost" aria-pressed={selected?.id === change.id} onClick={() => update({ selected: change.id, range: undefined })}>
-      <FileDiff aria-hidden="true" /><span>{change.path}</span>{state.reviewed.includes(change.id) && <span>{ko ? '확인함' : 'Reviewed'}</span>}
+      <Glyph name="diff" /><span>{change.path}</span>{state.reviewed.includes(change.id) && <span>{ko ? '확인함' : 'Reviewed'}</span>}
     </Button></li>)}</ul>
     {selected && <><p>{selected.coverage === 'fragment' ? (ko ? '부분 기록 · 파일 줄 번호는 제공되지 않았습니다.' : 'Partial record · file line numbers were not supplied.') : (ko ? '기록된 패치 · 왼쪽은 변경 전, 오른쪽은 변경 후 줄 번호입니다.' : 'Recorded patch · before and after line numbers.')} {ko ? 'Shift로 여러 줄 선택' : 'Shift to select a range'}</p>
       <div className="conversation-review__patch" role="group" aria-label={selected.path}>
@@ -64,7 +64,7 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
     </>}
   </div>;
   return <>
-    {!hideTrigger && <Button ref={triggerRef} className="conversation-review__trigger" variant="ghost" size="sm" leadingIcon={<FileDiff />} aria-expanded={state.open} onClick={() => update({ open: !state.open })}>{title}{changes.length ? ` · ${changes.length}` : ''}</Button>}
+    {!hideTrigger && <Button ref={triggerRef} className="conversation-review__trigger" variant="ghost" size="sm" leadingIcon={<Glyph name="diff" />} aria-expanded={state.open} onClick={() => update({ open: !state.open })}>{title}{changes.length ? ` · ${changes.length}` : ''}</Button>}
     {mobile && HostOverlay ? state.open && <HostOverlay title={title} onClose={() => update({ open: false })} returnFocusRef={hideTrigger && returnFocusRef ? returnFocusRef : triggerRef}>{content}</HostOverlay>
       : wide && state.open ? <aside className="conversation-review__aside" aria-label={title}>{content}</aside> : <Dialog open={state.open} onOpenChange={open => update({ open })} title={title} ownerDocument={ownerDocument} variant={mobile ? 'sheet' : 'dialog'} size="lg" closeLabel={ko ? '닫기' : 'Close'}>{content}</Dialog>}
   </>;

@@ -1,8 +1,8 @@
 /**
  * Stencil glyphs of the 2.0 Board + Desk language: filled silhouettes on a 20px grid with 2px
  * knock-outs (evenodd) and a 3px outer radius. Decorative: every use sits next to a visible
- * label or carries one through the control's accessible name. The shell, board, live list and
- * flow use these; lucide icons elsewhere are replaced bundle by bundle.
+ * label or carries one through the control's accessible name. They are the only icons in the
+ * app (I5 retired lucide; `test/no-lucide.test.ts` keeps it out).
  */
 
 const PATHS = {
@@ -71,6 +71,33 @@ const PATHS = {
   // Desktop tool screens (I5): file types in the explorer and the project tree.
   code: 'M6.6 5.2L7.9 6.6 4.5 10l3.4 3.4-1.4 1.4L1.7 10zm6.8 0L18.3 10l-4.8 4.8-1.4-1.4 3.4-3.4-3.4-3.4zM11.1 3.6l1.9.5-4.1 12.3-1.9-.5z',
   image: 'M3 3h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1.5 2.5v9h11v-9zM5.5 13.5l3-4 2 2.5 1.5-1.5 2.5 3zM12.5 6.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z',
+  // The rest of the desktop (I5): lucide is gone; every remaining icon draws on this grid.
+  save: 'M3 2h11l4 4v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm2 2v4h8V4zm5 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z',
+  chat: 'M3 3h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V14H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm3 4v2h8V7zm0 3.5v2h5v-2z',
+  spin: 'M10 2a8 8 0 1 1-8 8h2.5A5.5 5.5 0 1 0 10 4.5z',
+  bot: 'M9 2h2v2h4a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4zM7 8v2.5h2V8zm4 0v2.5h2V8zm-3.5 4.5V14h5v-1.5zM.5 8H2v4H.5zM18 8h1.5v4H18z',
+  undo: 'M7 4.5L2.5 9 7 13.5l1.4-1.4L6.3 10H12a3.5 3.5 0 0 1 0 7H9v2h3a5.5 5.5 0 0 0 0-11H6.3l2.1-2.1z',
+  spark: 'M9 2l1.8 5.2L16 9l-5.2 1.8L9 16l-1.8-5.2L2 9l5.2-1.8zM16 13l.8 2.2 2.2.8-2.2.8L16 19l-.8-2.2-2.2-.8 2.2-.8z',
+  rows: 'M2 3h16v6H2zm2 2v2h12V5zM2 11h16v6H2zm2 2v2h12v-2z',
+  cols: 'M2 3h7v14H2zm2 2v10h3V5zM11 3h7v14h-7zm2 2v10h3V5z',
+  pause: 'M5 3h3.5v14H5zm6.5 0H15v14h-3.5z',
+  edit: 'M13.5 2.5l4 4L7 17H3v-4zM10 17h8v1.5h-8z',
+  zoomIn: 'M8.5 2a6.5 6.5 0 0 1 5.2 10.4l4.2 4.2-1.4 1.4-4.2-4.2A6.5 6.5 0 1 1 8.5 2zm0 2.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM7.75 6v1.75H6v1.5h1.75V11h1.5V9.25H11v-1.5H9.25V6z',
+  zoomOut: 'M8.5 2a6.5 6.5 0 0 1 5.2 10.4l4.2 4.2-1.4 1.4-4.2-4.2A6.5 6.5 0 1 1 8.5 2zm0 2.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM6 7.75h5v1.5H6z',
+  wrap: 'M2 4h16v2H2zm0 5h13a3 3 0 0 1 0 6h-3v2l-3-3 3-3v2h3a1 1 0 0 0 0-2H2zm0 5h4v2H2z',
+  star: 'M10 1.8l2.5 5.3 5.8.7-4.3 4 1.1 5.8L10 14.8l-5.1 2.8 1.1-5.8-4.3-4 5.8-.7z',
+  repeat: 'M4 9V7a3 3 0 0 1 3-3h7V2l3.5 3L14 8V6H7a1 1 0 0 0-1 1v2zm12 2v2a3 3 0 0 1-3 3H6v2l-3.5-3L6 12v2h7a1 1 0 0 0 1-1v-2z',
+  unpin: 'M7 2h6v1.5l-1 1V9l3 3v1.5h-4.25V18h-1.5v-4.5H5V12l3-3V4.5l-1-1zM2.3 3.4l1.1-1.1 14.3 14.3-1.1 1.1z',
+  panelOpen: 'M2 3h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v10h9V5zm11 0v10h3V5zM9.5 7l-3 3 3 3 1-1-2-2 2-2z',
+  panelClose: 'M2 3h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v10h9V5zm11 0v10h3V5zM7.5 7l-1 1 2 2-2 2 1 1 3-3z',
+  flag: 'M4 2h1.75v16H4zm2.5 1H16l-2.5 4L16 11H6.5z',
+  external: 'M11 2h7v7h-2V5.4l-6.3 6.3-1.4-1.4L14.6 4H11zM3 5h5v2H5v8h8v-3h2v5H3z',
+  bell: 'M10 2a1.25 1.25 0 0 1 1.25 1.25v.4A5 5 0 0 1 15 8.5V13l1.5 2v1h-13v-1L5 13V8.5a5 5 0 0 1 3.75-4.85v-.4A1.25 1.25 0 0 1 10 2zM8 17h4a2 2 0 0 1-4 0z',
+  clip: 'M4 7v6a6 6 0 0 0 12 0V6a4.25 4.25 0 0 0-8.5 0v7.5h2V6a2.25 2.25 0 0 1 4.5 0v7a4 4 0 0 1-8 0V7z',
+  unlink: 'M8.5 6.5h-3a3.5 3.5 0 0 0 0 7h3v-2h-3a1.5 1.5 0 0 1 0-3h3zm3 0h3a3.5 3.5 0 0 1 0 7h-3v-2h3a1.5 1.5 0 0 0 0-3h-3zM9 1.5h2v3.5H9zm0 13.5h2v3.5H9z',
+  plug: 'M6.5 2h2v4h3V2h2v4H16v3a6 6 0 0 1-5 5.92V18H9v-3.08A6 6 0 0 1 4 9V6h2.5z',
+  commit: 'M1 9h5.13a4 4 0 0 1 7.74 0H19v2h-5.13a4 4 0 0 1-7.74 0H1zm9-1a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+  map: 'M2 4.5l5-2 6 2 5-2v13l-5 2-6-2-5 2zm4.25-.15v10.4h1.5V4.35zm6 2v10.4h1.5V6.35z',
 } as const;
 
 /** Extra shapes drawn on top of a path (the request and phone glyphs carry a signal dot). */
@@ -81,10 +108,16 @@ const DOTS: Partial<Record<GlyphName, readonly [number, number, number]>> = {
 
 export type GlyphName = keyof typeof PATHS;
 
-export function Glyph({ name, size = 18, className }: { readonly name: GlyphName; readonly size?: number; readonly className?: string }): JSX.Element {
+export function Glyph({ name, size = 18, className, 'data-tone': tone }: {
+  readonly name: GlyphName;
+  readonly size?: number;
+  readonly className?: string;
+  /** A colour hook for the surrounding stylesheet (the chat status marks use it). */
+  readonly 'data-tone'?: string;
+}): JSX.Element {
   const dot = DOTS[name];
   return (
-    <svg className={className ? `ez-ui-glyph ${className}` : 'ez-ui-glyph'} width={size} height={size} viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+    <svg className={className ? `ez-ui-glyph ${className}` : 'ez-ui-glyph'} width={size} height={size} viewBox="0 0 20 20" aria-hidden="true" focusable="false" data-tone={tone}>
       <path fillRule="evenodd" d={PATHS[name]} />
       {dot && <circle cx={dot[0]} cy={dot[1]} r={dot[2]} />}
     </svg>
@@ -102,13 +135,16 @@ export interface GlyphIconProps {
   readonly size?: number;
 }
 
-const glyphIcons = new Map<GlyphName, (props: GlyphIconProps) => JSX.Element>();
+/** The icon-component shape every primitive's `icon` prop takes. */
+export type GlyphIcon = (props: GlyphIconProps) => JSX.Element;
+
+const glyphIcons = new Map<GlyphName, GlyphIcon>();
 
 /**
  * A glyph shaped like an icon component, for primitives that take an icon component
  * (`IconButton icon={glyphIcon('back')}`). One stable component per name.
  */
-export function glyphIcon(name: GlyphName): (props: GlyphIconProps) => JSX.Element {
+export function glyphIcon(name: GlyphName): GlyphIcon {
   let icon = glyphIcons.get(name);
   if (!icon) {
     icon = function GlyphIcon(props: GlyphIconProps) {

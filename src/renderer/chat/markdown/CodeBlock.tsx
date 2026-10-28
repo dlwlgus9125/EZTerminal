@@ -1,4 +1,4 @@
-import { Check, Copy, WrapText } from 'lucide-react';
+import { glyphIcon } from '../../ui/Glyph';
 import { memo, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { IconButton, VisuallyHidden } from '../../ui';
@@ -108,7 +108,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, labels }: Cod
     <IconButton
       className={language ? 'chat-md-code__action' : 'chat-md-code__action chat-md-code__float'}
       size="sm"
-      icon={copyState === 'copied' ? Check : Copy}
+      icon={copyState === 'copied' ? glyphIcon('check') : glyphIcon('copy')}
       aria-label={labels.copyCode}
       onClick={copy}
     />
@@ -127,7 +127,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, labels }: Cod
             <IconButton
               className="chat-md-code__action"
               size="sm"
-              icon={WrapText}
+              icon={glyphIcon('wrap')}
               aria-label={labels.wrapLines}
               aria-pressed={wrap}
               onClick={toggleWrap}

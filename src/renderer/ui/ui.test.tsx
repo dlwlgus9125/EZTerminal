@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { Settings } from 'lucide-react';
+import { glyphIcon } from './Glyph';
 import { act, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,7 +74,7 @@ describe('buttons and form controls', () => {
   });
 
   it('requires an accessible icon-button label and hides the icon from assistive tech', () => {
-    render(<IconButton icon={Settings} aria-label="Settings" />);
+    render(<IconButton icon={glyphIcon('set')} aria-label="Settings" />);
     const button = container.querySelector('button')!;
     expect(button.getAttribute('aria-label')).toBe('Settings');
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');

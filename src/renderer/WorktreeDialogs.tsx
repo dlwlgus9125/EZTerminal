@@ -1,4 +1,4 @@
-import { GitBranch, GitMerge, Trash2 } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useEffect, useRef, useState } from 'react';
 
 import type { RemovedWorkspaceWorktree, WorkspaceWorktreeIpcResult, WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
@@ -40,7 +40,7 @@ export function NewWorktreeDialog({ open, onOpenChange, projectName, createLabel
   };
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="sm"
-      title={text('새 워크트리', 'New worktree')} icon={<GitBranch aria-hidden="true" />}
+      title={text('새 워크트리', 'New worktree')} icon={<Glyph name="wt" />}
       description={text(`${projectName}의 새 브랜치를 따로 열어 작업합니다. 지금 작업 위치의 커밋되지 않은 변경은 옮겨지지 않습니다.`,
         `Work on a new ${projectName} branch in its own folder. Uncommitted changes in the current checkout stay where they are.`)}
       closeLabel={text('닫기', 'Close')} testId="new-worktree-dialog"
@@ -115,7 +115,7 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   };
   if (cleanedNotes) {
     return (
-      <Dialog open={open} onOpenChange={onOpenChange} size="md" title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Trash2 aria-hidden="true" />}
+      <Dialog open={open} onOpenChange={onOpenChange} size="md" title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Glyph name="trash" />}
         closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
         footer={<Button variant="secondary" onClick={() => onOpenChange(false)}>{text('닫기', 'Close')}</Button>}>
         <div className="worktree-merge">
@@ -128,11 +128,11 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   if (confirming && cleanup) {
     return (
       <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md" tone="danger" initialFocusRef={backRef}
-        title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Trash2 aria-hidden="true" />}
+        title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Glyph name="trash" />}
         closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
         footer={<>
           <Button ref={backRef} variant="secondary" disabled={busy !== null} onClick={() => setConfirming(false)}>{text('돌아가기', 'Back')}</Button>
-          <Button variant="danger" leadingIcon={<Trash2 />} loading={busy === 'cleanup'} disabled={busy !== null || cleanup.busy}
+          <Button variant="danger" leadingIcon={<Glyph name="trash" />} loading={busy === 'cleanup'} disabled={busy !== null || cleanup.busy}
             onClick={() => void runCleanup()} data-testid="worktree-cleanup-confirm">{text('정리', 'Clean up')}</Button>
         </>}>
         <div className="worktree-merge">
@@ -158,12 +158,12 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   };
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md"
-      title={text(`${branch} 병합`, `Merge ${branch}`)} icon={<GitMerge aria-hidden="true" />}
+      title={text(`${branch} 병합`, `Merge ${branch}`)} icon={<Glyph name="merge" />}
       description={text(`${branch}의 작업을 ${base}로 합칩니다. ${base}에 병합 커밋이 하나 생깁니다.`, `Brings ${branch} into ${base} with one merge commit.`)}
       closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
       footer={<>
         <Button variant="secondary" disabled={busy !== null} onClick={() => onOpenChange(false)}>{merged ? text('닫기', 'Close') : text('취소', 'Cancel')}</Button>
-        {cleanable && <Button variant="secondary" leadingIcon={<Trash2 />} disabled={busy !== null}
+        {cleanable && <Button variant="secondary" leadingIcon={<Glyph name="trash" />} disabled={busy !== null}
           onClick={() => { setError(undefined); setConfirming(true); }} data-testid="worktree-cleanup">{text('워크트리 정리…', 'Clean up worktree…')}</Button>}
         {!merged && !cleanable && <Button variant="primary" loading={busy === 'merge'} disabled={busy !== null || !status || status.dirty || status.ahead === 0}
           onClick={() => void run('merge', onMerge, (value) => setMerged(value.into))} data-testid="worktree-merge-confirm">{text(`${base}로 병합`, `Merge into ${base}`)}</Button>}

@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, CircleSlash, CornerDownRight, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, ShieldQuestion, Users, X } from 'lucide-react';
+import { Glyph } from '../../ui/Glyph';
 
 import { formatClock, useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
@@ -22,7 +22,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
     return (
       <article className="chat-instruction" data-origin="subagent-report" aria-label={`${copy.subagentReport}: ${from.title ?? copy.subagent}`} data-message-id={row.anchorId}>
         <p className="chat-instruction__label">
-          <Users aria-hidden="true" />{copy.subagentReport}{from.title ? ` · ${from.title}` : ''}
+          <Glyph name="kids" />{copy.subagentReport}{from.title ? ` · ${from.title}` : ''}
           {context.onOpenRelated && (
             <button type="button" className="chat-link-button chat-instruction__open" onClick={() => context.onOpenRelated?.(from.sessionId)}
               aria-label={`${copy.openSubagent}: ${from.title ?? copy.subagent}`}>{copy.openSubagent}</button>
@@ -41,7 +41,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
     // A subagent starts from its parent agent's instruction, not from the person.
     return (
       <article className="chat-instruction" aria-label={copy.parentInstruction} data-message-id={row.anchorId}>
-        <p className="chat-instruction__label"><CornerDownRight aria-hidden="true" />{copy.parentInstruction}</p>
+        <p className="chat-instruction__label"><Glyph name="next" />{copy.parentInstruction}</p>
         <p className="chat-instruction__text" data-folded={fold.folded || undefined}>{row.text}</p>
         {fold.foldable && (
           <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
@@ -62,7 +62,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
               <li key={attachment.id}>
                 {attachment.kind === 'image'
                   ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
-                  : <Paperclip aria-hidden="true" />}
+                  : <Glyph name="clip" />}
                 <span>{attachment.name}</span>
               </li>
             ))}
@@ -90,16 +90,16 @@ export function BubbleAssistant({ row, providerLabel }: { readonly row: RowOf<'a
 }
 
 function StatusGlyph({ tool }: { readonly tool: ChatTool }): JSX.Element | null {
-  if (tool.awaitingApproval) return <ShieldQuestion className="chat-status-icon" data-tone="warning" aria-hidden="true" />;
+  if (tool.awaitingApproval) return <Glyph name="q" className="chat-status-icon" data-tone="warning" />;
   switch (tool.status) {
     case 'running':
-      return <LoaderCircle className="chat-spin" aria-hidden="true" />;
+      return <Glyph name="spin" className="chat-spin" />;
     case 'failed':
-      return <AlertTriangle className="chat-status-icon" data-tone="danger" aria-hidden="true" />;
+      return <Glyph name="warn" className="chat-status-icon" data-tone="danger" />;
     case 'denied':
-      return <CircleSlash className="chat-status-icon" data-tone="danger" aria-hidden="true" />;
+      return <Glyph name="x" className="chat-status-icon" data-tone="danger" />;
     case 'interrupted':
-      return <X className="chat-status-icon" data-tone="muted" aria-hidden="true" />;
+      return <Glyph name="x" className="chat-status-icon" data-tone="muted" />;
     default:
       return null;
   }
@@ -130,7 +130,7 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
           {tool.subagent?.subagentType && <span className="chat-chip">{tool.subagent.subagentType}</span>}
           {meta.map((value) => <span key={value} data-tone={value.startsWith('exit') || value.startsWith('종료') ? 'danger' : undefined}>{value}</span>)}
           <StatusGlyph tool={tool} />
-          {detail && <ChevronRight className="chat-chevron" aria-hidden="true" />}
+          {detail && <Glyph name="next" className="chat-chevron" />}
         </span>
       </button>
       {tool.subagent && context.onOpenRelated && (
@@ -157,8 +157,8 @@ function ThoughtLine({ entry }: { readonly entry: Extract<ChatActivity, { kind: 
         <ToolIcon category="thought" />
         <span className="chat-tool__verb">{label}</span>
         <span className="chat-tool__meta">
-          {entry.streaming && <LoaderCircle className="chat-spin" aria-hidden="true" />}
-          {hasText && <ChevronRight className="chat-chevron" aria-hidden="true" />}
+          {entry.streaming && <Glyph name="spin" className="chat-spin" />}
+          {hasText && <Glyph name="next" className="chat-chevron" />}
         </span>
       </button>
       {open && hasText && <p className="chat-thought__text">{entry.text}</p>}
@@ -184,12 +184,12 @@ export function BubbleActivity({ row }: { readonly row: RowOf<'activity'> }): JS
   return (
     <section className="chat-run" data-live={row.live || undefined} aria-label={summary.text}>
       <button type="button" className="chat-run__header" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
-        <ChevronRight className="chat-chevron" aria-hidden="true" />
+        <Glyph name="next" className="chat-chevron" />
         <span className="chat-run__summary" data-mono={single ? true : undefined}>{single ? `$ ${single}` : summary.text}</span>
         {problems.length > 0 && <span className="chat-run__problems">{problems.join(' · ')}</span>}
         {row.live
-          ? <LoaderCircle className="chat-spin" aria-hidden="true" />
-          : toolCount > 0 && problems.length === 0 && <Check className="chat-status-icon" data-tone="success" aria-hidden="true" />}
+          ? <Glyph name="spin" className="chat-spin" />
+          : toolCount > 0 && problems.length === 0 && <Glyph name="check" className="chat-status-icon" data-tone="success" />}
       </button>
       {open && (
         <ol className="chat-run__lines">
@@ -211,7 +211,7 @@ export function BubbleTurnStatus({ row }: { readonly row: RowOf<'turn-status'> }
   if (!text) return null;
   return (
     <p className="chat-turn-status" data-state={row.state} role={live ? 'status' : undefined}>
-      {live && row.state !== 'queued' && row.state !== 'blocked' && <LoaderCircle className="chat-spin" aria-hidden="true" />}
+      {live && row.state !== 'queued' && row.state !== 'blocked' && <Glyph name="spin" className="chat-spin" />}
       {text}
     </p>
   );
@@ -221,7 +221,7 @@ export function BubblePlan({ row }: { readonly row: RowOf<'plan'> }): JSX.Elemen
   const copy = useChatCopy();
   return (
     <section className="chat-card chat-plan" aria-label={copy.plan}>
-      <header className="chat-card__header"><NotebookPen aria-hidden="true" /><span>{copy.plan}</span>
+      <header className="chat-card__header"><Glyph name="edit" /><span>{copy.plan}</span>
         {row.filePath && <span className="chat-card__meta" title={row.filePath}>{row.filePath.replace(/^.*[\\/]/u, '')}</span>}
       </header>
       <Prose markdown={row.markdown} variant="prose" />
@@ -235,7 +235,7 @@ export function BubbleQuestion({ row }: { readonly row: RowOf<'question'> }): JS
     <section className="chat-card chat-question" aria-label={copy.asked}>
       {row.questions.map((question, index) => (
         <div key={index} className="chat-question__item">
-          <header className="chat-card__header"><MessageCircleQuestion aria-hidden="true" /><span>{question.header ?? copy.asked}</span></header>
+          <header className="chat-card__header"><Glyph name="q" /><span>{question.header ?? copy.asked}</span></header>
           <p className="chat-question__text">{question.question}</p>
           {question.options.length > 0 && <ul className="chat-question__options">{question.options.map((option) => <li key={option}>{option}</li>)}</ul>}
         </div>
@@ -252,7 +252,7 @@ export function TodoList({ items }: { readonly items: RowOf<'todo'>['items'] }):
     <ul className="chat-todo__list">
       {items.map((item, index) => (
         <li key={`${index}:${item.text}`} data-status={item.status}>
-          <span className="chat-todo__box" aria-hidden="true">{item.status === 'completed' ? <Check /> : item.status === 'in_progress' ? <LoaderCircle className="chat-spin" /> : null}</span>
+          <span className="chat-todo__box" aria-hidden="true">{item.status === 'completed' ? <Glyph name="check" /> : item.status === 'in_progress' ? <Glyph name="spin" className="chat-spin" /> : null}</span>
           <span className="chat-todo__text">{item.status === 'in_progress' && item.active ? item.active : item.text}</span>
         </li>
       ))}
@@ -274,9 +274,9 @@ export function BubbleTodo({ row }: { readonly row: RowOf<'todo'> }): JSX.Elemen
   return (
     <section className="chat-todo-update">
       <button type="button" className="chat-tool__line" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
-        <ListChecks className="chat-tool-icon" aria-hidden="true" />
+        <Glyph name="list" className="chat-tool-icon" />
         <span className="chat-tool__verb">{changes.length ? changes.join(' · ') : copy.tasks}</span>
-        <span className="chat-tool__meta"><span>{copy.tasksProgress(done, row.items.length)}</span><ChevronRight className="chat-chevron" aria-hidden="true" /></span>
+        <span className="chat-tool__meta"><span>{copy.tasksProgress(done, row.items.length)}</span><Glyph name="next" className="chat-chevron" /></span>
       </button>
       {open && <TodoList items={row.items} />}
     </section>
@@ -296,9 +296,9 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
       <section className="chat-card chat-changes" aria-label={copy.changedFiles(row.files.length)} data-results="true">
         <header className="chat-changes__header">
           <button type="button" className="chat-changes__toggle" onClick={() => openResults('changes', turn)} data-testid="chat-changes-open-results">
-            <FileDiff aria-hidden="true" />
+            <Glyph name="diff" />
             <span>{copy.changedFiles(row.files.length)}</span>
-            <ChevronRight className="chat-chevron" aria-hidden="true" />
+            <Glyph name="next" className="chat-chevron" />
           </button>
         </header>
         <ul className="chat-changes__files">
@@ -321,8 +321,8 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
     <section className="chat-card chat-changes" aria-label={copy.changedFiles(row.files.length)}>
       <header className="chat-changes__header">
         <button type="button" className="chat-changes__toggle" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
-          <ChevronRight className="chat-chevron" aria-hidden="true" />
-          <FileDiff aria-hidden="true" />
+          <Glyph name="next" className="chat-chevron" />
+          <Glyph name="diff" />
           <span>{copy.changedFiles(row.files.length)}</span>
         </button>
         {context.onReviewChanges && <button type="button" className="chat-link-button" onClick={context.onReviewChanges}>{copy.review}</button>}
@@ -352,11 +352,11 @@ function BubbleSubagentResult({ row }: { readonly row: RowOf<'child'> }): JSX.El
   return (
     <section className="chat-child" data-state={subagent.state} aria-label={`${copy.subagent}: ${subagent.title ?? ''}`}>
       <header className="chat-child__head">
-        <Users className="chat-child__icon" aria-hidden="true" />
+        <Glyph name="kids" className="chat-child__icon" />
         <strong className="chat-child__title">{subagent.title ?? copy.subagent}</strong>
         {subagent.subagentType && <span className="chat-chip">{subagent.subagentType}</span>}
         <span className="chat-child__state" data-tone={failed ? 'danger' : 'success'}>
-          {failed ? <AlertTriangle aria-hidden="true" /> : <Check aria-hidden="true" />}
+          {failed ? <Glyph name="warn" /> : <Glyph name="check" />}
           {failed ? copy.subagentStopped : copy.subagentDone}
         </span>
         {row.relatedSessionId && context.onOpenRelated && (
@@ -385,6 +385,6 @@ export function BubbleNotice({ row }: { readonly row: RowOf<'notice'> | RowOf<'c
 
 export function BubbleError({ row }: { readonly row: RowOf<'error'> }): JSX.Element {
   return (
-    <p className="chat-error" role="alert"><AlertTriangle aria-hidden="true" />{row.text}</p>
+    <p className="chat-error" role="alert"><Glyph name="warn" />{row.text}</p>
   );
 }

@@ -95,17 +95,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1226,
-          "endLine": 1242,
+          "startLine": 1215,
+          "endLine": 1231,
           "lineDigest": "sha256:d066361a5a960e39b184d5a77779313788bdc1730ccb9e7182db8851351b58d8",
           "claim": "The planning view selects AI proposal review or typed structure/flow editing with explicit patch callbacks."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1524,
-          "endLine": 1565,
-          "lineDigest": "sha256:fff0ba977cf7cf21c2733420e9db679b11cd1d816f9e77636e20cd21949fbc97",
+          "startLine": 1513,
+          "endLine": 1554,
+          "lineDigest": "sha256:15599478468a04598e7f493fad47fdeaa3a8665da3febf50be5add6b8cf817ad",
           "claim": "The scene editor receives controlled entity drafts, write/readonly gates, assets, AI access, and typed operations from the planning workspace."
         }
       ]
@@ -122,16 +122,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2489,
-          "endLine": 2630,
-          "lineDigest": "sha256:94ef2daa071f3c4c13ed7b9267fa95bef6396c32f61d81dc02b80acacdf5be27",
+          "startLine": 2459,
+          "endLine": 2600,
+          "lineDigest": "sha256:ae1dfff30b077dbdaef402a8c0d2dcf039fc7d2a31a76c3205d58ac955d484c0",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 633,
-          "endLine": 650,
+          "startLine": 603,
+          "endLine": 620,
           "lineDigest": "sha256:e3f8c4046d50bf9cf62d6da23b4162e085ff5790daa622318fa1f61fd3d0dfb8",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
@@ -140,7 +140,7 @@
           "relativePath": "src/renderer/ConversationChangeReview.tsx",
           "startLine": 1,
           "endLine": 71,
-          "lineDigest": "sha256:0ffbe420a0d3a0d14b3da2242118001ab1c7529b5714ad3efd95b413021bed77",
+          "lineDigest": "sha256:d5af9e37e5770c4ede93b78b00732a49b018e10b2337e640353362061635d467",
           "claim": "Both skins review only completed non-sensitive records from the selected session. Quotes enter the existing draft without submission; fragment records do not invent file line numbers."
         }
       ]

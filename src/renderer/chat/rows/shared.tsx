@@ -1,4 +1,4 @@
-import { Check, Copy, CornerUpLeft, RotateCcw } from 'lucide-react';
+import { Glyph } from '../../ui/Glyph';
 import { useEffect, useRef, useState } from 'react';
 
 import { MAX_CHAT_REPLY_LENGTH } from '../../../shared/chat-message';
@@ -38,7 +38,7 @@ export function MessageActions({ text, messageId, allowReuse = false, createdAt,
           void navigator.clipboard.writeText(text).then(() => announce('ok'), () => announce('failed'));
         }}
       >
-        {copied === 'ok' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {copied === 'ok' ? <Glyph name="check" /> : <Glyph name="copy" />}
       </button>
       {context.onReply && text.length > 0 && (
         <button
@@ -48,12 +48,12 @@ export function MessageActions({ text, messageId, allowReuse = false, createdAt,
           title={copy.reply}
           onClick={() => context.onReply?.({ messageId, text: text.slice(0, MAX_CHAT_REPLY_LENGTH) })}
         >
-          <CornerUpLeft aria-hidden="true" />
+          <Glyph name="undo" />
         </button>
       )}
       {allowReuse && context.onReuse && (
         <button type="button" className="chat-icon-action" aria-label={copy.reuse} title={copy.reuse} onClick={() => context.onReuse?.(text)}>
-          <RotateCcw aria-hidden="true" />
+          <Glyph name="refresh" />
         </button>
       )}
       {showTime && <time className="chat-message-time" dateTime={createdAt}>{formatClock(createdAt, context.locale)}</time>}

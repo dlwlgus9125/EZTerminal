@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Folder, FolderGit2, FolderKanban, GitBranch, HardDrive, MessageSquare, Pin, Search, SquareTerminal, Users } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useAppTranslation } from './i18n';
 import { Button, Input } from './ui';
@@ -186,7 +186,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
   };
 
   return <section className="project-conversation-tree" data-mobile={mobile || undefined} aria-label={text('프로젝트와 대화', 'Projects and conversations')} data-testid="project-conversation-tree">
-    <div className="project-conversation-tree__search"><Search aria-hidden="true" /><Input value={state.query} maxLength={500}
+    <div className="project-conversation-tree__search"><Glyph name="search" /><Input value={state.query} maxLength={500}
       aria-label={text('프로젝트·소프로젝트·대화 제목 검색', 'Search project, subproject and conversation titles')}
       placeholder={text('프로젝트·소프로젝트·대화 검색', 'Search projects and conversations')}
       onChange={event => { pendingScroll.current = 0; setState(current => ({ ...current, query: event.target.value, scrollTop: 0 })); }} /></div>
@@ -211,9 +211,9 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
         {rows.map((row, index) => {
           const { node } = row;
           const branch = !flat && Boolean(node.children);
-          const Icon = node.subagent ? Users : node.target.kind === 'workspace'
-            ? node.target.local ? HardDrive : FolderGit2
-            : { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
+          const Icon = node.subagent ? glyphIcon('kids') : node.target.kind === 'workspace'
+            ? node.target.local ? glyphIcon('server') : glyphIcon('wt')
+            : { project: glyphIcon('proj'), subproject: glyphIcon('proj'), stage: glyphIcon('wt'), conversation: glyphIcon('chat'), terminal: glyphIcon('term') }[node.target.kind];
           const status = node.target.kind === 'project' ? projectStatus?.[node.target.projectId] : undefined;
           // Collapsed, a parent shows what its subagents need; open, each child shows its own.
           // A parent already waiting for the same thing (its subagent's approval lives on it) says it once.
@@ -230,10 +230,10 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
               {branch ? <button type="button" className="project-conversation-tree__expand" tabIndex={-1}
                 aria-label={`${row.expanded ? text('접기', 'Collapse') : text('펼치기', 'Expand')}: ${node.title}`}
                 onClick={event => { event.stopPropagation(); toggle(node); }}>
-                {row.expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+                {row.expanded ? <Glyph name="down" /> : <Glyph name="next" />}
               </button> : <span className="project-conversation-tree__spacer" />}
               <Icon className="project-conversation-tree__icon" aria-hidden="true" />
-              <span className="project-conversation-tree__label" title={node.title}><strong>{node.pinned && <Pin aria-hidden="true" />}{node.title}</strong>
+              <span className="project-conversation-tree__label" title={node.title}><strong>{node.pinned && <Glyph name="pin" />}{node.title}</strong>
                 <small>{(flat || node.target.kind === 'conversation' && row.depth === 1 && node.path.length > 1) && node.path.length ? `${node.path.join(' / ')} · ` : ''}{node.providerLabel ? `${node.providerLabel}${node.source === 'native' ? ' CLI' : ''}` : kindLabel(node)}
                   {node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}{node.target.kind === 'conversation' || node.target.kind === 'terminal' ? ` · ${date(node.updatedAt)}` : ''}
                   {node.target.kind === 'stage' && node.children?.length ? ` · ${text('대화', 'Chats')} ${node.children.length}` : ''}

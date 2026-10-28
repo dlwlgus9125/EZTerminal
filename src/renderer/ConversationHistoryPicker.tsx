@@ -1,4 +1,4 @@
-import { ArrowLeft, History, MessageSquare, RefreshCw, SquareTerminal } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type { AgentTranscriptPage } from '../shared/agent-history';
@@ -243,7 +243,7 @@ function ConversationHistoryPickerView({
     <div className="conversation-history__browser" hidden={showMobilePreview}>
       <div className="conversation-history__search">
         <Field label={text('대화 검색', 'Search conversations')} labelHidden><Input value={search} maxLength={500} placeholder={text('제목 · 최근 내용 검색', 'Search titles and recent text')} onChange={(event) => changeFilter(() => setSearch(event.target.value))} /></Field>
-        <Button size="sm" variant="ghost" aria-label={text('대화 목록 새로고침', 'Refresh conversations')} disabled={!client || disconnected || listLoading} onClick={() => setListRevision((value) => value + 1)}><RefreshCw size={16} aria-hidden="true" /></Button>
+        <Button size="sm" variant="ghost" aria-label={text('대화 목록 새로고침', 'Refresh conversations')} disabled={!client || disconnected || listLoading} onClick={() => setListRevision((value) => value + 1)}><Glyph name="refresh" size={16} /></Button>
       </div>
       <div className="conversation-history__filters">
         <Field label={text('프로젝트', 'Project')}><Select value={projectId} onChange={(event) => changeFilter(() => setProjectId(event.target.value))}><option value="">{text('모든 프로젝트', 'All projects')}</option>{[...knownProjects].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</Select></Field>
@@ -256,7 +256,7 @@ function ConversationHistoryPickerView({
         {listLoading && !items.length && <p role="status" className="conversation-history__notice">{text('PC의 대화를 불러오는 중…', 'Loading conversations from the PC…')}</p>}
         {!listLoading && !items.length && !unavailable && <p className="conversation-history__notice">{query || providerId || source || archived === 'only' ? text('조건에 맞는 대화가 없습니다. 검색 조건을 바꿔보세요.', 'No conversations match these filters. Try another search.') : text('이 범위에 저장된 대화가 없습니다.', 'There are no saved conversations in this scope.')}</p>}
         <ol>{items.map((item) => <li key={item.conversationId}><button type="button" className="conversation-history__row" aria-current={item.conversationId === selectedId ? 'true' : undefined} onClick={() => { if (onOpenConversation) void Promise.resolve(onOpenConversation(item)).catch(() => setListError('unavailable')); else setSelectedId(item.conversationId); }}>
-          <span className="conversation-history__row-heading">{item.source === 'native' ? <SquareTerminal size={16} aria-hidden="true" /> : <MessageSquare size={16} aria-hidden="true" />}<strong>{item.title}</strong>{item.archived && <Badge>{text('보관', 'Archived')}</Badge>}</span>
+          <span className="conversation-history__row-heading">{item.source === 'native' ? <Glyph name="term" size={16} /> : <Glyph name="chat" size={16} />}<strong>{item.title}</strong>{item.archived && <Badge>{text('보관', 'Archived')}</Badge>}</span>
           {item.preview && <span className="conversation-history__snippet">{item.preview}</span>}
           <span className="conversation-history__metadata">{providerLabel(item.providerId)} · {item.source === 'native' ? text('CLI 기록', 'CLI history') : text('Agent 대화', 'Agent conversation')}{item.linkedSessionId && item.source === 'native' ? text(' · Agent 연결됨', ' · Linked to Agent') : ''}</span>
           <span className="conversation-history__metadata"><span>{location(item)}</span><time dateTime={new Date(item.updatedAt).toISOString()}>{date(item.updatedAt)}</time></span>
@@ -265,8 +265,8 @@ function ConversationHistoryPickerView({
       </div>
     </div>
     <div className="conversation-history__preview" hidden={!!onOpenConversation || variant === 'mobile' && !showMobilePreview}>
-      {variant === 'mobile' && selectedId && <Button size="sm" variant="ghost" leadingIcon={<ArrowLeft size={16} />} onClick={closePreview}>{text('대화 목록', 'Conversation list')}</Button>}
-      {!selectedId ? <div className="conversation-history__empty"><History size={28} aria-hidden="true" /><p>{text('대화를 선택하면 이전 내용을 확인할 수 있습니다.', 'Select a conversation to preview its previous messages.')}</p><small>{text('기록을 열거나 미리 보는 동안 메시지는 전송되지 않습니다.', 'Opening or previewing history does not send a message.')}</small></div> : <>
+      {variant === 'mobile' && selectedId && <Button size="sm" variant="ghost" leadingIcon={<Glyph name="back" size={16} />} onClick={closePreview}>{text('대화 목록', 'Conversation list')}</Button>}
+      {!selectedId ? <div className="conversation-history__empty"><Glyph name="clock" size={28} /><p>{text('대화를 선택하면 이전 내용을 확인할 수 있습니다.', 'Select a conversation to preview its previous messages.')}</p><small>{text('기록을 열거나 미리 보는 동안 메시지는 전송되지 않습니다.', 'Opening or previewing history does not send a message.')}</small></div> : <>
         {entry && <header className="conversation-history__preview-heading"><h3>{entry.title}</h3><p>{providerLabel(entry.providerId)} · {location(entry)}</p>{entry.roots.map((root) => <small key={root}>{root}</small>)}</header>}
         <div className="conversation-history__transcript" aria-busy={previewLoading}>
           {previewLoading && <p role="status">{text('이전 메시지를 읽는 중…', 'Reading previous messages…')}</p>}

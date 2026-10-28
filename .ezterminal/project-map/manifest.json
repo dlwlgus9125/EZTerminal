@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5fd29048e29971353a6061966148381158c24428168cce233332c8bc2a69d498",
+        "inputDigest": "sha256:fd193ba3293989cbd0efe25725f32286d2633c2d9d63838569550ecc5fcd4cca",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-2): the legacy agent dock panel and AgentSessionPanel are gone (a create still in recovery renders the structured draft); the anchored approval and session blocks only moved."
+        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1924574a2ecf836d2cb9e4771cc41e65a9e1b25a9b8e728fb61ae6a51d68e150",
+        "inputDigest": "sha256:1818f36489e736a452e1f27614eb996f78191f3ff2d347421b5ba4d76b5910d8",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-0 prep): the conversation row type the flow screen lists moved to workflow/workflow-conversations.ts and the old planning panel re-exports it; the daemon projection event filter moved to daemon-session-events.ts. Anchors only moved."
+        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8c71397beebcd3190984bd9c4dc50427cd7eabcdb9613c15384efbf35b4a9487",
+        "inputDigest": "sha256:eb6ebe4e1bbdb1ed84c0023261ea6a4400320a0bb84daed41f0df7641cd31461",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-1): the phone flow screen also gets the result reader, the execution access for 독립 검토 다시 요청 and backup per PC. The navigation projection and authority fingerprint are unchanged; anchors moved."
+        "reason": "Reviewed (I5-5): lucide icons became stencil glyphs (glyphIcon and Glyph); only icon references changed inside the anchored blocks. No behaviour, data flow or copy changed; anchors re-digested."
       }
     }
   ]

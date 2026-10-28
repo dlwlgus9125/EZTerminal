@@ -14,36 +14,6 @@ import { createResultsFileResolver } from './agent-results/results-file-links';
 import { publishResultsModel, publishResultsSession } from './agent-results/results-source-store';
 import { useResultsCopy } from './agent-results/copy';
 import {
-  Activity,
-  AlertTriangle,
-  Archive,
-  FileDiff,
-  History,
-  MoreHorizontal,
-  ArrowUp,
-  AtSign,
-  Bot,
-  Cpu,
-  CornerLeftUp,
-  Forward,
-  Gauge,
-  ScanSearch,
-  NotebookPen,
-  ShieldAlert,
-  ShieldCheck,
-  LoaderCircle,
-  MessagesSquare,
-  Plus,
-  Sparkles,
-  SquareSlash,
-  Clock3,
-  Paperclip,
-  Reply,
-  Square,
-  Unlink2,
-  X,
-} from 'lucide-react';
-import {
   memo,
   useCallback,
   useContext,
@@ -81,7 +51,7 @@ import {
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
 import { announceConversationHeader, usePaneActions } from './shell/pane-actions';
-import { Glyph } from './ui/Glyph';
+import { Glyph, glyphIcon, type GlyphIcon } from './ui/Glyph';
 import { useAgentStateLabel } from './agent-state-label';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
@@ -761,7 +731,7 @@ export function StructuredAgentDraftPanel({
 
       {loadError && (
         <div className="structured-agent__banner structured-agent__banner--error" role="alert">
-          <AlertTriangle aria-hidden="true" />
+          <Glyph name="warn" />
           <span>{loadError}</span>
           {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{copy.retry}</Button>}
         </div>
@@ -920,7 +890,7 @@ export function StructuredAgentDraftPanel({
             loading={submitting}
             loadingLabel={copy.creating}
             disabled={loading || !hasUsableProvider || !hasUsableWorkspace}
-            leadingIcon={<Bot />}
+            leadingIcon={<Glyph name="bot" />}
             data-testid="structured-agent-create"
           >
             {copy.create}
@@ -1553,7 +1523,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       }}
     >
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
-        <p className="chat-queue__title"><Clock3 aria-hidden="true" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
+        <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
         {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
         <ol>{queueItems.map(item => <li key={item.turnId} className="chat-queue__item">
           <p>{item.text}</p>
@@ -1585,18 +1555,18 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       {completion.menu}
       <div className="chat-composer__box" data-dragging={dragging || undefined} data-disabled={disabled || undefined}>
         {value.replyTo && <div className="structured-agent-composer__reply">
-          <Reply aria-hidden="true" /><blockquote>{value.replyTo.text}</blockquote>
+          <Glyph name="undo" /><blockquote>{value.replyTo.text}</blockquote>
           <Button variant="ghost" size="sm" disabled={disabled} aria-label={copy.removeReply}
-            onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
+            onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><Glyph name="x" /></Button>
         </div>}
         {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
           {attachments.map((attachment) => <li key={attachment.id} data-kind={attachment.kind} data-attachment-id={attachment.id}>
             {attachment.kind === 'image'
               ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
-              : <Paperclip aria-hidden="true" />}
+              : <Glyph name="clip" />}
             <span>{attachment.name}</span>
             <Button variant="ghost" size="sm" disabled={disabled} aria-label={`${copy.removeAttachment}: ${attachment.name}`}
-              onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><X /></Button>
+              onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><Glyph name="x" /></Button>
           </li>)}
         </ul>}
         <div className="structured-agent-composer__input-row"><span className="structured-agent-composer__prompt" aria-hidden="true">›</span>
@@ -1653,16 +1623,16 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           <Menu
             label={ko ? '추가' : 'Add'}
             placement="top-start"
-            trigger={<button type="button" className="chat-composer__plus" disabled={disabled} aria-label={ko ? '추가' : 'Add'} title={ko ? '추가' : 'Add'}><Plus aria-hidden="true" /></button>}
+            trigger={<button type="button" className="chat-composer__plus" disabled={disabled} aria-label={ko ? '추가' : 'Add'} title={ko ? '추가' : 'Add'}><Glyph name="plus" /></button>}
           >
-            <MenuItem icon={Paperclip} disabled={!supportsMessageContext || readingFiles} onSelect={() => fileInputRef.current?.click()}>
+            <MenuItem icon={glyphIcon('clip')} disabled={!supportsMessageContext || readingFiles} onSelect={() => fileInputRef.current?.click()}>
               {supportsMessageContext ? copy.attach : copy.attachmentUnsupported}
             </MenuItem>
-            {fileSearch && <MenuItem icon={AtSign} onSelect={insertMention}>
+            {fileSearch && <MenuItem icon={glyphIcon('file')} onSelect={insertMention}>
               {ko ? '파일 참조' : 'Mention a file'}
             </MenuItem>}
-            <MenuItem icon={Sparkles} onSelect={() => completion.openManual('skills')}>{ko ? '스킬' : 'Skills'}</MenuItem>
-            <MenuItem icon={SquareSlash} onSelect={() => completion.openManual('commands')}>{ko ? '명령' : 'Commands'}</MenuItem>
+            <MenuItem icon={glyphIcon('spark')} onSelect={() => completion.openManual('skills')}>{ko ? '스킬' : 'Skills'}</MenuItem>
+            <MenuItem icon={glyphIcon('term')} onSelect={() => completion.openManual('commands')}>{ko ? '명령' : 'Commands'}</MenuItem>
           </Menu>
           {toolbar && <div className="conversation-composer-toolbar chat-composer__settings">{toolbar}</div>}
           <span className="chat-composer__spacer" />
@@ -1685,7 +1655,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               }}
               data-testid="structured-agent-btw"
             >
-              <MessagesSquare aria-hidden="true" />
+              <Glyph name="chat" />
             </button>
           )}
           {busy && onInterruptAndSend && hasDraft && (
@@ -1713,7 +1683,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               onClick={() => onStop()}
               data-testid="structured-agent-stop"
             >
-              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+              {stopping ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="stop" />}
             </button>
           )}
           {showStop ? (
@@ -1727,7 +1697,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               onClick={() => onStop?.()}
               data-testid="structured-agent-stop"
             >
-              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+              {stopping ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="stop" />}
             </button>
           ) : (
             <button
@@ -1739,7 +1709,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               title={busy ? copy.queue : copy.send}
               data-testid="structured-agent-send"
             >
-              {submitting === 'send' ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+              {submitting === 'send' ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="send" />}
               <span className="ez-ui-visually-hidden">{busy ? copy.queue : copy.send}</span>
             </button>
           )}
@@ -1784,7 +1754,7 @@ export interface StructuredAgentSessionPanelProps {
   readonly beforeMessages?: ReactNode;
   readonly headerActions?: ReactNode;
   /** More actions for the conversation menu, after "Previous conversations". */
-  readonly menuItems?: readonly { readonly label: string; readonly icon?: typeof History; readonly disabled?: boolean; readonly onSelect: () => void }[];
+  readonly menuItems?: readonly { readonly label: string; readonly icon?: GlyphIcon; readonly disabled?: boolean; readonly onSelect: () => void }[];
   readonly statusLabel?: string;
   readonly onOpenHistory?: () => void;
   readonly capabilityClient?: AgentCapabilitiesClient;
@@ -2425,12 +2395,12 @@ export function StructuredAgentSessionPanel({
                   onClick={togglePlan}
                   data-testid="structured-agent-live-plan"
                 >
-                  <NotebookPen aria-hidden="true" />
+                  <Glyph name="edit" />
                   <span className="chat-pill__value">{permissionText.plan}</span>
                 </button>
                 {pairModelAndEffort(<SettingPill
                   label={copy.modelOf(providerName)}
-                  icon={Cpu}
+                  icon={glyphIcon('mon')}
                   prefix={providerName}
                   value={selectedModel}
                   placeholder={copy.providerDefault}
@@ -2450,7 +2420,7 @@ export function StructuredAgentSessionPanel({
                 />, effortSupported && (
                   <SettingPill
                     label={i18n.language.startsWith('ko') ? '추론 강도' : 'Reasoning effort'}
-                    icon={Gauge}
+                    icon={glyphIcon('mon')}
                     value={selectedEffort}
                     placeholder={i18n.language.startsWith('ko') ? '기본 강도' : 'Default effort'}
                     options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
@@ -2461,7 +2431,7 @@ export function StructuredAgentSessionPanel({
                 ))}
                 <SettingPill
                   label={copy.permission}
-                  icon={accessLevel === 'full-access' ? ShieldAlert : ShieldCheck}
+                  icon={accessLevel === 'full-access' ? glyphIcon('warn') : glyphIcon('ok')}
                   value={accessLevel}
                   options={ACCESS_LEVELS.map((level) => ({ value: level, label: permissionText.levels[level].label, description: permissionText.levels[level].hint }))}
                   disabled={settingsLocked || (turnCurrent && !planOn)}
@@ -2505,7 +2475,7 @@ export function StructuredAgentSessionPanel({
           {parent && onOpenRelatedSession ? (
             <button type="button" className="structured-agent-session-header__parent" onClick={() => onOpenRelatedSession(parent.sessionId)}
               title={`${copy.parentConversation}: ${parent.title}`} aria-label={`${copy.backToParent}: ${parent.title}`} data-testid="structured-agent-parent">
-              <CornerLeftUp aria-hidden="true" /><span>{parent.title}</span>
+              <Glyph name="up" /><span>{parent.title}</span>
             </button>
           ) : <span className="structured-agent__eyebrow">{providerLabel}</span>}
           <h1 id={titleId} title={`${title} · ${providerLabel} · ${workspace.label}`}>{title}</h1>
@@ -2550,7 +2520,7 @@ export function StructuredAgentSessionPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    leadingIcon={<Unlink2 />}
+                    leadingIcon={<Glyph name="unlink" />}
                     disabled={disabled || settingsBusy || lifecycleBusy !== null}
                     loading={lifecycleBusy === 'detach'}
                     loadingLabel={copy.detachingSession}
@@ -2564,7 +2534,7 @@ export function StructuredAgentSessionPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    leadingIcon={<Archive />}
+                    leadingIcon={<Glyph name="archive" />}
                     disabled={disabled || settingsBusy || lifecycleBusy !== null}
                     loading={lifecycleBusy === 'archive'}
                     loadingLabel={copy.archivingSession}
@@ -2578,7 +2548,7 @@ export function StructuredAgentSessionPanel({
                   <Button
                     variant="danger"
                     size="sm"
-                    leadingIcon={<Square />}
+                    leadingIcon={<Glyph name="stop" />}
                     disabled={disabled || settingsBusy || lifecycleBusy !== null}
                     loading={lifecycleBusy === 'cancel'}
                     loadingLabel={copy.stoppingAgent}
@@ -2597,16 +2567,16 @@ export function StructuredAgentSessionPanel({
             {/* Android keeps the heartbeat control inline below the header, so the chip and menu entry are desktop only. */}
             {heartbeatActive && variant !== 'mobile' && (
               <button type="button" className="chat-header-chip" onClick={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-chip">
-                <Activity aria-hidden="true" />{copy.heartbeatOn}
+                <Glyph name="mon" />{copy.heartbeatOn}
               </button>
             )}
             {results ? (
-              <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />}
+              <Button type="button" variant="ghost" size="sm" leadingIcon={<Glyph name="diff" />}
                 onClick={() => results.open({ activate: true, target: { section: 'changes' } })} data-testid="structured-agent-results">
                 {resultsCopy.results}{changeCount > 0 ? ` ${String(changeCount)}` : ''}
               </Button>
             ) : changeCount > 0 && (
-              <Button ref={reviewButtonRef} type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
+              <Button ref={reviewButtonRef} type="button" variant="ghost" size="sm" leadingIcon={<Glyph name="diff" />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
                 {copy.changedFiles(changeCount)}
               </Button>
             )}
@@ -2624,7 +2594,7 @@ export function StructuredAgentSessionPanel({
               trigger={(
                 <button type="button" className="chat-icon-action chat-header-more" aria-label={copy.conversationMenu} title={copy.conversationMenu}
                   aria-busy={lifecycleBusy !== null || undefined} data-testid="structured-agent-menu">
-                  <MoreHorizontal aria-hidden="true" />
+                  <Glyph name="more" />
                 </button>
               )}
             >
@@ -2635,7 +2605,7 @@ export function StructuredAgentSessionPanel({
                 </MenuLabel>
               )}
               {compactRow && <MenuSeparator />}
-              {onOpenHistory && <MenuItem icon={History} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
+              {onOpenHistory && <MenuItem icon={glyphIcon('clock')} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
               {menuItems.map((entry) => (
                 <MenuItem key={entry.label} {...(entry.icon ? { icon: entry.icon } : {})} disabled={entry.disabled} onSelect={entry.onSelect}>{entry.label}</MenuItem>
               ))}
@@ -2648,13 +2618,13 @@ export function StructuredAgentSessionPanel({
               ))}
               {onDelegate && !providerOwned && !historyOnly && <MenuSeparator />}
               {onDelegate && !providerOwned && !historyOnly && (
-                <MenuItem icon={Forward} onSelect={() => onDelegate('handoff')} data-testid="structured-agent-delegate">{copy.delegateHandoff}</MenuItem>
+                <MenuItem icon={glyphIcon('next')} onSelect={() => onDelegate('handoff')} data-testid="structured-agent-delegate">{copy.delegateHandoff}</MenuItem>
               )}
               {onDelegate && !providerOwned && !historyOnly && (
-                <MenuItem icon={ScanSearch} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
+                <MenuItem icon={glyphIcon('search')} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
               )}
               {heartbeatControl !== undefined && variant !== 'mobile' && <MenuSeparator />}
-              {heartbeatControl !== undefined && variant !== 'mobile' && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
+              {heartbeatControl !== undefined && variant !== 'mobile' && <MenuItem icon={glyphIcon('mon')} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
               {paneActions && <MenuSeparator />}
               {paneActions && <MenuLabel>{copy.tabSection}</MenuLabel>}
               {paneActions?.preview && <MenuItem onSelect={paneActions.keep} data-testid="structured-agent-tab-keep">{copy.keepTab}</MenuItem>}
@@ -2662,16 +2632,16 @@ export function StructuredAgentSessionPanel({
               {paneActions && <MenuItem onSelect={() => paneActions.split('below')} data-testid="structured-agent-tab-split-below">{copy.splitBelow}</MenuItem>}
               {paneActions?.moveToNewWindow && <MenuItem onSelect={paneActions.moveToNewWindow} data-testid="structured-agent-tab-new-window">{copy.moveToNewWindow}</MenuItem>}
               {paneActions?.moveToMainWindow && <MenuItem onSelect={paneActions.moveToMainWindow} data-testid="structured-agent-tab-main-window">{copy.moveToMainWindow}</MenuItem>}
-              {paneActions && <MenuItem icon={X} onSelect={paneActions.close} data-testid="structured-agent-tab-close">{copy.closeTab}</MenuItem>}
+              {paneActions && <MenuItem icon={glyphIcon('x')} onSelect={paneActions.close} data-testid="structured-agent-tab-close">{copy.closeTab}</MenuItem>}
               {hasLifecycleActions && (canDetach || canArchive) && <MenuSeparator />}
               {!historyOnly && canDetach && (
-                <MenuItem icon={Unlink2} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                <MenuItem icon={glyphIcon('unlink')} disabled={disabled || settingsBusy || lifecycleBusy !== null}
                   onSelect={() => void runLifecycle('detach', onDetach)} data-testid="structured-agent-detach">
                   {copy.detachSession}
                 </MenuItem>
               )}
               {!historyOnly && canArchive && (
-                <MenuItem icon={Archive} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                <MenuItem icon={glyphIcon('archive')} disabled={disabled || settingsBusy || lifecycleBusy !== null}
                   onSelect={() => void runLifecycle('archive', onArchive)} data-testid="structured-agent-archive">
                   {copy.archiveSession}
                 </MenuItem>
@@ -2683,14 +2653,14 @@ export function StructuredAgentSessionPanel({
       {/* Below the header, full width: a failure is read, not squeezed beside the controls. */}
       {settingsError && (
         <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert" data-testid="structured-agent-session-error">
-          <AlertTriangle aria-hidden="true" />
+          <Glyph name="warn" />
           <span><strong>{settingsError.title}</strong> {settingsError.detail}</span>
           <Button variant="ghost" size="sm" onClick={() => setSettingsError(null)}>{copy.close}</Button>
         </div>
       )}
       {lifecycleError && (
         <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert">
-          <AlertTriangle aria-hidden="true" />
+          <Glyph name="warn" />
           <span><strong>{copy.lifecycleFailed}</strong> {lifecycleError === copy.lifecycleFailed ? '' : lifecycleError}</span>
           <Button variant="ghost" size="sm" onClick={() => setLifecycleError(null)}>{copy.close}</Button>
         </div>

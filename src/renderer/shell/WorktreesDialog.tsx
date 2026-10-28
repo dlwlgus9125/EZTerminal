@@ -1,4 +1,4 @@
-import { GitBranch, GitMerge } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
@@ -87,13 +87,13 @@ export function WorktreesDialog({ project, snapshot, worktrees, reloadKey, onClo
       onOpenChange={(next) => { if (!next) onClose(); }}
       title={text(`워크트리 · ${project.name}`, `Worktrees · ${project.name}`)}
       description={text('브랜치마다 따로 연 작업 폴더입니다. 끝난 작업을 병합하고 정리합니다.', 'A folder of its own for each branch. Merge finished work home, then clean up.')}
-      icon={<GitBranch aria-hidden="true" />}
+      icon={<Glyph name="wt" />}
       closeLabel={text('닫기', 'Close')}
       size="lg"
       className="ez-project-dialog"
       testId="worktrees-dialog"
       footer={(
-        <Button variant="primary" leadingIcon={<GitBranch aria-hidden="true" />} onClick={onNew} data-testid="worktrees-new">
+        <Button variant="primary" leadingIcon={<Glyph name="wt" />} onClick={onNew} data-testid="worktrees-new">
           {text('새 워크트리…', 'New worktree…')}
         </Button>
       )}
@@ -131,7 +131,7 @@ export function WorktreesDialog({ project, snapshot, worktrees, reloadKey, onClo
                   </div>
                   <Button
                     size="sm"
-                    leadingIcon={<GitMerge aria-hidden="true" />}
+                    leadingIcon={<Glyph name="merge" />}
                     aria-label={`${text('병합', 'Merge')}: ${name}`}
                     onClick={() => onMerge(row)}
                     data-testid="workspace-merge"

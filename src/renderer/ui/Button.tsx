@@ -1,4 +1,4 @@
-import { ChevronDown, LoaderCircle, type LucideIcon } from 'lucide-react';
+import { Glyph, glyphIcon, type GlyphIcon } from './Glyph';
 import {
   forwardRef,
   type ButtonHTMLAttributes,
@@ -53,7 +53,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...props}
     >
       {loading ? (
-        <LoaderCircle className="ez-ui-button__spinner" aria-hidden="true" />
+        <Glyph name="spin" className="ez-ui-button__spinner" />
       ) : (
         leadingIcon && <span className="ez-ui-button__icon" aria-hidden="true">{leadingIcon}</span>
       )}
@@ -70,7 +70,7 @@ export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'> {
   readonly 'aria-label': string;
   /** A lucide icon or a stencil glyph (`glyphIcon(name)`); always rendered decorative. */
-  readonly icon: LucideIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  readonly icon: GlyphIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
   readonly variant?: ButtonVariant;
   readonly size?: ButtonSize;
   readonly loading?: boolean;
@@ -106,7 +106,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       {...props}
     >
       {loading ? (
-        <LoaderCircle className="ez-ui-button__spinner" aria-hidden="true" />
+        <Glyph name="spin" className="ez-ui-button__spinner" />
       ) : (
         <Icon aria-hidden="true" />
       )}
@@ -156,7 +156,7 @@ export const SplitButton = forwardRef<HTMLButtonElement, SplitButtonProps>(funct
       </Button>
       <IconButton
         className="ez-ui-split-button__menu"
-        icon={ChevronDown}
+        icon={glyphIcon('down')}
         variant={variant}
         size={size}
         disabled={disabled || loading}

@@ -4,7 +4,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import './workflow-flow-canvas.css';
-import { LayoutGrid, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
+import { glyphIcon } from '../ui/Glyph';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
@@ -58,10 +58,10 @@ function CanvasControls({ text, onTidy }: { text: WorkflowCopy; onTidy?: () => v
   const flow = useReactFlow();
   const fit = useWorkflowFit();
   return <Panel position="top-right" className="workflow-canvas__controls" aria-label={text('캔버스 보기', 'Canvas view')}>
-    <IconButton icon={ZoomIn} aria-label={text('확대', 'Zoom in')} onClick={() => void flow.zoomIn()} />
-    <IconButton icon={ZoomOut} aria-label={text('축소', 'Zoom out')} onClick={() => void flow.zoomOut()} />
-    <IconButton icon={Maximize} aria-label={text('전체 보기', 'Fit view')} onClick={() => fit()} />
-    {onTidy && <IconButton icon={LayoutGrid} aria-label={text('자동 정렬', 'Tidy layout')} onClick={onTidy} />}
+    <IconButton icon={glyphIcon('zoomIn')} aria-label={text('확대', 'Zoom in')} onClick={() => void flow.zoomIn()} />
+    <IconButton icon={glyphIcon('zoomOut')} aria-label={text('축소', 'Zoom out')} onClick={() => void flow.zoomOut()} />
+    <IconButton icon={glyphIcon('expand')} aria-label={text('전체 보기', 'Fit view')} onClick={() => fit()} />
+    {onTidy && <IconButton icon={glyphIcon('grid')} aria-label={text('자동 정렬', 'Tidy layout')} onClick={onTidy} />}
   </Panel>;
 }
 /** Fit once, the first time the canvas is visible with measured cards; later fits are the user's. */

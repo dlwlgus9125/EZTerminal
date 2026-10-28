@@ -1,5 +1,5 @@
 import { permissionPresetLabel } from "./agent-permission-copy";
-import { Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonSnapshot } from "../shared/daemon-protocol";
 import type {
@@ -516,7 +516,7 @@ export function PlanningExecutionPanel({
         {run.state === "prepared" && (
           <Button
             variant="primary"
-            leadingIcon={<Play />}
+            leadingIcon={<Glyph name="play" />}
             disabled={locked}
             onClick={() => runAction("start", run.runId)}
           >
@@ -525,7 +525,7 @@ export function PlanningExecutionPanel({
         )}
         {run.state === "running" && !run.dispatchPaused && (
           <Button
-            leadingIcon={<Pause />}
+            leadingIcon={<Glyph name="pause" />}
             disabled={locked}
             onClick={() => runAction("pause", run.runId)}
           >
@@ -534,7 +534,7 @@ export function PlanningExecutionPanel({
         )}
         {(run.dispatchPaused || run.state === "paused") && (
           <Button
-            leadingIcon={<Play />}
+            leadingIcon={<Glyph name="play" />}
             disabled={
               locked || run.gates.some((gate) => gate.state === "pending")
             }
@@ -882,14 +882,14 @@ export function PlanningExecutionPanel({
         <h2>{text("실행과 검토", "Execution and review")}</h2>
         <div className="planning-workspace__actions">
           <IconButton
-            icon={RefreshCw}
+            icon={glyphIcon('refresh')}
             aria-label={text("실행 상태 새로고침", "Refresh execution")}
             disabled={busy || disabled}
             onClick={() => void refresh()}
           />
           <Button
             size="sm"
-            leadingIcon={<Plus />}
+            leadingIcon={<Glyph name="plus" />}
             disabled={locked || !snapshot || planning.baselines.length === 0}
             onClick={() => setPrepareOpen((current) => !current)}
           >
@@ -1060,7 +1060,7 @@ export function PlanningExecutionPanel({
                         size="sm"
                         variant="ghost"
                         disabled={locked}
-                        leadingIcon={<Trash2 />}
+                        leadingIcon={<Glyph name="trash" />}
                         onClick={() =>
                           setAssignments((current) =>
                             current.filter(

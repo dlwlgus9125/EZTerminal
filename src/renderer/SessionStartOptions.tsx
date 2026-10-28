@@ -1,4 +1,4 @@
-import { Bot, SquareTerminal } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import type { AgentLaunchBootstrap, AgentProjectLauncherSummary } from '../shared/agent-history';
@@ -48,8 +48,8 @@ export function SessionStartOptions({ kind, onKindChange, locked = false, prefix
   const copy = useSessionCopy();
   return <div className="session-start-options">
     <div className="session-start-options__choices" role="group" aria-label={copy.kind}>
-      <Button leadingIcon={<SquareTerminal />} aria-pressed={kind === 'terminal'} disabled={locked} onClick={() => onKindChange('terminal')} data-testid={`${prefix}-terminal`}>{copy.terminal}</Button>
-      <Button leadingIcon={<Bot />} aria-pressed={kind === 'agent'} disabled={locked} onClick={() => onKindChange('agent')} data-testid={`${prefix}-agent`}>{copy.agent}</Button>
+      <Button leadingIcon={<Glyph name="term" />} aria-pressed={kind === 'terminal'} disabled={locked} onClick={() => onKindChange('terminal')} data-testid={`${prefix}-terminal`}>{copy.terminal}</Button>
+      <Button leadingIcon={<Glyph name="bot" />} aria-pressed={kind === 'agent'} disabled={locked} onClick={() => onKindChange('agent')} data-testid={`${prefix}-agent`}>{copy.agent}</Button>
     </div>
 
   </div>;

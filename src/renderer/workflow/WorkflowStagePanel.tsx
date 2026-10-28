@@ -1,4 +1,4 @@
-import { MessageSquare, ScanSearch } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useState } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import type { ExecutionRun } from '../../shared/planning-execution';
@@ -97,11 +97,11 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
       </div>
     </div>}
     {node.operation === 'agent' && <div className="workflow-stage-panel__conversations">
-      <Button leadingIcon={<MessageSquare />} variant={conversation?.working ? 'primary' : 'secondary'} disabled={!conversation || !props.onOpenConversation}
+      <Button leadingIcon={<Glyph name="chat" />} variant={conversation?.working ? 'primary' : 'secondary'} disabled={!conversation || !props.onOpenConversation}
         onClick={() => conversation && props.onOpenConversation?.(conversation.sessionId)} data-testid="workflow-stage-open">
         {conversation?.working ? text('작업 중인 대화 열기', 'Open the working conversation') : text('이 단계 대화 열기', 'Open this stage’s conversation')}
       </Button>
-      {conversation?.reviewSessionId && <Button variant="ghost" leadingIcon={<ScanSearch />} onClick={() => props.onOpenConversation?.(conversation.reviewSessionId!)}>{text('검토 대화 열기', 'Open the review conversation')}</Button>}
+      {conversation?.reviewSessionId && <Button variant="ghost" leadingIcon={<Glyph name="search" />} onClick={() => props.onOpenConversation?.(conversation.reviewSessionId!)}>{text('검토 대화 열기', 'Open the review conversation')}</Button>}
       {!conversation && <p className="workflow-hint">{run ? text('이번 실행에서 아직 시작하지 않아 대화가 없습니다.', 'No conversation yet: this stage has not started in this run.') : text('실행하면 단계마다 새 대화가 생깁니다.', 'Each run starts a new conversation for each stage.')}</p>}
       {props.runCleaned && <p className="workflow-hint" data-testid="workflow-stage-cleaned">{text('이 단계의 작업 폴더는 정리되었습니다. 대화 기록과 결과는 그대로 볼 수 있습니다.', 'This stage’s work folder was cleaned up. Its conversations and results stay readable.')}</p>}
     </div>}

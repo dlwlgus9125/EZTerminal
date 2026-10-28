@@ -1,4 +1,4 @@
-import { FileMinus2, FilePen, FilePlus2 } from 'lucide-react';
+import { glyphIcon } from '../../ui/Glyph';
 import { useMemo } from 'react';
 
 import { diffCounts, reviewLines, type RecordedFileChange } from '../../../shared/conversation-changes';
@@ -20,7 +20,7 @@ export function DiffView({ change, variant = 'card', workspaceRoot }: {
   const displayPath = (path: string): string => workspacePath(path, workspaceRoot);
   const lines = useMemo(() => reviewLines(change).slice(0, MAX_LINES), [change]);
   const { added, removed } = diffCounts(change);
-  const Icon = removed === 0 && added > 0 ? FilePlus2 : added === 0 && removed > 0 ? FileMinus2 : FilePen;
+  const Icon = removed === 0 && added > 0 ? glyphIcon('plus') : added === 0 && removed > 0 ? glyphIcon('minus') : glyphIcon('edit');
   const numbered = change.coverage === 'patch';
   return (
     <figure className="chat-diff" data-variant={variant}>

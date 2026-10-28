@@ -1,15 +1,4 @@
-import {
-  ArrowLeft,
-  FileText,
-  FolderOpen,
-  MessageSquarePlus,
-  Plus,
-  RefreshCw,
-  Save,
-  SquareTerminal,
-  Trash2,
-  Undo2,
-} from "lucide-react";
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PlanningCommand,
@@ -908,7 +897,7 @@ function PlanningWorkspaceContent({
         <div className="planning-workspace__identity">
           {onBack && (
             <IconButton
-              icon={ArrowLeft}
+              icon={glyphIcon('back')}
               aria-label={copy("프로젝트 목록", "Projects")}
               onClick={onBack}
             />
@@ -927,7 +916,7 @@ function PlanningWorkspaceContent({
             <Button
               variant="ghost"
               size="sm"
-              leadingIcon={<SquareTerminal />}
+              leadingIcon={<Glyph name="term" />}
               onClick={onOpenTerminal}
             >
               {copy("터미널", "Terminal")}
@@ -937,14 +926,14 @@ function PlanningWorkspaceContent({
             <Button
               variant="primary"
               size="sm"
-              leadingIcon={<MessageSquarePlus />}
+              leadingIcon={<Glyph name="new" />}
               onClick={onNewConversation}
             >
               {copy("새 대화", "New conversation")}
             </Button>
           )}
           <IconButton
-            icon={RefreshCw}
+            icon={glyphIcon('refresh')}
             aria-label={copy("새로고침", "Refresh")}
             disabled={busy || loading}
             onClick={() => void refresh()}
@@ -1003,7 +992,7 @@ function PlanningWorkspaceContent({
             <Button
               variant="ghost"
               size="sm"
-              leadingIcon={<FolderOpen />}
+              leadingIcon={<Glyph name="proj" />}
               onClick={onOpenFiles}
             >
               {copy("파일", "Files")}
@@ -1079,7 +1068,7 @@ function PlanningWorkspaceContent({
                   )}
                 </p>
                 <Button
-                  leadingIcon={<Plus />}
+                  leadingIcon={<Glyph name="plus" />}
                   onClick={addItem}
                   disabled={locked}
                 >
@@ -1088,7 +1077,7 @@ function PlanningWorkspaceContent({
                 {executionAccess && (
                   <Button
                     variant="secondary"
-                    leadingIcon={<Plus />}
+                    leadingIcon={<Glyph name="plus" />}
                     disabled={locked}
                     onClick={() => {
                       const existing = Object.values(entityDrafts.tasks).find(
@@ -1257,7 +1246,7 @@ function PlanningWorkspaceContent({
                     <div className="planning-workspace__list-heading">
                       <h2>{labels.planning}</h2>
                       <IconButton
-                        icon={Plus}
+                        icon={glyphIcon('plus')}
                         aria-label={copy("기획 항목 추가", "Add planning item")}
                         onClick={addItem}
                         disabled={locked}
@@ -1352,7 +1341,7 @@ function PlanningWorkspaceContent({
                         <Button
                           variant="ghost"
                           size="sm"
-                          leadingIcon={<ArrowLeft />}
+                          leadingIcon={<Glyph name="back" />}
                           onClick={() => setSelectedId(null)}
                         >
                           {copy("목록", "List")}
@@ -1371,7 +1360,7 @@ function PlanningWorkspaceContent({
                             !edit.item.title.trim() ||
                             !edit.dirty
                           }
-                          leadingIcon={<Save />}
+                          leadingIcon={<Glyph name="save" />}
                         >
                           {busy
                             ? copy("저장 중", "Saving")
@@ -1480,7 +1469,7 @@ function PlanningWorkspaceContent({
                             variant="ghost"
                             size="sm"
                             disabled={writeLocked}
-                            leadingIcon={<Trash2 />}
+                            leadingIcon={<Glyph name="trash" />}
                             onClick={() => setDeleteId(edit.item.id)}
                           >
                             {copy("항목 삭제", "Delete item")}
@@ -1497,7 +1486,7 @@ function PlanningWorkspaceContent({
                     </form>
                   ) : (
                     <EmptyState
-                      icon={FileText}
+                      icon={glyphIcon('file')}
                       title={copy("기획을 작성하세요", "Build your plan")}
                       description={copy(
                         "요구사항, 기능, 정보 구조, 흐름과 결정을 연결할 준비를 합니다.",
@@ -1505,7 +1494,7 @@ function PlanningWorkspaceContent({
                       )}
                       action={
                         <Button
-                          leadingIcon={<Plus />}
+                          leadingIcon={<Glyph name="plus" />}
                           disabled={locked}
                           onClick={addItem}
                         >
@@ -1559,7 +1548,7 @@ function PlanningWorkspaceContent({
                   <Button
                     size="sm"
                     onClick={onNewConversation}
-                    leadingIcon={<Plus />}
+                    leadingIcon={<Glyph name="plus" />}
                   >
                     {copy("새 대화", "New conversation")}
                   </Button>
@@ -1876,7 +1865,7 @@ function PlanningWorkspaceContent({
                           variant="ghost"
                           size="sm"
                           disabled={writeLocked || pendingCount > 0}
-                          leadingIcon={<Undo2 />}
+                          leadingIcon={<Glyph name="undo" />}
                           onClick={() =>
                             void execute({
                               ...envelope(),

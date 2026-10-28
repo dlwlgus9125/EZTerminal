@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { useAppTranslation } from './i18n';
@@ -102,7 +102,7 @@ export function TerminalFindBar({
         disabled={!query}
         onClick={onPrevious}
       >
-        <ChevronUp aria-hidden="true" size={16} />
+        <Glyph name="up" size={16} />
       </button>
       <button
         type="button"
@@ -112,7 +112,7 @@ export function TerminalFindBar({
         disabled={!query}
         onClick={onNext}
       >
-        <ChevronDown aria-hidden="true" size={16} />
+        <Glyph name="down" size={16} />
       </button>
       <button
         type="button"
@@ -121,7 +121,7 @@ export function TerminalFindBar({
         title={t('terminalFind.closeTitle')}
         onClick={onClose}
       >
-        <X aria-hidden="true" size={16} />
+        <Glyph name="x" size={16} />
       </button>
     </div>
   );

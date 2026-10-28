@@ -1,4 +1,4 @@
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useState } from 'react';
 
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
@@ -78,7 +78,7 @@ export function AgentProfilesSettings({
       <div className="agent-profiles-settings__head">
         <h3>{text('에이전트 프로필', 'Agent profiles')}</h3>
         {!draft && providers[0] && (
-          <Button size="sm" variant="secondary" leadingIcon={<Plus aria-hidden="true" />} onClick={() => setDraft(emptyDraft(providers[0]!.id))}>
+          <Button size="sm" variant="secondary" leadingIcon={<Glyph name="plus" />} onClick={() => setDraft(emptyDraft(providers[0]!.id))}>
             {text('프로필 추가', 'Add profile')}
           </Button>
         )}
@@ -97,8 +97,8 @@ export function AgentProfilesSettings({
                 <span>{[providerLabel(profile.providerId), profile.model ?? text('기본 모델', 'Default model'), profile.reasoningEffort, permissionPresetLabel(profile.permissionPreset, locale)].filter(Boolean).join(' · ')}</span>
                 {profile.whenToUse && <small>{profile.whenToUse}</small>}
               </div>
-              <IconButton icon={Pencil} size="sm" variant="ghost" aria-label={`${text('편집', 'Edit')}: ${profile.name}`} onClick={() => setDraft(profile)} />
-              <IconButton icon={Trash2} size="sm" variant="ghost" aria-label={`${text('삭제', 'Delete')}: ${profile.name}`} onClick={() => void onDeleteProfile(profile.id)} />
+              <IconButton icon={glyphIcon('edit')} size="sm" variant="ghost" aria-label={`${text('편집', 'Edit')}: ${profile.name}`} onClick={() => setDraft(profile)} />
+              <IconButton icon={glyphIcon('trash')} size="sm" variant="ghost" aria-label={`${text('삭제', 'Delete')}: ${profile.name}`} onClick={() => void onDeleteProfile(profile.id)} />
             </li>
           ))}
         </ul>

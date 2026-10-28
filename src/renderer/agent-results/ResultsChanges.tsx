@@ -1,4 +1,4 @@
-import { FileMinus2, FilePen, FilePlus2, FileSymlink, RefreshCw, X } from 'lucide-react';
+import { glyphIcon } from '../ui/Glyph';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { gitDiffFileChanges, patchKind, type ConversationFileChange, type FileChangeKind, type RecordedFileChange, type ReviewLine } from '../../shared/conversation-changes';
@@ -46,7 +46,7 @@ interface ReviewState {
   readonly comments: readonly ReviewComment[];
 }
 
-const KIND_ICON = { add: FilePlus2, delete: FileMinus2, rename: FileSymlink, update: FilePen } as const;
+const KIND_ICON = { add: glyphIcon('plus'), delete: glyphIcon('minus'), rename: glyphIcon('link'), update: glyphIcon('edit') } as const;
 
 function groupRecords(changes: readonly ConversationFileChange[]): FileEntry[] {
   const byPath = new Map<string, { path: string; records: ChangeRecord[]; kinds: FileChangeKind[]; added: number; removed: number }>();
@@ -245,7 +245,7 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
           {gitAvailable && <option value="git">{copy.scopeGit}</option>}
         </Select>
         {scope === 'git' && (
-          <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={refreshGit} disabled={git.phase === 'loading'} />
+          <IconButton size="sm" icon={glyphIcon('refresh')} aria-label={copy.refresh} onClick={refreshGit} disabled={git.phase === 'loading'} />
         )}
       </div>
       <p className="results-note">
@@ -380,7 +380,7 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
                   <li key={comment.id} className="results-tray__item">
                     <span className="results-tray__where">{comment.lines ? `${comment.path}:${comment.lines}` : comment.path}</span>
                     {comment.text && <span className="results-tray__text">{comment.text}</span>}
-                    <IconButton size="sm" icon={X} aria-label={copy.removeComment}
+                    <IconButton size="sm" icon={glyphIcon('x')} aria-label={copy.removeComment}
                       onClick={() => setView((current) => ({ ...current, comments: current.comments.filter((entry) => entry.id !== comment.id) }))} />
                   </li>
                 ))}

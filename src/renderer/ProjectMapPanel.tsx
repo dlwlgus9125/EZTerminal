@@ -1,22 +1,4 @@
-import {
-  AlertTriangle,
-  Bot,
-  CheckCircle2,
-  Download,
-  ExternalLink,
-  FileCode2,
-  Focus,
-  GitCommitHorizontal,
-  LocateFixed,
-  Map,
-  Plus,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 
@@ -242,7 +224,7 @@ function ProjectMapJobStatus({
       aria-busy={!terminal}
     >
       <div className="project-map__job-summary" role="status" aria-live="polite">
-        <Bot size={17} aria-hidden="true" />
+        <Glyph name="bot" size={17} />
         <div className="project-map__job-copy">
           <strong>{headline}</strong>
           <span>{detail}</span>
@@ -281,7 +263,7 @@ function ProjectMapJobStatus({
             }).finally(() => setCanceling(false));
           }}
         >
-          <X size={13} aria-hidden="true" />
+          <Glyph name="x" size={13} />
           {canceling ? t('projectMap.cancelingJob', 'Canceling…') : t('projectMap.cancelJob', 'Cancel')}
         </button>
       ) : null}
@@ -413,14 +395,14 @@ function ProjectMapCanvas({
     <div ref={shellRef} className="project-map__canvas-shell">
       <div className="project-map__zoom" aria-label="Map zoom controls">
         <button type="button" onClick={() => setZoom((value) => clampZoom(value - 0.15))} aria-label="Zoom out">
-          <ZoomOut size={15} aria-hidden="true" />
+          <Glyph name="zoomOut" size={15} />
         </button>
         <button type="button" onClick={fit} aria-label="Fit map">
-          <LocateFixed size={15} aria-hidden="true" />
+          <Glyph name="pointer" size={15} />
           <span>Fit</span>
         </button>
         <button type="button" onClick={() => setZoom((value) => clampZoom(value + 0.15))} aria-label="Zoom in">
-          <ZoomIn size={15} aria-hidden="true" />
+          <Glyph name="zoomIn" size={15} />
         </button>
       </div>
       <svg
@@ -624,9 +606,9 @@ function EvidenceList({
                 });
               }}
             >
-              <FileCode2 size={14} aria-hidden="true" />
+              <Glyph name="code" size={14} />
               <span>{anchor.rootAlias}:{anchor.relativePath}:{anchor.startLine}</span>
-              <ExternalLink size={12} aria-hidden="true" />
+              <Glyph name="external" size={12} />
             </button>
           </article>
         );
@@ -665,7 +647,7 @@ function BindingEditor({
 
   return (
     <section className="project-map__binding" aria-labelledby="project-map-binding-title">
-      <Map size={28} aria-hidden="true" />
+      <Glyph name="map" size={28} />
       <div>
         <h2 id="project-map-binding-title">Bind logical roots</h2>
         <p>The repository keeps portable aliases. Choose the exact local checkout for each alias.</p>
@@ -716,7 +698,7 @@ function BindingEditor({
           }).catch(() => setError('Bindings could not be saved.')).finally(() => setSaving(false));
         }}
       >
-        <ShieldCheck size={16} aria-hidden="true" />
+        <Glyph name="ok" size={16} />
         {saving ? 'Saving...' : 'Save bindings'}
       </button>
     </section>
@@ -776,7 +758,7 @@ function ProjectMapCreator({
   return (
     <section className="project-map__creator" aria-labelledby="project-map-create-title">
       <div className="project-map__creator-heading">
-        <Map size={30} aria-hidden="true" />
+        <Glyph name="map" size={30} />
         <div>
           <h2 id="project-map-create-title">{t('projectMap.createTitle', 'Create Project Map')}</h2>
           <p>{t('projectMap.createDescription', 'Choose the first map type and open a dedicated Agent session in this workspace. The new tab shows the real work and approvals.')}</p>
@@ -926,7 +908,7 @@ function ProjectMapCreator({
           }}
           data-testid="project-map-send-creation"
         >
-          <Bot size={15} aria-hidden="true" />
+          <Glyph name="bot" size={15} />
           {sendState === 'preparing'
             ? t('projectMap.openingSession', 'Opening dedicated session…')
             : sendState === 'launched' || isActiveProjectMapJob(activeJob)
@@ -993,7 +975,7 @@ function AgentAuthoring({
   const briefSafe = projectMapBriefIsSafe(brief);
   return (
     <details className="project-map__authoring">
-      <summary><Bot size={15} aria-hidden="true" /> {t('projectMap.updateWithAgent', 'Update in a new Agent session')}</summary>
+      <summary><Glyph name="bot" size={15} /> {t('projectMap.updateWithAgent', 'Update in a new Agent session')}</summary>
       <p>{t('projectMap.updateWithAgentDescription', 'Open a dedicated Agent tab in the owning workspace so its work, approvals, and errors remain visible.')}</p>
       <label>
         <span>{t('projectMap.newSessionAgent', 'Agent for new session')}</span>
@@ -1072,7 +1054,7 @@ function AgentAuthoring({
           }).catch(() => setSendState('failed'));
         }}
       >
-        <Bot size={14} aria-hidden="true" />
+        <Glyph name="bot" size={14} />
         {sendState === 'preparing'
           ? t('projectMap.openingSession', 'Opening dedicated session…')
           : sendState === 'launched' || isActiveProjectMapJob(activeJob)
@@ -1209,7 +1191,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
   }, [document, query]);
 
   if (!params) {
-    return <section ref={panelRef} className="project-map project-map--center"><AlertTriangle />Invalid Project Map panel.</section>;
+    return <section ref={panelRef} className="project-map project-map--center"><Glyph name="warn" />Invalid Project Map panel.</section>;
   }
   const displayedState = document?.state ?? collection?.state ?? 'invalid';
   const candidate = snapshot?.candidate;
@@ -1266,7 +1248,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
     <section ref={panelRef} className="project-map" data-state={document?.state ?? collection?.state ?? 'loading'}>
       <header className="project-map__toolbar">
         <div className="project-map__identity">
-          <Map size={18} aria-hidden="true" />
+          <Glyph name="map" size={18} />
           <div>
             <strong>{document?.spec.title ?? t('projectMap.title', 'Project Map')}</strong>
             <small>{document?.spec.summary ?? collection?.collectionId ?? 'Repository-owned system maps'}</small>
@@ -1288,7 +1270,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
           </label>
         ) : null}
         <span className="project-map__status" data-state={displayedState}>
-          {document?.state === 'valid' ? <CheckCircle2 size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
+          {document?.state === 'valid' ? <Glyph name="check" size={14} /> : <Glyph name="warn" size={14} />}
           {t(`projectMap.status.${displayedState}`, statusLabel(displayedState))}
         </span>
         {candidate && !approvalMatchesCandidate ? (
@@ -1299,7 +1281,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
             onClick={approveCandidate}
             data-testid="project-map-approve"
           >
-            <ShieldCheck size={15} aria-hidden="true" />
+            <Glyph name="ok" size={15} />
             {approving ? t('projectMap.approving', 'Approving…') : t('projectMap.approve', 'Approve map')}
           </button>
         ) : null}
@@ -1313,11 +1295,11 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
             </select>
           </label>
           <button type="button" disabled={!approvedFingerprint || exportState.kind === 'working'} onClick={exportApproved}>
-            <Download size={15} aria-hidden="true" /> {t('projectMap.export', 'Export')}
+            <Glyph name="download" size={15} /> {t('projectMap.export', 'Export')}
           </button>
         </div>
         <button className="project-map__icon-action" type="button" onClick={() => void load(document?.mapId, true)} aria-label="Refresh map">
-          <RefreshCw size={16} aria-hidden="true" />
+          <Glyph name="refresh" size={16} />
         </button>
       </header>
 
@@ -1331,9 +1313,9 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
         />
       ) : null}
 
-      {loading && !collection ? <div className="project-map__loading"><RefreshCw className="spin" /> {t('projectMap.loading', 'Loading Project Map…')}</div> : null}
+      {loading && !collection ? <div className="project-map__loading"><Glyph name="refresh" className="spin" /> {t('projectMap.loading', 'Loading Project Map…')}</div> : null}
       {!loading && collection && !document && snapshot?.verificationPending ? (
-        <div className="project-map__loading"><RefreshCw className="spin" /> {t('projectMap.preparing', 'Preparing the first Production snapshot…')}</div>
+        <div className="project-map__loading"><Glyph name="refresh" className="spin" /> {t('projectMap.preparing', 'Preparing the first Production snapshot…')}</div>
       ) : null}
 
       {!loading && collection?.state === 'empty' ? (
@@ -1348,7 +1330,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
           />
         ) : (
           <div className="project-map__empty">
-            <Map size={32} aria-hidden="true" />
+            <Glyph name="map" size={32} />
             <h2>{t('projectMap.noCollection', 'No Project Map collection')}</h2>
             <p>{t('projectMap.noCollectionDescription', 'Create the first verified map in a dedicated Agent session. EZTerminal opens the workspace and submits the brief; it never invents or writes repository files itself.')}</p>
             <button
@@ -1358,7 +1340,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
               onClick={() => setCreating(true)}
               data-testid="project-map-create"
             >
-              <Plus size={16} aria-hidden="true" />
+              <Glyph name="plus" size={16} />
               {isActiveProjectMapJob(snapshot?.activeJob)
                 ? t('projectMap.requestInProgress', 'Request in progress')
                 : t('projectMap.create', 'Create Project Map')}
@@ -1375,7 +1357,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
 
       {!document && collection?.state === 'invalid' ? (
         <div className="project-map__empty project-map__empty--error">
-          <AlertTriangle size={32} aria-hidden="true" />
+          <Glyph name="warn" size={32} />
           <h2>{t('projectMap.sourceInvalid', 'Project Map source is invalid')}</h2>
           <p>{error ?? t('projectMap.sourceInvalidRecovery', 'Fix the manifest diagnostics and refresh.')}</p>
           <ul>{collection.diagnostics.slice(0, 8).map((item) => <li key={`${item.code}:${item.subject}`}>{item.subject}: {item.message}</li>)}</ul>
@@ -1386,7 +1368,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
         <div className="project-map__workspace" data-inspector-empty={selectedItem ? undefined : 'true'}>
           <aside className="project-map__rail" aria-label="Map chapters and search">
             <label className="project-map__search">
-              <Search size={14} aria-hidden="true" />
+              <Glyph name="search" size={14} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('projectMap.find', 'Find a node or relation')} />
             </label>
             {searchResults.length > 0 ? (
@@ -1399,7 +1381,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
             <div className="project-map__chapters">
               <span>{t('projectMap.chapters', 'Chapters')}</span>
               <button type="button" data-active={!chapterId ? 'true' : undefined} onClick={() => setChapterId(undefined)}>
-                <Focus size={14} aria-hidden="true" /> {t('projectMap.fullMap', 'Full map')}
+                <Glyph name="expand" size={14} /> {t('projectMap.fullMap', 'Full map')}
               </button>
               {document.spec.chapters.map((chapter) => (
                 <button
@@ -1414,7 +1396,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
               ))}
             </div>
             <div className="project-map__provenance">
-              <span><GitCommitHorizontal size={14} aria-hidden="true" /> {document.provenance.kind === 'commit-pinned' ? 'Commit pinned' : 'Worktree snapshot'}</span>
+              <span><Glyph name="commit" size={14} /> {document.provenance.kind === 'commit-pinned' ? 'Commit pinned' : 'Worktree snapshot'}</span>
               {document.provenance.roots.map((root) => (
                 <small key={root.rootAlias}>{root.rootAlias} - {root.dirty ? root.snapshotHash?.slice(7, 17) : root.head.slice(0, 10)}</small>
               ))}
@@ -1422,11 +1404,11 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
           </aside>
 
           <main className="project-map__main">
-            {snapshot?.verificationPending ? <div className="project-map__banner" role="status"><RefreshCw className="spin" size={15} /> {t('projectMap.verifyingBackground', 'Production verification is running in the background. The visible approved map remains interactive.')}</div> : null}
-            {snapshot?.displaySource === 'candidate-preview' ? <div className="project-map__banner" role="status"><AlertTriangle size={15} /> {t('projectMap.candidatePreview', 'Candidate preview. Review the checks and approve it before export.')}</div> : null}
-            {snapshot?.displaySource === 'last-approved' && snapshot.candidate ? <div className="project-map__banner" role="status"><AlertTriangle size={15} /> {t('projectMap.lastApprovedCandidate', 'Showing the last approved map. A newly verified candidate is waiting for review.')}</div> : null}
-            {error ? <div className="project-map__banner" role="status"><AlertTriangle size={15} /> Showing verified last-good data because current source failed: {error}</div> : null}
-            {document.state === 'stale' ? <div className="project-map__banner" role="status"><AlertTriangle size={15} /> {t('projectMap.stale', 'Authoritative inputs changed. Review the map or record a no-semantic-impact reason.')}</div> : null}
+            {snapshot?.verificationPending ? <div className="project-map__banner" role="status"><Glyph name="refresh" className="spin" size={15} /> {t('projectMap.verifyingBackground', 'Production verification is running in the background. The visible approved map remains interactive.')}</div> : null}
+            {snapshot?.displaySource === 'candidate-preview' ? <div className="project-map__banner" role="status"><Glyph name="warn" size={15} /> {t('projectMap.candidatePreview', 'Candidate preview. Review the checks and approve it before export.')}</div> : null}
+            {snapshot?.displaySource === 'last-approved' && snapshot.candidate ? <div className="project-map__banner" role="status"><Glyph name="warn" size={15} /> {t('projectMap.lastApprovedCandidate', 'Showing the last approved map. A newly verified candidate is waiting for review.')}</div> : null}
+            {error ? <div className="project-map__banner" role="status"><Glyph name="warn" size={15} /> Showing verified last-good data because current source failed: {error}</div> : null}
+            {document.state === 'stale' ? <div className="project-map__banner" role="status"><Glyph name="warn" size={15} /> {t('projectMap.stale', 'Authoritative inputs changed. Review the map or record a no-semantic-impact reason.')}</div> : null}
             {snapshot?.diff ? (
               <details className="project-map__diff">
                 <summary>{t('projectMap.candidateChanges', 'Candidate changes · {{semantic}} semantic · {{evidence}} evidence', { semantic: snapshot.diff.semantic.length, evidence: snapshot.diff.evidence.length })}</summary>
@@ -1480,7 +1462,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
               </>
             ) : (
               <div className="project-map__inspector-empty">
-                <LocateFixed size={24} aria-hidden="true" />
+                <Glyph name="pointer" size={24} />
                 <h2>{t('projectMap.selectItem', 'Select an item')}</h2>
                 <p>{t('projectMap.selectItemDescription', 'Inspect the claim and jump to its verified source lines.')}</p>
               </div>
@@ -1488,7 +1470,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
             <div className="project-map__checks" aria-label={`${String(document.verification.checks.filter((check) => check.status === 'passed').length)} of ${String(document.verification.checks.length)} verification checks passed`}>
               <h3>{t('projectMap.verification', 'Verification')}</h3>
               <span className="project-map__checks-summary">
-                <CheckCircle2 size={13} />
+                <Glyph name="check" size={13} />
                 {t('projectMap.checksPassed', '{{passed}}/{{total}} checks passed', {
                   passed: document.verification.checks.filter((check) => check.status === 'passed').length,
                   total: document.verification.checks.length,
@@ -1496,7 +1478,7 @@ export function ProjectMapPanel(props: ProjectMapPanelProps): JSX.Element {
               </span>
               {document.verification.checks.map((check) => (
                 <span key={check.name} data-status={check.status}>
-                  {check.status === 'passed' ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                  {check.status === 'passed' ? <Glyph name="check" size={13} /> : <Glyph name="warn" size={13} />}
                   {check.name}
                 </span>
               ))}

@@ -1,7 +1,4 @@
-import {
-  Check,
-  type LucideIcon,
-} from 'lucide-react';
+import { Glyph, type GlyphIcon } from './Glyph';
 import {
   cloneElement,
   createContext,
@@ -195,7 +192,7 @@ export function Menu({
 
 export interface MenuItemProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
   /** A lucide icon or a stencil glyph (`glyphIcon(name)`). */
-  readonly icon?: LucideIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  readonly icon?: GlyphIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
   readonly destructive?: boolean;
   readonly onSelect: () => void;
 }
@@ -269,7 +266,7 @@ export function MenuRadioItem({
       }}
       {...props}
     >
-      <span className="ez-ui-menu-item__icon">{checked && <Check aria-hidden="true" />}</span>
+      <span className="ez-ui-menu-item__icon">{checked && <Glyph name="check" />}</span>
       <span className="ez-ui-menu-item__label">{children}</span>
     </button>
   );
@@ -299,7 +296,7 @@ export function MenuCheckboxItem({
       }}
       {...props}
     >
-      <span className="ez-ui-menu-item__icon">{checked && <Check aria-hidden="true" />}</span>
+      <span className="ez-ui-menu-item__icon">{checked && <Glyph name="check" />}</span>
       <span className="ez-ui-menu-item__label">{children}</span>
     </button>
   );

@@ -1,12 +1,4 @@
-import {
-  CircleAlert,
-  CircleCheck,
-  Info,
-  Inbox,
-  LoaderCircle,
-  TriangleAlert,
-  type LucideIcon,
-} from 'lucide-react';
+import { Glyph, glyphIcon, type GlyphIcon } from './Glyph';
 import { type HTMLAttributes, type ReactNode } from 'react';
 
 import { classNames } from './utils';
@@ -22,19 +14,19 @@ export function Badge({ className, size = 'md', variant = 'neutral', ...props }:
   return <span className={classNames('ez-ui-badge', className)} data-size={size} data-variant={variant} {...props} />;
 }
 
-const STATUS_ICONS: Record<SemanticVariant | 'loading', LucideIcon> = {
-  neutral: Info,
-  accent: Info,
-  info: Info,
-  success: CircleCheck,
-  warning: TriangleAlert,
-  danger: CircleAlert,
-  loading: LoaderCircle,
+const STATUS_ICONS: Record<SemanticVariant | 'loading', GlyphIcon> = {
+  neutral: glyphIcon('info'),
+  accent: glyphIcon('info'),
+  info: glyphIcon('info'),
+  success: glyphIcon('check'),
+  warning: glyphIcon('warn'),
+  danger: glyphIcon('warn'),
+  loading: glyphIcon('spin'),
 };
 
 export interface StatusProps extends HTMLAttributes<HTMLSpanElement> {
   readonly variant?: SemanticVariant | 'loading';
-  readonly icon?: LucideIcon;
+  readonly icon?: GlyphIcon;
   readonly live?: 'off' | 'polite' | 'assertive';
 }
 
@@ -65,14 +57,14 @@ interface StateProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   readonly title: ReactNode;
   readonly description?: ReactNode;
   readonly action?: ReactNode;
-  readonly icon?: LucideIcon;
+  readonly icon?: GlyphIcon;
 }
 
 export function EmptyState({
   action,
   className,
   description,
-  icon: Icon = Inbox,
+  icon: Icon = glyphIcon('req'),
   title,
   ...props
 }: StateProps): JSX.Element {
@@ -101,7 +93,7 @@ export function LoadingState({ className, description, label, ...props }: Loadin
       aria-busy="true"
       {...props}
     >
-      <LoaderCircle className="ez-ui-state__icon is-spinning" aria-hidden="true" />
+      <Glyph name="spin" className="ez-ui-state__icon is-spinning" />
       <h3 className="ez-ui-state__title">{label}</h3>
       {description && <p className="ez-ui-state__description">{description}</p>}
     </div>
@@ -112,7 +104,7 @@ export function ErrorState({
   action,
   className,
   description,
-  icon: Icon = TriangleAlert,
+  icon: Icon = glyphIcon('warn'),
   title,
   ...props
 }: StateProps): JSX.Element {

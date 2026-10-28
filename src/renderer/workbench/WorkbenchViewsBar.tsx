@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Maximize2, Plus, X } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useAppTranslation } from '../i18n';
 import type { WorkbenchViewsController } from '../workbench-views';
 
@@ -27,10 +27,10 @@ export function WorkbenchViewsBar({ controller }: { controller: WorkbenchViewsCo
                 event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
               }
             }}>{name(view.title)}</button>}
-        {controller.views.length > 1 && <button type="button" aria-label={`${ko ? '작업 공간 닫기' : 'Close workspace'}: ${name(view.title)}`} title={ko ? '세션을 기본 작업 공간으로 옮깁니다' : 'Move sessions to the main workspace'} onClick={() => controller.close(view.id)}><X aria-hidden="true" /></button>}
+        {controller.views.length > 1 && <button type="button" aria-label={`${ko ? '작업 공간 닫기' : 'Close workspace'}: ${name(view.title)}`} title={ko ? '세션을 기본 작업 공간으로 옮깁니다' : 'Move sessions to the main workspace'} onClick={() => controller.close(view.id)}><Glyph name="x" /></button>}
       </div>)}
     </div>
-    <button type="button" aria-label={ko ? '새 작업 공간' : 'New workspace'} onClick={() => controller.create(ko ? `작업 공간 ${controller.views.length + 1}` : `Workspace ${controller.views.length + 1}`)}><Plus aria-hidden="true" /></button>
+    <button type="button" aria-label={ko ? '새 작업 공간' : 'New workspace'} onClick={() => controller.create(ko ? `작업 공간 ${controller.views.length + 1}` : `Workspace ${controller.views.length + 1}`)}><Glyph name="plus" /></button>
     {controller.views.length > 1 && controller.panels.some(panel => panel.id === controller.api.activePanel?.id) && <select aria-label={ko ? '현재 탭을 작업 공간으로 이동' : 'Move current tab to workspace'} value="" onChange={event => {
       if (controller.api.activePanel && event.currentTarget.value) controller.move(controller.api.activePanel.id, event.currentTarget.value);
     }}><option value="">{ko ? '탭 이동' : 'Move tab'}</option>{controller.views.filter(view => view.id !== controller.activeId).map(view => <option key={view.id} value={view.id}>{name(view.title)}</option>)}</select>}
@@ -38,7 +38,7 @@ export function WorkbenchViewsBar({ controller }: { controller: WorkbenchViewsCo
       <select aria-label={ko ? '입력할 영역' : 'Input target'} value={controller.api.activePanel?.id ?? ''} onChange={event => controller.api.getPanel(event.currentTarget.value)?.api.setActive()}>
         {controller.panels.map(panel => <option key={panel.id} value={panel.id}>{panel.title}</option>)}
       </select>
-      <button type="button" aria-pressed={controller.isFocused} aria-label={ko ? '집중 보기' : 'Focus pane'} onClick={() => controller.toggleFocus()}><Maximize2 aria-hidden="true" /></button>
+      <button type="button" aria-pressed={controller.isFocused} aria-label={ko ? '집중 보기' : 'Focus pane'} onClick={() => controller.toggleFocus()}><Glyph name="expand" /></button>
     </>}
   </div>;
 }

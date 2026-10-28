@@ -91,9 +91,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1339,
-          "endLine": 1368,
-          "lineDigest": "sha256:0e4c0661b7ec2fa089549ccae67cf2e10091d822255748b9ed598839a0654385",
+          "startLine": 1321,
+          "endLine": 1350,
+          "lineDigest": "sha256:b56d9801207a890ea11455212f2a0aae8df14fe66023ed8064a00ff8f7158250",
           "claim": "The empty state opens guided creation while explicitly retaining manual authoring and the no-app-write boundary."
         }
       ]
@@ -110,9 +110,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1452,
-          "endLine": 1503,
-          "lineDigest": "sha256:79a6b01fa77900509c5d0aee75178dd312d361c4e1aeeab24fc0f182f1369281",
+          "startLine": 1434,
+          "endLine": 1485,
+          "lineDigest": "sha256:1e7088057819da50926548454c28751a6b11b9291b082e4a9ef6e7d44f522e92",
           "claim": "The inspector supports directed exploration, exact evidence navigation, and named verification checks."
         }
       ]
@@ -129,16 +129,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 119,
-          "endLine": 149,
+          "startLine": 101,
+          "endLine": 131,
           "lineDigest": "sha256:eed8703b2c3946e1c9eadf00f240784b5b92eecacb9bfdd55cd17b0643d49e23",
           "claim": "The form loads configured launchers and admits only Codex or Claude for Project Map work."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 786,
-          "endLine": 853,
+          "startLine": 768,
+          "endLine": 835,
           "lineDigest": "sha256:0dd1aafab89d893aee46c8c2f63ff9f94b44213ade8c0e2d08e506d8b4713854",
           "claim": "The guided form exposes the closed map-type selector, new-session Agent selector, exact workspace hint, and editable brief before launch."
         }
@@ -156,8 +156,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 91,
-          "endLine": 104,
+          "startLine": 73,
+          "endLine": 86,
           "lineDigest": "sha256:506b237ac6b6ec89d45f429b238cc1dd072af0af2b516fa42ea2fce4cf2440e6",
           "claim": "Creation instructions require repository-owned schema v2 source, evidence, semantic-only layout intent, both quality profiles, and human review."
         }
@@ -175,8 +175,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 884,
-          "endLine": 925,
+          "startLine": 866,
+          "endLine": 907,
           "lineDigest": "sha256:172dd16ca7afa27958e8fb9e02142ba39ec8f7494d458a18cc12742750af60dc",
           "claim": "The explicit action prepares the exact owning workspace and hands a runtime-only Project Map request to a new Agent terminal."
         },
@@ -264,9 +264,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 193,
-          "endLine": 306,
-          "lineDigest": "sha256:6afa8f5c1df288fd743774170012e107558115e9eee64ff6f50f21a0c5c1228a",
+          "startLine": 175,
+          "endLine": 288,
+          "lineDigest": "sha256:c9bc5674c841e9163b2ec2356a938fd920028a174220d514e30eea7b7538f91d",
           "claim": "The global request strip derives exact copy and three milestones from durable dispatch and phase data, exposes timestamps and cancellation, and preserves a compatibility fallback for older jobs."
         }
       ]
@@ -302,9 +302,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 963,
-          "endLine": 1088,
-          "lineDigest": "sha256:a8f93edbacdf14726a62f94895a05f807786b805242c2411dd900a95106f7fe0",
+          "startLine": 945,
+          "endLine": 1070,
+          "lineDigest": "sha256:582bda8e4e0938b75a3a3d85a13f47f0a5e9af536a82bb9a8eab3381f7b8350c",
           "claim": "Existing-map authoring names the owned source, preserves portability constraints, and opens a fresh exact-workspace Agent session only from an explicit handler."
         }
       ]
@@ -386,25 +386,25 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1326,
-          "endLine": 1332,
+          "startLine": 1308,
+          "endLine": 1314,
           "lineDigest": "sha256:f36ef1d6963117d499c7e62b1073f410d5a560c09a776f51cf6da2ac49906fbf",
           "claim": "The request status is mounted above empty, creation, and diagram content whenever a persisted job exists."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1424,
-          "endLine": 1441,
-          "lineDigest": "sha256:7f17da8e1055fbacdb394ed71b1fe5c299aa3bff7a0deabaded44d8755dc6b06",
+          "startLine": 1406,
+          "endLine": 1423,
+          "lineDigest": "sha256:52c818dd2f56b10a2deb35cb6398ee71f6d05801d92f67ca87117f581285a9b5",
           "claim": "Candidate, last-approved, verification, and stale banners precede the semantic and evidence diff."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1452,
-          "endLine": 1503,
-          "lineDigest": "sha256:79a6b01fa77900509c5d0aee75178dd312d361c4e1aeeab24fc0f182f1369281",
+          "startLine": 1434,
+          "endLine": 1485,
+          "lineDigest": "sha256:1e7088057819da50926548454c28751a6b11b9291b082e4a9ef6e7d44f522e92",
           "claim": "Selected claims expose directed exploration, exact evidence, and every named verification check in the native inspector."
         }
       ]
@@ -421,8 +421,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1215,
-          "endLine": 1238,
+          "startLine": 1197,
+          "endLine": 1220,
           "lineDigest": "sha256:10d873f8bc2209c9bdfe17a6f93866b232c59e4df2a1ca208e29f0fa6aa6e3af",
           "claim": "The renderer derives candidate readiness from Production quality, valid state, zero diagnostics, and all passing checks before sending its fingerprint."
         },
@@ -448,8 +448,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1241,
-          "endLine": 1262,
+          "startLine": 1223,
+          "endLine": 1244,
           "lineDigest": "sha256:e924850495b217e0ecd30c4613b5b712a02a934d297d36fb9663a51918ec8b12",
           "claim": "The UI selects a destination and exports only the currently approved map ID and fingerprint with an explicit theme."
         },
@@ -475,9 +475,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1339,
-          "endLine": 1368,
-          "lineDigest": "sha256:0e4c0661b7ec2fa089549ccae67cf2e10091d822255748b9ed598839a0654385",
+          "startLine": 1321,
+          "endLine": 1350,
+          "lineDigest": "sha256:b56d9801207a890ea11455212f2a0aae8df14fe66023ed8064a00ff8f7158250",
           "claim": "The primary empty-state action changes only the local guided-creation state."
         }
       ]
@@ -492,9 +492,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 941,
-          "endLine": 1088,
-          "lineDigest": "sha256:2f29d203094a6f21467be92897e55474a13d41dcc4f62867b94825b541642132",
+          "startLine": 923,
+          "endLine": 1070,
+          "lineDigest": "sha256:5b346979ccf68fc5823d80d44b03bdef82446be6d7b50e84fc568b0936c6b372",
           "claim": "Existing maps expose a separate explicit update brief that opens the same dedicated owning-workspace Agent path."
         }
       ]
@@ -509,8 +509,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 786,
-          "endLine": 853,
+          "startLine": 768,
+          "endLine": 835,
           "lineDigest": "sha256:0dd1aafab89d893aee46c8c2f63ff9f94b44213ade8c0e2d08e506d8b4713854",
           "claim": "Type and Agent selection precede the editable creation brief in one visible form."
         }
@@ -526,8 +526,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 880,
-          "endLine": 925,
+          "startLine": 862,
+          "endLine": 907,
           "lineDigest": "sha256:05fd9a11793972d1c6bd6e9809dd3536ec0c754344602aa9c2ddee5e9f935d40",
           "claim": "The launch control requires a supported Agent and safe non-empty brief, validates the exact target, and opens a fresh-session bootstrap only in its click handler."
         }
@@ -628,8 +628,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 91,
-          "endLine": 104,
+          "startLine": 73,
+          "endLine": 86,
           "lineDigest": "sha256:506b237ac6b6ec89d45f429b238cc1dd072af0af2b516fa42ea2fce4cf2440e6",
           "claim": "The brief directs the Agent to inspect authoritative implementation and add exact evidence before writing claims."
         }
@@ -713,9 +713,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1424,
-          "endLine": 1441,
-          "lineDigest": "sha256:7f17da8e1055fbacdb394ed71b1fe5c299aa3bff7a0deabaded44d8755dc6b06",
+          "startLine": 1406,
+          "endLine": 1423,
+          "lineDigest": "sha256:52c818dd2f56b10a2deb35cb6398ee71f6d05801d92f67ca87117f581285a9b5",
           "claim": "Candidate state and semantic or evidence change counts are presented before approval."
         }
       ]
@@ -730,9 +730,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1294,
-          "endLine": 1317,
-          "lineDigest": "sha256:026b60d97927c03fbd4973c6ccd61c91279f9f6a5c86de805c1bb2cb11b79b3e",
+          "startLine": 1276,
+          "endLine": 1299,
+          "lineDigest": "sha256:10c08b40fa03ab5b5b58f5d61b993fbe87cc36144aad0a86e3d35e05053bd23f",
           "claim": "Approval appears for an unapproved candidate, while export controls stay disabled until an approval fingerprint exists."
         }
       ]
@@ -747,9 +747,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectMapPanel.tsx",
-          "startLine": 1294,
-          "endLine": 1317,
-          "lineDigest": "sha256:026b60d97927c03fbd4973c6ccd61c91279f9f6a5c86de805c1bb2cb11b79b3e",
+          "startLine": 1276,
+          "endLine": 1299,
+          "lineDigest": "sha256:10c08b40fa03ab5b5b58f5d61b993fbe87cc36144aad0a86e3d35e05053bd23f",
           "claim": "Approval is offered only for an unmatched candidate, while both export controls stay disabled until an approved fingerprint exists."
         }
       ]

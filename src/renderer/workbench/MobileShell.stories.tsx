@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronsUpDown, Play, Plus } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
 import { ConnectScreen } from '../../../mobile/src/ConnectScreen';
@@ -51,12 +51,12 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
     <main className="mobile-workspace mobile-story-workspace" data-testid="mobile-workspace">
       <header className="mob-term-head">
         <button type="button" className="mob-icon-btn" aria-label={copy.back} data-testid="workspace-hub-btn">
-          <ChevronLeft aria-hidden="true" />
+          <Glyph name="back" />
         </button>
         <button type="button" className="mob-term-head__session" aria-label={copy.sessions} data-testid="menu-btn">
           <span className="mob-dot mob-dot--live" aria-hidden="true" />
           <span className="mob-term-head__label">{copy.terminal}</span>
-          <ChevronsUpDown aria-hidden="true" />
+          <Glyph name="down" />
         </button>
         <button
           type="button"
@@ -64,7 +64,7 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
           aria-label={copy.newTerminal}
           data-testid="tab-add-btn"
         >
-          <Plus aria-hidden="true" />
+          <Glyph name="plus" />
         </button>
       </header>
       <section className="mobile-story-terminal" aria-label={copy.terminal}>
@@ -80,7 +80,7 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
           <Field label={copy.command} labelHidden>
             <Input placeholder={copy.placeholder} />
           </Field>
-          <Button type="submit" variant="primary" leadingIcon={<Play />}>{copy.run}</Button>
+          <Button type="submit" variant="primary" leadingIcon={<Glyph name="play" />}>{copy.run}</Button>
         </form>
       </section>
     </main>

@@ -1,4 +1,4 @@
-import { Copy, MoreHorizontal, Pin, Settings, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from './Glyph';
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
@@ -82,19 +82,19 @@ function MenuExample(): JSX.Element {
     <div className="ez-story-stack">
       <Menu
         label="Pane actions"
-        trigger={<Button trailingIcon={<MoreHorizontal />}>Pane actions</Button>}
+        trigger={<Button trailingIcon={<Glyph name="more" />}>Pane actions</Button>}
       >
         <MenuLabel>Pane</MenuLabel>
-        <MenuItem icon={Copy} onSelect={() => setSelected('Duplicated pane')}>Duplicate</MenuItem>
+        <MenuItem icon={glyphIcon('copy')} onSelect={() => setSelected('Duplicated pane')}>Duplicate</MenuItem>
         <MenuCheckboxItem checked={pinned} onCheckedChange={setPinned}>Pin pane</MenuCheckboxItem>
         <MenuSeparator />
         <MenuLabel>Effect profile</MenuLabel>
         <MenuRadioItem checked={profile === 'static'} onSelect={() => setProfile('static')}>Static</MenuRadioItem>
         <MenuRadioItem checked={profile === 'crt'} onSelect={() => setProfile('crt')}>CRT Signature</MenuRadioItem>
         <MenuSeparator />
-        <MenuItem icon={Settings} onSelect={() => setSelected('Opened settings')}>Settings</MenuItem>
-        <MenuItem icon={Trash2} destructive onSelect={() => setSelected('Closed pane')}>Close pane</MenuItem>
-        <MenuItem icon={Pin} disabled onSelect={() => undefined}>Managed action</MenuItem>
+        <MenuItem icon={glyphIcon('set')} onSelect={() => setSelected('Opened settings')}>Settings</MenuItem>
+        <MenuItem icon={glyphIcon('trash')} destructive onSelect={() => setSelected('Closed pane')}>Close pane</MenuItem>
+        <MenuItem icon={glyphIcon('pin')} disabled onSelect={() => undefined}>Managed action</MenuItem>
       </Menu>
       <Status variant="info" live="polite">{selected}</Status>
     </div>
@@ -118,7 +118,7 @@ export const PopoverContent: Story = {
       <div className="ez-story-stack" style={{ inlineSize: '18rem' }}>
         <Status variant="success">Connected</Status>
         <p className="ez-story-note">127.0.0.1:7420 · encrypted tunnel</p>
-        <Button size="sm" leadingIcon={<Copy />}>Copy address</Button>
+        <Button size="sm" leadingIcon={<Glyph name="copy" />}>Copy address</Button>
       </div>
     </Popover>
   ),
@@ -127,7 +127,7 @@ export const PopoverContent: Story = {
 export const TooltipOnFocus: Story = {
   render: () => (
     <Tooltip content="Open terminal settings" side="bottom" delay={0}>
-      <IconButton icon={Settings} aria-label="Settings" />
+      <IconButton icon={glyphIcon('set')} aria-label="Settings" />
     </Tooltip>
   ),
   play: async ({ canvasElement }) => {

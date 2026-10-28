@@ -1,12 +1,4 @@
-import {
-  ArrowDown,
-  ArrowUp,
-  FileSearch,
-  Hash,
-  RefreshCw,
-  ShieldAlert,
-  X,
-} from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import type * as Monaco from 'monaco-editor';
@@ -472,7 +464,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
             onClick={() => props.api.updateParameters({ ...document, lens: { kind: 'current' } })}
           >
             {t('projectWorkbench.agentTurn')}
-            <X aria-hidden="true" size={13} />
+            <Glyph name="x" size={13} />
           </button>
         )}
         {snapshot?.comparison?.repositoryName && (
@@ -482,7 +474,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
         )}
         <span className="project-editor__readonly">{t('projectWorkbench.readOnly')}</span>
         {snapshot?.current?.sensitive && (
-          <ShieldAlert aria-label={t('projectWorkbench.sensitiveFile')} size={16} />
+          <span role="img" aria-label={t('projectWorkbench.sensitiveFile')}><Glyph name="warn" size={16} /></span>
         )}
         <div className="project-editor__actions">
           <button
@@ -491,7 +483,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
               ?.getAction('actions.find')?.run()}
             disabled={!hasText}
           >
-            <FileSearch aria-hidden="true" size={15} /> {t('projectWorkbench.find')}
+            <Glyph name="search" size={15} /> {t('projectWorkbench.find')}
           </button>
           <button
             type="button"
@@ -499,7 +491,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
               ?.getAction('editor.action.gotoLine')?.run()}
             disabled={!hasText}
           >
-            <Hash aria-hidden="true" size={15} /> {t('projectWorkbench.goToLine')}
+            <Glyph name="list" size={15} /> {t('projectWorkbench.goToLine')}
           </button>
           {review?.kind === 'full-diff' && (
             <>
@@ -508,19 +500,19 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
                 aria-label={t('projectWorkbench.previousHunk')}
                 onClick={() => diffRef.current?.goToDiff('previous')}
               >
-                <ArrowUp aria-hidden="true" size={15} />
+                <Glyph name="up" size={15} />
               </button>
               <button
                 type="button"
                 aria-label={t('projectWorkbench.nextHunk')}
                 onClick={() => diffRef.current?.goToDiff('next')}
               >
-                <ArrowDown aria-hidden="true" size={15} />
+                <Glyph name="down" size={15} />
               </button>
             </>
           )}
           <button type="button" onClick={() => void load()} disabled={loading}>
-            <RefreshCw aria-hidden="true" size={15} /> {t('projectWorkbench.refresh')}
+            <Glyph name="refresh" size={15} /> {t('projectWorkbench.refresh')}
           </button>
         </div>
       </header>

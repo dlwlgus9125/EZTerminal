@@ -1,4 +1,4 @@
-import { FileSearch, Hand, MessageSquare, Pause, Play, Repeat, RotateCw, Settings, Square } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { deviceTimezone } from '../device-timezone';
 import { useEffect, useId, useState } from 'react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, blockingRunOf, type ExecutionRun } from '../../shared/planning-execution';
@@ -89,17 +89,17 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
     <span className="workflow-run-bar__phase" data-testid="workflow-run-phase">
       {run ? text(`실행 #${number} · ${workflowStateLabel(run.state, text)}`, `Run #${number} · ${workflowStateLabel(run.state, text)}`) : text('아직 실행하지 않음', 'Not run yet')}
     </span>
-    <Button size="sm" variant={launchBlocked ? 'secondary' : 'primary'} leadingIcon={<RotateCw />} disabled={!!launchBlocked} aria-describedby={launchBlocked ? why : undefined}
+    <Button size="sm" variant={launchBlocked ? 'secondary' : 'primary'} leadingIcon={<Glyph name="refresh" />} disabled={!!launchBlocked} aria-describedby={launchBlocked ? why : undefined}
       onClick={props.onLaunch} data-testid="workflow-run-again">{runs.length ? text('다시 실행', 'Run again') : text('실행', 'Run')}</Button>
     {launchBlocked && <small id={why} className="workflow-run-bar__why">{launchBlocked}</small>}
     {run && controls && <>
       {controls.cancelling && <Badge variant="warning">{text('취소 처리 중', 'Cancelling')}</Badge>}
       {controls.blocked && <Badge variant="warning">{text('멈춤 · 진행할 수 있는 단계 없음', 'Stopped · no stage can proceed')}</Badge>}
-      {props.awaiting.length > 0 && controls.approvalsOpen && <Button size="sm" variant="primary" leadingIcon={<Hand />} onClick={() => props.onJumpToNode(props.awaiting[0].nodeId)}>{text(`승인 대기 ${props.awaiting.length}`, `${props.awaiting.length} awaiting approval`)}</Button>}
-      {controls.canStart && <Button size="sm" leadingIcon={<Play />} disabled={commandsDisabled || !!going} onClick={() => command({ type: 'run.start', payload: { runId: run.runId } })}>{text('실행 시작', 'Start execution')}</Button>}
-      {controls.canPause && <Button size="sm" leadingIcon={<Pause />} disabled={commandsDisabled} onClick={() => command({ type: 'run.pause', payload: { runId: run.runId } })}>{text('일시정지', 'Pause')}</Button>}
-      {controls.canResume && <Button size="sm" leadingIcon={<Play />} disabled={commandsDisabled} onClick={() => command({ type: 'run.resume', payload: { runId: run.runId } })}>{text('계속', 'Continue')}</Button>}
-      {controls.canCancel && <Button size="sm" leadingIcon={<Square />} disabled={commandsDisabled} onClick={() => command({ type: 'run.cancel', payload: { runId: run.runId } })}>{text('실행 취소', 'Cancel execution')}</Button>}
+      {props.awaiting.length > 0 && controls.approvalsOpen && <Button size="sm" variant="primary" leadingIcon={<Glyph name="req" />} onClick={() => props.onJumpToNode(props.awaiting[0].nodeId)}>{text(`승인 대기 ${props.awaiting.length}`, `${props.awaiting.length} awaiting approval`)}</Button>}
+      {controls.canStart && <Button size="sm" leadingIcon={<Glyph name="play" />} disabled={commandsDisabled || !!going} onClick={() => command({ type: 'run.start', payload: { runId: run.runId } })}>{text('실행 시작', 'Start execution')}</Button>}
+      {controls.canPause && <Button size="sm" leadingIcon={<Glyph name="pause" />} disabled={commandsDisabled} onClick={() => command({ type: 'run.pause', payload: { runId: run.runId } })}>{text('일시정지', 'Pause')}</Button>}
+      {controls.canResume && <Button size="sm" leadingIcon={<Glyph name="play" />} disabled={commandsDisabled} onClick={() => command({ type: 'run.resume', payload: { runId: run.runId } })}>{text('계속', 'Continue')}</Button>}
+      {controls.canCancel && <Button size="sm" leadingIcon={<Glyph name="stop" />} disabled={commandsDisabled} onClick={() => command({ type: 'run.cancel', payload: { runId: run.runId } })}>{text('실행 취소', 'Cancel execution')}</Button>}
       {controls.canIntegrate && <Button size="sm" variant="primary" disabled={commandsDisabled} onClick={() => command({ type: 'run.integrate', payload: { runId: run.runId } })}>{text('검토된 결과 통합 허용', 'Allow integration of reviewed results')}</Button>}
       {run.integrationAuthorized && <Badge variant="success">{run.integrationAuthorized.by === PLANNING_AUTO_APPROVAL_PRINCIPAL ? text('통합 허용됨 · 자동 승인', 'Integration allowed · auto-approve') : text('통합 허용됨', 'Integration allowed')}</Badge>}
       {run.integrationAuthorized && props.integration && (() => {
@@ -109,8 +109,8 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
       {runs.length > 1 && <Select aria-label={text('실행 번호', 'Run number')} value={run.runId} onChange={(event) => props.onPickRun(event.target.value)}>
         {ordered.map((entry) => <option key={entry.runId} value={entry.runId}>{`#${flowRunNumber(runs, entry)} · ${workflowStateLabel(entry.state, text)}${entry.startedAt ? '' : text(' · 시작 안 함', ' · not started')} · ${new Date(entry.createdAt).toLocaleString()}`}</option>)}
       </Select>}
-      {props.onOpenResults && run.state !== 'prepared' && <Button size="sm" variant="ghost" leadingIcon={<FileSearch />} onClick={() => props.onOpenResults!(run.runId)}>{text('결과', 'Results')}</Button>}
-      {run.preparation.startedBy && props.onOpenConversation && <Button size="sm" variant="ghost" leadingIcon={<MessageSquare />} onClick={() => props.onOpenConversation!(run.preparation.startedBy!.sessionId)}>{text('시작한 대화', 'Started from')}</Button>}
+      {props.onOpenResults && run.state !== 'prepared' && <Button size="sm" variant="ghost" leadingIcon={<Glyph name="search" />} onClick={() => props.onOpenResults!(run.runId)}>{text('결과', 'Results')}</Button>}
+      {run.preparation.startedBy && props.onOpenConversation && <Button size="sm" variant="ghost" leadingIcon={<Glyph name="chat" />} onClick={() => props.onOpenConversation!(run.preparation.startedBy!.sessionId)}>{text('시작한 대화', 'Started from')}</Button>}
     </>}
     {/* 승인 and 검토 AI are saved on the subproject: runs prepared from now on use them (a run keeps its own). */}
     <span className="workflow-run-bar__group" role="group" aria-label={text('승인 단계 · 다음 실행부터', 'Approval stages · from the next run')} title={text('다음에 준비하는 실행부터 적용됩니다.', 'Applies to runs prepared from now on.')}>
@@ -192,7 +192,7 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
       : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).')
         : status?.blocked === 'unconfirmed' ? text('이 PC를 거치지 않고(프로젝트 폴더와 함께) 들어오거나 바뀐 흐름이라 아직 반복하지 않습니다. 지금 흐름 그대로 반복하려면 켜기를 누르세요.', 'This flow came or changed outside this PC (with the project folder), so it does not repeat yet. Turn it on to repeat the flow as it is now.') : null;
   return <span className="workflow-run-bar__group" role="group" aria-label={text('반복', 'Repeat')} data-testid="workflow-repeat">
-    <span className="workflow-run-bar__label"><Repeat aria-hidden="true" size={12} /> {text('반복', 'Repeat')}</span>
+    <span className="workflow-run-bar__label"><Glyph name="repeat" size={12} /> {text('반복', 'Repeat')}</span>
     <Select aria-label={text('반복', 'Repeat')} value={on ? repeat!.cadence : 'off'} disabled={disabled} data-testid="workflow-repeat-cadence"
       title={!canTurnOn && !on ? (active ? text('검토 AI를 먼저 고르세요.', 'Choose the review AI first.') : text('진행 중인 소프로젝트만 반복합니다.', 'Only an active subproject repeats.')) : undefined}
       onChange={(event) => { const value = event.target.value; if (value === 'off') { if (repeat && on) save({ enabled: false }); } else save({ cadence: value as WorkflowRepeat['cadence'], enabled: true }); }}>
@@ -216,7 +216,7 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
     {on && <small className="workflow-run-bar__why" role="status" data-testid="workflow-repeat-status">
       {!active ? text('완료되거나 보관된 소프로젝트는 반복하지 않습니다. 다시 진행하면 그때부터 반복합니다.', 'A completed or archived subproject does not repeat. It repeats again from when it is reopened.')
         : blockedText ?? (status?.nextAt ? text(`다음 실행 ${when(status.nextAt, true)}`, `Next run ${when(status.nextAt, true)}`) : text('다음 실행 시각을 계산하는 중입니다.', 'Working out the next run.'))}
-      {status?.blocked === 'automation-off' && onOpenAutomationSettings && <> <Button size="sm" variant="ghost" leadingIcon={<Settings />} onClick={onOpenAutomationSettings}>{text('설정 열기', 'Open settings')}</Button></>}
+      {status?.blocked === 'automation-off' && onOpenAutomationSettings && <> <Button size="sm" variant="ghost" leadingIcon={<Glyph name="set" />} onClick={onOpenAutomationSettings}>{text('설정 열기', 'Open settings')}</Button></>}
       {status?.blocked === 'unconfirmed' && canTurnOn && <> <Button size="sm" variant="ghost" disabled={disabled} onClick={() => save({ enabled: true })} data-testid="workflow-repeat-confirm">{text('켜기', 'Turn on')}</Button></>}
       {lastText && <><br />{text('마지막: ', 'Last: ')}{lastText}</>}
     </small>}

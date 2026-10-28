@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, GitBranch, Settings, TriangleAlert } from 'lucide-react';
+import { Glyph, glyphIcon } from '../../ui/Glyph';
 import { useState, type SyntheticEvent } from 'react';
 
 import { conversationFolderName, type ConversationFolders } from '../../../shared/conversation-folders';
@@ -82,7 +82,7 @@ export function FolderPill({ workspace, folders, choices, onEditProject }: {
   const [placement, setPlacement] = useState<'top-start' | 'top-end'>('top-start');
   const count = folders.additional.length;
   const missing = folders.missing.length;
-  const Icon = workspace.kind === 'worktree' ? GitBranch : Folder;
+  const Icon = workspace.kind === 'worktree' ? glyphIcon('wt') : glyphIcon('proj');
   const summary = copy.summary(workspace.label, count, missing);
   const place = (event: SyntheticEvent<HTMLButtonElement>): void => setPlacement(placementFor(event.currentTarget));
   return (
@@ -96,8 +96,8 @@ export function FolderPill({ workspace, folders, choices, onEditProject }: {
           <Icon aria-hidden="true" />
           <span className="chat-pill__value">{workspace.label}</span>
           {count > 0 && <span className="chat-folders__count">+{count}</span>}
-          {missing > 0 && <TriangleAlert className="chat-folders__alert" aria-hidden="true" />}
-          <ChevronDown className="chat-pill__chevron" aria-hidden="true" />
+          {missing > 0 && <Glyph name="warn" className="chat-folders__alert" />}
+          <Glyph name="down" className="chat-pill__chevron" />
         </button>
       )}
     >
@@ -114,7 +114,7 @@ export function FolderPill({ workspace, folders, choices, onEditProject }: {
               </span>
             </MenuRadioItem>
           ))}
-          {choices.onNewWorktree && <MenuItem icon={GitBranch} onSelect={choices.onNewWorktree}>{copy.newWorktree}</MenuItem>}
+          {choices.onNewWorktree && <MenuItem icon={glyphIcon('wt')} onSelect={choices.onNewWorktree}>{copy.newWorktree}</MenuItem>}
         </>
       ) : (
         <>
@@ -128,7 +128,7 @@ export function FolderPill({ workspace, folders, choices, onEditProject }: {
           {count > 0 && <MenuLabel>{copy.alsoWorksIn}</MenuLabel>}
           {folders.additional.map((folderPath) => <FolderEntry key={folderPath} folderPath={folderPath} />)}
           {missing > 0 && (
-            <MenuLabel className="chat-folders__missing"><TriangleAlert aria-hidden="true" />{copy.missing}</MenuLabel>
+            <MenuLabel className="chat-folders__missing"><Glyph name="warn" />{copy.missing}</MenuLabel>
           )}
           {folders.missing.map((folderPath) => <FolderEntry key={folderPath} folderPath={folderPath} className="chat-folders__entry--missing" />)}
           <MenuLabel className="chat-folders__note">{copy.instructions}</MenuLabel>
@@ -137,7 +137,7 @@ export function FolderPill({ workspace, folders, choices, onEditProject }: {
       {onEditProject && (
         <>
           <MenuSeparator />
-          <MenuItem icon={Settings} onSelect={onEditProject}>{copy.editProject}</MenuItem>
+          <MenuItem icon={glyphIcon('set')} onSelect={onEditProject}>{copy.editProject}</MenuItem>
         </>
       )}
     </Menu>

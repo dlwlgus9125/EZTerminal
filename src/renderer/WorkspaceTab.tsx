@@ -3,7 +3,7 @@ import {
   DockviewDefaultTab,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
-import { X } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 
 import type { AgentProvider, AgentStatus } from '../shared/agent';
 import type { AgentHistoryProvider } from '../shared/agent-history';
@@ -195,7 +195,7 @@ function AgentHistoryTab({
           requestClose(() => props.api.close());
         }}
       >
-        <X aria-hidden="true" />
+        <Glyph name="x" />
       </div>
     </div>
   );
@@ -252,7 +252,7 @@ function ProjectSessionTab({
           requestClose(() => props.api.close());
         }}
       >
-        <X aria-hidden="true" />
+        <Glyph name="x" />
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Eye, Flag, GitBranch, GitMerge, Hand, LayoutGrid, List, PanelRightClose, PanelRightOpen, PencilRuler, Plus, Save, Split, Undo2, type LucideIcon } from 'lucide-react';
+import { Glyph, glyphIcon, type GlyphIcon } from '../ui/Glyph';
 import type { ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowCommand, WorkflowNode } from '../../shared/workflow';
 import { Badge, Button, IconButton, Menu, MenuItem } from '../ui';
@@ -7,7 +7,7 @@ import { workflowOperationLabel, type WorkflowCopy } from './workflow-copy';
 
 type RunCommand = Extract<WorkflowCommand, { type: 'run.start' | 'run.pause' | 'run.resume' | 'run.approve' | 'run.cancel' | 'run.integrate' }>;
 export type WorkflowRunCommandInput<C = RunCommand> = C extends RunCommand ? Pick<C, 'type' | 'payload'> : never;
-const OPERATIONS: Array<[WorkflowNode['operation'], LucideIcon]> = [['agent', Bot], ['approval', Hand], ['condition', Split], ['parallel', Split], ['join', GitMerge], ['complete', Flag]];
+const OPERATIONS: Array<[WorkflowNode['operation'], GlyphIcon]> = [['agent', glyphIcon('bot')], ['approval', glyphIcon('req')], ['condition', glyphIcon('flow')], ['parallel', glyphIcon('flow')], ['join', glyphIcon('merge')], ['complete', glyphIcon('flag')]];
 
 export interface WorkflowCanvasHeaderProps {
   readonly text: WorkflowCopy;
@@ -45,32 +45,32 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
   const version = run?.preparation.workflow?.revision ?? '?';
   return <div className="workflow-canvas-header" data-mode={mode}>
     {mode === 'run-view' && run && <div className="workflow-canvas-header__banner" role="status">
-      <Eye aria-hidden="true" /><span>{text(`실행 v${version}이 시작할 때 고정된 흐름입니다. 여기서는 편집할 수 없습니다.`, `The flow frozen when run v${version} started. It cannot be edited here.`)}</span>
-      <Button size="sm" leadingIcon={<ArrowLeft />} onClick={() => props.onRunView(false)}>{text('편집으로 돌아가기', 'Back to editing')}</Button>
+      <Glyph name="eye" /><span>{text(`실행 v${version}이 시작할 때 고정된 흐름입니다. 여기서는 편집할 수 없습니다.`, `The flow frozen when run v${version} started. It cannot be edited here.`)}</span>
+      <Button size="sm" leadingIcon={<Glyph name="back" />} onClick={() => props.onRunView(false)}>{text('편집으로 돌아가기', 'Back to editing')}</Button>
     </div>}
     <div className="workflow-canvas-header__row">
       {mode === 'run-view' ? <Badge>{text(`실행 v${version} · 읽기 전용`, `Run v${version} · read-only`)}</Badge>
         : <div className="workflow-canvas-header__group" role="group" aria-label={text('초안', 'Draft')}>
           {props.hasLocalDraft ? <Badge variant="warning">{text('미저장 변경', 'Unsaved changes')}</Badge> : <Badge>{`${text('흐름', 'Flow')} v${props.revision}`}</Badge>}
           {props.hasLocalDraft && <>
-            <Button size="sm" variant="primary" leadingIcon={<Save />} disabled={editLocked || commandsDisabled} onClick={props.onSaveDraft}>{text('초안 저장', 'Save draft')}</Button>
-            <Button size="sm" leadingIcon={<Undo2 />} disabled={editLocked} onClick={props.onDiscardDraft}>{text('변경 취소', 'Discard changes')}</Button>
+            <Button size="sm" variant="primary" leadingIcon={<Glyph name="save" />} disabled={editLocked || commandsDisabled} onClick={props.onSaveDraft}>{text('초안 저장', 'Save draft')}</Button>
+            <Button size="sm" leadingIcon={<Glyph name="undo" />} disabled={editLocked} onClick={props.onDiscardDraft}>{text('변경 취소', 'Discard changes')}</Button>
           </>}
-          <Button size="sm" variant="ghost" leadingIcon={<PencilRuler />} aria-pressed={props.structure} disabled={editLocked} onClick={() => props.onStructureChange(!props.structure)} data-testid="workflow-structure-toggle">
+          <Button size="sm" variant="ghost" leadingIcon={<Glyph name="edit" />} aria-pressed={props.structure} disabled={editLocked} onClick={() => props.onStructureChange(!props.structure)} data-testid="workflow-structure-toggle">
             {props.structure ? text('흐름 편집 끝', 'Done editing the flow') : text('흐름 편집', 'Edit the flow')}
           </Button>
-          {props.structure && <Menu label={text('추가할 단계 종류', 'New stage type')} trigger={<Button size="sm" leadingIcon={<Plus />} disabled={editLocked}>{text('단계 추가', 'Add stage')}</Button>}>
+          {props.structure && <Menu label={text('추가할 단계 종류', 'New stage type')} trigger={<Button size="sm" leadingIcon={<Glyph name="plus" />} disabled={editLocked}>{text('단계 추가', 'Add stage')}</Button>}>
             {OPERATIONS.map(([operation, icon]) => <MenuItem key={operation} icon={icon} onSelect={() => props.onAddStage(operation)}>{workflowOperationLabel(operation, text)}</MenuItem>)}
           </Menu>}
-          {props.diverged && <Button size="sm" leadingIcon={<GitBranch />} onClick={() => props.onRunView(true)}>{ended ? text('최근 실행 보기', 'View last run') : text('진행 중인 실행 보기', 'View running run')}</Button>}
+          {props.diverged && <Button size="sm" leadingIcon={<Glyph name="wt" />} onClick={() => props.onRunView(true)}>{ended ? text('최근 실행 보기', 'View last run') : text('진행 중인 실행 보기', 'View running run')}</Button>}
         </div>}
       <div className="workflow-canvas-header__view" role="group" aria-label={text('흐름 보기', 'Workflow view')}>
-        <IconButton icon={GitBranch} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
-        <IconButton icon={List} aria-pressed={props.layout === 'list'} aria-label={text('목록', 'List')} onClick={() => props.onLayoutChange('list')} />
-        {props.panelToggle && <IconButton icon={props.panelToggle.open ? PanelRightClose : PanelRightOpen} aria-expanded={props.panelToggle.open} aria-controls={props.panelToggle.controls}
+        <IconButton icon={glyphIcon('wt')} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
+        <IconButton icon={glyphIcon('list')} aria-pressed={props.layout === 'list'} aria-label={text('목록', 'List')} onClick={() => props.onLayoutChange('list')} />
+        {props.panelToggle && <IconButton icon={props.panelToggle.open ? glyphIcon('panelClose') : glyphIcon('panelOpen')} aria-expanded={props.panelToggle.open} aria-controls={props.panelToggle.controls}
           aria-label={props.panelToggle.open ? text('단계 패널 접기', 'Hide stage panel') : text('단계 패널 펼치기', 'Show stage panel')} onClick={props.panelToggle.onToggle} />}
       </div>
     </div>
-    {props.overlapping && props.structure && mode !== 'run-view' && props.layout === 'graph' && <p className="workflow-canvas-header__overlap" role="status"><span>{text('겹쳐 있는 단계가 있습니다.', 'Some stages overlap.')}</span><Button size="sm" leadingIcon={<LayoutGrid />} disabled={editLocked} onClick={props.onAutoLayout}>{text('자동 정렬', 'Tidy layout')}</Button></p>}
+    {props.overlapping && props.structure && mode !== 'run-view' && props.layout === 'graph' && <p className="workflow-canvas-header__overlap" role="status"><span>{text('겹쳐 있는 단계가 있습니다.', 'Some stages overlap.')}</span><Button size="sm" leadingIcon={<Glyph name="grid" />} disabled={editLocked} onClick={props.onAutoLayout}>{text('자동 정렬', 'Tidy layout')}</Button></p>}
   </div>;
 }

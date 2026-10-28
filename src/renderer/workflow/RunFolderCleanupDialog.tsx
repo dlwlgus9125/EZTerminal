@@ -1,4 +1,4 @@
-import { FolderX } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useState } from 'react';
 
 import type { CleanedFolderEntry, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan, RunRetentionAccess } from '../../shared/run-retention';
@@ -83,7 +83,7 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
   };
   const kind = (value: RunFolderPlan['kind']) => (value === 'attempt' ? text('단계 작업 폴더', 'Stage work folder')
     : value === 'validation' ? text('검증 폴더', 'Validation folder') : text('통합 폴더', 'Integration folder'));
-  return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }} dismissible={!busy} size="lg" icon={<FolderX aria-hidden="true" />}
+  return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }} dismissible={!busy} size="lg" icon={<Glyph name="trash" />}
     title={text('작업 폴더 정리', 'Clean up work folders')} closeLabel={text('닫기', 'Close')}
     description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리하고, 폴더가 모두 정리된 실행이 만든 기획 기준본도 지웁니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
       'Each flow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up, and the planning baselines of runs whose folders are all gone go too. Results, changes and stage conversations stay readable afterwards.')}

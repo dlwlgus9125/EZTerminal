@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { SquareTerminal } from 'lucide-react';
+import { glyphIcon } from './ui/Glyph';
 import type { AgentTranscriptPage } from '../shared/agent-history';
 import type { ConversationEntry } from '../shared/conversation-history';
 import type { ChatStateScope, ChatStateSnapshot } from '../shared/chat-state';
@@ -371,7 +371,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
                 onClick={() => void onReviewChange(entry, turn.id, path).catch(reason => setError(String(reason)))}>{path}</Button>) : []))}
           </details>}
       </>}
-      menuItems={entry?.historyId && onContinueCli ? [{ label: text('터미널에서 이어가기', 'Continue in terminal'), icon: SquareTerminal, disabled: busy || disconnected,
+      menuItems={entry?.historyId && onContinueCli ? [{ label: text('터미널에서 이어가기', 'Continue in terminal'), icon: glyphIcon('term'), disabled: busy || disconnected,
         onSelect: () => void onContinueCli(entry).catch(reason => setError(String(reason))) }] : []}
     />
   </div>;

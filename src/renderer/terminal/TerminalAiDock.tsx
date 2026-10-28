@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { useEffect, useMemo, useRef } from 'react';
 
 import type { ChatAttachment } from '../../shared/chat-message';
@@ -107,7 +107,7 @@ function TerminalChips({ controller, view }: { readonly controller: ChatRecovery
             </details>
             <button type="button" className="terminal-ai-chip__remove" aria-label={t('terminalAi.removeChip', { name: chip.name })}
               onClick={() => remove(chip.id)} data-testid="terminal-ai-chip-remove">
-              <X aria-hidden="true" size={14} />
+              <Glyph name="x" size={14} />
             </button>
           </li>
         ))}

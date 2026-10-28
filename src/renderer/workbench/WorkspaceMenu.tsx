@@ -1,4 +1,4 @@
-import { Columns2, Rows2, Save, Star, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from '../ui/Glyph';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { useAppTranslation } from '../i18n';
@@ -52,10 +52,10 @@ export function WorkspaceMenu({
       {leading}
       <div className="workspace-menu-section">
         <div className="workspace-menu-label">{t('workspace.split')}</div>
-        <Button leadingIcon={<Columns2 />} variant="ghost" onClick={onSplitRight} data-testid="btn-split-right">
+        <Button leadingIcon={<Glyph name="cols" />} variant="ghost" onClick={onSplitRight} data-testid="btn-split-right">
           {t('workspace.splitRight')}
         </Button>
-        <Button leadingIcon={<Rows2 />} variant="ghost" onClick={onSplitDown} data-testid="btn-split-down">
+        <Button leadingIcon={<Glyph name="rows" />} variant="ghost" onClick={onSplitDown} data-testid="btn-split-down">
           {t('workspace.splitBelow')}
         </Button>
       </div>
@@ -73,7 +73,7 @@ export function WorkspaceMenu({
               {name}
             </button>
             <IconButton
-              icon={Star}
+              icon={glyphIcon('star')}
               aria-label={startupPreset === name
                 ? t('workspace.stopAtStartup', { name })
                 : t('workspace.startAtStartup', { name })}
@@ -82,7 +82,7 @@ export function WorkspaceMenu({
               data-testid={`preset-star-${name}`}
             />
             <IconButton
-              icon={Trash2}
+              icon={glyphIcon('trash')}
               aria-label={t('workspace.deletePreset', { name })}
               variant="danger"
               onClick={() => onDelete(name)}
@@ -101,12 +101,12 @@ export function WorkspaceMenu({
               autoFocus
               data-testid="preset-name-input"
             />
-            <Button leadingIcon={<Save />} onClick={save} disabled={!nameDraft.trim()} data-testid="preset-save-confirm">
+            <Button leadingIcon={<Glyph name="save" />} onClick={save} disabled={!nameDraft.trim()} data-testid="preset-save-confirm">
               {t('common.save')}
             </Button>
           </div>
         ) : (
-          <Button leadingIcon={<Save />} variant="ghost" onClick={() => onSetSaving(true)} data-testid="btn-save-preset">
+          <Button leadingIcon={<Glyph name="save" />} variant="ghost" onClick={() => onSetSaving(true)} data-testid="btn-save-preset">
             {t('workspace.saveCurrent')}
           </Button>
         )}

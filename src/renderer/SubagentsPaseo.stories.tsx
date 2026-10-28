@@ -15,7 +15,7 @@ import { HighlighterProvider } from './chat/markdown/HighlighterProvider';
 import claudeSubagentApproval from './chat/fixtures/claude-subagent-approval.json';
 import claudeSubagents from './chat/fixtures/claude-subagents.json';
 import { Button, IconButton } from './ui';
-import { GitMerge, MessageSquarePlus, FileDiff } from 'lucide-react';
+import { glyphIcon } from './ui/Glyph';
 import './index.css';
 import './structured-agent.css';
 
@@ -244,9 +244,9 @@ function TreeStory({ workspaces, expandParent }: { readonly workspaces: readonly
       <div style={{ width: 340, height: 640, display: 'flex', flexDirection: 'column' }} className="project-navigation-story__navigation">
         <ProjectConversationTree nodes={nodes} persistenceScope={scope} onOpen={fn()}
           renderWorkspaceActions={(target) => target.local ? null : <>
-            <IconButton icon={MessageSquarePlus} size="sm" variant="ghost" aria-label="이 작업 위치에서 새 대화" />
-            <IconButton icon={FileDiff} size="sm" variant="ghost" aria-label="변경 검토" />
-            <IconButton icon={GitMerge} size="sm" variant="ghost" aria-label="병합" />
+            <IconButton icon={glyphIcon('new')} size="sm" variant="ghost" aria-label="이 작업 위치에서 새 대화" />
+            <IconButton icon={glyphIcon('diff')} size="sm" variant="ghost" aria-label="변경 검토" />
+            <IconButton icon={glyphIcon('merge')} size="sm" variant="ghost" aria-label="병합" />
           </>} />
       </div>
     </AppI18nProvider>

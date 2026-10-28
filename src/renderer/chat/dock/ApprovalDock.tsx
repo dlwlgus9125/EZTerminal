@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, FileDiff, MessageCircleQuestion, NotebookPen, ShieldAlert, ShieldCheck, ShieldQuestion, SquareTerminal } from 'lucide-react';
+import { Glyph, glyphIcon, type GlyphIcon } from '../../ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
@@ -63,13 +63,13 @@ function dockTitle(pending: PendingInteraction, copy: ChatCopy): string {
   }
 }
 
-function riskIcon(kind: string | undefined): typeof ShieldAlert {
+function riskIcon(kind: string | undefined): GlyphIcon {
   switch (kind) {
-    case 'command': return SquareTerminal;
-    case 'file-change': return FileDiff;
-    case 'question': return MessageCircleQuestion;
-    case 'plan': return NotebookPen;
-    default: return ShieldQuestion;
+    case 'command': return glyphIcon('term');
+    case 'file-change': return glyphIcon('diff');
+    case 'question': return glyphIcon('q');
+    case 'plan': return glyphIcon('edit');
+    default: return glyphIcon('q');
   }
 }
 
@@ -211,7 +211,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
       {canRespond && access && (
         <div className="chat-dock__plan-access">
           <span>{copy.approval.planAccess}</span>
-          <SettingPill label={copy.approval.planAccess} icon={access.level === 'full-access' ? ShieldAlert : ShieldCheck} value={access.level}
+          <SettingPill label={copy.approval.planAccess} icon={access.level === 'full-access' ? glyphIcon('warn') : glyphIcon('ok')} value={access.level}
             options={ACCESS_LEVELS.map((level) => ({ value: level, label: levels[level].label, description: levels[level].hint }))}
             disabled={disabled || busy} onChange={access.onChange} testId="chat-dock-plan-access" />
         </div>
@@ -263,7 +263,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
         <span className="chat-dock__title">{request?.subagent ? `${request.subagent.title} · ${title}` : title}</span>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-link-button" onClick={() => onCollapsedChange(false)}>
-          <ChevronUp aria-hidden="true" />{copy.approval.expand}
+          <Glyph name="up" />{copy.approval.expand}
         </button>
       </div>
     );
@@ -306,7 +306,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
         </div>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>
-          <ChevronDown aria-hidden="true" />
+          <Glyph name="down" />
         </button>
       </header>
       {body}
@@ -373,10 +373,10 @@ export function ProposedPlanDock({ markdown, access, disabled = false, onApprove
   if (collapsed) {
     return (
       <div className="chat-dock chat-dock--collapsed" data-risk="read">
-        <NotebookPen aria-hidden="true" />
+        <Glyph name="edit" />
         <span className="chat-dock__title">{copy.approval.planTitle}</span>
         <button type="button" className="chat-link-button" onClick={() => onCollapsedChange(false)}>
-          <ChevronUp aria-hidden="true" />{copy.approval.expand}
+          <Glyph name="up" />{copy.approval.expand}
         </button>
       </div>
     );
@@ -384,10 +384,10 @@ export function ProposedPlanDock({ markdown, access, disabled = false, onApprove
   return (
     <section className="chat-dock" data-risk="read" aria-label={copy.approval.planTitle} role="region" data-testid="chat-dock-proposed-plan" onKeyDown={(event) => foldOnEscape(event, onCollapsedChange)}>
       <header className="chat-dock__header">
-        <NotebookPen aria-hidden="true" />
+        <Glyph name="edit" />
         <div className="chat-dock__heading"><p className="chat-dock__title">{copy.approval.planTitle}</p></div>
         <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>
-          <ChevronDown aria-hidden="true" />
+          <Glyph name="down" />
         </button>
       </header>
       <PlanBody markdown={markdown} />

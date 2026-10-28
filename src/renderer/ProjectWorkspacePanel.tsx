@@ -1,18 +1,4 @@
-import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  ChevronsUp,
-  GitBranch,
-  GitCommitHorizontal,
-  Map as MapIcon,
-  MessageSquarePlus,
-  RefreshCw,
-  Search,
-  Settings,
-  ShieldCheck,
-  SquareTerminal,
-} from 'lucide-react';
+import { Glyph, glyphIcon } from './ui/Glyph';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import type { AgentProjectSummary } from '../shared/agent-history';
@@ -429,7 +415,7 @@ function ProjectCodeTree({
     <div className="project-code-view">
       <div className="project-view-tools">
         <label className="project-search-control">
-          <Search aria-hidden="true" size={14} />
+          <Glyph name="search" size={14} />
           <DeferredSearchInput
             type="text"
             value={state.query}
@@ -453,12 +439,12 @@ function ProjectCodeTree({
           <option value="content">{t('projectWorkbench.content')}</option>
         </select>
         <IconButton
-          icon={ChevronsUp}
+          icon={glyphIcon('up')}
           aria-label={t('projectWorkbench.collapseAll')}
           onClick={() => updateState({ expandedPaths: ['__root__'] })}
         />
         <IconButton
-          icon={RefreshCw}
+          icon={glyphIcon('refresh')}
           aria-label={t('projectWorkbench.refresh')}
           onClick={() => {
             directoryGenerationRef.current += 1;
@@ -568,8 +554,8 @@ function ProjectCodeTree({
                 >
                   {entry.kind === 'directory'
                     ? isExpanded
-                      ? <ChevronDown aria-hidden="true" size={14} />
-                      : <ChevronRight aria-hidden="true" size={14} />
+                      ? <Glyph name="down" size={14} />
+                      : <Glyph name="next" size={14} />
                     : <span className="project-tree__spacer" />}
                   <FileSystemEntryIcon
                     name={entry.name}
@@ -697,7 +683,7 @@ export function ProjectWorkspacePanel({
         <header className="project-workspace__header">
           {onBack && (
             <IconButton
-              icon={ArrowLeft}
+              icon={glyphIcon('back')}
               aria-label={t('projectWorkbench.backToProjects')}
               onClick={onBack}
             />
@@ -721,7 +707,7 @@ export function ProjectWorkspacePanel({
       <header className="project-workspace__header">
         {onBack && (
           <IconButton
-            icon={ArrowLeft}
+            icon={glyphIcon('back')}
             aria-label={t('projectWorkbench.backToProjects')}
             onClick={onBack}
             data-testid="project-workspace-back"
@@ -734,7 +720,7 @@ export function ProjectWorkspacePanel({
           </small>
         </div>
         <IconButton
-          icon={SquareTerminal}
+          icon={glyphIcon('term')}
           aria-label={t('header.newTerminal')}
           disabled={newSessionDisabled || !workspace || workspace.access !== 'granted'}
           title={newSessionDisabled ? newSessionDisabledReason : undefined}
@@ -748,13 +734,13 @@ export function ProjectWorkspacePanel({
           }}
           data-testid="project-workspace-new-session"
         />
-        {onNewAgent && <IconButton icon={MessageSquarePlus} aria-label={t('agentHub.newAgentRun')}
+        {onNewAgent && <IconButton icon={glyphIcon('new')} aria-label={t('agentHub.newAgentRun')}
           disabled={!workspace || workspace.access !== 'granted'}
           onClick={() => {
             if (workspace?.access === 'granted') onNewAgent({ projectId: project.projectId, rootId: workspace.rootId, workspaceId: workspace.workspaceId }, workspace.displayPath);
           }} data-testid="project-workspace-new-agent" />}
         <IconButton
-          icon={MapIcon}
+          icon={glyphIcon('map')}
           aria-label={t('projectMap.open', 'Open Project Map')}
           disabled={!workspace || workspace.access !== 'granted' || !onOpenProjectMap}
           onClick={() => {
@@ -768,7 +754,7 @@ export function ProjectWorkspacePanel({
           data-testid="project-workspace-open-map"
         />
         <IconButton
-          icon={Settings}
+          icon={glyphIcon('set')}
           aria-label={t('agentHub.projects.manage', { name: project.name })}
           onClick={onManage}
         />
@@ -825,7 +811,7 @@ export function ProjectWorkspacePanel({
       <div className="project-workspace__content">
         {!workspace || workspace.access !== 'granted' ? (
           <div className="project-workspace__authorization">
-            <ShieldCheck aria-hidden="true" />
+            <Glyph name="ok" />
             <strong>{t('projectWorkbench.externalWorktree')}</strong>
             <p>{t('projectWorkbench.externalWorktreeDescription')}</p>
             {workspace && (
@@ -877,12 +863,12 @@ export function ProjectWorkspacePanel({
         )}
       >
         <div className="project-workspace-approval__identity">
-          <GitBranch aria-hidden="true" />
+          <Glyph name="wt" />
           <strong>{approvalTarget?.branch || approvalTarget?.name}</strong>
           <code>{approvalTarget?.displayPath}</code>
           {approvalTarget?.head && (
             <small>
-              <GitCommitHorizontal aria-hidden="true" /> {approvalTarget.head.slice(0, 12)}
+              <Glyph name="commit" /> {approvalTarget.head.slice(0, 12)}
             </small>
           )}
         </div>

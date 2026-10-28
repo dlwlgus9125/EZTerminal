@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ChevronUp, ListChecks } from 'lucide-react';
+import { Glyph } from '../../ui/Glyph';
 
 import type { TodoItem } from '../../../shared/transcript-payload';
 import { useChatCopy } from '../copy';
@@ -19,10 +19,10 @@ export function TaskDock({ items }: { readonly items: readonly TodoItem[] }): JS
     return (
       <section className="chat-task-dock" aria-label={copy.tasks}>
         <button type="button" className="chat-task-dock__header" onClick={() => openResults('summary')} data-testid="chat-task-dock-open-results">
-          <ListChecks aria-hidden="true" />
+          <Glyph name="list" />
           <span className="chat-task-dock__progress">{copy.tasksProgress(done, items.length)}</span>
           {current && <span className="chat-task-dock__current">{current.active ?? current.text}</span>}
-          <ChevronRight aria-hidden="true" />
+          <Glyph name="next" />
         </button>
       </section>
     );
@@ -30,10 +30,10 @@ export function TaskDock({ items }: { readonly items: readonly TodoItem[] }): JS
   return (
     <section className="chat-task-dock" aria-label={copy.tasks}>
       <button type="button" className="chat-task-dock__header" aria-expanded={open} onClick={() => context.setExpanded('task-dock', !open)}>
-        <ListChecks aria-hidden="true" />
+        <Glyph name="list" />
         <span className="chat-task-dock__progress">{copy.tasksProgress(done, items.length)}</span>
         {current && <span className="chat-task-dock__current">{current.active ?? current.text}</span>}
-        {open ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+        {open ? <Glyph name="down" /> : <Glyph name="up" />}
       </button>
       {open && <TodoList items={items} />}
     </section>

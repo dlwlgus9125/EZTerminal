@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { memo, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { classifyDirectAgentCommand } from '../shared/agent-command';
@@ -124,8 +124,8 @@ export const Block = memo(function Block({
           data-testid="block-toggle"
         >
           {collapsed
-            ? <ChevronRight aria-hidden="true" size={14} />
-            : <ChevronDown aria-hidden="true" size={14} />}
+            ? <Glyph name="next" size={14} />
+            : <Glyph name="down" size={14} />}
         </button>
         <span className="prompt-sigil" aria-hidden="true">
           &gt;
@@ -202,7 +202,7 @@ export const Block = memo(function Block({
             aria-label={t('block.dismiss')}
             data-testid="block-dismiss"
           >
-            <X aria-hidden="true" size={16} />
+            <Glyph name="x" size={16} />
           </button>
         )}
       </header>

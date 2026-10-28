@@ -1,4 +1,4 @@
-import { ShieldAlert } from 'lucide-react';
+import { Glyph } from './ui/Glyph';
 import { useId } from 'react';
 
 import type { DaemonAuthoritySafeModeAvailability } from '../shared/daemon-authority';
@@ -25,7 +25,7 @@ export function DaemonSafeModeNotice({
       aria-live="polite"
       aria-labelledby={titleId}
     >
-      <ShieldAlert aria-hidden="true" />
+      <Glyph name="warn" />
       <div>
         <h3 id={titleId}>{t('agentHub.daemonSafeMode.title')}</h3>
         <p>{t('agentHub.daemonSafeMode.terminalAvailable')}</p>

@@ -1,4 +1,4 @@
-import { LoaderCircle, RotateCcw, Square, ArrowUp, Trash2, X } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import {
   useContext,
   useEffect,
@@ -75,7 +75,7 @@ function SideQuestionThreadView({ thread, copy, disabledReason, inputRef }: {
               <p>{entry.question}</p>
             </div>
             {entry.status === 'pending' && (
-              <p className="side-question__pending"><LoaderCircle className="chat-spin" aria-hidden="true" />{copy.pending}</p>
+              <p className="side-question__pending"><Glyph name="spin" className="chat-spin" />{copy.pending}</p>
             )}
             {entry.status === 'answered' && (entry.answer
               ? <div className="side-question__answer chat-assistant" data-synthetic={entry.synthetic || undefined}>
@@ -87,7 +87,7 @@ function SideQuestionThreadView({ thread, copy, disabledReason, inputRef }: {
               <div className="side-question__error" role={entry.errorCode === 'cancelled' ? undefined : 'alert'}>
                 <p>{copy.errors[entry.errorCode ?? 'failed']}</p>
                 {entry.errorCode !== 'cancelled' && entry.errorCode !== 'invalid' && !disabledReason && !thread.pending && (
-                  <Button type="button" variant="ghost" size="sm" leadingIcon={<RotateCcw />} onClick={() => thread.ask(entry.question)}>{copy.retry}</Button>
+                  <Button type="button" variant="ghost" size="sm" leadingIcon={<Glyph name="refresh" />} onClick={() => thread.ask(entry.question)}>{copy.retry}</Button>
                 )}
               </div>
             )}
@@ -118,11 +118,11 @@ function SideQuestionThreadView({ thread, copy, disabledReason, inputRef }: {
         />
         {thread.pending ? (
           <button type="button" className="chat-composer__send" data-kind="stop" aria-label={copy.stop} title={copy.stop} onClick={thread.cancel} data-testid="side-question-stop">
-            <Square aria-hidden="true" />
+            <Glyph name="stop" />
           </button>
         ) : (
           <button type="submit" className="chat-composer__send" disabled={Boolean(disabledReason) || !text.trim()} aria-label={copy.send} title={copy.send} data-testid="side-question-send">
-            <ArrowUp aria-hidden="true" />
+            <Glyph name="send" />
           </button>
         )}
       </form>
@@ -258,10 +258,10 @@ function SideQuestionWindow({ ko, thread, onClose, disabledReason, returnFocusRe
         </div>
         <button type="button" className="chat-icon-action" aria-label={copy.clear} title={copy.clear}
           disabled={thread.entries.length === 0} onClick={thread.clear} data-testid="side-question-clear">
-          <Trash2 aria-hidden="true" />
+          <Glyph name="trash" />
         </button>
         <button type="button" className="chat-icon-action" aria-label={copy.close} title={`${copy.close} (Esc)`} onClick={onClose} data-testid="side-question-close">
-          <X aria-hidden="true" />
+          <Glyph name="x" />
         </button>
       </header>
       <SideQuestionThreadView thread={thread} copy={copy} disabledReason={disabledReason} inputRef={inputRef} />
@@ -279,7 +279,7 @@ function SideQuestionSheet({ ko, thread, onClose, disabledReason, returnFocusRef
       <p className="side-question__subtitle">{copy.subtitle}</p>
       <SideQuestionThreadView thread={thread} copy={copy} disabledReason={disabledReason} inputRef={inputRef} />
       {thread.entries.length > 0 && (
-        <Button type="button" variant="ghost" size="sm" leadingIcon={<Trash2 />} onClick={thread.clear} data-testid="side-question-clear">{copy.clear}</Button>
+        <Button type="button" variant="ghost" size="sm" leadingIcon={<Glyph name="trash" />} onClick={thread.clear} data-testid="side-question-clear">{copy.clear}</Button>
       )}
     </div>
   );

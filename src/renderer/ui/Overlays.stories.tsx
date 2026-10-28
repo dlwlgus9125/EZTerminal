@@ -1,4 +1,4 @@
-import { RefreshCw, Settings } from 'lucide-react';
+import { Glyph } from './Glyph';
 import { useRef, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
@@ -122,7 +122,7 @@ export const PanelDefault: Story = {
         title="System status"
         description="Updated a few seconds ago"
         actions={<Badge variant="success">Live</Badge>}
-        footer={<Button leadingIcon={<RefreshCw />}>Refresh</Button>}
+        footer={<Button leadingIcon={<Glyph name="refresh" />}>Refresh</Button>}
         onClose={() => undefined}
       >
         <div className="ez-story-stack" style={{ inlineSize: 'auto' }}>
@@ -155,7 +155,7 @@ export const PanelWithIconAction: Story = {
     <div style={{ blockSize: '14rem', inlineSize: '22rem' }}>
       <PanelShell
         title="Settings"
-        actions={<Button size="sm" variant="ghost" leadingIcon={<Settings />}>Advanced</Button>}
+        actions={<Button size="sm" variant="ghost" leadingIcon={<Glyph name="set" />}>Advanced</Button>}
       >
         <p className="ez-story-note">PanelShell keeps headings, actions, body scrolling, and footer placement consistent.</p>
       </PanelShell>

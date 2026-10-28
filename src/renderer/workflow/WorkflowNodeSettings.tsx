@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { Glyph, glyphIcon } from '../ui/Glyph';
 import type { WorkflowEdge, WorkflowGraph, WorkflowNode } from '../../shared/workflow-graph';
 import { workflowOutcomePorts } from '../../shared/workflow-graph';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
@@ -55,15 +55,15 @@ export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, o
         <Select aria-label={text('연결 조건', 'Connection outcome')} value={edge.outcome} disabled={readOnly} onChange={event => updateEdge(edge.id, { outcome: event.target.value as WorkflowEdge['outcome'] })}>{[...new Set([...ports, edge.outcome])].map(outcome => <option key={outcome} value={outcome}>{workflowOutcomeLabel(outcome, text)}</option>)}</Select>
         <Select aria-label={text('다음 단계', 'Next stage')} value={edge.to} disabled={readOnly} onChange={event => updateEdge(edge.id, { to: event.target.value })}>{graph.nodes.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</Select>
         <Input aria-label={text('연결 반복 한도', 'Connection retry limit')} type="number" min="0" max="20" value={edge.retryLimit ?? ''} readOnly={readOnly} onChange={event => updateEdge(edge.id, { retryLimit: event.target.value ? Number(event.target.value) : undefined })} />
-        <IconButton aria-label={text('연결 삭제', 'Remove connection')} icon={Trash2} disabled={readOnly} onClick={() => onChange({ ...graph, edges: graph.edges.filter(item => item.id !== edge.id) })} />
+        <IconButton aria-label={text('연결 삭제', 'Remove connection')} icon={glyphIcon('trash')} disabled={readOnly} onClick={() => onChange({ ...graph, edges: graph.edges.filter(item => item.id !== edge.id) })} />
       </div>)}
-      {!readOnly && ports.length > 0 && <Button onClick={() => { const target = others[0]; if (target) onChange({ ...graph, edges: [...graph.edges, { id: `edge-${crypto.randomUUID()}`, from: node.id, to: target.id, outcome: ports[0] }] }); }} disabled={others.length === 0} leadingIcon={<Plus />}>{text('연결 추가', 'Add connection')}</Button>}
+      {!readOnly && ports.length > 0 && <Button onClick={() => { const target = others[0]; if (target) onChange({ ...graph, edges: [...graph.edges, { id: `edge-${crypto.randomUUID()}`, from: node.id, to: target.id, outcome: ports[0] }] }); }} disabled={others.length === 0} leadingIcon={<Glyph name="plus" />}>{text('연결 추가', 'Add connection')}</Button>}
     </fieldset>
     {!readOnly && <div className="workflow-inline">
       <Button disabled={graph.entryNodeId === node.id} onClick={() => onChange({ ...graph, entryNodeId: node.id })}>{text('시작점으로 지정', 'Set as entry')}</Button>
-      {onMove && <><IconButton icon={ArrowUp} aria-label={text('화면에서 위로 이동', 'Move up on canvas')} onClick={() => onMove(node.id, -140)} /><IconButton icon={ArrowDown} aria-label={text('화면에서 아래로 이동', 'Move down on canvas')} onClick={() => onMove(node.id, 140)} /></>}
+      {onMove && <><IconButton icon={glyphIcon('up')} aria-label={text('화면에서 위로 이동', 'Move up on canvas')} onClick={() => onMove(node.id, -140)} /><IconButton icon={glyphIcon('down')} aria-label={text('화면에서 아래로 이동', 'Move down on canvas')} onClick={() => onMove(node.id, 140)} /></>}
     </div>}
-    {!readOnly && onRequestDelete && <Button variant="danger" leadingIcon={<Trash2 />} onClick={() => onRequestDelete(node.id)}>{text('단계 삭제', 'Delete stage')}</Button>}
+    {!readOnly && onRequestDelete && <Button variant="danger" leadingIcon={<Glyph name="trash" />} onClick={() => onRequestDelete(node.id)}>{text('단계 삭제', 'Delete stage')}</Button>}
   </div>;
 }
 
@@ -81,6 +81,6 @@ export function WorkflowEdgeInspector({ graph, edge, text, readOnly, taken, onCh
     <Field label={text('연결 조건', 'Connection outcome')}><Select value={edge.outcome} disabled={readOnly} onChange={event => update({ outcome: event.target.value as WorkflowEdge['outcome'] })}>{[...new Set([...(source ? workflowOutcomePorts(source.operation) : []), edge.outcome])].map(outcome => <option key={outcome} value={outcome}>{workflowOutcomeLabel(outcome, text)}</option>)}</Select></Field>
     <Field label={text('다음 단계', 'Next stage')}><Select value={edge.to} disabled={readOnly} onChange={event => update({ to: event.target.value })}>{graph.nodes.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</Select></Field>
     <Field label={text('재시도 한도', 'Retry limit')} description={text('실패·거절로 앞 단계로 돌아가는 연결에만 씁니다.', 'Only for a failure or rejection that returns to an earlier stage.')}><Input type="number" min="0" max="20" value={edge.retryLimit ?? ''} readOnly={readOnly} onChange={event => update({ retryLimit: event.target.value ? Number(event.target.value) : undefined })} /></Field>
-    {!readOnly && <Button variant="danger" leadingIcon={<Trash2 />} onClick={() => onChange({ ...graph, edges: graph.edges.filter(item => item.id !== edge.id) })}>{text('연결 삭제', 'Remove connection')}</Button>}
+    {!readOnly && <Button variant="danger" leadingIcon={<Glyph name="trash" />} onClick={() => onChange({ ...graph, edges: graph.edges.filter(item => item.id !== edge.id) })}>{text('연결 삭제', 'Remove connection')}</Button>}
   </div>;
 }

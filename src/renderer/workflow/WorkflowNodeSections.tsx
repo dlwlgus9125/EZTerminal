@@ -1,4 +1,4 @@
-import { FileSearch, MessageSquare, MessageSquarePlus, ScanSearch } from 'lucide-react';
+import { Glyph } from '../ui/Glyph';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowNode } from '../../shared/workflow-graph';
 import { Badge, Button, Status } from '../ui';
@@ -17,8 +17,8 @@ export function WorkflowStageSection({ node, text, readOnly, archived = false, l
   return <div className="workflow-stage">
     {archived && <p role="status">{text('삭제된 단계의 기록입니다. 문서와 대화는 보관되어 있습니다.', 'This is a deleted stage. Its document and conversations remain in history.')}</p>}
     <label className="workflow-field">{text('단계 문서', 'Stage document')}<textarea rows={10} value={node.document} readOnly={readOnly || archived} onChange={event => onDocumentChange(event.target.value)} /></label>
-    <div className="workflow-toolbar"><h3>{text('이 단계의 대화', 'Conversations in this stage')}</h3><Button leadingIcon={<MessageSquarePlus />} disabled={readOnly || archived || !canStartChat} onClick={onStartChat}>{text('새 단계 대화', 'New stage conversation')}</Button></div>
-    {links.length > 0 ? <ul className="workflow-items">{links.map(link => <li key={link.sessionId}><Button variant="ghost" leadingIcon={<MessageSquare />} onClick={() => onOpenConversation?.(link.sessionId)}>{link.title}</Button><small>v{link.graphRevision}</small></li>)}</ul>
+    <div className="workflow-toolbar"><h3>{text('이 단계의 대화', 'Conversations in this stage')}</h3><Button leadingIcon={<Glyph name="new" />} disabled={readOnly || archived || !canStartChat} onClick={onStartChat}>{text('새 단계 대화', 'New stage conversation')}</Button></div>
+    {links.length > 0 ? <ul className="workflow-items">{links.map(link => <li key={link.sessionId}><Button variant="ghost" leadingIcon={<Glyph name="chat" />} onClick={() => onOpenConversation?.(link.sessionId)}>{link.title}</Button><small>v{link.graphRevision}</small></li>)}</ul>
       : <p className="workflow-hint">{text('아직 대화가 없습니다. 문서를 작성하거나 이 단계에서 대화를 시작하세요.', 'No conversations yet. Write the document or start a conversation in this stage.')}</p>}
   </div>;
 }
@@ -65,9 +65,9 @@ export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled
           {attempt.summary && <p>{attempt.summary}</p>}
           {reviews.map(review => <p key={review.reviewId} className="workflow-hint">{review.decision === 'approve' ? text('독립 검토: 통과', 'Independent review: passed') : text('독립 검토: 거절', 'Independent review: rejected')}{review.detail ? ` — ${review.detail}` : ''}</p>)}
           <div className="workflow-inline">
-            <Button leadingIcon={<MessageSquare />} onClick={() => onOpenConversation?.(attempt.sessionId)}>{text('작업 대화 열기', 'Open task conversation')}</Button>
-            {reviews.map(review => <Button key={review.reviewId} variant="ghost" leadingIcon={<ScanSearch />} onClick={() => onOpenConversation?.(review.reviewerSessionId)}>{text('검토 대화 열기', 'Open review conversation')}</Button>)}
-            {onOpenAttemptResult && attempt.state !== 'running' && <Button variant="ghost" leadingIcon={<FileSearch />} onClick={() => onOpenAttemptResult(attempt.attemptId)}>{text('결과 상세', 'Result details')}</Button>}
+            <Button leadingIcon={<Glyph name="chat" />} onClick={() => onOpenConversation?.(attempt.sessionId)}>{text('작업 대화 열기', 'Open task conversation')}</Button>
+            {reviews.map(review => <Button key={review.reviewId} variant="ghost" leadingIcon={<Glyph name="search" />} onClick={() => onOpenConversation?.(review.reviewerSessionId)}>{text('검토 대화 열기', 'Open review conversation')}</Button>)}
+            {onOpenAttemptResult && attempt.state !== 'running' && <Button variant="ghost" leadingIcon={<Glyph name="search" />} onClick={() => onOpenAttemptResult(attempt.attemptId)}>{text('결과 상세', 'Result details')}</Button>}
           </div>
         </li>;
       })}</ol>

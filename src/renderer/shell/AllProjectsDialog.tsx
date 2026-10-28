@@ -1,4 +1,3 @@
-import { MoreHorizontal, Pin, PinOff, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 
 import type { AgentProjectSummary } from '../../shared/agent-history';
@@ -6,7 +5,7 @@ import { DeferredSearchInput } from '../DeferredSearchInput';
 import { formatCwd } from '../format-cwd';
 import { useAppTranslation } from '../i18n';
 import type { ProjectRegistryAccess } from '../ProjectDialogs';
-import { Button, Dialog, EmptyState, ErrorState, Field, Glyph, IconButton, LoadingState, Menu, MenuItem } from '../ui';
+import { Button, Dialog, EmptyState, ErrorState, Field, Glyph, glyphIcon, IconButton, LoadingState, Menu, MenuItem } from '../ui';
 import { useShellText } from './shell-text';
 import './project-dialogs.css';
 
@@ -113,7 +112,7 @@ export function AllProjectsDialog({ access, reloadKey, onClose, onOpen, onAdd, o
       className="ez-project-dialog"
       testId="all-projects-dialog"
       footer={onAdd && (
-        <Button variant="primary" leadingIcon={<Plus aria-hidden="true" />} onClick={onAdd} data-testid="all-projects-add">
+        <Button variant="primary" leadingIcon={<Glyph name="plus" />} onClick={onAdd} data-testid="all-projects-add">
           {t('agentHub.projects.add')}
         </Button>
       )}
@@ -166,7 +165,7 @@ export function AllProjectsDialog({ access, reloadKey, onClose, onOpen, onAdd, o
                     </span>
                   </button>
                   <IconButton
-                    icon={project.pinned ? PinOff : Pin}
+                    icon={project.pinned ? glyphIcon('unpin') : glyphIcon('pin')}
                     aria-label={`${project.pinned ? t('agentHub.projects.unpin') : t('agentHub.projects.pin')}: ${project.name}`}
                     disabled={pinning !== null}
                     onClick={() => void togglePin(project)}
@@ -175,7 +174,7 @@ export function AllProjectsDialog({ access, reloadKey, onClose, onOpen, onAdd, o
                   <Menu
                     label={manage}
                     placement={menuPlacement}
-                    trigger={<IconButton icon={MoreHorizontal} aria-label={manage} onClick={placeMenu} />}
+                    trigger={<IconButton icon={glyphIcon('more')} aria-label={manage} onClick={placeMenu} />}
                   >
                     <MenuItem onSelect={() => onEdit(project)}>{t('agentHub.projects.edit')}</MenuItem>
                     <MenuItem onSelect={() => onCliHistory(project)}>{text('CLI 기록', 'CLI history')}</MenuItem>
