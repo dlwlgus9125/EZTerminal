@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DaemonStore } from './daemon-store';
 import { PlanningExecutionStore } from './planning-execution-store';
 import { PlanningService } from './planning-service';
+import { seedPlanning } from './planning-seed.fixture';
 import { ProjectArchiveService } from './project-archive-service';
 import { archiveHash, archiveObjectHash, decodeArchiveEntry, parseArchiveJson, redactArchiveValue, verifyArchive } from './project-archive-package';
 import { createDaemonCommand } from '../shared/daemon-protocol';
@@ -39,13 +40,8 @@ async function fixture({ shortUserData = false } = {}) {
   ] });
   await store.appendTranscriptBatch([{ id: 'M', sessionId: 'S', sequence: 1, kind: 'assistant-message', text: 'Useful history; Bearer token-123456789012345', isDelta: false, isSensitive: false, createdAt: NOW }]);
   const planning = new PlanningService({ resolveProjectRoot: id => store.getSnapshot().projects.find(project => project.id === id)?.rootPath });
-  const added = await planning.execute({ commandId: 'asset', projectId: 'P', expectedRevision: 0, actor: { kind: 'user', id: 'user' }, type: 'planning.patch',
-    payload: { summary: 'Add asset', operations: [
-      { op: 'item.put', value: { id: 'requirement', revision: 0, title: 'Preserve records', kind: 'requirement', body: 'Keep complete history', status: 'ready', acceptance: ['History remains accessible'] } },
-      { op: 'asset.put', value: { id: 'asset', revision: 0, title: 'Owned text', relativePath: 'asset.txt', hash: archiveHash(assetBytes), mimeType: 'text/plain', byteLength: assetBytes.length } },
-    ] } });
-  expect(added.ok).toBe(true);
-  expect(await planning.execute({ commandId: 'freeze', projectId: 'P', expectedRevision: 1, actor: { kind: 'user', id: 'user' }, type: 'planning.freeze', payload: { baselineId: 'B', title: 'Frozen' } })).toMatchObject({ ok: true });
+  await seedPlanning(planning, 'P', { items: [{ id: 'requirement', revision: 0, title: 'Preserve records', kind: 'requirement', body: 'Keep complete history', status: 'ready', acceptance: ['History remains accessible'] }], assets: [{ id: 'asset', revision: 0, title: 'Owned text', relativePath: 'asset.txt', hash: archiveHash(assetBytes), mimeType: 'text/plain', byteLength: assetBytes.length }] },
+    { baselines: [{ id: 'B', title: 'Frozen' }] });
   const ledger = new PlanningExecutionStore(store);
   const register = vi.fn(async ({ projectId, name, rootPath }: { projectId: string; name: string; rootPath: string }) => {
     const existing = store.getSnapshot().projects.find(project => project.id === projectId);
@@ -75,8 +71,7 @@ describe('project archive authority', () => {
     const user = { kind: 'desktop' as const, id: 'test' }; const common = { projectId: 'P', hostId: 'host' };
     for (const [index, id] of ['one', 'two'].entries()) {
       expect(await workflows.execute({ ...common, expectedRevision: index, commandId: `create-${id}`, type: 'subproject.create', payload: { id, title: id, goal: '', presetId: 'research' } }, user)).toMatchObject({ ok: true });
-      expect(await f.planning.execute({ projectId: 'P', subprojectId: id, commandId: `plan-${id}`, expectedRevision: 0, actor: { kind: 'user', id: 'test' }, type: 'planning.patch', payload: { summary: id,
-        operations: [{ op: 'item.put', value: { id: 'same-item-id', revision: 0, title: id, body: `${id} private document`, kind: 'requirement', status: 'ready', acceptance: [] } }] } })).toMatchObject({ ok: true });
+      await seedPlanning(f.planning, 'P', { items: [{ id: 'same-item-id', revision: 0, title: id, body: `${id} private document`, kind: 'requirement', status: 'ready', acceptance: [] }] }, { subprojectId: id });
     }
     await workflows.execute({ ...common, expectedRevision: 0, commandId: 'link', subprojectId: 'one', type: 'session.link', payload: { sessionId: 'active', nodeId: 'one:research', scope: 'stage' } }, user);
     const service = new ProjectArchiveService({ ...f.options, workflows }); const target = path.join(f.directory, 'multi.json');

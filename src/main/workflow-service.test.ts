@@ -5,6 +5,8 @@ import path from 'node:path';
 import { WorkflowService, launchIntentDigest, repeatContentDigest, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
 import { repeatConfigDigest } from './workflow-repeat-time';
 import { PlanningService } from './planning-service';
+import { seedPlanning } from './planning-seed.fixture';
+import type { TaskDefinition } from '../shared/planning';
 import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
 import { legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
 
@@ -23,7 +25,7 @@ afterEach(async () => { vi.restoreAllMocks(); await fs.rm(directory, { recursive
 
 describe('workflow authority and storage', () => {
   it('keeps an unmigrated legacy registry stable across reads and host restarts', async () => {
-    await planning.execute({ projectId: 'project', commandId: 'legacy', actor: { kind: 'user', id: 'u' }, expectedRevision: 0, type: 'planning.patch', payload: { summary: 'legacy', operations: [{ op: 'item.put', value: { id: 'item', revision: 0, title: 'old', kind: 'requirement', body: 'record', status: 'ready', acceptance: [] } }] } });
+    await seedPlanning(planning, 'project', { items: [{ id: 'item', revision: 0, title: 'old', kind: 'requirement', body: 'record', status: 'ready', acceptance: [] }] });
     const options = { hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined };
     const earlier = new WorkflowService({ ...options, now: () => new Date('2026-10-13T00:00:00.000Z') });
     const later = new WorkflowService({ ...options, now: () => new Date('2026-10-14T00:00:00.000Z') });
@@ -48,19 +50,23 @@ describe('workflow authority and storage', () => {
     await expect(fs.stat(path.join(directory, '.ezterminal', 'planning', 'workflows.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
   it('maps legacy planning without changing source bytes, baselines or receipts and keeps quick tasks unowned', async () => {
-    await planning.execute({ projectId: 'project', commandId: 'legacy', actor: { kind: 'user', id: 'u' }, expectedRevision: 0, type: 'planning.patch', payload: { summary: 'legacy', operations: [{ op: 'item.put', value: { id: 'item', revision: 0, title: 'old', kind: 'requirement', body: 'record', status: 'ready', acceptance: [] } }] } });
-    await planning.execute({ projectId: 'project', commandId: 'legacy-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 1, type: 'planning.freeze', payload: { baselineId: 'old-baseline', title: 'Old baseline' } });
+    const quickTask: TaskDefinition = { id: 'quick-task', revision: 0, title: 'Quick', objective: 'Check one thing', featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [], allowedPaths: [], interfaceRefs: [], acceptance: [{ id: 'ac', description: 'Checked' }], validationPlan: [{ id: 'v', acceptanceIds: ['ac'], description: 'Inspect', method: 'inspection', environment: 'Host' }], status: 'ready' };
+    await seedPlanning(planning, 'project', { items: [{ id: 'item', revision: 0, title: 'old', kind: 'requirement', body: 'record', status: 'ready', acceptance: [] }] }, { baselines: [
+      { id: 'old-baseline', title: 'Old baseline' },
+      { id: 'quick', title: 'Quick', purpose: 'quick-task', draft: { tasks: [quickTask] } },
+    ] });
     const source = path.join(directory, '.ezterminal', 'planning', 'project.json'); const before = await fs.readFile(source);
     const migrated = await snapshot(); expect(migrated.subprojects[0].id).toBe('legacy-default');
     expect((await service.execute(create('a'), user)).ok).toBe(true);
     expect(await fs.readFile(source)).toEqual(before);
     expect((await fs.readdir(path.dirname(source))).filter(name => name.includes('workflow-backup')).length).toBe(1);
     expect(migrated.legacyBaselineOwners['old-baseline']).toBe('legacy-default');
-    expect(await planning.execute({ projectId: 'project', commandId: 'legacy-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 1, type: 'planning.freeze', payload: { baselineId: 'old-baseline', title: 'Old baseline' } })).toMatchObject({ ok: true, duplicate: true });
-    await planning.execute({ projectId: 'project', commandId: 'later-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 2, type: 'planning.freeze', payload: { baselineId: 'later-baseline', title: 'Later baseline' } });
+    expect(migrated.legacyBaselineOwners.quick).toBeNull();
+    // The old planning screen's edits are refused (I5); a legacy-default flow run still adds its baseline to the root file.
+    expect(await planning.execute({ projectId: 'project', commandId: 'later-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 3, type: 'planning.freeze', payload: { baselineId: 'later-baseline', title: 'Later baseline' } })).toMatchObject({ ok: false, error: 'unavailable' });
+    const empty = { id: 'draft-1', items: [], links: [], scenes: [], components: [], profiles: [], tasks: [], assets: [] };
+    expect((await planning.captureWorkflowBaseline('project', 'legacy-default', 'later-baseline', 'Later baseline', empty)).ok).toBe(true);
     expect((await snapshot()).legacyBaselineOwners['later-baseline']).toBe('legacy-default');
-    await planning.execute({ projectId: 'project', commandId: 'quick-freeze', actor: { kind: 'user', id: 'u' }, expectedRevision: 3, type: 'planning.quick-freeze', payload: { baselineId: 'quick', title: 'Quick', profileIds: [], task: { id: 'quick-task', revision: 0, title: 'Quick', objective: 'Check one thing', featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [], allowedPaths: [], interfaceRefs: [], acceptance: [{ id: 'ac', description: 'Checked' }], validationPlan: [{ id: 'v', acceptanceIds: ['ac'], description: 'Inspect', method: 'inspection', environment: 'Host' }], status: 'ready' } } });
-    expect((await snapshot()).legacyBaselineOwners.quick).toBeNull();
   });
   it('isolates revisions across subprojects, serializes same-draft conflicts and replays exact commands', async () => {
     const a = create('a'); expect((await service.execute(a, user)).ok).toBe(true);
@@ -130,7 +136,7 @@ describe('workflow authority and storage', () => {
   });
   it('copies graph identities and planning documents without sessions, history or execution authority', async () => {
     await service.execute(create('a'), user);
-    await planning.execute({ projectId: 'project', subprojectId: 'a', commandId: 'doc', actor: { kind: 'user', id: 'u' }, expectedRevision: 0, type: 'planning.patch', payload: { summary: 'source', operations: [{ op: 'item.put', value: { id: 'item', revision: 0, title: 'Source', kind: 'requirement', body: 'document', status: 'draft', acceptance: [] } }] } });
+    await seedPlanning(planning, 'project', { items: [{ id: 'item', revision: 0, title: 'Source', kind: 'requirement', body: 'document', status: 'draft', acceptance: [] }] }, { subprojectId: 'a' });
     const command: WorkflowCommand = { ...base, commandId: 'copy', subprojectId: 'a', type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } };
     expect(await service.execute(command, user)).toMatchObject({ ok: true });
     expect(await service.execute(command, user)).toMatchObject({ ok: true, duplicate: true });

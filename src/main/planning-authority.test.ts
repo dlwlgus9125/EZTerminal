@@ -31,16 +31,14 @@ function command(): PlanningCommand {
 }
 
 describe('transport-independent planning authority', () => {
-  it('replaces caller identity and exposes the same durable revision to both clients', async () => {
-    const { authority } = await fixture();
-    const result = await authority.execute(command(), 'android:device-1');
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.message);
-    expect(result.snapshot.history.at(-1)?.actor).toEqual({ kind: 'user', id: 'android:device-1' });
-    const desktop = await authority.read('project');
-    expect(desktop).toEqual({ ok: true, snapshot: result.snapshot });
-    const replay = await authority.execute(command(), 'android:device-1');
-    expect(replay).toMatchObject({ ok: true, duplicate: true, revision: result.revision });
+  it('replaces caller identity and hands an older phone edit to the store, which refuses it and changes nothing', async () => {
+    // I5: planning edits belonged to the removed planning screen; only an older phone still sends them.
+    const { service, ingress, available } = await fixture();
+    const execute = vi.spyOn(service, 'execute');
+    const authority = new PlanningAuthority({ service, ingress, available, ready: Promise.resolve() });
+    expect(await authority.execute(command(), 'android:device-1')).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(execute.mock.calls[0]![0]).toMatchObject({ actor: { kind: 'user', id: 'android:device-1' } });
+    expect(await authority.read('project')).toMatchObject({ ok: true, snapshot: { revision: 0, history: [] } });
   });
 
   it('does not mutate after shutdown admission closes or authority becomes unavailable', async () => {
@@ -66,7 +64,7 @@ describe('transport-independent planning authority', () => {
     await Promise.resolve();
     expect(drained).toBe(false);
     release();
-    expect(await pending).toMatchObject({ ok: true });
+    expect(await pending).toMatchObject({ ok: false, error: 'unavailable' });
     await drain;
     expect(drained).toBe(true);
   });

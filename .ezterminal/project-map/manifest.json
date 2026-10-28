@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:104c761e43eff3cc0849acbbe3fe738ff37285ba110a6eb408f6317c15310f52",
+        "inputDigest": "sha256:b783e9ec9f2a1868b95a36fa1da2de306259ce762050416189f5fe8a5f18a4b7",
         "decision": "map-updated",
-        "reason": "I5-10: the planning AI (tool-free proposals) and planning drafts are gone from the PC; their node, edges and chapter are removed, and device recovery now cites the flow graph store beside chat state. Execution, results and archive are unchanged."
+        "reason": "I5-10b: planning edits are refused (the planning screen is gone); the store keeps reads, restore imports and flow-run baselines. Its node cites capture and restore, the ingress edge now reads and refuses, the writer moved."
       }
     },
     {

@@ -8,31 +8,23 @@ import {
   PlanningMutationResultSchema,
   PlanningReadResultSchema,
   type PlanningCommand,
+  type PlanningDraft,
   type PlanningItem,
-  type PlanningMutationResult,
-  type PlanningOperation,
-  type PlanningRoleProfile,
-  type PlanningSnapshot,
   type TaskDefinition,
-  type SceneElement,
-  type ScreenScene,
 } from '../shared/planning';
+import { seedPlanning, type SeedBaseline, type SeedDraft } from './planning-seed.fixture';
 import { PlanningService } from './planning-service';
 
 let root: string;
 let service: PlanningService;
-let counter: number;
 const actor = { kind: 'user', id: 'desktop' } as const;
 const now = () => new Date('2026-10-13T04:00:00.000Z');
 const filePath = () => path.join(root, '.ezterminal', 'planning', 'project.json');
 const createService = () => new PlanningService({ resolveProjectRoot: (id) => id === 'project-1' ? root : null, now });
+const EMPTY: PlanningDraft = { id: 'draft-1', items: [], links: [], scenes: [], components: [], profiles: [], tasks: [], assets: [] };
 const item = (id = 'requirement-1', overrides: Partial<PlanningItem> = {}): PlanningItem => ({
   id, revision: 0, title: 'Preserve terminal sessions', kind: 'requirement', body: 'Use the existing PTY authority.',
   status: 'ready', acceptance: ['Switching chat skin preserves the terminal.'], ...overrides,
-});
-const profile = (overrides: Partial<PlanningRoleProfile> = {}): PlanningRoleProfile => ({
-  id: 'planner', revision: 0, title: 'Planning', role: 'planning', instructions: 'Plan within the authorized namespace.',
-  contextRefs: [], allowedTools: ['planning.read', 'planning.patch'], retryLimit: 2, ...overrides,
 });
 const task = (id: string, overrides: Partial<TaskDefinition> = {}): TaskDefinition => ({
   id, revision: 0, title: id, objective: 'Implement the reviewed design.', featureIds: [], screenIds: [],
@@ -41,28 +33,15 @@ const task = (id: string, overrides: Partial<TaskDefinition> = {}): TaskDefiniti
   validationPlan: [{ id: `${id}-check`, acceptanceIds: [`${id}-acceptance`], method: 'command', command: 'pnpm test', description: 'Run checks', environment: 'Windows' }],
   status: 'ready', ...overrides,
 });
-const element = (id: string, overrides: Partial<SceneElement> = {}): SceneElement => ({
-  id, kind: 'button', parentId: null, order: 0, properties: { text: 'Send' }, stateIds: [],
-  layout: { direction: 'column', width: 'fill', height: 'hug', gap: 8, padding: 8, overflow: 'visible' }, ...overrides,
-});
-const scene = (overrides: Partial<ScreenScene> = {}): ScreenScene => ({
-  id: 'chat-scene', revision: 0, title: 'Chat', platform: 'windows', width: 1440, height: 900,
-  featureIds: [], elements: [element('send')], states: [{ id: 'default', title: 'Default', kind: 'default' }],
-  transitions: [], status: 'ready', ...overrides,
-});
-function patch(expectedRevision: number, operations: PlanningOperation[], commandId = `edit-${++counter}`): PlanningCommand {
-  return { commandId, projectId: 'project-1', expectedRevision, actor, type: 'planning.patch', payload: { operations, summary: 'Edit planning' } };
-}
-function accepted(result: PlanningMutationResult): PlanningSnapshot {
-  expect(PlanningMutationResultSchema.safeParse(result).success).toBe(true);
-  if (!result.ok) throw new Error(`${result.error}: ${result.message} ${result.issues?.join(', ')}`);
-  return result.snapshot;
-}
+const edits: PlanningCommand[] = [
+  { commandId: 'edit', projectId: 'project-1', expectedRevision: 1, actor, type: 'planning.patch', payload: { summary: 'Edit', operations: [{ op: 'item.put', value: item('new') }] } },
+  { commandId: 'freeze', projectId: 'project-1', expectedRevision: 1, actor, type: 'planning.freeze', payload: { baselineId: 'frozen', title: 'Frozen' } },
+  { commandId: 'quick', projectId: 'project-1', expectedRevision: 1, actor, type: 'planning.quick-freeze', payload: { baselineId: 'quick', title: 'Quick', task: task('quick'), profileIds: [] } },
+];
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-planning-'));
   service = createService();
-  counter = 0;
 });
 afterEach(async () => {
   await service.flush();
@@ -71,35 +50,6 @@ afterEach(async () => {
 });
 
 describe('PlanningService durable project authority', () => {
-  it('freezes selected tasks with their dependency and document closure while leaving unrelated drafts untouched', async () => {
-    const before = accepted(await service.execute(patch(0, [
-      { op: 'item.put', value: item('requirement') }, { op: 'item.put', value: item('unrelated', { status: 'draft' }) },
-      { op: 'profile.put', value: profile() },
-      { op: 'task.put', value: task('dependency', { featureIds: ['requirement'], profileId: 'planner' }) },
-      { op: 'task.put', value: task('chosen', { dependencyIds: ['dependency'] }) },
-      { op: 'task.put', value: task('unfinished', { status: 'draft' }) },
-    ])));
-    const result = accepted(await service.execute({ projectId: 'project-1', commandId: 'selected-freeze', expectedRevision: before.revision, actor, type: 'planning.freeze', payload: { baselineId: 'selected', title: 'Selected tasks', taskIds: ['chosen'] } }));
-    expect(result.draft).toEqual(before.draft);
-    expect(result.baselines[0].draft.tasks.map(value => value.id)).toEqual(['dependency', 'chosen']);
-    expect(result.baselines[0].draft.items.map(value => value.id)).toEqual(['requirement']);
-    expect(result.baselines[0].draft.profiles.map(value => value.id)).toEqual(['planner']);
-  });
-  it('freezes a reviewed quick task independently of unfinished planning and preserves the editable draft', async () => {
-    const before = accepted(await service.execute(patch(0, [
-      { op: 'item.put', value: item('unfinished', { status: 'draft' }) },
-      { op: 'profile.put', value: profile() },
-    ])));
-    const command: PlanningCommand = { commandId: 'quick', projectId: 'project-1', expectedRevision: before.revision, actor,
-      type: 'planning.quick-freeze', payload: { baselineId: 'quick-baseline', title: 'Small task', task: task('quick-task'), profileIds: ['planner'] } };
-    const after = accepted(await service.execute(command));
-    expect(after.draft).toEqual(before.draft);
-    expect(after.baselines[0]).toMatchObject({ purpose: 'quick-task', draft: { items: [], tasks: [{ id: 'quick-task' }], profiles: [{ id: 'planner' }] } });
-    expect(await createService().execute(command)).toMatchObject({ ok: true, duplicate: true });
-    expect(await service.execute({ ...command, commandId: 'ai-quick', expectedRevision: after.revision, actor: { kind: 'ai', id: 'agent' } }))
-      .toMatchObject({ ok: false, error: 'forbidden' });
-  });
-
   it('reads a legacy project without creating planning files or touching terminal data', async () => {
     await fs.writeFile(path.join(root, 'terminal-state'), 'existing');
     const result = await service.read('project-1');
@@ -109,157 +59,34 @@ describe('PlanningService durable project authority', () => {
     expect(await service.read('unknown')).toMatchObject({ ok: false, error: 'not-found' });
   });
 
-  it('commits typed edits and idempotency receipts together and survives a host restart', async () => {
-    const command = patch(0, [{ op: 'item.put', value: item() }], 'first-edit');
-    const result = await service.execute(command);
-    const snapshot = accepted(result);
-    expect(snapshot.revision).toBe(1);
-    expect(snapshot.draft.items[0]?.revision).toBe(1);
-    const restarted = createService();
-    const duplicate = await restarted.execute(command);
-    expect(duplicate).toEqual({ ...result, duplicate: true });
-    expect((await fs.readdir(path.dirname(filePath())))).toEqual(['project.json']);
-    expect(await restarted.execute({ ...command, payload: { ...command.payload, summary: 'different' } })).toMatchObject({ ok: false, error: 'conflict' });
-    const persisted = JSON.parse(await fs.readFile(filePath(), 'utf8'));
-    expect(persisted.receipts).toHaveLength(1);
-    expect(persisted.snapshot.history).toHaveLength(1);
-    expect(persisted.snapshot).not.toHaveProperty('attempts');
-  });
-
-  it('serializes competing edits and preserves the winner when the other revision is stale', async () => {
-    const results = await Promise.all([
-      service.execute(patch(0, [{ op: 'item.put', value: item('first') }])),
-      service.execute(patch(0, [{ op: 'item.put', value: item('second') }])),
-    ]);
-    expect(results.filter((entry) => entry.ok)).toHaveLength(1);
-    expect(results.find((entry) => !entry.ok)).toMatchObject({ error: 'stale', revision: 1 });
-    expect(await service.read('project-1')).toMatchObject({ ok: true, snapshot: { draft: { items: [{ id: 'first' }] } } });
-  });
-
-  it('does not consume command IDs or revisions when a write fails', async () => {
-    const first = accepted(await service.execute(patch(0, [{ op: 'item.put', value: item() }])));
+  it('refuses every planning edit (the planning screen is gone) and leaves the file as it was', async () => {
+    await seedPlanning(service, 'project-1', { items: [item()] });
     const before = await fs.readFile(filePath(), 'utf8');
-    const command = patch(1, [{ op: 'item.put', value: { ...first.draft.items[0]!, title: 'Updated title' } }]);
-    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('disk failure'), { code: 'EIO' }));
-    expect(await service.execute(command)).toMatchObject({ ok: false, error: 'unavailable', revision: 1 });
+    for (const command of edits) {
+      const result = await service.execute(command);
+      expect(PlanningMutationResultSchema.safeParse(result).success).toBe(true);
+      expect(result).toMatchObject({ ok: false, error: 'unavailable', message: expect.stringContaining('Update the app') });
+    }
+    expect(await service.execute({ ...edits[0], expectedRevision: -1 })).toMatchObject({ ok: false, error: 'invalid' });
     expect(await fs.readFile(filePath(), 'utf8')).toBe(before);
-    expect(await fs.readdir(path.dirname(filePath()))).toEqual(['project.json']);
-    rename.mockRestore();
-    expect(accepted(await service.execute(command)).revision).toBe(2);
+    expect(await createService().read('project-1')).toMatchObject({ ok: true, snapshot: { revision: 1, history: [] } });
   });
 
-  it('preserves immutable baselines while branching and undoing as new revisions', async () => {
-    const initial = accepted(await service.execute(patch(0, [{ op: 'item.put', value: item() }])));
-    const frozen = accepted(await service.execute({ commandId: 'freeze', projectId: 'project-1', expectedRevision: 1, actor,
-      type: 'planning.freeze', payload: { baselineId: 'baseline-1', title: 'Approved design' } }));
-    const original = structuredClone(frozen.baselines[0]);
-    const edited = accepted(await service.execute(patch(2, [{ op: 'item.put', value: { ...initial.draft.items[0]!, body: 'New requirement.' } }], 'changed')));
-    expect(edited.baselines[0]).toEqual(original);
-    const undone = accepted(await service.execute({ commandId: 'undo', projectId: 'project-1', expectedRevision: 3, actor,
-      type: 'planning.undo', payload: { changeId: 'changed' } }));
-    expect(undone.draft.items[0]).toMatchObject({ body: item().body, revision: 4 });
-    expect(undone.history.at(-1)).toMatchObject({ undoOf: 'changed' });
-    const branch = accepted(await service.execute({ commandId: 'branch', projectId: 'project-1', expectedRevision: 4, actor,
-      type: 'planning.branch', payload: { baselineId: 'baseline-1', draftId: 'draft-2' } }));
-    expect(branch.draft).toMatchObject({ id: 'draft-2', basedOnBaselineId: 'baseline-1' });
-    expect(branch.baselines[0]).toEqual(original);
-    expect(await service.execute({ commandId: 'wrong-undo', projectId: 'project-1', expectedRevision: 5, actor,
-      type: 'planning.undo', payload: { changeId: 'changed' } })).toMatchObject({ ok: false, error: 'conflict' });
-    const reread = await createService().read('project-1');
-    expect(reread).toMatchObject({ ok: true, snapshot: { baselines: [original] } });
-  });
-
-  it('rejects deleting referenced entities unless all affected references are removed in the same bundle', async () => {
-    const draft = accepted(await service.execute(patch(0, [
-      { op: 'item.put', value: item('requirement') }, { op: 'item.put', value: item('feature', { kind: 'feature' }) },
-      { op: 'link.put', value: { id: 'link', revision: 0, fromId: 'feature', toId: 'requirement', kind: 'implements', note: '' } },
-    ])));
-    expect(draft.revision).toBe(1);
-    expect(await service.execute(patch(1, [{ op: 'entity.delete', kind: 'item', id: 'requirement' }]))).toMatchObject({ ok: false, error: 'invalid' });
-    const result = accepted(await service.execute(patch(1, [{ op: 'entity.delete', kind: 'item', id: 'requirement' }, { op: 'entity.delete', kind: 'link', id: 'link' }])));
-    expect(result.draft.items.map((entry) => entry.id)).toEqual(['feature']);
-    expect(result.draft.links).toHaveLength(0);
-  });
-
-  it('marks linked tasks and downstream dependents for review while leaving independent work alone', async () => {
-    const start = accepted(await service.execute(patch(0, [
-      { op: 'item.put', value: item('requirement') },
-      { op: 'task.put', value: task('t1', { featureIds: ['requirement'] }) },
-      { op: 'task.put', value: task('t2', { dependencyIds: ['t1'] }) },
-      { op: 'task.put', value: task('t3') },
-    ])));
-    const next = accepted(await service.execute(patch(1, [{ op: 'item.put', value: { ...start.draft.items[0]!, body: 'Changed' } }])));
-    expect(next.draft.tasks.map((entry) => [entry.id, entry.status])).toEqual([['t1', 'review-needed'], ['t2', 'review-needed'], ['t3', 'ready']]);
-    expect(await service.execute({ commandId: 'premature-freeze', projectId: 'project-1', expectedRevision: 2, actor,
-      type: 'planning.freeze', payload: { baselineId: 'baseline', title: 'Premature' } })).toMatchObject({ ok: false, error: 'invalid' });
-  });
-
-  it('rejects cyclic task graphs and incomplete validation before any disk mutation', async () => {
-    expect(await service.execute(patch(0, [
-      { op: 'task.put', value: task('t1', { dependencyIds: ['t2'] }) },
-      { op: 'task.put', value: task('t2', { dependencyIds: ['t1'] }) },
-    ]))).toMatchObject({ ok: false, error: 'invalid' });
-    expect(await service.execute(patch(0, [{ op: 'task.put', value: task('t1', { validationPlan: [] }) }]))).toMatchObject({ ok: false, error: 'invalid' });
-    expect(await fs.readdir(root)).toEqual([]);
-  });
-
-  it('keeps AI profile proposals separate until an explicit user applies the exact version', async () => {
-    const created = accepted(await service.execute(patch(0, [{ op: 'profile.put', value: profile() }])));
-    const current = created.draft.profiles[0]!;
-    const proposed = { ...current, instructions: 'Provide short decision-ready alternatives.' };
-    const proposal = accepted(await service.execute({ commandId: 'propose', projectId: 'project-1', expectedRevision: 1,
-      actor: { kind: 'ai', id: 'planner-session' }, type: 'profile.propose',
-      payload: { proposalId: 'proposal-1', profileId: current.id, baseVersion: current.revision, proposed, reason: 'Improve clarity.' } }));
-    expect(proposal.draft.profiles[0]).toEqual(current);
-    const apply = { commandId: 'apply', projectId: 'project-1', expectedRevision: 2, actor,
-      type: 'profile.apply', payload: { proposalId: 'proposal-1' } } as const;
-    expect(await service.execute({ ...apply, actor: { kind: 'ai', id: 'planner-session' } })).toMatchObject({ ok: false, error: 'forbidden' });
-    const applied = accepted(await service.execute(apply));
-    expect(applied.draft.profiles[0]).toMatchObject({ instructions: proposed.instructions, revision: 3 });
-    expect(applied.profileProposals[0]?.status).toBe('applied');
-  });
-
-  it('rejects planning execution permissions and AI direct profile edits', async () => {
-    expect(await service.execute(patch(0, [{ op: 'profile.put', value: profile({ allowedTools: ['terminal.execute'] }) }]))).toMatchObject({ ok: false, error: 'invalid' });
-    expect(await service.execute({ ...patch(0, [{ op: 'profile.put', value: profile() }]), actor: { kind: 'ai', id: 'agent' } })).toMatchObject({ ok: false, error: 'forbidden' });
-    expect(await service.execute({ ...patch(0, [{ op: 'item.put', value: item() }]), payload: { operations: [{ op: 'runtime.put', value: {} }], summary: 'Invalid runtime persistence' } })).toMatchObject({ ok: false, error: 'invalid' });
-  });
-
-  it('marks an AI profile proposal stale after a user changes its base version', async () => {
-    const start = accepted(await service.execute(patch(0, [{ op: 'profile.put', value: profile() }])));
-    const current = start.draft.profiles[0]!;
-    accepted(await service.execute({ commandId: 'proposal', projectId: 'project-1', expectedRevision: 1,
-      actor: { kind: 'ai', id: 'agent' }, type: 'profile.propose',
-      payload: { proposalId: 'p1', profileId: current.id, baseVersion: current.revision,
-        proposed: { ...current, instructions: 'AI proposal' }, reason: 'Clarify instructions.' } }));
-    const edited = accepted(await service.execute(patch(2, [{ op: 'profile.put', value: { ...current, instructions: 'User edit' } }])));
-    expect(edited.profileProposals[0]?.status).toBe('stale');
-    expect(await service.execute({ commandId: 'apply-stale', projectId: 'project-1', expectedRevision: 3, actor,
-      type: 'profile.apply', payload: { proposalId: 'p1' } })).toMatchObject({ ok: false, error: 'stale' });
-    expect(await createService().read('project-1')).toMatchObject({ ok: true, snapshot: { draft: { profiles: [{ instructions: 'User edit' }] } } });
-  });
-
-  it('retains stale draft references for review but refuses to freeze them', async () => {
-    accepted(await service.execute(patch(0, [{ op: 'item.put', value: item('source') }])));
-    const withTask = accepted(await service.execute(patch(1, [{ op: 'task.put', value: task('consumer', {
-      inputRefs: [{ id: 'source', kind: 'item', revision: 1 }],
-    }) }])));
-    const changed = accepted(await service.execute(patch(2, [{ op: 'item.put', value: { ...withTask.draft.items[0]!, body: 'New source' } }])));
-    expect(changed.draft.tasks[0]).toMatchObject({ status: 'review-needed', inputRefs: [{ revision: 1 }] });
-    const reviewed = accepted(await service.execute(patch(3, [{ op: 'task.put', value: { ...changed.draft.tasks[0]!, status: 'ready' } }])));
-    expect(await service.execute({ commandId: 'freeze-stale-ref', projectId: 'project-1', expectedRevision: 4, actor,
-      type: 'planning.freeze', payload: { baselineId: 'base', title: 'Base' } })).toMatchObject({ ok: false, error: 'invalid' });
-    expect(accepted(await service.execute(patch(4, [{ op: 'task.put', value: {
-      ...reviewed.draft.tasks[0]!, inputRefs: [{ id: 'source', kind: 'item', revision: 3 }],
-    } }]))).revision).toBe(5);
-    expect(accepted(await service.execute({ commandId: 'freeze-current-ref', projectId: 'project-1', expectedRevision: 5, actor,
-      type: 'planning.freeze', payload: { baselineId: 'base', title: 'Base' } })).baselines).toHaveLength(1);
+  it('restores into a new project only, and checks every baseline against its draft', async () => {
+    const seeded = await seedPlanning(service, 'project-1', { items: [item()] }, { baselines: [{ id: 'base', title: 'Base' }] });
+    expect(await service.importSnapshot('project-1', seeded)).toMatchObject({ ok: false, error: 'conflict' });
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-planning-restore-'));
+    try {
+      const restore = new PlanningService({ resolveProjectRoot: (id) => id === 'project-2' ? other : null, now });
+      const broken = structuredClone(seeded);
+      broken.baselines[0]!.draft.items[0]!.body = 'Changed baseline';
+      expect(await restore.importSnapshot('project-2', broken)).toMatchObject({ ok: false, error: 'invalid' });
+      expect(await restore.importSnapshot('project-2', seeded)).toMatchObject({ ok: true, snapshot: { projectId: 'project-2', baselines: [{ id: 'base' }] } });
+    } finally { await fs.rm(other, { recursive: true, force: true }); }
   });
 
   it('rejects tampered baseline data and preserves the original bytes for recovery', async () => {
-    accepted(await service.execute(patch(0, [{ op: 'item.put', value: item() }])));
-    accepted(await service.execute({ commandId: 'freeze-for-integrity', projectId: 'project-1', expectedRevision: 1, actor,
-      type: 'planning.freeze', payload: { baselineId: 'base', title: 'Base' } }));
+    await seedPlanning(service, 'project-1', { items: [item()] }, { baselines: [{ id: 'base', title: 'Base' }] });
     const stored = JSON.parse(await fs.readFile(filePath(), 'utf8'));
     stored.snapshot.baselines[0].draft.items[0].body = 'Changed baseline';
     const tampered = JSON.stringify(stored);
@@ -269,16 +96,16 @@ describe('PlanningService durable project authority', () => {
   });
 
   it('preserves malformed or externally edited files instead of quarantining or replacing them', async () => {
-    accepted(await service.execute(patch(0, [{ op: 'item.put', value: item() }])));
+    await seedPlanning(service, 'project-1', { items: [item()] });
     const original = await fs.readFile(filePath(), 'utf8');
     const malformed = '{ broken but recoverable';
     await fs.writeFile(filePath(), malformed);
     expect(await service.read('project-1')).toMatchObject({ ok: false, error: 'corrupt' });
-    expect(await service.execute(patch(1, [{ op: 'item.put', value: item('new') }]))).toMatchObject({ ok: false, error: 'corrupt' });
+    expect(await service.captureWorkflowBaseline('project-1', 'legacy-default', 'run', 'Run', EMPTY)).toMatchObject({ ok: false, error: 'corrupt' });
     expect(await fs.readFile(filePath(), 'utf8')).toBe(malformed);
     await fs.writeFile(filePath(), original);
-    const external = createService();
-    accepted(await external.execute(patch(1, [{ op: 'item.put', value: item('outside') }], 'external-edit')));
+    // Another host instance writes the file (a legacy-default flow run's baseline).
+    expect((await createService().captureWorkflowBaseline('project-1', 'legacy-default', 'outside', 'Outside', EMPTY)).ok).toBe(true);
     expect(await service.read('project-1')).toMatchObject({ ok: false, error: 'external-change', message: expect.stringContaining('restart the application') });
     expect(await service.read('project-1')).toMatchObject({ ok: false, error: 'external-change' });
     expect(await createService().read('project-1')).toMatchObject({ ok: true, snapshot: { revision: 2 } });
@@ -290,73 +117,34 @@ describe('PlanningService durable project authority', () => {
       await fs.mkdir(path.join(root, '.ezterminal'));
       await fs.symlink(external, path.join(root, '.ezterminal', 'planning'), process.platform === 'win32' ? 'junction' : 'dir');
       expect(await service.read('project-1')).toMatchObject({ ok: false, error: 'forbidden' });
-      expect(await service.execute(patch(0, [{ op: 'item.put', value: item() }]))).toMatchObject({ ok: false, error: 'forbidden' });
+      expect(await service.captureWorkflowBaseline('project-1', 'legacy-default', 'run', 'Run', EMPTY)).toMatchObject({ ok: false, error: 'forbidden' });
       expect(await fs.readdir(external)).toEqual([]);
     } finally { await fs.rm(external, { recursive: true, force: true }); }
-  });
-
-  it('propagates component properties while preserving instance overrides and immutable baselines', async () => {
-    const component = { id: 'send-component', revision: 0, title: 'Send button', elements: [element('button')], allowedOverrides: ['text'] as ['text'] };
-    accepted(await service.execute(patch(0, [{ op: 'component.put', value: component }])));
-    const created = accepted(await service.execute(patch(1, [{ op: 'scene.put', value: scene({ elements: [element('send', {
-      properties: { text: '보내기' }, component: { componentId: component.id, version: 1, overrides: { text: '보내기' } },
-    })] }) }])));
-    const frozen = accepted(await service.execute({ commandId: 'scene-freeze', projectId: 'project-1', expectedRevision: 2, actor,
-      type: 'planning.freeze', payload: { baselineId: 'scene-baseline', title: 'Scene' } }));
-    const updated = accepted(await service.execute(patch(3, [{ op: 'component.put', value: {
-      ...created.draft.components[0]!, elements: [element('button', { properties: { text: 'Submit', disabled: true } })],
-    } }])));
-    expect(updated.draft.scenes[0]?.elements[0]?.properties).toEqual({ text: '보내기', disabled: true });
-    expect(updated.draft.scenes[0]?.status).toBe('review-needed');
-    expect(updated.baselines).toEqual(frozen.baselines);
-    expect(await service.execute(patch(4, [{ op: 'component.put', value: { ...updated.draft.components[0]!, allowedOverrides: [] } }]))).toMatchObject({ ok: false, error: 'conflict' });
-  });
-
-  it('propagates nested component edits atomically while keeping local overrides and frozen versions', async () => {
-    accepted(await service.execute(patch(0, [{ op: 'component.put', value: { id: 'button-component', revision: 0, title: 'Button', elements: [element('button-root')], allowedOverrides: ['text'] } }])));
-    accepted(await service.execute(patch(1, [{ op: 'component.put', value: { id: 'card-component', revision: 0, title: 'Card', allowedOverrides: [], elements: [
-      element('card-root', { kind: 'frame' }), element('nested-button', { parentId: 'card-root', properties: { text: 'Local label' }, component: { componentId: 'button-component', version: 1, overrides: { text: 'Local label' } } }),
-    ] } }])));
-    accepted(await service.execute(patch(2, [{ op: 'scene.put', value: scene({ elements: [element('card-instance', { kind: 'frame', component: { componentId: 'card-component', version: 2, overrides: {} } })] }) }])));
-    const frozen = accepted(await service.execute({ commandId: 'nested-freeze', projectId: 'project-1', expectedRevision: 3, actor, type: 'planning.freeze', payload: { baselineId: 'nested-baseline', title: 'Frozen nested design' } }));
-    const button = frozen.draft.components.find((entry) => entry.id === 'button-component')!;
-    const changed = accepted(await service.execute(patch(4, [{ op: 'component.put', value: { ...button, elements: [element('button-root', { properties: { text: 'Global label', disabled: true } })] } }])));
-    expect(changed.draft.components.find((entry) => entry.id === 'card-component')).toMatchObject({ revision: 5, elements: expect.arrayContaining([expect.objectContaining({ properties: { text: 'Local label', disabled: true }, component: { componentId: 'button-component', version: 5, overrides: { text: 'Local label' } } })]) });
-    expect(changed.draft.scenes[0]?.elements.find((entry) => entry.id === 'card-instance')?.component?.version).toBe(5);
-    expect(changed.draft.scenes[0]?.elements.find((entry) => entry.id === 'card-instance:nested-button')?.properties).toEqual({ text: 'Local label', disabled: true });
-    expect(changed.baselines).toEqual(frozen.baselines);
-    const card = changed.draft.components.find((entry) => entry.id === 'card-component')!;
-    const nextButton = changed.draft.components.find((entry) => entry.id === 'button-component')!;
-    const together = accepted(await service.execute(patch(5, [
-      { op: 'component.put', value: { ...nextButton, elements: [element('button-root', { properties: { text: 'Second global label' } })] } },
-      { op: 'component.put', value: { ...card, title: 'Manually edited card' } },
-    ])));
-    expect(together.draft.components.find((entry) => entry.id === 'card-component')).toMatchObject({ revision: 6, title: 'Manually edited card' });
-    expect(together.draft.scenes[0]?.elements.find((entry) => entry.id === 'card-instance:nested-button')?.properties.text).toBe('Local label');
-  });
-
-  it('rejects nested component cycles without changing either source or scene', async () => {
-    accepted(await service.execute(patch(0, [{ op: 'component.put', value: { id: 'a', revision: 0, title: 'A', elements: [element('a-root')], allowedOverrides: [] } }])));
-    const before = accepted(await service.execute(patch(1, [{ op: 'component.put', value: { id: 'b', revision: 0, title: 'B', elements: [element('b-root', { component: { componentId: 'a', version: 1, overrides: {} } })], allowedOverrides: [] } }])));
-    expect(await service.execute(patch(2, [{ op: 'component.put', value: { ...before.draft.components.find((entry) => entry.id === 'a')!, elements: [element('a-root', { component: { componentId: 'b', version: 2, overrides: {} } })] } }]))).toMatchObject({ ok: false, error: 'invalid' });
-    expect(await service.read('project-1')).toEqual({ ok: true, snapshot: before });
   });
 });
 
 describe('PlanningService 기획 기준본 정리 (I2-7f)', () => {
   const A = `workflow-${'a'.repeat(32)}`;
   const B = `workflow-${'b'.repeat(32)}`;
+  const RUNTIME = { kind: 'user', id: 'workflow-runtime' } as const;
   const scoped = () => new PlanningService({ resolveProjectRoot: (id) => id === 'project-1' ? root : null, now, subprojectId: 'flow-1' });
   /** Two workflow-run baselines captured the way a run does, each with a ready item. */
   async function captured(planning: PlanningService) {
     const read = await planning.read('project-1', 'flow-1'); if (!read.ok) throw new Error(read.message);
-    const empty = read.snapshot.draft;
-    const draft = { ...empty, items: [item('requirement-1')] };
+    const draft = { ...read.snapshot.draft, items: [item('requirement-1')] };
     const first = await planning.captureWorkflowBaseline('project-1', 'flow-1', A, 'Run 1', draft);
     const second = await planning.captureWorkflowBaseline('project-1', 'flow-1', B, 'Run 2', draft);
     if (!first.ok || !second.ok) throw new Error('capture failed');
     const snapshot = second.snapshot;
     return { snapshot, hash: (id: string) => snapshot.baselines.find(entry => entry.id === id)!.hash };
+  }
+  /** A flow's planning file as it can still be found: run baselines A and B beside what a person left. */
+  async function seededFlow(planning: PlanningService, subprojectId: string, draft: SeedDraft, others: readonly SeedBaseline[] = []) {
+    const runs = { items: [item('requirement-1')] };
+    const snapshot = await seedPlanning(planning, 'project-1', draft, { subprojectId, keepRevisions: true, baselines: [
+      { id: A, title: 'Run 1', draft: runs, createdBy: RUNTIME }, { id: B, title: 'Run 2', draft: runs, createdBy: RUNTIME }, ...others,
+    ] });
+    return (id: string) => snapshot.baselines.find(entry => entry.id === id)!.hash;
   }
 
   it('removes a baseline this host made for a run, keeps the rest and the file valid', async () => {
@@ -372,7 +160,7 @@ describe('PlanningService 기획 기준본 정리 (I2-7f)', () => {
     await planning.flush();
   });
 
-  it('removes nothing it cannot prove is a run’s own: another hash, another maker, another run’s, the root file', async () => {
+  it('removes nothing it cannot prove is a run’s own: another hash, another run’s, the root file', async () => {
     const planning = scoped();
     const { hash } = await captured(planning);
     expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: '0'.repeat(64) }], [])).toEqual({ ok: true, removed: [] });
@@ -382,28 +170,29 @@ describe('PlanningService 기획 기준본 정리 (I2-7f)', () => {
     expect(still.snapshot.baselines.some(entry => entry.id === A)).toBe(true);
     expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [A])).toEqual({ ok: true, removed: [] });
     expect(await planning.pruneWorkflowBaselines('project-1', 'legacy-default', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
-    // A person's frozen baseline named like a run's is not the host's to remove.
-    const current = await planning.read('project-1', 'flow-1'); if (!current.ok) throw new Error(current.message);
-    const frozen = accepted(await planning.execute({ projectId: 'project-1', subprojectId: 'flow-1', commandId: 'person-freeze', expectedRevision: current.snapshot.revision, actor, type: 'planning.quick-freeze',
-      payload: { baselineId: `workflow-${'c'.repeat(32)}`, title: 'Mine', task: task('mine'), profileIds: [] } }));
-    const mine = frozen.baselines.find(entry => entry.id === `workflow-${'c'.repeat(32)}`)!;
-    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: mine.id, hash: mine.hash }], [])).toEqual({ ok: true, removed: [] });
+    await planning.flush();
+  });
+
+  it('never removes a person’s baseline named like a run’s', async () => {
+    const planning = scoped();
+    const mine = `workflow-${'c'.repeat(32)}`;
+    const hash = await seededFlow(planning, 'flow-1', { items: [item('requirement-1')] }, [{ id: mine, title: 'Mine', purpose: 'quick-task', draft: { tasks: [task('mine')] } }]);
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: mine, hash: hash(mine) }], [])).toEqual({ ok: true, removed: [] });
     await planning.flush();
   });
 
   it('keeps a baseline the draft or a kept baseline refers to, following the chain', async () => {
     const planning = scoped();
-    const { snapshot, hash } = await captured(planning);
     const refersTo = (baselineId: string) => task('uses-run-1', { inputRefs: [{ id: 'requirement-1', kind: 'item', revision: 0, baselineId }] });
     // The draft refers to A: it stays.
-    const withRef = accepted(await planning.execute({ ...patch(snapshot.revision, [{ op: 'task.put', value: refersTo(A) }]), subprojectId: 'flow-1' }));
-    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
-    // A person's baseline frozen from that draft refers to A; the draft no longer does: A still stays, through it.
-    const frozen = accepted(await planning.execute({ projectId: 'project-1', subprojectId: 'flow-1', commandId: 'freeze-ref', expectedRevision: withRef.revision, actor, type: 'planning.freeze', payload: { baselineId: 'person-baseline', title: 'Mine', taskIds: ['uses-run-1'] } }));
-    accepted(await planning.execute({ ...patch(frozen.revision, [{ op: 'entity.delete', kind: 'task', id: 'uses-run-1' }]), subprojectId: 'flow-1' }));
-    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
+    const draftHash = await seededFlow(planning, 'flow-1', { items: [item('requirement-1')], tasks: [refersTo(A)] });
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: draftHash(A) }], [])).toEqual({ ok: true, removed: [] });
+    // A person's baseline frozen from such a draft refers to A, the draft no longer does: A still stays, through it.
+    const chainHash = await seededFlow(planning, 'flow-2', { items: [item('requirement-1')] },
+      [{ id: 'person-baseline', title: 'Mine', draft: { items: [item('requirement-1')], tasks: [refersTo(A)] } }]);
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-2', [{ id: A, hash: chainHash(A) }], [])).toEqual({ ok: true, removed: [] });
     // B nothing refers to: it goes.
-    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: B, hash: hash(B) }], [])).toEqual({ ok: true, removed: [B] });
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-2', [{ id: B, hash: chainHash(B) }], [])).toEqual({ ok: true, removed: [B] });
     await planning.flush();
   });
 

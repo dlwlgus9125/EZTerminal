@@ -9,18 +9,13 @@ import {
   PlanningCommandSchema,
   PlanningSnapshotSchema,
   validatePlanningDraft,
-  type PlanningCommand,
   type PlanningDraft,
   type PlanningError,
   type PlanningMutationResult,
-  type PlanningOperation,
   type PlanningReadResult,
   type PlanningSnapshot,
-  type PlanningComponent,
-  type ScreenScene,
 } from '../shared/planning';
 import { AsyncMutationGate } from './async-mutation-gate';
-import { selectPlanningTasks } from '../shared/planning-selection';
 
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const ReceiptSchema = z.object({
@@ -52,6 +47,8 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 function digest(value: unknown): string { return createHash('sha256').update(canonical(value)).digest('hex'); }
+/** The hash a baseline records for its draft; restore (`importSnapshot`) checks it. */
+export function planningDraftHash(draft: PlanningDraft): string { return digest(draft); }
 function clone<T>(value: T): T { return structuredClone(value); }
 function failure(error: PlanningError['error'], message: string, revision?: number, issues?: readonly string[]): PlanningError {
   return { ok: false, error, message, ...(revision !== undefined ? { revision } : {}), ...(issues ? { issues } : {}) };
@@ -131,38 +128,16 @@ export class PlanningService {
     });
   }
 
+  /**
+   * Planning edits (patch, freeze, branch, undo, profile proposals) belonged to the old planning screen, removed in
+   * I5; only an older phone still sends them. They are refused; what flows need (reads, the restore/copy import and
+   * the run baselines below) stays.
+   */
   execute(value: unknown): Promise<PlanningMutationResult> {
     const parsed = PlanningCommandSchema.safeParse(value);
     if (!parsed.success) return Promise.resolve(failure('invalid', 'The planning command is invalid.', undefined,
       parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)));
-    const command = parsed.data;
-    if (command.subprojectId && command.subprojectId !== 'legacy-default' && command.subprojectId !== this.options.subprojectId) {
-      return this.scope(command.subprojectId)!.execute(command);
-    }
-    return this.exclusive(command.projectId, async () => {
-      const loaded = await this.load(command.projectId);
-      if (!loaded.ok) return loaded;
-      const { file, target, bytesHash } = loaded;
-      const fingerprint = digest(command);
-      const existing = file.receipts.find((entry) => entry.commandId === command.commandId);
-      if (existing) {
-        if (existing.fingerprint !== fingerprint) return failure('conflict', 'This command ID already belongs to another operation.', file.snapshot.revision);
-        // Receipt identity is stable; callers receive the current read snapshot without replaying a mutation.
-        return { ok: true, commandId: existing.commandId, revision: existing.revision, changeId: existing.changeId, duplicate: true, snapshot: clone(file.snapshot) };
-      }
-      if (command.expectedRevision !== file.snapshot.revision) return failure('stale', 'Planning changed. Read the current revision before applying this edit.', file.snapshot.revision);
-      const next = this.apply(file.snapshot, command);
-      if (!next.ok) return next;
-      const receipt = { commandId: command.commandId, fingerprint, revision: next.snapshot.revision, changeId: command.commandId };
-      const nextFile = envelope(next.snapshot, [...file.receipts, receipt]);
-      try {
-        await this.write(target, nextFile, bytesHash);
-      } catch (error) {
-        if (error instanceof ExternalPlanningChange) return failure('external-change', error.message, file.snapshot.revision);
-        return failure('unavailable', 'Planning could not be saved. The previous file and unsaved edit were preserved.', file.snapshot.revision);
-      }
-      return { ok: true, commandId: command.commandId, revision: next.snapshot.revision, changeId: command.commandId, duplicate: false, snapshot: clone(next.snapshot) };
-    });
+    return Promise.resolve(failure('unavailable', 'Planning editing moved to flows in EZTerminal 2.0. Update the app on this device to work on this project.'));
   }
 
   /** Host-generated workflow baseline. Adds an immutable input without replacing the editable planning draft. */
@@ -315,227 +290,6 @@ export class PlanningService {
     }
     this.observed.set(target, bytesHash);
     return { ok: true, file, target, bytesHash };
-  }
-
-  private apply(snapshot: PlanningSnapshot, command: PlanningCommand): PlanningReadResult {
-    const next = clone(snapshot);
-    const nextRevision = snapshot.revision + 1;
-    const changed = new Set<string>();
-    let summary = command.type as string;
-    let undoOf: string | undefined;
-    if (command.actor.kind === 'ai' && command.type !== 'planning.patch' && command.type !== 'profile.propose') {
-      return failure('forbidden', 'Freezing, branching, undo and profile application require a user command.', snapshot.revision);
-    }
-    if (command.type === 'planning.patch') {
-      summary = command.payload.summary;
-      for (const operation of command.payload.operations) {
-        if (command.actor.kind === 'ai' && (operation.op === 'profile.put' || (operation.op === 'entity.delete' && operation.kind === 'profile'))) {
-          return failure('forbidden', 'AI profile changes must be proposed and explicitly applied.', snapshot.revision);
-        }
-        const error = this.applyOperation(next.draft, operation, nextRevision, changed);
-        if (error) return { ...error, revision: snapshot.revision };
-      }
-      // Explicit edits and nested component propagation share one revision.
-      const editedComponents = command.payload.operations.flatMap((operation) => operation.op === 'component.put' ? [operation.value.id] : []);
-      for (const id of editedComponents) {
-        const component = next.draft.components.find((entry) => entry.id === id);
-        if (!component) continue;
-        const error = this.propagateComponent(next.draft, component, changed, nextRevision);
-        if (error) return { ...error, revision: snapshot.revision };
-      }
-      this.markImpacted(next.draft, changed, nextRevision);
-    } else if (command.type === 'planning.quick-freeze') {
-      const { task, baselineId, title, profileIds } = command.payload;
-      if (next.baselines.some((entry) => entry.id === baselineId)) return failure('conflict', 'A baseline with this ID already exists.', snapshot.revision);
-      if (task.status !== 'ready' || !task.objective.trim() || !task.acceptance.length || !task.validationPlan.length
-        || task.dependencyIds.length || task.featureIds.length || task.screenIds.length) {
-        return failure('invalid', 'A quick task needs a reviewed objective, scope, acceptance criteria and validation, with no unresolved task dependencies.', snapshot.revision);
-      }
-      const selected = new Set([...profileIds, ...(task.profileId ? [task.profileId] : [])]);
-      for (const profileId of selected) {
-        const profile = next.draft.profiles.find((entry) => entry.id === profileId);
-        if (!profile) return failure('not-found', 'A selected quick-task profile is unavailable.', snapshot.revision);
-        if (profile.parentProfileId) selected.add(profile.parentProfileId);
-      }
-      const draft = { ...emptySnapshot(snapshot.projectId).draft, id: baselineId,
-        profiles: clone(next.draft.profiles.filter((entry) => selected.has(entry.id))), tasks: [{ ...clone(task), revision: nextRevision }] };
-      const issues = validatePlanningDraft(draft, true);
-      if (issues.length) return failure('invalid', 'Quick-task references must be self-contained or point to an existing frozen baseline.', snapshot.revision, issues);
-      next.baselines.push({ id: baselineId, title, purpose: 'quick-task', sourceRevision: snapshot.revision,
-        createdAt: this.now().toISOString(), createdBy: command.actor, hash: digest(draft), draft });
-      summary = `Prepare quick task ${title}`;
-    } else if (command.type === 'planning.freeze') {
-      if (next.baselines.some((entry) => entry.id === command.payload.baselineId)) return failure('conflict', 'A baseline with this ID already exists.', snapshot.revision);
-      let frozenDraft = next.draft;
-      try { if (command.payload.taskIds) frozenDraft = selectPlanningTasks(next.draft, command.payload.taskIds); }
-      catch (error) { return failure('invalid', error instanceof Error ? error.message : 'Invalid task selection.', snapshot.revision); }
-      const reviewable = [...frozenDraft.items, ...frozenDraft.scenes, ...frozenDraft.tasks];
-      if (reviewable.length === 0 || reviewable.some((entry) => entry.status !== 'ready')) return failure('invalid', 'Every planning item, scene and task must be reviewed before freezing.', snapshot.revision);
-      const referenceIssues = validatePlanningDraft(frozenDraft, true);
-      if (referenceIssues.length) return failure('invalid', 'Resolve stale references before freezing.', snapshot.revision, referenceIssues);
-      next.baselines.push({ id: command.payload.baselineId, title: command.payload.title, sourceRevision: snapshot.revision,
-        createdAt: this.now().toISOString(), createdBy: command.actor, hash: digest(frozenDraft), draft: clone(frozenDraft) });
-      summary = `Freeze ${command.payload.title}`;
-    } else if (command.type === 'planning.branch') {
-      const baseline = next.baselines.find((entry) => entry.id === command.payload.baselineId);
-      if (!baseline) return failure('not-found', 'The baseline does not exist.', snapshot.revision);
-      next.draft = clone(baseline.draft);
-      next.draft.id = command.payload.draftId;
-      next.draft.basedOnBaselineId = baseline.id;
-      this.reviseRestoredDraft(next.draft, nextRevision);
-      summary = `Branch ${baseline.title}`;
-    } else if (command.type === 'planning.undo') {
-      const reversible = next.history.filter((entry) => ['planning.patch', 'planning.branch', 'planning.undo', 'profile.apply'].includes(entry.type));
-      const last = reversible.at(-1);
-      if (!last || last.id !== command.payload.changeId) return failure('conflict', 'Only the latest edit bundle can be undone. Later edits will not be overwritten.', snapshot.revision);
-      next.draft = clone(last.before);
-      this.reviseRestoredDraft(next.draft, nextRevision);
-      undoOf = last.id;
-      summary = `Undo ${last.summary}`;
-    } else if (command.type === 'profile.propose') {
-      const current = next.draft.profiles.find((entry) => entry.id === command.payload.profileId);
-      if (!current) return failure('not-found', 'The profile does not exist.', snapshot.revision);
-      if (current.revision !== command.payload.baseVersion || command.payload.proposed.id !== current.id
-        || command.payload.proposed.revision !== current.revision) return failure('stale', 'The profile proposal must target the current version.', snapshot.revision);
-      if (next.profileProposals.some((entry) => entry.id === command.payload.proposalId)) return failure('conflict', 'This proposal ID already exists.', snapshot.revision);
-      const proposedDraft = clone(next.draft);
-      proposedDraft.profiles = proposedDraft.profiles.map((entry) => entry.id === current.id ? command.payload.proposed : entry);
-      const issues = validatePlanningDraft(proposedDraft);
-      if (issues.length) return failure('invalid', 'The proposed profile violates planning constraints.', snapshot.revision, issues);
-      next.profileProposals.push({ id: command.payload.proposalId, profileId: current.id, baseVersion: current.revision,
-        proposed: command.payload.proposed, reason: command.payload.reason, status: 'pending', createdAt: this.now().toISOString() });
-      summary = `Propose changes to ${current.title}`;
-    } else {
-      const proposal = next.profileProposals.find((entry) => entry.id === command.payload.proposalId);
-      if (!proposal) return failure('not-found', 'The profile proposal does not exist.', snapshot.revision);
-      const current = next.draft.profiles.find((entry) => entry.id === proposal.profileId);
-      if (proposal.status !== 'pending' || !current || current.revision !== proposal.baseVersion) return failure('stale', 'The profile changed. Compare a new proposal before applying it.', snapshot.revision);
-      const error = this.applyOperation(next.draft, { op: 'profile.put', value: proposal.proposed }, nextRevision, changed);
-      if (error) return error;
-      proposal.status = 'applied';
-      this.markImpacted(next.draft, changed, nextRevision);
-      summary = `Apply changes to ${current.title}`;
-    }
-    for (const proposal of next.profileProposals) {
-      if (proposal.status === 'pending' && next.draft.profiles.find((entry) => entry.id === proposal.profileId)?.revision !== proposal.baseVersion) proposal.status = 'stale';
-    }
-    const issues = [...validatePlanningDraft(next.draft), ...referencesAreFrozen(next)];
-    if (issues.length) return failure('invalid', 'The edit would leave invalid planning references.', snapshot.revision, issues);
-    next.revision = nextRevision;
-    next.history.push({ id: command.commandId, commandId: command.commandId, revision: nextRevision, type: command.type,
-      actor: command.actor, createdAt: this.now().toISOString(), summary, changedIds: [...changed],
-      ...(undoOf ? { undoOf } : {}), before: clone(snapshot.draft) });
-    const validated = PlanningSnapshotSchema.safeParse(next);
-    if (!validated.success) return failure('invalid', 'The resulting planning data exceeds supported limits.', snapshot.revision,
-      validated.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`));
-    return { ok: true, snapshot: next };
-  }
-
-  private applyOperation(draft: PlanningDraft, operation: PlanningOperation, nextRevision: number, changed: Set<string>): PlanningError | undefined {
-    const put = <T extends { id: string; revision: number }>(entries: T[], value: T): PlanningError | undefined => {
-      const index = entries.findIndex((entry) => entry.id === value.id);
-      if ((index < 0 && value.revision !== 0) || (index >= 0 && entries[index]!.revision !== value.revision)) return failure('stale', `Entity ${value.id} changed. Read its current revision.`);
-      const next = { ...clone(value), revision: nextRevision };
-      if (index < 0) entries.push(next); else entries[index] = next;
-      changed.add(value.id);
-      return undefined;
-    };
-    switch (operation.op) {
-      case 'item.put': return put(draft.items, operation.value);
-      case 'link.put': return put(draft.links, operation.value);
-      case 'scene.put': return put(draft.scenes, operation.value);
-      case 'component.put': {
-        return put(draft.components, operation.value);
-      }
-      case 'profile.put': return put(draft.profiles, operation.value);
-      case 'task.put': return put(draft.tasks, operation.value);
-      case 'asset.put': return put(draft.assets, operation.value);
-      case 'entity.delete': {
-        const key = { item: 'items', link: 'links', scene: 'scenes', component: 'components', profile: 'profiles', task: 'tasks', asset: 'assets' } as const;
-        const entries = draft[key[operation.kind]] as Array<{ id: string }>;
-        const index = entries.findIndex((entry) => entry.id === operation.id);
-        if (index < 0) return failure('not-found', `Entity ${operation.id} does not exist.`);
-        entries.splice(index, 1);
-        changed.add(operation.id);
-        return undefined;
-      }
-    }
-  }
-
-  private propagateComponent(draft: PlanningDraft, component: PlanningComponent, changed: Set<string>, nextRevision: number, ancestry = new Set<string>()): PlanningError | undefined {
-    if (ancestry.has(component.id)) return failure('invalid', 'Reusable component references form a cycle.');
-    const path = new Set([...ancestry, component.id]);
-    const roots = component.elements.filter((entry) => !entry.parentId);
-    const owners: Array<ScreenScene | PlanningComponent> = [...draft.components, ...draft.scenes];
-    const instances = owners.flatMap((scene) => scene.elements.filter((element) => element.component?.componentId === component.id).map((element) => ({ scene, element })));
-    const dependentComponents = new Set<string>();
-    if (instances.length && roots.length !== 1) return failure('invalid', 'A reusable component must have exactly one root element.');
-    for (const { scene, element } of instances) {
-      const overrides = element.component!.overrides;
-      if (Object.keys(overrides).some((key) => !component.allowedOverrides.includes(key as keyof typeof overrides))) {
-        return failure('conflict', `Component ${component.id} removes an overridden property in scene ${scene.id}. Compare the instance before applying.`);
-      }
-      const descendants = new Set<string>([element.id]);
-      let previousSize: number;
-      do {
-        previousSize = descendants.size;
-        for (const child of scene.elements) if (child.parentId && descendants.has(child.parentId)) descendants.add(child.id);
-      } while (previousSize !== descendants.size);
-      const root = roots[0]!;
-      const mapId = (id: string) => id === root.id ? element.id : `${element.id}:${id}`;
-      const propagated = component.elements.map((template) => ({
-        ...clone(template), id: mapId(template.id),
-        parentId: template.parentId ? mapId(template.parentId) : element.parentId,
-        ...(template.id === root.id ? {
-          order: element.order,
-          properties: { ...template.properties, ...overrides },
-          component: { componentId: component.id, version: component.revision, overrides: clone(overrides) },
-          stateIds: element.stateIds,
-        } : {}),
-      }));
-      scene.elements = [...scene.elements.filter((entry) => !descendants.has(entry.id)), ...propagated];
-      scene.revision = nextRevision;
-      if ('status' in scene) scene.status = 'review-needed';
-      else dependentComponents.add(scene.id);
-      changed.add(scene.id);
-    }
-    for (const id of dependentComponents) {
-      const error = this.propagateComponent(draft, draft.components.find((entry) => entry.id === id)!, changed, nextRevision, path);
-      if (error) return error;
-    }
-    return undefined;
-  }
-
-  private markImpacted(draft: PlanningDraft, changed: Set<string>, nextRevision: number): void {
-    const impacted = new Set(changed);
-    let size: number;
-    do {
-      size = impacted.size;
-      for (const link of draft.links) if (impacted.has(link.toId)) impacted.add(link.fromId);
-      for (const scene of draft.scenes) if (scene.featureIds.some((id) => impacted.has(id))) impacted.add(scene.id);
-      for (const task of draft.tasks) {
-        if ([...task.featureIds, ...task.screenIds, ...task.dependencyIds, ...(task.profileId ? [task.profileId] : []),
-          ...task.inputRefs.filter((ref) => !ref.baselineId).map((ref) => ref.id),
-          ...task.interfaceRefs.filter((ref) => !ref.baselineId).map((ref) => ref.id)].some((id) => impacted.has(id))) impacted.add(task.id);
-      }
-    } while (size !== impacted.size);
-    for (const entry of [...draft.items, ...draft.scenes, ...draft.tasks]) {
-      if (impacted.has(entry.id) && !changed.has(entry.id)) {
-        entry.status = 'review-needed'; entry.revision = nextRevision; changed.add(entry.id);
-      }
-    }
-  }
-
-  private reviseRestoredDraft(draft: PlanningDraft, nextRevision: number): void {
-    for (const entries of [draft.items, draft.links, draft.scenes, draft.components, draft.profiles, draft.tasks, draft.assets]) {
-      for (const entry of entries) entry.revision = nextRevision;
-    }
-    for (const entity of [...draft.profiles, ...draft.tasks]) {
-      for (const ref of 'contextRefs' in entity ? entity.contextRefs : [...entity.inputRefs, ...entity.interfaceRefs]) {
-        if (!ref.baselineId && ref.kind !== 'file') ref.revision = nextRevision;
-      }
-    }
-    for (const owner of [...draft.scenes, ...draft.components]) for (const element of owner.elements) if (element.component) element.component.version = nextRevision;
   }
 
   private async write(target: string, file: PlanningFile, expectedHash: string | null): Promise<void> {

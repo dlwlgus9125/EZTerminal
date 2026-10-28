@@ -10,6 +10,7 @@ import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningService } from './planning-service';
+import { seedPlanning } from './planning-seed.fixture';
 import { PlanningExecutionStore } from './planning-execution-store';
 import { autoApprovalCommandId, autoApprovalCommands, autoApprovalRefused, PlanningRunService, workflowLaunchId, workflowLedgerId, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
@@ -83,15 +84,11 @@ async function fixture(realResults = false, bindStages = false) {
     { kind: 'workspace.upsert', value: { id: 'workspace', projectId: 'project', name: 'Main', kind: 'local', rootPath: directory } },
     { kind: 'provider.upsert', value: { id: 'codex', displayName: 'Codex', protocol: 'codex-app-server', executablePath: 'codex', executableVersion: '1', argv: [], environmentVariableNames: [], capabilities: [], enabled: true, health: 'ready' } },
   ] });
-  const patched = await planning.execute({ commandId: 'planning', projectId: 'project', expectedRevision: 0, actor: { kind: 'user', id: 'test' },
-    type: 'planning.patch', payload: { summary: 'Define tasks', operations: [
-      ...planningProfilePresets('en').map((value) => ({ op: 'profile.put', value })),
-      { op: 'task.put', value: { id: 'task', revision: 0, title: 'Plan', objective: 'Review the plan', featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [], allowedPaths: [], interfaceRefs: [],
-        acceptance: [{ id: 'acceptance', description: 'Plan reviewed' }], validationPlan: [{ id: 'inspection', acceptanceIds: ['acceptance'], description: 'Inspect result', method: 'inspection', environment: 'Windows' }], status: 'ready' } },
-    ] } });
-  if (!patched.ok) throw new Error(patched.message);
-  const frozen = await planning.execute({ commandId: 'freeze', projectId: 'project', expectedRevision: patched.revision, actor: { kind: 'user', id: 'test' }, type: 'planning.freeze', payload: { baselineId: 'baseline', title: 'Ready' } });
-  if (!frozen.ok) throw new Error(frozen.message);
+  // Planning as the planning screen left it: the presets and one ready task, frozen as 'baseline'.
+  await seedPlanning(planning, 'project', { profiles: planningProfilePresets('en'), tasks: [
+    { id: 'task', revision: 0, title: 'Plan', objective: 'Review the plan', featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [], allowedPaths: [], interfaceRefs: [],
+        acceptance: [{ id: 'acceptance', description: 'Plan reviewed' }], validationPlan: [{ id: 'inspection', acceptanceIds: ['acceptance'], description: 'Inspect result', method: 'inspection', environment: 'Windows' }], status: 'ready' },
+  ] }, { baselines: [{ id: 'baseline', title: 'Ready' }] });
   await service.start();
   await runtime.start();
   cleanups.push(async () => { await service.dispose(); await results?.dispose(); await runtime.dispose('process-loss'); await store.close(); });

@@ -165,7 +165,7 @@
     {
       "id": "planning-store",
       "label": "Project planning and baselines",
-      "detail": "Explicit subprojects own independent planning files, immutable baselines and undo; legacy planning remains bound to its default subproject.",
+      "detail": "Explicit subprojects own independent planning files and immutable baselines that flow runs capture and restore imports; legacy planning stays bound to its default subproject.",
       "kind": "store",
       "group": "planning-authority",
       "rank": 2,
@@ -174,24 +174,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 132,
-          "endLine": 165,
-          "lineDigest": "sha256:985d9173ccf021f8135005e3b72d49c4cef6ac5574e368ca2b10782fbb0b4cd9",
-          "claim": "Planning commands route to explicit subproject stores, compare revision, deduplicate exact command identity and save mutation plus receipt atomically."
+          "startLine": 144,
+          "endLine": 166,
+          "lineDigest": "sha256:3672a575fa334fdb52b8517d086fe85177bc5ed854dbb8b4f26683f43ab19f87",
+          "claim": "Flow runs capture baselines into the explicit subproject planning file, hashing the copied draft; an existing id must carry the same inputs, and the revision advances in the same atomic write."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 347,
-          "endLine": 397,
-          "lineDigest": "sha256:bc7d06ffd5a9060600ea28e674ac2d644a2ca01604d6f916494f904c992188e9",
-          "claim": "Baseline freezing validates the selected task subset and its references before hashing copied content; branch and undo retain immutable prior baselines."
+          "startLine": 110,
+          "endLine": 129,
+          "lineDigest": "sha256:8c419c1132f088a5e0526401e823fbe5f47f6e9466f584a51ecd876d576e09ba",
+          "claim": "Restore imports a planning snapshot only into a new project, checking every baseline hash and frozen reference before the first write."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 541,
-          "endLine": 562,
+          "startLine": 295,
+          "endLine": 316,
           "lineDigest": "sha256:d32871b3cb543b2f215362669dc24b57a95dd6a3f18a13d88bce1831c6b755f3",
           "claim": "The writer fsyncs a private temporary file, checks the expected disk hash and project boundary, then atomically renames."
         }
@@ -409,16 +409,16 @@
       "id": "primary-2",
       "from": "authenticated-planning",
       "to": "planning-store",
-      "label": "revisioned atomic edits",
+      "label": "reads; edits refused (I5)",
       "kind": "primary",
       "evidence": [
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 132,
-          "endLine": 165,
-          "lineDigest": "sha256:985d9173ccf021f8135005e3b72d49c4cef6ac5574e368ca2b10782fbb0b4cd9",
-          "claim": "Planning commands route to explicit subproject stores, compare revision, deduplicate exact command identity and save mutation plus receipt atomically."
+          "startLine": 130,
+          "endLine": 141,
+          "lineDigest": "sha256:2f24456e7c9a712e6a804422b0ae36cd020368a246c154a212a0a5a0e535c44b",
+          "claim": "Planning edits (patch, freeze, branch, undo, profile proposals) are validated and refused since the planning screen was removed (I5); this path never changes the planning file."
         }
       ]
     },
