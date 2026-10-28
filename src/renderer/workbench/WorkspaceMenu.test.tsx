@@ -80,7 +80,7 @@ describe('WorkspaceMenu accessibility', () => {
 
     const dialog = container.querySelector<HTMLElement>('[data-testid="preset-menu"]')!;
     expect(dialog.getAttribute('role')).toBe('dialog');
-    expect(dialog.getAttribute('aria-label')).toBe('Workspace');
+    expect(dialog.getAttribute('aria-label')).toBe('Layout');
     expect(dialog.querySelector('[role="menuitem"]')).toBeNull();
     expect(dialog.querySelector('[aria-pressed="true"]')).not.toBeNull();
     expect(document.activeElement).toBe(dialog.querySelector('[data-testid="btn-split-right"]'));
