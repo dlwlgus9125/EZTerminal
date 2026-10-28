@@ -734,6 +734,18 @@ describe('workflow project workspace', () => {
     expect(stageDocument()).toBe('Unsaved draft');
     expect(container.querySelector('section')?.scrollTop).toBe(77); expect(state.commands).toHaveLength(0);
   });
+  it('never sends the person back with a saved view that arrives after they opened a workflow (found after a phone update)', async () => {
+    const state = fixture(); const snapshot = workflowFixture();
+    let answer: (value: Awaited<ReturnType<WorkflowDraftAccess['workflowDraftRead']>>) => void = () => undefined;
+    const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, view: { subprojectId: 'payments', page: 'flow', scrollTop: 0 } };
+    const recovery: WorkflowDraftAccess = { workflowDraftRead: () => new Promise(resolve => { answer = resolve; }),
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={state.access} recoveryAccess={recovery} conversations={[]} />));
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('.workflow-item')].find(item => item.textContent?.includes('Login improvements'))!.click());
+    expect(container.querySelector('h2')?.textContent).toBe('Login improvements');
+    await act(async () => { answer({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: saved } }); await Promise.resolve(); });
+    expect(container.querySelector('h2')?.textContent).toBe('Login improvements');
+  });
 });
 
 describe('WorkflowWorkspacePanel · one canvas', () => {

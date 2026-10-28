@@ -149,6 +149,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const targetKey = navigationTarget?.key;
   const targetRun = navigationTarget?.runId;
   const targetRef = useRef(targetSubproject); targetRef.current = targetSubproject;
+  /** The person chose a workflow or stage since the saved view started loading: that view must not replace the choice. */
+  const navigated = useRef(false);
   const [view, setView] = useState<'flow' | 'stage' | 'history' | 'run'>('flow');
   // The one canvas: a connection can be selected besides a stage (nodeId); the run view and
   // graph/list choice live in memory. 'flow' | 'stage' | 'run' pages are its panel sections.
@@ -305,10 +307,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   }, [recovery]);
   useEffect(() => {
     if (!recovery) return;
-    let current = true; setRecoveryReady(false);
+    let current = true; setRecoveryReady(false); navigated.current = false;
     void recovery.read().then(saved => { if (current) { if (saved) {
       const restored = adoptRecovery(saved, recovery.olderVersion);
-      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); setPreviewExpired(false); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page === 'planning' ? 'flow' : saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) restoreConversation(saved.pendingConversation); } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
+      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); setPreviewExpired(false); if (saved.view && !targetRef.current && !navigated.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page === 'planning' ? 'flow' : saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) restoreConversation(saved.pendingConversation); } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [recovery]);
   useEffect(() => {
@@ -534,7 +536,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (blockingRunOf(snapshot?.runs ?? [], selected.id) || local || issues.length || (canLaunch && !selected.runSettings)) return;
     void launch();
   });
-  const selectSubproject = (id: string): void => { launchRequest.current = undefined; setSelectedId(id); setNodeId(snapshot?.subprojects.find(item => item.id === id)?.graph.entryNodeId ?? null); setView('flow'); setEdgeId(null); setRunView(false); };
+  const selectSubproject = (id: string): void => { navigated.current = true; launchRequest.current = undefined; setSelectedId(id); setNodeId(snapshot?.subprojects.find(item => item.id === id)?.graph.entryNodeId ?? null); setView('flow'); setEdgeId(null); setRunView(false); };
   /** After the host confirms a subproject creation (at once or by reconciling the request): open it, let its setup go. */
   const finishCreate = async (created: NonNullable<typeof create>): Promise<void> => {
     setSelectedId(created.id); setNodeId(created.graph.entryNodeId); setView('flow');
@@ -599,7 +601,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (shownSetupId.current !== id) return;
     setCreationVisible(false); setCreate(null);
   };
-  const openStage = (id: string): void => { setNodeId(id); setEdgeId(null); setRunView(false); setView('stage'); };
+  const openStage = (id: string): void => { navigated.current = true; setNodeId(id); setEdgeId(null); setRunView(false); setView('stage'); };
   const startChat = (target: NonNullable<typeof chatTarget>): void => {
     if (!target.subprojectId && !target.previewId && onNewConversation) { onNewConversation(); return; }
     if (daemonAccess) { chatDraftForm.current = undefined; setChatTarget(target); }
@@ -732,7 +734,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
         editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} commandsBusy={busy || !!pending} issues={issues} providers={providerOptions}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}
-        onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); if (narrowStart && next?.kind === 'node') setPanelOpen(true); }}
+        onSelectionChange={next => { navigated.current = true; setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); if (narrowStart && next?.kind === 'node') setPanelOpen(true); }}
         decorations={harness.decorations} edgeDecorations={harness.edgeDecorations} panelTop={harness.panelTop} stageSlots={harness.stageSlots} onDropAgent={harness.onDropAgent}
         section={sectionFromPage(lastFlowPage.current)} onSectionChange={next => setView(pageFromSection(next))}
         pickedRunId={preparedRunId} onPickRun={setPreparedRunId} runView={runView} onRunViewChange={setRunView}
