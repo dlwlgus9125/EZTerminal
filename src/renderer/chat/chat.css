@@ -2276,3 +2276,11 @@
 /* The agent an approved plan runs with (단계 연결), under the plan's access level. */
 .chat-dock__phase { display: flex; align-items: center; margin: var(--ui-space-1) 0 0; color: var(--ui-text-secondary); }
 .chat-dock__phase > svg { flex: none; width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); color: var(--ui-accent); }
+
+/* The queued change's scope: next request only, or from now on (native radios, arrow keys). */
+.chat-pending-settings__scope { display: inline-flex; flex: none; border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); overflow: hidden; }
+.chat-pending-settings__scope > label { position: relative; padding: 0 var(--ui-space-2); color: var(--ui-text-secondary); cursor: pointer; }
+.chat-pending-settings__scope > label + label { border-left: 1px solid var(--ui-border-mid); }
+.chat-pending-settings__scope > label[data-checked] { background: var(--ui-surface-selected); color: var(--ui-text-primary); font-weight: 600; }
+.chat-pending-settings__scope > label:focus-within { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.chat-pending-settings__scope input { position: absolute; opacity: 0; pointer-events: none; }

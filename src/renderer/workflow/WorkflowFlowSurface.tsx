@@ -97,10 +97,13 @@ export interface WorkflowFlowSurfaceProps {
   /** What each stage card shows beyond the stage (agent, chain, checks); see WorkflowNodeDecoration. */
   readonly decorations?: Readonly<Record<string, WorkflowNodeDecoration>>;
   readonly edgeDecorations?: Readonly<Record<string, WorkflowEdgeDecoration>>;
+  /** What waiting stages ask for when they are not approvals (run bar), and a note under 반복. */
+  readonly awaitingLabel?: (count: number) => string;
+  readonly repeatNote?: ReactNode;
   /** Above whatever the side panel shows (the agent list). */
   readonly panelTop?: ReactNode;
   /** A stage's agent settings and what it waits for, in place of the AI · model · effort fields. */
-  readonly stageSlots?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string } | undefined;
+  readonly stageSlots?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
 }
 
 const NO_ISSUES: readonly WorkflowIssue[] = [];
@@ -221,7 +224,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
       hasLocalDraft={!!props.draftGraph} issueCount={props.issues.length} awaiting={awaiting} onLaunch={props.onLaunch} onRunCommand={props.onRunCommand}
       onPickRun={props.onPickRun} onSaveReviewer={props.onSaveReviewer} onAutoApprove={props.onAutoApprove} onJumpToNode={id => jumpTo(id, 'run')}
       repeatStatus={props.repeatStatus} onSaveRepeat={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings}
-      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} integration={integration} />
+      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} integration={integration} awaitingLabel={props.awaitingLabel} repeatNote={props.repeatNote} />
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run}
       editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} structure={props.structure} onStructureChange={props.onStructureChange}
       overlapping={workflowLayoutOverlaps(view.graph, card)} layout={props.layout} onLayoutChange={props.onLayoutChange} onRunView={props.onRunViewChange}
@@ -248,7 +251,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
             onMove={(staticRenderer || canvasFailed) && shaping ? (id, dy) => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === id ? { ...item, position: { ...item.position, y: Math.max(0, item.position.y + dy) } } : item) }) : undefined}
             onApprove={(activationId, decision) => props.onRunCommand({ type: 'run.approve', payload: { runId: view.run!.runId, activationId, decision } })}
             onStartChat={() => props.onStartStageChat(node.id)} onOpenConversation={props.onOpenConversation}
-            settingsSlot={slots?.settings} topSlot={slots?.top} kindLabel={slots?.kindLabel} instructionsLabel={slots?.instructionsLabel} conversationHint={slots?.conversationHint}
+            settingsSlot={slots?.settings} topSlot={slots?.top} kindLabel={slots?.kindLabel} instructionsLabel={slots?.instructionsLabel} conversationHint={slots?.conversationHint} statusLabel={slots?.statusLabel}
             onOpenAttemptResult={props.onOpenAttemptResult && view.run ? attemptId => props.onOpenAttemptResult!(view.run!.runId, attemptId) : undefined} />
           {view.run && !view.overlay && <div className="workflow-node-run"><p className="workflow-hint">{text('편집 중인 흐름의 단계나 연결이 실행에 고정된 흐름과 달라 상태를 겹쳐 보이지 않습니다.', 'The stages or connections being edited differ from the flow this run froze, so its state is not overlaid.')}</p>
             <Button onClick={() => props.onRunViewChange(true)}>{text('실행에서 이 단계 보기', 'See this stage in the run')}</Button></div>}

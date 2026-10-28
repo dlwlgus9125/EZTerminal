@@ -2264,7 +2264,7 @@ export function StructuredAgentSessionPanel({
     }
     return sent;
   };
-  const planBlockedReason = turnCurrent && !settingsLocked ? copy.settingsAfterTurn : undefined;
+  const planBlockedReason = lockedByTurn && !settingsLocked ? copy.settingsAfterTurn : undefined;
   // /btw: a side question about this conversation, answered without tools and kept in memory only.
   const sideThread = useSideQuestionThread(sessionId, sideQuestion?.client);
   const [sideOpen, setSideOpen] = useState(false);
@@ -2395,6 +2395,12 @@ export function StructuredAgentSessionPanel({
               <span className="chat-pending-settings__now">{i18n.language.startsWith('ko') ? '지금 차례' : 'This turn'} <strong>{pendingSettings.current}</strong></span>
               <span className="chat-pending-settings__arrow" aria-hidden="true"><Glyph name="next" /></span>
               <span className="chat-pending-settings__next">{i18n.language.startsWith('ko') ? '다음 요청' : 'Next request'} <strong>{pendingSettings.next}</strong></span>
+              {effortScope && <span className="chat-pending-settings__scope" role="radiogroup" aria-label={i18n.language.startsWith('ko') ? '적용 범위' : 'Applies to'}>
+                {(['once', 'keep'] as const).map((value) => <label key={value} data-checked={effortScope.value === value || undefined}>
+                  <input type="radio" name={`${sessionId}-effort-scope`} value={value} checked={effortScope.value === value} onChange={() => effortScope.onChange(value)} />
+                  {value === 'once' ? (i18n.language.startsWith('ko') ? '다음 요청 1회만' : 'Next request only') : (i18n.language.startsWith('ko') ? '이후 계속' : 'From now on')}
+                </label>)}
+              </span>}
               {pendingSettings.onCancel && <button type="button" className="chat-pending-settings__cancel" onClick={pendingSettings.onCancel}>{i18n.language.startsWith('ko') ? '예약 취소' : 'Cancel change'}</button>}
             </p>}
             {settingsReadOnly ? (
@@ -2453,7 +2459,6 @@ export function StructuredAgentSessionPanel({
                     options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
                     disabled={disabled || settingsBusy}
                     onChange={(next) => void updateSettings({ reasoningEffort: next })}
-                    {...(effortScope ? { scope: { label: i18n.language.startsWith('ko') ? '적용' : 'Apply to', value: effortScope.value, options: [{ value: 'once', label: i18n.language.startsWith('ko') ? '이번 요청만' : 'This request only' }, { value: 'keep', label: i18n.language.startsWith('ko') ? '이후 계속' : 'From now on' }], onChange: (next: string) => effortScope.onChange(next as 'once' | 'keep') } } : {})}
                     testId="structured-agent-live-effort"
                   />
                 ))}
@@ -2802,7 +2807,7 @@ export function StructuredAgentSessionPanel({
           stopping={lifecycleBusy === 'cancel'}
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
-          {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
+          {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || lockedByTurn, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
           {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
           {...(full ? { onFocusDecision: focusDecision } : {})}
           appCommands={appCommands}

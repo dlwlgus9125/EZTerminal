@@ -49,8 +49,18 @@
 .workflow-stage-agent__empty { padding: var(--ui-space-3); border: 1px dashed var(--ui-border-strong); border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); font-size: var(--ui-font-size-sm); text-align: center; }
 .workflow-stage-agent__empty > p { margin: 0 0 var(--ui-space-2); }
 .workflow-stage-agent__empty > p:last-child { margin: 0; }
-.workflow-stage-agent__session { display: flex; flex-wrap: wrap; }
-.workflow-stage-agent__session > * { margin: 0 var(--ui-space-1) var(--ui-space-1) 0; }
+/* 이 단계를 실행할 때: native radios (arrow keys move between them), drawn as two plates. */
+.workflow-stage-agent__session { display: flex; flex-wrap: wrap; margin: 0; padding: 0; border: 0; min-width: 0; }
+.workflow-stage-agent__session > legend { width: 100%; padding: 0; }
+.workflow-stage-agent__session > label { position: relative; display: inline-flex; align-items: center; min-height: 2rem; margin: 0 var(--ui-space-1) var(--ui-space-1) 0; padding: 0 var(--ui-space-2); border: 1px solid var(--ui-border-mid); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text-secondary); font-size: var(--ui-font-size-sm); cursor: pointer; }
+.workflow-stage-agent__session > label > * + * { margin-left: var(--ui-space-1); }
+.workflow-stage-agent__session > label > svg { width: 0.875rem; height: 0.875rem; }
+.workflow-stage-agent__session > label[data-checked] { border-color: var(--ui-accent); background: var(--ui-surface-selected); color: var(--ui-text-primary); font-weight: 600; }
+.workflow-stage-agent__session > label[data-disabled] { opacity: 0.6; cursor: not-allowed; }
+.workflow-stage-agent__session > label:focus-within { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.workflow-stage-agent__session input { position: absolute; opacity: 0; pointer-events: none; }
+.workflow-check__allowed { display: inline-flex; flex: none; align-items: center; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-check__allowed > svg { width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); color: var(--ui-text-muted); }
 .workflow-stage-agent__note { margin: var(--ui-space-1) 0 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
 .workflow-stage-agent__note[data-tone='saving'] { color: var(--ui-success); }
 .workflow-stage-agent__pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -86,10 +96,31 @@
 .workflow-template__desc { color: var(--ui-text-secondary); font-size: var(--ui-font-size-sm); }
 .workflow-template__chain { display: flex; flex-wrap: wrap; align-items: center; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
 .workflow-template__chain > span { margin: 2px var(--ui-space-1) 0 0; padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); }
-.workflow-template__chain > span[data-kind='person'] { border-color: var(--ui-warning-border); }
+.workflow-template__chain > span[data-kind='person'] { border-style: dashed; border-color: var(--ui-border-strong); }
 .workflow-template__chain > span[data-kind='check'] { font-family: var(--ui-font-mono); }
 .workflow-template__needs { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
 
 /* The outline (phone list) names the agent placed on each stage. */
 .workflow-outline__agent { color: var(--ui-accent); font-size: var(--ui-font-size-xs); font-weight: 600; }
 .workflow-outline__agent[data-missing] { color: var(--ui-warning); }
+
+/* 확인 명령 허용: exactly what runs, where, and what changed. */
+.workflow-consent__why { display: flex; align-items: flex-start; margin: 0 0 var(--ui-space-3); padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-warning-border); border-radius: var(--ui-radius-sm); background: var(--ui-warning-muted); color: var(--ui-text-primary); font-size: var(--ui-font-size-sm); }
+.workflow-consent__why > svg { flex: none; width: 0.875rem; height: 0.875rem; margin: 2px var(--ui-space-2) 0 0; color: var(--ui-warning); }
+.workflow-consent__facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 0; }
+.workflow-consent__facts > dt { margin: 0 var(--ui-space-3) var(--ui-space-2) 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-consent__facts > dd { min-width: 0; margin: 0 0 var(--ui-space-2); }
+.workflow-consent__facts code { display: block; overflow-wrap: anywhere; padding: var(--ui-space-1) var(--ui-space-2); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); color: var(--ui-text-primary); font-family: var(--ui-font-mono); font-size: var(--ui-font-size-sm); }
+.workflow-consent__facts code.workflow-consent__before { color: var(--ui-text-secondary); text-decoration: line-through; }
+.workflow-consent__note { margin: var(--ui-space-2) 0 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+
+.workflow-template__selected { display: inline-flex; align-items: center; margin-left: auto; color: var(--ui-accent); font-size: var(--ui-font-size-xs); }
+.workflow-template__selected > svg { width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); }
+
+/* Under 반복 (mockup): which version the schedule runs and what the last run found. */
+.workflow-repeat-note { flex: 1 0 100%; margin-top: var(--ui-space-1); padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border-mid); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-sm); background: var(--ui-info-muted); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-repeat-note > p { margin: 0; }
+.workflow-repeat-note > p + p { margin-top: var(--ui-space-1); }
+.workflow-repeat-note strong { color: var(--ui-text-primary); }
+.workflow-repeat-note button { padding: 0; border: 0; background: none; color: var(--ui-accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.workflow-repeat-note__actions > button + button { margin-left: var(--ui-space-3); }

@@ -1,6 +1,6 @@
 import { Glyph } from '../ui/Glyph';
 import { deviceTimezone } from '../device-timezone';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, blockingRunOf, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
 import { flowRunNumber } from '../../shared/workflow-run-view';
@@ -47,6 +47,10 @@ export interface WorkflowRunBarProps {
   readonly onOpenResults?: (runId: string) => void;
   /** The shown run's integration after it was allowed (its lamp; 결과 opens the record). */
   readonly integration?: RunIntegrationView | null;
+  /** What the waiting stages ask for, when they are not approvals (e.g. 답변 대기 n). */
+  readonly awaitingLabel?: (count: number) => string;
+  /** Under 반복: which version the schedule runs and what the last run found (e.g. 예약은 v6 · 편집본 v7). */
+  readonly repeatNote?: ReactNode;
 }
 
 function integrationLamp(view: RunIntegrationView, text: WorkflowCopy): { readonly tone: LedTone; readonly label: string } {
@@ -95,7 +99,7 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
     {run && controls && <>
       {controls.cancelling && <Badge variant="warning">{text('취소 처리 중', 'Cancelling')}</Badge>}
       {controls.blocked && <Badge variant="warning">{text('멈춤 · 진행할 수 있는 단계 없음', 'Stopped · no stage can proceed')}</Badge>}
-      {props.awaiting.length > 0 && controls.approvalsOpen && <Button size="sm" variant="primary" leadingIcon={<Glyph name="req" />} onClick={() => props.onJumpToNode(props.awaiting[0].nodeId)}>{text(`승인 대기 ${props.awaiting.length}`, `${props.awaiting.length} awaiting approval`)}</Button>}
+      {props.awaiting.length > 0 && controls.approvalsOpen && <Button size="sm" variant="primary" leadingIcon={<Glyph name="req" />} onClick={() => props.onJumpToNode(props.awaiting[0].nodeId)}>{props.awaitingLabel?.(props.awaiting.length) ?? text(`승인 대기 ${props.awaiting.length}`, `${props.awaiting.length} awaiting approval`)}</Button>}
       {controls.canStart && <Button size="sm" leadingIcon={<Glyph name="play" />} disabled={commandsDisabled || !!going} onClick={() => command({ type: 'run.start', payload: { runId: run.runId } })}>{text('실행 시작', 'Start execution')}</Button>}
       {controls.canPause && <Button size="sm" leadingIcon={<Glyph name="pause" />} disabled={commandsDisabled} onClick={() => command({ type: 'run.pause', payload: { runId: run.runId } })}>{text('일시정지', 'Pause')}</Button>}
       {controls.canResume && <Button size="sm" leadingIcon={<Glyph name="play" />} disabled={commandsDisabled} onClick={() => command({ type: 'run.resume', payload: { runId: run.runId } })}>{text('계속', 'Continue')}</Button>}
@@ -136,6 +140,7 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
     </span>}
     {props.savedRunSettings && props.onSaveRepeat && <WorkflowRepeatGroup text={text} repeat={subproject.repeat} status={props.repeatStatus} canTurnOn={!!reviewer} active={subproject.status === 'active'}
       disabled={commandsDisabled || archived} onSave={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings} />}
+    {props.repeatNote}
   </div>;
 }
 

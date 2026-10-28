@@ -80,7 +80,7 @@ export function WorkflowNodeCard({ node, text, entry = false, selected = false, 
       {decoration?.dropTarget && <span className="workflow-node-card__drop" role="status">{text('여기에 놓아 배정', 'Drop to assign here')}</span>}
       {detail && <span className="workflow-node-card__detail">{detail}</span>}
       {status && <span className="workflow-node-card__run">
-        <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status>
+        <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{decoration?.statusLabel ?? status.label}</Status>
         {run && run.iteration > 0 && <span className="workflow-node-card__meta">{text(`회차 ${run.iteration + 1}`, `Round ${run.iteration + 1}`)}</span>}
         {run?.arrivals && <span className="workflow-node-card__meta">{text(`${run.arrivals.arrived}/${run.arrivals.expected} 도착`, `${run.arrivals.arrived}/${run.arrivals.expected} arrived`)}</span>}
       </span>}

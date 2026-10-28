@@ -32,3 +32,7 @@
 .settings-changes__list > li[data-undone] .settings-changes__label { color: var(--ui-text-muted); text-decoration: line-through; }
 .settings-changes__at { flex: none; color: var(--ui-text-muted); font-family: var(--ui-font-mono); font-size: var(--ui-font-size-xs); }
 .settings-changes__state { flex: none; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+
+.settings-proposal[data-state='applying'], .settings-proposal[data-state='resolved-elsewhere'], .settings-proposal[data-state='expired'] { border-left-color: var(--ui-border-strong); background: var(--ui-surface-inset); }
+.settings-proposal[data-state='failed'] { border-left-color: var(--ui-danger-border); }
+.settings-proposal__state { margin: 0; color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }

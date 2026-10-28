@@ -32,7 +32,7 @@ export interface WorkflowTemplatePickerProps {
 export function WorkflowTemplatePicker({ text, open, templates, selected, name, onSelect, onNameChange, onCreate, onClose }: WorkflowTemplatePickerProps): JSX.Element {
   const group = useId();
   return <Dialog open={open} onOpenChange={value => { if (!value) onClose(); }} title={text('새 워크플로', 'New workflow')} closeLabel={text('닫기', 'Close')}
-    description={text('템플릿에서 시작합니다. 단계 지시·완료 조건·확인 명령이 채워져 있고, 단계마다 에이전트만 놓으면 됩니다.', 'Start from a template: stage instructions, acceptance and checks are filled in; place an agent on each stage.')}
+    description={text('템플릿에서 시작합니다. 단계 지시·완료 조건·확인 명령이 채워져 있습니다. 만든 뒤 단계마다 에이전트를 놓고, 확인 명령과 바꿀 수 있는 경로가 이 프로젝트에 맞는지 확인합니다(명령은 이 PC에서 한 번 허용).', 'Start from a template: stage instructions, acceptance and checks are filled in. Then place an agent on each stage and check that the commands and editable paths fit this project (commands are allowed once on this PC).')}
     footer={<><Button onClick={onClose}>{text('취소', 'Cancel')}</Button><Button variant="primary" disabled={!name.trim()} onClick={onCreate}>{text('이 템플릿으로 만들기', 'Create from this template')}</Button></>}>
     <Field label={text('이름', 'Name')}><Input value={name} onChange={event => onNameChange(event.target.value)} /></Field>
     <div className="workflow-templates" role="radiogroup" aria-label={text('템플릿', 'Templates')}>
@@ -40,9 +40,10 @@ export function WorkflowTemplatePicker({ text, open, templates, selected, name, 
         <label data-checked={template.id === selected || undefined}>
           <input type="radio" name={group} value={template.id} checked={template.id === selected} onChange={() => onSelect(template.id)} />
           <span className="workflow-template__title"><Glyph name={template.origin === 'builtin' ? 'flow' : 'star'} /><span>{template.title}</span>
-            <span className="workflow-template__origin">{template.origin === 'builtin' ? text('기본', 'Built-in') : text('내 템플릿', 'Mine')}</span></span>
+            <span className="workflow-template__origin">{template.origin === 'builtin' ? text('기본', 'Built-in') : text('내 템플릿', 'Mine')}</span>
+            {template.id === selected && <span className="workflow-template__selected"><Glyph name="check" />{text('선택됨', 'Selected')}</span>}</span>
           <span className="workflow-template__desc">{template.description}</span>
-          <span className="workflow-template__chain" aria-label={text('단계', 'Stages')}>{template.steps.map((step, index) => <span key={`${step.label}-${index}`} data-kind={step.kind}>{step.label}</span>)}</span>
+          <span className="workflow-template__chain" aria-label={text('단계', 'Stages')}>{template.steps.map((step, index) => <span key={`${step.label}-${index}`} data-kind={step.kind}>{step.kind === 'person' ? text(`사람: ${step.label}`, `Person: ${step.label}`) : step.kind === 'check' ? text(`명령: ${step.label}`, `Check: ${step.label}`) : step.label}</span>)}</span>
           {template.needs && <span className="workflow-template__needs">{template.needs}</span>}
         </label>
       </div>)}
@@ -71,6 +72,6 @@ export function WorkflowTemplateSave({ text, open, name, description, keepAgents
     <Field label={text('이름', 'Name')}><Input value={name} onChange={event => onNameChange(event.target.value)} /></Field>
     <Field label={text('설명', 'Description')}><Input value={description} onChange={event => onDescriptionChange(event.target.value)} /></Field>
     <label className="workflow-field workflow-field--check"><input type="checkbox" checked={keepAgents} onChange={event => onKeepAgentsChange(event.target.checked)} />
-      {text('단계에 놓은 에이전트도 함께 저장 (다른 PC에서는 같은 이름의 에이전트를 찾고, 없으면 \'에이전트 없음\')', 'Keep the agents placed on stages (another PC looks for the same names; otherwise “agent missing”)')}</label>
+      {text('단계에 놓은 에이전트도 함께 저장. 다른 PC에서는 이름이 같은 에이전트를 후보로만 보여 주고, AI·모델이 맞는지 확인한 뒤 연결합니다(맞는 것이 없으면 "에이전트 없음").', 'Keep the agents placed on stages. Another PC only suggests agents with the same name and connects them once you confirm the AI and model match (otherwise “agent missing”).')}</label>
   </Dialog>;
 }

@@ -20,6 +20,8 @@ export interface WorkflowNodeDecoration {
   readonly kindLabel?: string;
   /** An agent is being dragged over this stage. */
   readonly dropTarget?: boolean;
+  /** The run state in this stage's own words (e.g. 답변 대기 · 조치 필요 for an answer stage). */
+  readonly statusLabel?: string;
   /** Waits for the person (an answer stage): amber like an awaiting approval. */
   readonly attention?: boolean;
   /** Port names of this kind of stage (e.g. 답함 for an answer stage) and ports it does not have. */

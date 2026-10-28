@@ -55,6 +55,8 @@ export interface WorkflowStagePanelProps {
   /** The stage's kind as the flow names it (e.g. 답변 기다림), in place of the operation's name. */
   readonly kindLabel?: string;
   readonly instructionsLabel?: string;
+  /** The run state in this stage's own words (e.g. 답변 대기 for an answer stage). */
+  readonly statusLabel?: string;
   /** Where this stage's conversation comes from (e.g. it continues the previous stage's). */
   readonly conversationHint?: string;
 }
@@ -96,10 +98,11 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
     {run && <p className="workflow-stage-panel__state" data-testid="workflow-stage-state">
       {/* An element, so WebView 74's flex-gap fallback spaces it too (mobile-shared.css). */}
       <span>{text(`실행 #${props.runNumber}`, `Run #${props.runNumber}`)}</span>
-      {status ? <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status> : <span>{text('이 실행에 표시하지 않음', 'Not shown for this run')}</span>}
+      {status ? <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{props.statusLabel ?? status.label}</Status> : <span>{text('이 실행에 표시하지 않음', 'Not shown for this run')}</span>}
     </p>}
     {props.topSlot}
-    {awaiting && <div className="workflow-approval" data-testid="workflow-stage-approval">
+    {/* A stage that asks the person in its own way (an answer, an approval with a comment) shows that instead. */}
+    {awaiting && !props.topSlot && <div className="workflow-approval" data-testid="workflow-stage-approval">
       <p>{(frozen ?? node).instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
       <div className="workflow-inline">
         <Button variant="primary" disabled={props.commandsDisabled || !approvalsOpen} onClick={() => props.onApprove(awaiting.id, 'approve')}>{text('승인', 'Approve')}</Button>

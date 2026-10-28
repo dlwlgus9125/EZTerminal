@@ -34,7 +34,10 @@ function inventory(scope: ParentNode): Set<string> {
     const label = (element as HTMLInputElement).labels?.[0] ?? element.closest('label');
     const own = label ? [...label.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE || (node as Element).tagName === 'SPAN').map((node) => node.textContent ?? '').join('') : '';
     const name = element.getAttribute('aria-label') ?? (own.trim() || element.querySelector('strong')?.textContent || element.textContent || '').trim().replace(/\s+/gu, ' ').slice(0, 60);
-    found.add(`${element.tagName.toLowerCase()}:${name}`);
+    const key = `${element.tagName.toLowerCase()}:${name}`;
+    found.add(key);
+    // Reachable now: shown and not disabled (a mockup may open a control, never close a shipped one).
+    if (!(element as HTMLButtonElement).disabled && !element.closest('[hidden]') && element.getAttribute('aria-disabled') !== 'true') found.add(`enabled:${key}`);
   });
   return found;
 }
@@ -44,7 +47,8 @@ const chat: StructuredAgentSessionPanelProps = {
   sessionId: 'parity-chat', title: 'Parity', providerId: 'claude', providerLabel: 'Claude', workspace: { id: 'ws', label: 'App', kind: 'local' },
   model: 'claude-opus-5-5', modelOptions: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }], permissionPreset: 'standard', state: 'working', items: [],
   effortSupported: true, reasoningEffort: 'high', usage: { weekly: { usedPercent: 21 }, limitsObservedAt: 1, contextPercent: 30, contextObservedAt: 1 },
-  onSend: async () => ({ ok: true }), onChangeSettings: async () => ({ ok: true }),
+  onSend: async () => ({ ok: true }), onChangeSettings: async () => ({ ok: true }), onCancel: async () => ({ ok: true }),
+  folders: { primary: 'C:\\Working\\App', additional: [], missing: [] },
 };
 
 describe('harness mockup keeps every shipped control', () => {
@@ -57,6 +61,9 @@ describe('harness mockup keeps every shipped control', () => {
     const after = inventory(container);
     expect(missing(before, after)).toEqual([]);
     expect(after.has('testid:structured-agent-pending-settings')).toBe(true);
+    // The shipped pieces the first fixture missed are really there: folder pill and stop.
+    expect([...before].some((key) => key.startsWith('testid:structured-agent-folders'))).toBe(true);
+    expect([...before].some((key) => /stop|중지|멈춤/iu.test(key))).toBe(true);
     expect(after.has('testid:settings-change-track')).toBe(true);
   });
 
@@ -79,7 +86,7 @@ describe('harness mockup keeps every shipped control', () => {
         checks={[]} review={{ value: 'run', options: STORY_REVIEWS }} /> })} />);
     const after = inventory(container);
     // Replaced by the agent placed on the stage (WorkflowStageAgent): who and how hard now come from the agent + the stage's overrides.
-    const replaced = [...before].filter((key) => /^select:(AI|모델|노력)|^testid:workflow-stage-(effort|advanced)$/u.test(key));
+    const replaced = [...before].filter((key) => /^(enabled:)?select:(AI|모델|노력)|^testid:workflow-stage-(effort|advanced)$/u.test(key));
     expect(missing(before, after, replaced)).toEqual([]);
     expect(after.has('testid:workflow-agent-list')).toBe(true);
     expect(after.has('testid:workflow-stage-agent')).toBe(true);

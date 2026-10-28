@@ -4,7 +4,9 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import type { ChatAgentPhaseMap, ChatAgentProfile, ChatAgentProfileAccess } from '../../shared/chat-agent-profiles';
 import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
-import { validateWorkflowGraph, type WorkflowNode } from '../../shared/workflow-graph';
+import type { WorkflowRepeat, WorkflowRepeatStatus } from '../../shared/workflow';
+import { validateWorkflowGraph, type WorkflowIssue, type WorkflowNode } from '../../shared/workflow-graph';
+import { WorkflowCheckConsent } from '../workflow/WorkflowCheckConsent';
 import { SettingsChangeTrack } from '../chat/SettingsChangeTrack';
 import { AppI18nProvider } from '../i18n';
 import { shellSnapshot } from '../shell/shell-fixtures';
@@ -25,7 +27,7 @@ import { WorkflowFlowSurface } from '../workflow/WorkflowFlowSurface';
 import { WorkflowStageAgent } from '../workflow/WorkflowStageAgent';
 import { WorkflowStaticGraph } from '../workflow/WorkflowStaticGraph';
 import { WorkflowTemplatePicker, WorkflowTemplateSave } from '../workflow/WorkflowTemplateDialog';
-import { CHAIN_HINTS, HARNESS_GRAPH, HARNESS_PHASES, HARNESS_PROFILES, HARNESS_TEMPLATES, STORY_EFFORTS, STORY_PERMISSIONS, STORY_REVIEWS, harnessAgents, harnessDecorations } from './harness-fixtures';
+import { CHAIN_HINTS, CHECK_DECORATIONS, CHECK_GRAPH, HARNESS_GRAPH, HARNESS_PHASES, HARNESS_PROFILES, HARNESS_TEMPLATES, STORY_EFFORTS, STORY_PERMISSIONS, STORY_REVIEWS, harnessAgents, harnessDecorations, harnessRun } from './harness-fixtures';
 import '../index.css';
 import '../structured-agent.css';
 import '../workflow/workflow.css';
@@ -117,6 +119,7 @@ const chatBase: StructuredAgentSessionPanelProps = {
   workspace: { id: 'ws-ez', label: 'EZTerminal', kind: 'local', path: 'C:\\Working\\EZTerminal' },
   model: 'claude-opus-5-5', modelOptions: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }],
   permissionPreset: 'standard', state: 'idle', queuedCount: 0, items: [], effortSupported: true, reasoningEffort: 'high',
+  folders: { primary: 'C:\\Working\\EZTerminal', additional: [], missing: [] }, onCancel: fn(async () => ({ ok: true as const })),
   usage: { fiveHour: { usedPercent: 24 }, weekly: { usedPercent: 21 }, limitsObservedAt: Date.parse(NOW), contextPercent: 38, contextObservedAt: Date.parse(NOW) },
   onSend: fn(async () => ({ ok: true as const })), onInterruptAndSend: fn(async () => ({ ok: true as const })),
   onChangeSettings: fn(async () => ({ ok: true as const })), onResolveApproval: fn(async () => ({ ok: true as const })),
@@ -154,12 +157,13 @@ export const ComposerPlanApproval: Story = {
     turns: [{ id: 'turn-plan', sessionId: 'harness-chat', commandId: 'command-plan', state: 'completed', revision: 2, createdAt: NOW, updatedAt: NOW }],
     planPhaseNote: "구현은 '구현 담당'(Codex · GPT-6-Astra · 보통 · 승인 후 실행)으로 시작합니다 · 설정 › AI › 단계 연결" }} />,
 };
-/** The effort menu: pick the level, then whether it is for this request only or from now on. */
+/** The effort menu picks the level (it closes on a pick); the queued line then says for how long: 다음 요청 1회만 / 이후 계속. */
 export const ComposerEffortScope: Story = {
-  render: () => <Chat props={{ state: 'working', items: workingItems, queueSettings: true, reasoningEffort: 'medium', pendingSettings: { current: '높음', next: '보통 · 이번 요청만', onCancel: fn() }, effortScope: { value: 'once', onChange: fn() } }} />,
+  render: () => <Chat props={{ state: 'working', items: workingItems, queueSettings: true, reasoningEffort: 'medium', pendingSettings: { current: 'Opus 5.5 · 높음', next: 'Opus 5.5 · 보통', onCancel: fn() }, effortScope: { value: 'once', onChange: fn() } }} />,
   play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole('radio', { name: '다음 요청 1회만' })).toBeChecked();
     await userEvent.click(within(canvasElement).getByTestId('structured-agent-live-effort'));
-    await waitFor(() => expect(within(document.body).getByRole('menuitemradio', { name: '이번 요청만' })).toBeVisible());
+    await waitFor(() => expect(within(document.body).getByRole('menuitemradio', { name: '보통' })).toBeVisible());
   },
 };
 
@@ -174,37 +178,50 @@ interface CanvasProps {
   readonly missingOn?: string;
   readonly answerWaiting?: boolean;
   readonly approvalWaiting?: boolean;
+  /** Overlay a run stopped where the person is needed. */
+  readonly run?: 'answer' | 'approval';
+  readonly extraIssues?: readonly WorkflowIssue[];
+  readonly repeat?: { readonly value: WorkflowRepeat; readonly status?: WorkflowRepeatStatus; readonly note?: ReactNode };
+  readonly panelOpen?: boolean;
   readonly mobile?: boolean;
   readonly sheet?: boolean;
-  readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string } | undefined;
+  /** The 정기 점검 template instead of 개발 절차. */
+  readonly periodic?: boolean;
+  readonly slot?: (node: WorkflowNode) => { readonly settings?: ReactNode; readonly top?: ReactNode; readonly kindLabel?: string; readonly instructionsLabel?: string; readonly conversationHint?: string; readonly statusLabel?: string } | undefined;
 }
 /** The 시안 shows the proposed names (rename table, decision 14); production copy changes in development step 1. */
 function renamed(korean: string): string {
-  return korean.replace(/흐름 편집/gu, '단계 편집').replace(/흐름 v(\d+)/gu, '워크플로 v$1').replace(/흐름 요약/gu, '워크플로 요약').replace(/흐름 캔버스/gu, '워크플로 캔버스').replace(/소프로젝트/gu, '워크플로');
+  if (korean === '흐름') return '워크플로';
+  return korean.replace(/흐름 보기/gu, '워크플로 보기').replace(/흐름 편집/gu, '단계 편집').replace(/흐름 v(\d+)/gu, '워크플로 v$1').replace(/흐름 요약/gu, '워크플로 요약').replace(/흐름 캔버스/gu, '워크플로 캔버스').replace(/소프로젝트/gu, '워크플로');
 }
 function useHarnessCopy(): ReturnType<typeof useWorkflowCopy> {
   const base = useWorkflowCopy();
   return useMemo(() => ((korean: string, english: string) => base(renamed(korean), english)) as ReturnType<typeof useWorkflowCopy>, [base]);
 }
-function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting, mobile = false, sheet = false, slot }: CanvasProps): JSX.Element {
+function Canvas({ select, agentsOpen = true, dragging, dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting, run, extraIssues = [], repeat, panelOpen = true, mobile = false, sheet = false, periodic = false, slot }: CanvasProps): JSX.Element {
   const text = useHarnessCopy();
-  const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `dev:${select}` } : null);
+  const runs = useMemo(() => run ? [harnessRun(run)] : [], [run]);
+  const graph = periodic ? CHECK_GRAPH : HARNESS_GRAPH;
+  const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: 'node', id: `${periodic ? 'chk' : 'dev'}:${select}` } : null);
   const [section, setSection] = useState<WorkflowPanelSection>('settings');
-  const [open, setOpen] = useState(agentsOpen);
+  // Decision 15: a narrow window starts with the agent list folded.
+  const [open, setOpen] = useState(() => agentsOpen && (typeof window === 'undefined' || window.innerWidth >= 1200));
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
-  const decorations = useMemo(() => harnessDecorations({ dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting }), [answerWaiting, approvalWaiting, dropOn, implementWithoutAgent, missingOn]);
-  const issues = validateWorkflowGraph(HARNESS_GRAPH, true);
-  const selected = selection?.kind === 'node' ? HARNESS_GRAPH.nodes.find(node => node.id === selection.id) : undefined;
+  const decorations = useMemo(() => periodic ? CHECK_DECORATIONS : harnessDecorations({ dropOn, implementWithoutAgent, missingOn, answerWaiting, approvalWaiting }), [answerWaiting, approvalWaiting, dropOn, implementWithoutAgent, missingOn, periodic]);
+  const issues = [...validateWorkflowGraph(graph, true), ...extraIssues];
+  const selected = selection?.kind === 'node' ? graph.nodes.find(node => node.id === selection.id) : undefined;
   const Renderer: ComponentType<WorkflowCanvasRendererProps> = mobile ? WorkflowStaticGraph : WorkflowFlowCanvas;
   return <div className="workflow-workspace" data-mobile={mobile || undefined} style={{ width: '100%', height: '100%', boxSizing: 'border-box' }}>
-    <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={HARNESS_GRAPH} draftGraph={null} revision={6} archivedNodes={[]} runs={[]}
+    <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={graph} draftGraph={null} revision={6} archivedNodes={[]} runs={runs}
+      {...(run === 'answer' ? { awaitingLabel: (count: number) => `답변 대기 ${count}` } : {})}
+      {...(repeat ? { repeatStatus: repeat.status, repeatNote: repeat.note } : {})}
       editLocked={false} commandsDisabled={false} issues={issues} providers={PROVIDERS as never}
       selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={null} onPickRun={fn()} runView={false} onRunViewChange={fn()}
       layout={layout} onLayoutChange={setLayout} onGraphChange={fn()} onSaveDraft={fn()} onDiscardDraft={fn()} onRunCommand={fn()}
-      subproject={{ id: 'dev', status: 'active', autoApprove: false, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } }, repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: false } }}
+      subproject={{ id: 'dev', status: 'active', autoApprove: false, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } }, repeat: repeat?.value ?? { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: false } }}
       onSaveRepeat={fn()}
       structure={false} onStructureChange={fn()} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()} stageLinks={() => []} canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()}
-      canvasRenderer={Renderer} panelOpen onPanelOpenChange={fn()}
+      canvasRenderer={Renderer} panelOpen={panelOpen} onPanelOpenChange={fn()}
       decorations={decorations.nodes} edgeDecorations={decorations.edges}
       panelTop={mobile ? undefined : <WorkflowAgentList text={text} agents={harnessAgents({ 'agent-design': 3, 'agent-build': implementWithoutAgent ? 0 : 1, 'agent-review': 1 })} open={open} onOpenChange={setOpen}
         targetStage={selected?.title} dragging={dragging} onAssign={fn()} onManage={fn()} />}
@@ -236,12 +253,12 @@ export const CanvasChecks: Story = {
     session: { value: 'fresh', reason: '앞 단계가 사람 승인이고 에이전트가 달라 새 대화로 시작합니다.' }, effort: { value: '', options: STORY_EFFORTS.map(option => option.value === '' ? { ...option, label: '기본 (보통)' } : option) },
     permission: { value: 'standard', options: STORY_PERMISSIONS, note: '바꿀 수 있는 경로: src/, test/' },
     checks: [{ id: 'c1', command: 'pnpm test', consent: 'confirmed' }, { id: 'c2', command: 'pnpm typecheck', consent: 'needed' }],
-    review: { value: 'off', options: STORY_REVIEWS, note: '검토를 끄면 확인 명령이 모두 통과해야 다음으로 갑니다. 명령이 없으면 뒤에 승인 단계가 필요합니다.' },
+    review: { value: 'off', options: STORY_REVIEWS, note: '검토를 끄면 확인 명령이 모두 통과해야 다음으로 갑니다. 명령이 없으면 뒤에 사람 확인 단계가 있어야 하고, 그 확인은 자동 승인으로 넘어가지 않습니다.' },
   })} />,
 };
 /** A stage that waits for the person's answer (amber): no AI runs; the answer goes to 계획 in the same conversation. */
 export const CanvasAnswer: Story = {
-  render: () => <DeskCanvas select="answer" agentsOpen={false} answerWaiting slot={node => node.id === 'dev:answer' ? { top: <AnswerDemo />, kindLabel: '답변 기다림', instructionsLabel: '물어볼 내용' } : undefined} />,
+  render: () => <DeskCanvas select="answer" agentsOpen={false} answerWaiting run="answer" slot={node => node.id === 'dev:answer' ? { top: <AnswerDemo />, kindLabel: '답변 기다림', instructionsLabel: '물어볼 내용', statusLabel: '답변 대기 · 조치 필요' } : undefined} />,
 };
 function AnswerDemo(): JSX.Element {
   const text = useWorkflowCopy();
@@ -251,7 +268,7 @@ function AnswerDemo(): JSX.Element {
 }
 /** Approval with a comment: 승인, or send it back to 시안 with what to change (the same conversation redoes it). */
 export const CanvasApproval: Story = {
-  render: () => <DeskCanvas select="approval" agentsOpen={false} approvalWaiting slot={node => node.id === 'dev:approval' ? { top: <ApprovalDemo />, kindLabel: '사람 승인 · 의견', instructionsLabel: '승인할 내용' } : undefined} />,
+  render: () => <DeskCanvas select="approval" agentsOpen={false} approvalWaiting run="approval" slot={node => node.id === 'dev:approval' ? { top: <ApprovalDemo />, kindLabel: '사람 승인 · 의견', instructionsLabel: '승인할 내용', statusLabel: '승인 대기 · 의견 가능' } : undefined} />,
 };
 function ApprovalDemo(): JSX.Element {
   const text = useWorkflowCopy();
@@ -261,7 +278,7 @@ function ApprovalDemo(): JSX.Element {
 }
 /** A workflow from a cloned repository names an agent this PC does not have: readable, but it will not run until reassigned. */
 export const CanvasMissingAgent: Story = {
-  render: () => <DeskCanvas select="implement" missingOn="dev:implement" slot={stageAgent({ agent: { name: '구현 담당', detail: '', tone: 'codex', missing: true, permissionLabel: '승인 후 실행' }, session: { value: 'fresh', reason: '에이전트를 다시 배정하면 정할 수 있습니다.' } })} />,
+  render: () => <DeskCanvas select="implement" missingOn="dev:implement" extraIssues={[{ code: 'missing-agent', message: '이 PC에 없는 에이전트입니다. 다시 배정하세요.', nodeId: 'dev:implement' }]} slot={stageAgent({ agent: { name: '구현 담당', detail: '', tone: 'codex', missing: true, permissionLabel: '승인 후 실행' }, session: { value: 'fresh', reason: '에이전트를 다시 배정하면 정할 수 있습니다.' } })} />,
 };
 
 // ── 4. Templates ────────────────────────────────────────────────────────────────────────────────────────
@@ -287,12 +304,13 @@ export const TemplateSave: Story = { render: () => <Templates save /> };
 
 // ── 5. Settings changed from a conversation ─────────────────────────────────────────────────────────────
 const settingsItems: readonly DaemonTranscriptItem[] = [
-  item('s-u1', 1, 'user-message', '테마는 라이트로 바꾸고, 검토만 하는 Codex 에이전트 하나 만들어 줘. 폰에서도 쓰게 원격 접속도 켜 줘.'),
-  item('s-a1', 2, 'assistant-message', '테마를 Light로 바꾸고 에이전트 "교차 검토"(Codex · GPT-6-Astra · 매우 높음 · 계획만)를 만들었습니다. 되돌리려면 아래에서 누르세요.\n\n원격 접속은 보안 설정이라 제가 직접 켤 수 없습니다. 제안을 올렸으니 확인 후 적용해 주세요.'),
+  item('s-u1', 1, 'user-message', '스캔라인 효과는 끄고, 검토만 하는 Codex 에이전트 하나 만들어 줘. 구현 담당은 전체 권한으로 바꾸고, 폰에서도 쓰게 원격 접속도 켜 줘.'),
+  item('s-a1', 2, 'assistant-message', '스캔라인 효과를 끄고 에이전트 "교차 검토"(Codex · GPT-6-Astra · 매우 높음 · 계획만)를 만들었습니다. 되돌리려면 아래에서 누르세요.\n\n구현 담당의 권한을 올리는 것과 원격 접속은 제가 직접 바꿀 수 없어 제안으로 올렸습니다. 확인 후 적용해 주세요.'),
 ];
 const track = (onPhone = false) => <SettingsChangeTrack ko onPhone={onPhone} onUndo={fn()} onApply={fn()} onDecline={fn()} onOpenSettings={fn()}
-  changes={[{ id: 'ch1', label: '테마: Matrix → Light', at: '09:31' }, { id: 'ch2', label: '에이전트 추가: 교차 검토 (Codex · 매우 높음 · 계획만)', at: '09:31' }]}
-  proposals={[{ id: 'p1', title: '원격 접속 켜기', desktopOnly: true, rows: [{ name: '원격 접속', before: '끔', after: '켬 (Tailscale 100.64.0.10)' }],
+  changes={[{ id: 'ch1', label: '화면 효과: 스캔라인 켬 → 끔', at: '09:31' }, { id: 'ch2', label: '에이전트 추가: 교차 검토 (Codex · 매우 높음 · 계획만)', at: '09:31' }]}
+  proposals={[{ id: 'p0', title: '에이전트 "구현 담당" 권한 올리기', rows: [{ name: '권한', before: '승인 후 실행', after: '전체 권한' }], risk: '에이전트를 고치는 일이지만 권한을 올리는 변경이라 제안으로만 올라옵니다. 워크플로 단계에서는 전체 권한이 승인 후 실행으로 낮춰집니다.' },
+    { id: 'p1', title: '원격 접속 켜기', desktopOnly: true, rows: [{ name: '원격 접속', before: '끔', after: '켬 (Tailscale 100.64.0.10)' }],
     risk: '켜면 페어링한 폰이 이 PC의 터미널과 대화를 조작할 수 있습니다. 페어링 코드는 따로 확인합니다.' }]} />;
 /** The AI changed two settings directly (with 되돌리기) and could only propose remote access (a person applies it). */
 export const ChatSettingsChange: Story = { render: () => <Chat props={{ items: settingsItems, settingsTrack: track() }} /> };
@@ -326,3 +344,66 @@ export const PhoneSettingsChange: Story = {
   render: () => <Chat mobile props={{ items: settingsItems, settingsTrack: track(true) }} />,
 };
 
+// ── 7. Review round (Codex · advisor): states the first pictures did not show ──────────────────────────────
+/** Claude: the approval continues the same turn, so this implementation keeps the current settings and the implement agent applies from the next request (until probe 2 shows the turn can be split). */
+export const ComposerPlanApprovalClaude: Story = {
+  render: () => <Chat props={{ reasoningEffort: 'high', permissionPreset: 'plan', items: planItems,
+    turns: [{ id: 'turn-plan', sessionId: 'harness-chat', commandId: 'command-plan', state: 'completed', revision: 2, createdAt: NOW, updatedAt: NOW }],
+    planPhaseNote: "Claude는 승인 뒤 같은 차례로 이어집니다. 이번 구현은 지금 설정(Opus 5.5 · 높음)으로 하고, 다음 요청부터 'Claude 구현'(보통)을 씁니다" }} />,
+};
+/** 확인하고 허용: exactly what runs, where, and why it is asked again (here: the stage changed the script the command calls). */
+export const CanvasCheckConsent: Story = {
+  render: () => <Desk><Canvas select="implement" agentsOpen={false} slot={stageAgent({
+    agent: { name: '구현 담당', detail: 'Codex · GPT-6-Astra · 승인 후 실행', tone: 'codex', effortLabel: '보통', permissionLabel: '승인 후 실행' },
+    session: { value: 'fresh', reason: '앞 단계가 사람 승인이고 에이전트가 달라 새 대화로 시작합니다.' },
+    checks: [{ id: 'c1', command: 'pnpm test', consent: 'confirmed' }, { id: 'c2', command: 'pnpm typecheck', consent: 'needed' }],
+    review: { value: 'off', options: STORY_REVIEWS, note: '검토를 끄면 확인 명령이 모두 통과해야 다음으로 갑니다. 명령이 없으면 뒤에 사람 확인 단계가 있어야 하고, 그 확인은 자동 승인으로 넘어가지 않습니다.' },
+  })} />
+    <ConsentDemo />
+  </Desk>,
+};
+function ConsentDemo(): JSX.Element {
+  const text = useWorkflowCopy();
+  return <WorkflowCheckConsent text={text} open command="pnpm typecheck" location="<작업 폴더>\.ezterminal\runs\run-dev-1\구현 (이 단계의 결과)" reason="script-changed"
+    resolved={{ label: 'package.json의 typecheck', value: 'tsc --noEmit && pnpm typecheck:mobile-e2e' }} before="tsc --noEmit" onAllow={fn()} onClose={fn()} />;
+}
+/** 정기 점검 with 반복: the schedule runs the confirmed v6 while the edited v7 waits for a look; an unchanged result skipped the AI summary. */
+export const CanvasRepeat: Story = {
+  render: () => <DeskCanvas periodic select="sum" agentsOpen={false} slot={stageAgent({
+    agent: { name: '빠른 조사', detail: 'Claude · Sonnet 5.5 · 계획만', tone: 'claude', effortLabel: '낮음', permissionLabel: '계획만' },
+    session: { value: 'continue', from: '의존성·테스트 확인' }, effort: { value: '', options: STORY_EFFORTS.map(option => option.value === '' ? { ...option, label: '기본 (낮음)' } : option) },
+    permission: { value: 'plan', options: STORY_PERMISSIONS }, checks: [],
+    review: { value: 'off', options: STORY_REVIEWS, note: '요약은 검토 끔. 확인 명령 결과가 지난번과 같으면 이 단계는 건너뜁니다. 뒤의 결과 확인은 사람이 합니다(자동 승인으로 넘어가지 않음).' },
+  })} repeat={{
+    value: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true },
+    status: { nextAt: '2026-10-30T00:00:00.000Z' },
+    note: <RepeatNote />,
+  }} />,
+};
+function RepeatNote(): JSX.Element {
+  return <div className="workflow-repeat-note" role="status">
+    <p><strong>예약 실행은 v6(확인한 버전)으로 돕니다.</strong> 편집본 v7은 아직 확인하지 않아 예약에 쓰지 않습니다.</p>
+    <p className="workflow-repeat-note__actions"><button type="button">v7로 다시 확인</button><button type="button">v6 보기</button><button type="button">바뀐 점 비교</button></p>
+    <p>마지막 실행 10/29 09:00 · 확인 명령 결과가 지난번과 같아 <strong>AI 요약을 건너뜀</strong> · <button type="button">검사 결과 보기</button> (명령이 실패하거나 시간 초과면 건너뛰지 않습니다)</p>
+  </div>;
+}
+/** A narrow window (1024 · 150%): the stage panel starts folded so the canvas keeps readable cards; selecting a stage opens it. */
+export const CanvasNarrow: Story = { render: () => <DeskCanvas agentsOpen={false} panelOpen={false} /> };
+/** The AI's changes over time: undo refused after a later change (shows the difference instead), a proposal resolved on the phone, an expired one. */
+export const ChatSettingsStates: Story = {
+  render: () => <Chat props={{ items: settingsItems, settingsTrack: <SettingsChangeTrack ko onUndo={fn()} onShowDiff={fn()} onApply={fn()} onDecline={fn()}
+    changes={[{ id: 'ch1', label: '화면 효과: 스캔라인 켬 → 끔', at: '09:31', conflict: true }, { id: 'ch2', label: '에이전트 추가: 교차 검토', at: '09:31', undone: true }]}
+    proposals={[
+      { id: 'p1', title: '원격 접속 켜기', desktopOnly: true, state: 'resolved-elsewhere', detail: 'PC에서 09:40에 적용', rows: [{ name: '원격 접속', before: '끔', after: '켬' }], risk: '페어링한 폰이 이 PC를 조작할 수 있습니다.' },
+      { id: 'p2', title: '반복 켜기 · 정기 점검 매일 09:00', state: 'expired', rows: [{ name: '반복', before: '끔', after: '매일 09:00' }], risk: '자동으로 실행이 시작됩니다.' },
+    ]} /> }} />,
+};
+/** A new phone on a PC that does not know agents yet (older EZTerminal): no 배정, it says why and keeps today's AI · 모델 fields. */
+export const PhoneOldHost: Story = {
+  parameters: { layout: 'centered' },
+  render: () => <Phone><Canvas mobile select="implement" implementWithoutAgent slot={() => ({ top: <p className="workflow-notice" role="status">이 PC의 EZTerminal은 아직 에이전트 배정을 모릅니다. PC를 업데이트하면 단계에 에이전트를 놓을 수 있습니다. 지금은 단계마다 AI·모델을 고릅니다.</p> })} /></Phone>,
+  play: async ({ canvasElement }) => {
+    const target = await within(canvasElement).findByTestId('workflow-stage-panel');
+    target.scrollIntoView({ block: 'start' });
+  },
+};

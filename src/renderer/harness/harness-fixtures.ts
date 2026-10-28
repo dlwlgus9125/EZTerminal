@@ -1,5 +1,6 @@
 import type { ChatAgentPhaseMap, ChatAgentProfile } from '../../shared/chat-agent-profiles';
-import type { WorkflowGraph, WorkflowNode } from '../../shared/workflow-graph';
+import type { ExecutionAttempt, ExecutionReview, ExecutionRun, ExecutionTask, PreparedExecutionTask } from '../../shared/planning-execution';
+import type { WorkflowActivation, WorkflowGraph, WorkflowNode } from '../../shared/workflow-graph';
 import type { WorkflowAgentListItem } from '../workflow/WorkflowAgentList';
 import type { WorkflowEdgeDecoration, WorkflowNodeDecoration } from '../workflow/workflow-canvas-types';
 import type { WorkflowTemplateChoice } from '../workflow/WorkflowTemplateDialog';
@@ -72,11 +73,11 @@ const build = { name: '구현 담당', tone: 'codex' as const };
 export function harnessDecorations(options: { readonly dropOn?: string; readonly implementWithoutAgent?: boolean; readonly missingOn?: string; readonly answerWaiting?: boolean; readonly approvalWaiting?: boolean } = {}): DecorationSet {
   const nodes: Record<string, WorkflowNodeDecoration> = {
     'dev:req': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 1/3 · 같은 대화', position: 'first' } },
-    'dev:answer': { kindLabel: '답변 기다림', chain: { label: '대화 유지 · AI 비용 없음', position: 'middle' }, badges: [options.answerWaiting ? '내 답을 기다림 · 지금' : '사람이 답함'], attention: options.answerWaiting, portLabels: { approved: '답함' }, hiddenPorts: ['rejected'] },
+    'dev:answer': { kindLabel: '답변 기다림', chain: { label: '대화 유지 · AI 비용 없음', position: 'middle' }, badges: [options.answerWaiting ? '내 답을 기다림 · 지금' : '사람이 답함'], attention: options.answerWaiting, ...(options.answerWaiting ? { statusLabel: '답변 대기 · 조치 필요' } : {}), portLabels: { approved: '답함' }, hiddenPorts: ['rejected'] },
     'dev:plan': { agent: { ...design, detail: 'Claude · Opus 5.5', effort: '높음' }, chain: { label: '이어서 2/3', position: 'middle' } },
     'dev:mock': { agent: { ...design, detail: 'Claude · Opus 5.5 · 노력만 낮춤', effort: '보통' }, chain: { label: '이어서 3/3', position: 'last' } },
     'dev:review': { agent: { name: '교차 검토', tone: 'codex', detail: 'Codex · GPT-6-Astra · 늘 새 대화', effort: '매우 높음' }, badges: ['읽기 전용'] },
-    'dev:approval': { badges: [options.approvalWaiting ? '내 승인을 기다림 · 지금' : '사람이 승인 · 의견 남기기'], attention: options.approvalWaiting, portLabels: { rejected: '의견 달아 되돌림' } },
+    'dev:approval': { badges: [options.approvalWaiting ? '내 승인을 기다림 · 지금' : '사람이 승인 · 의견 남기기'], attention: options.approvalWaiting, ...(options.approvalWaiting ? { statusLabel: '승인 대기 · 의견 가능' } : {}), portLabels: { rejected: '의견 달아 되돌림' } },
     'dev:implement': options.implementWithoutAgent ? { badges: ['pnpm test', '검토 끔'] } : { agent: { ...build, detail: 'Codex · GPT-6-Astra', effort: '보통' }, badges: ['pnpm test', '검토 끔'] },
   };
   if (options.dropOn) nodes[options.dropOn] = { ...nodes[options.dropOn], dropTarget: true };
@@ -107,3 +108,67 @@ export const CHAIN_HINTS: Readonly<Record<string, string>> = {
 };
 export const STORY_PERMISSIONS = [{ value: 'plan', label: '계획만 · 읽기 전용' }, { value: 'standard', label: '승인 후 실행' }];
 export const STORY_REVIEWS = [{ value: 'run', label: '실행 기본 (교차 검토)' }, { value: 'off', label: '끔 · 확인 명령으로만' }, { value: 'agent', label: '다른 에이전트…' }];
+
+/**
+ * A run of the 개발 절차 graph in the shape the runtime records, stopped where the person is needed:
+ * at 내 답변 (an answer) or at 시안 승인 (an approval with a comment). Only for the mockup's overlay.
+ */
+export function harnessRun(at: 'answer' | 'approval'): ExecutionRun {
+  const AT = '2026-10-29T00:10:00.000Z';
+  type Step = { readonly node: string; readonly state: WorkflowActivation['state']; readonly outcome?: WorkflowActivation['outcome'] };
+  const done = (node: string, outcome: WorkflowActivation['outcome'] = 'passed'): Step => ({ node, state: 'completed', outcome });
+  const steps: readonly Step[] = at === 'answer'
+    ? [done('req'), { node: 'answer', state: 'awaiting-approval' }]
+    : [done('req'), done('answer', 'approved'), done('plan'), done('mock'), done('review'), { node: 'approval', state: 'awaiting-approval' }];
+  const agents = HARNESS_GRAPH.nodes.filter(node => node.operation === 'agent');
+  const ran = steps.filter(step => agents.some(node => node.id === `dev:${step.node}`) && step.state === 'completed');
+  const activations: WorkflowActivation[] = steps.map(step => ({ id: `wf:dev:${step.node}:0`, nodeId: `dev:${step.node}`, iteration: 0, state: step.state, incomingEdgeIds: [], inputResults: {},
+    ...(step.outcome ? { outcome: step.outcome } : {}), ...(ran.includes(step) ? { attemptId: `attempt-${step.node}-1` } : {}) }));
+  const attempts: ExecutionAttempt[] = ran.map(step => {
+    const node = agents.find(entry => entry.id === `dev:${step.node}`)!;
+    const settings = { providerId: node.providerId!, model: node.model!, permissionPreset: node.permissionPreset };
+    return { attemptId: `attempt-${step.node}-1`, taskId: node.id, taskRevision: 1, dispatchId: `dispatch-${step.node}`, workspaceId: 'chain-design', number: 1, reason: 'initial',
+      sessionId: step.node === 'review' ? 'session-review-1' : 'session-design-chain', turnId: `turn-${step.node}`, state: 'succeeded', startedAt: AT, finishedAt: AT, summary: `${node.title} 마침`,
+      artifacts: [], requestedSettings: settings, effectiveSettings: settings };
+  });
+  const reviews: ExecutionReview[] = ran.map(step => ({ reviewId: `review-${step.node}`, attemptId: `attempt-${step.node}-1`, reviewerSessionId: `reviewer-${step.node}`, reviewerTurnId: `reviewer-turn-${step.node}`,
+    decidedBy: 'reviewer', baseline: { baselineId: 'baseline-dev', revision: 1, fingerprint: 'b'.repeat(64) }, artifacts: [], evidenceIds: [], decision: 'approve', detail: '완료 조건을 충족합니다.', decidedAt: AT }));
+  const tasks: ExecutionTask[] = agents.map(node => {
+    const step = ran.find(entry => `dev:${entry.node}` === node.id);
+    return { taskId: node.id, state: step ? 'completed' : 'waiting', retriesUsed: 0, ...(step ? { currentAttemptId: `attempt-${step.node}-1` } : {}) };
+  });
+  const prepared: PreparedExecutionTask[] = agents.map(node => ({ taskId: node.id, taskRevision: 1, stage: node.role, title: node.title, brief: node.instructions, dependsOn: [], retryLimit: node.retryLimit,
+    profile: { profileId: `profile-${node.id}`, revision: 1, role: node.role, providerId: node.providerId!, model: node.model!, prompt: 'Stage profile', permissionPreset: node.permissionPreset, capabilities: [] },
+    acceptance: [{ acceptanceId: `${node.id}:ok`, description: node.acceptance[0] ?? 'Done' }], validations: [{ validationId: `${node.id}:check`, acceptanceIds: [`${node.id}:ok`], method: 'inspection', environment: 'review' }] }));
+  return {
+    runId: 'run-dev-1', projectId: 'project-story', revision: 9, state: 'awaiting-review', createdAt: AT, updatedAt: AT, startedAt: AT,
+    preparation: { workflow: { subprojectId: 'dev', revision: 6, fingerprint: 'a'.repeat(64), graph: HARNESS_GRAPH }, subprojectId: 'dev', baseCommit: 'd'.repeat(40),
+      baseline: { baselineId: 'baseline-dev', revision: 1, fingerprint: 'b'.repeat(64) }, artifacts: [], teamMode: 'division', progressPolicy: 'autonomous', tasks: prepared, approvalPolicy: 'user' },
+    preparationFingerprint: 'c'.repeat(64), tasks, attempts, evidence: [], reviews, gates: [],
+    workflowRuntime: { activations, edgeCounts: Object.fromEntries(HARNESS_GRAPH.edges.filter(edge => steps.some(step => step.state === 'completed' && `dev:${step.node}` === edge.from)
+      && steps.some(step => `dev:${step.node}` === edge.to)).map(edge => [edge.id, 1])), completed: false },
+  };
+}
+/** "정기 점검": checks by command (no AI), then a cheap summary only when the result changed, then a look by the person. */
+export const CHECK_GRAPH: WorkflowGraph = {
+  entryNodeId: 'chk:run',
+  nodes: [
+    stage('run', '의존성·테스트 확인', 'agent', 'review', 0, 0, { providerId: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'low', instructions: '확인 명령을 돌리고 결과를 정리합니다.', acceptance: ['pnpm audit · pnpm test 결과'] }),
+    stage('sum', '바뀐 점 요약', 'agent', 'planning', 1, 0, { providerId: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'low', instructions: '지난번과 달라진 점만 다섯 줄 안으로 요약합니다.', acceptance: ['다섯 줄 요약'] }),
+    stage('look', '결과 확인', 'approval', 'review', 2, 0, { instructions: '요약을 보고 할 일을 정합니다.' }),
+    stage('done', '완료', 'complete', 'integration', 3, 0),
+  ].map(node => ({ ...node, id: node.id.replace('dev:', 'chk:') })),
+  edges: [
+    { id: 'chk:run-sum', from: 'chk:run', to: 'chk:sum', outcome: 'next' },
+    { id: 'chk:sum-look', from: 'chk:sum', to: 'chk:look', outcome: 'next' },
+    { id: 'chk:look-done', from: 'chk:look', to: 'chk:done', outcome: 'approved' },
+  ],
+};
+export const CHECK_DECORATIONS: { readonly nodes: Readonly<Record<string, WorkflowNodeDecoration>>; readonly edges: Readonly<Record<string, WorkflowEdgeDecoration>> } = {
+  nodes: {
+    'chk:run': { agent: { name: '빠른 조사', tone: 'claude', detail: 'Claude · Sonnet 5.5', effort: '낮음' }, badges: ['pnpm audit', 'pnpm test', '검토 끔'], chain: { label: '이어서 1/2', position: 'first' } },
+    'chk:sum': { agent: { name: '빠른 조사', tone: 'claude', detail: 'Claude · Sonnet 5.5', effort: '낮음' }, badges: ['결과가 같으면 건너뜀'], chain: { label: '이어서 2/2', position: 'last' } },
+    'chk:look': { badges: ['사람이 확인'] },
+  },
+  edges: { 'chk:run-sum': { chain: true, label: '이어서' } },
+};

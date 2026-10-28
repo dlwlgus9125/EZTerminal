@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Button, Field, Select } from '../ui';
 import { Glyph } from '../ui/Glyph';
 import type { WorkflowCopy } from './workflow-copy';
@@ -36,6 +37,7 @@ export interface WorkflowStageAgentProps {
  * stage panel shows it in place of the AI · model · effort fields; instructions stay below it.
  */
 export function WorkflowStageAgent({ text, agent, session, effort, permission, checks, review, disabled = false, onChange, onReplace, onRemove, onConfirmCheck, onAddCheck, onAssign }: WorkflowStageAgentProps): JSX.Element {
+  const radioName = useId();
   return <div className="workflow-stage-agent" data-testid="workflow-stage-agent">
     <div>
       <p className="workflow-stage-agent__label">{text('맡은 에이전트', 'Agent')}</p>
@@ -53,14 +55,20 @@ export function WorkflowStageAgent({ text, agent, session, effort, permission, c
       </div>}
     </div>
     <div>
-      <p className="workflow-stage-agent__label">{text('대화', 'Conversation')}</p>
-      <div className="workflow-stage-agent__session" role="radiogroup" aria-label={text('대화', 'Conversation')}>
-        <Button size="sm" variant={session.value === 'continue' ? 'primary' : 'secondary'} role="radio" aria-checked={session.value === 'continue'} disabled={disabled || !!session.reason} onClick={() => onChange?.({ session: 'continue' })} leadingIcon={<Glyph name="link" />}>{text('이어서', 'Continue')}</Button>
-        <Button size="sm" variant={session.value === 'fresh' ? 'primary' : 'secondary'} role="radio" aria-checked={session.value === 'fresh'} disabled={disabled} onClick={() => onChange?.({ session: 'fresh' })} leadingIcon={<Glyph name="new" />}>{text('새로 시작', 'Start fresh')}</Button>
-      </div>
+      <fieldset className="workflow-stage-agent__session" disabled={disabled}>
+        <legend className="workflow-stage-agent__label">{text('이 단계를 실행할 때', 'When this stage runs')}</legend>
+        <label data-checked={session.value === 'continue' || undefined} data-disabled={!!session.reason || undefined}>
+          <input type="radio" name={`${radioName}-session`} value="continue" checked={session.value === 'continue'} disabled={!!session.reason} onChange={() => onChange?.({ session: 'continue' })} />
+          <Glyph name="link" /><span>{text('앞 대화 이어서', 'Continue the previous conversation')}</span>
+        </label>
+        <label data-checked={session.value === 'fresh' || undefined}>
+          <input type="radio" name={`${radioName}-session`} value="fresh" checked={session.value === 'fresh'} onChange={() => onChange?.({ session: 'fresh' })} />
+          <Glyph name="new" /><span>{text('새 대화로', 'Start a new conversation')}</span>
+        </label>
+      </fieldset>
       <p className="workflow-stage-agent__note" data-tone={session.value === 'continue' && !session.reason ? 'saving' : undefined}>
         {session.reason ?? (session.value === 'continue'
-          ? text(`'${session.from ?? ''}' 단계와 같은 대화에서 이어서 합니다. 지금까지의 맥락을 다시 읽지 않으니 토큰과 시간을 아낄 수 있습니다.`, `Continues the '${session.from ?? ''}' conversation: no re-reading of the context, which can save tokens and time.`)
+          ? text(`'${session.from ?? ''}' 단계 대화에 이어서 하므로 처음부터 설명할 필요가 없습니다. 재시도해도 같은 대화로 돌아오며, 앞 시도의 결과와 확인 기록은 남습니다. (토큰·시간 절감은 개발 전에 측정)`, `Continues the '${session.from ?? ''}' conversation, so nothing needs explaining again. A retry returns to the same conversation; earlier attempts and their checks stay recorded. (Savings measured before development.)`)
           : text('새 대화에서 시작합니다. 앞 단계 결과는 요약으로 넘겨받습니다.', 'Starts a new conversation; the previous result arrives as a summary.'))}
       </p>
     </div>
@@ -84,7 +92,7 @@ export function WorkflowStageAgent({ text, agent, session, effort, permission, c
         <code>{check.command}</code>
         {check.consent === 'needed'
           ? <Button size="sm" variant="primary" disabled={disabled} onClick={() => onConfirmCheck?.(check.id)}>{text('확인하고 허용', 'Review and allow')}</Button>
-          : <span className="workflow-stage-agent__note" data-tone="saving"><Glyph name="check" />{text('확인됨', 'Allowed')}</span>}
+          : <span className="workflow-check__allowed"><Glyph name="key" />{text('실행 허용됨 · 결과는 실행 때', 'Allowed to run · result when it runs')}</span>}
       </div>)}
       {checks.some(check => check.consent === 'needed') && <p className="workflow-stage-agent__note">{text('새로 생기거나 바뀐 명령은 사람이 한 번 확인해야 실행됩니다. 받은 저장소에 들어 있던 명령도 같습니다.', 'New or changed commands run only after a person allows them once — including ones that came with a cloned repository.')}</p>}
       <Button size="sm" variant="ghost" leadingIcon={<Glyph name="plus" />} disabled={disabled} onClick={onAddCheck}>{text('명령 추가', 'Add a check')}</Button>
