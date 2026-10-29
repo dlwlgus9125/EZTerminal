@@ -98,6 +98,13 @@ describe('the review start form', () => {
     expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'base-branch' } });
   });
 
+  it('says the review waits for the conversation only for the reviewer that would (D13)', () => {
+    render({ self: { providerId: 'claude', waits: true }, others: [{ providerId: 'codex', waits: false }] });
+    expect(container.querySelector('[data-testid="review-start-waits"]')).not.toBeNull();
+    act(() => get('review-start-other').click());
+    expect(container.querySelector('[data-testid="review-start-waits"]')).toBeNull();
+  });
+
   it('says which model and effort each reviewer uses (D8), and nothing about cost', () => {
     render({ self: { providerId: 'claude', settingsText: 'Opus 5.5 · 높음' }, others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음' }] });
     expect(container.querySelector('[data-testid="review-start-self-settings"]')?.textContent).toBe('사용: Opus 5.5 · 높음');

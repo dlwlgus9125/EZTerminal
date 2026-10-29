@@ -16,6 +16,8 @@ export interface ReviewerChoice {
   readonly unavailableReason?: string;
   /** The model and effort it reviews with, as the host will pick them (shown under the choice). */
   readonly settingsText?: string;
+  /** This reviewer would wait for the conversation first (D13): the host's rule for it, read from the snapshot. */
+  readonly waits?: boolean;
 }
 
 /** What the host offers for a review of this conversation. */
@@ -30,7 +32,7 @@ export interface ReviewStartOptions {
   readonly worktree?: boolean;
   /** Why no review can start here (not a Git repository, history only…). */
   readonly disabledReason?: string;
-  /** The conversation is answering: the review waits for the turn to end. */
+  /** The conversation is answering: the review waits for the turn to end (a reviewer's own `waits` comes first). */
   readonly busy?: boolean;
 }
 
@@ -78,6 +80,7 @@ export function ReviewStartForm({ options, onStart, onCancel, initialTarget, ini
   const blockedReason = options.disabledReason
     ?? (mode === 'other' && !otherChoice ? copy.noOther : chosen?.unavailableReason);
   const branch = scope === 'base-branch' && branchOffered;
+  const waits = (chosen?.waits ?? options.busy) === true;
   const start = (): void => {
     if (blockedReason || !chosen) return;
     const trimmed = focus.trim();
@@ -163,7 +166,7 @@ export function ReviewStartForm({ options, onStart, onCancel, initialTarget, ini
         <textarea id={`${id}-focus`} rows={2} value={focus} maxLength={REVIEW_LIMITS.focus} placeholder={copy.focusPlaceholder} disabled={disabled}
           onChange={(event) => setFocus(event.target.value)} onKeyDown={onFocusKey} data-testid="review-start-focus" />
       </div>
-      {options.busy && !disabled && <p className="review-start__note"><Glyph name="clock" />{copy.busy}</p>}
+      {waits && !disabled && <p className="review-start__note" data-testid="review-start-waits"><Glyph name="clock" />{copy.busy}</p>}
       {blockedReason && (
         <p className="review-start__note review-start__note--blocked" role="status" data-testid="review-start-reason"><Glyph name="info" />{blockedReason}</p>
       )}

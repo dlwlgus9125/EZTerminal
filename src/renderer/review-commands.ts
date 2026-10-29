@@ -130,7 +130,11 @@ export function reviewHost(input: ReviewHostInput): ReviewHostProps | undefined 
   };
 
   const selfText = settings(agent.providerId, agent.model, agent.reasoningEffort);
+  // D13 as the host runs it: this AI's fork waits for a running turn and for queued ones (they would change files
+  // during the review); another AI waits only for the turn running when it starts.
+  const running = agent.currentTurnId !== undefined;
   const self: ReviewerChoice = {
+    waits: running || agent.queuedTurnCount > 0,
     providerId: agent.providerId,
     ...(support[agent.providerId]?.self !== true ? { unavailableReason: why(agent.providerId) }
       // A fork needs the provider's conversation: nothing to fork before the first message.
@@ -147,6 +151,7 @@ export function reviewHost(input: ReviewHostInput): ReviewHostProps | undefined 
         : input.reviewAgent ? copy.start.defaultSettings : undefined;
       return {
         providerId: provider.id,
+        waits: running,
         ...(support[provider.id]?.reviewer !== true ? { unavailableReason: why(provider.id) } : {}),
         ...(settingsText ? { settingsText } : {}),
       };
@@ -157,8 +162,6 @@ export function reviewHost(input: ReviewHostInput): ReviewHostProps | undefined 
     others,
     ...(input.baseRef ? { baseRef: input.baseRef } : {}),
     ...(workspace?.kind === 'worktree' ? { worktree: true } : {}),
-    // The host waits for a running turn only (not one still queued): the form says it waits only then.
-    busy: agent.currentTurnId !== undefined,
   };
   const answer = (result: ReviewCommandResult): StructuredAgentUiResult => (result.ok ? { ok: true }
     : { ok: false, message: result.fits !== undefined ? copy.fixTooLong(result.fits) : result.message });

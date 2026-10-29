@@ -82,19 +82,20 @@ describe('what a conversation offers for reviews', () => {
       reviewAgent: (providerId: string) => (providerId === 'codex' ? { name: '코드 리뷰어', model: 'gpt-6.1-sol', reasoningEffort: 'high' } : undefined),
     })!;
     expect(offer.reviewStart.options).toEqual({
-      self: { providerId: 'claude', settingsText: 'Opus 5.5 · 높음' },
+      self: { providerId: 'claude', settingsText: 'Opus 5.5 · 높음', waits: false },
       // Gemini has no review support entry: it is not offered.
-      others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음' }],
+      others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음', waits: false }],
       baseRef: 'main',
       worktree: true,
-      busy: false,
     });
   });
 
-  it('says the review waits only while a turn runs, as the host does (not for one still queued)', () => {
+  it('says a review waits as the host makes it wait (D13): this AI for running and queued turns, another AI for a running one', () => {
     const agent = snapshot().agents[0]!;
-    expect(host({ agents: [{ ...agent, state: 'queued', queuedTurnCount: 1 }] })!.reviewStart.options.busy).toBe(false);
-    expect(host({ agents: [{ ...agent, state: 'working', currentTurnId: 'turn-1' }] })!.reviewStart.options.busy).toBe(true);
+    const queued = host({ agents: [{ ...agent, state: 'queued', queuedTurnCount: 1 }] })!.reviewStart.options;
+    expect([queued.self.waits, queued.others[0]!.waits]).toEqual([true, false]);
+    const running = host({ agents: [{ ...agent, state: 'working', currentTurnId: 'turn-1' }] })!.reviewStart.options;
+    expect([running.self.waits, running.others[0]!.waits]).toEqual([true, true]);
   });
 
   it('says why an AI cannot review, and that this one needs a first message to fork', () => {
