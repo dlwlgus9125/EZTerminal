@@ -18,7 +18,10 @@ import {
 const updateGoldens = process.env.UPDATE_PROVIDER_GOLDENS === '1';
 
 describe('recorded provider sessions replayed through the current adapters', () => {
-  const fixtures = listProviderCaptureFixtures();
+  // Review recordings (claude-/codex-review-*) are read-only reviewer sessions that end in the
+  // findings schema; the fork ones start with resume + forkSession or thread/fork, which the
+  // conversation adapters do not issue, so they have no chat golden.
+  const fixtures = listProviderCaptureFixtures().filter((name) => !/^(?:claude|codex)-review-/u.test(name));
 
   it('has recorded fixtures to replay', () => {
     expect(fixtures.length).toBeGreaterThan(0);
