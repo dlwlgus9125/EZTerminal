@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -12,7 +13,10 @@ import {
   type GitDiffResult,
   type GitDirectoryStatus,
   type GitFileChange,
+  type GitReviewDiffResult,
+  type GitReviewScope,
 } from '../shared/git-status';
+import { resolveMergeBase } from './git-ref-safety';
 import { GitCommandError, GitRunner } from './worktree-service';
 
 /** Repository answers remain cheap enough for UI use and bounded over IPC. */
@@ -240,7 +244,13 @@ function quotedDiffPath(prefix: 'a' | 'b', repoPath: string): string {
   return JSON.stringify(`${prefix}/${repoPath}`);
 }
 
-function untrackedPatch(repoPath: string, text: string): string {
+/** Git's own style: a path is quoted only when it holds a quote, a backslash or a control character. */
+function plainDiffPath(prefix: 'a' | 'b', repoPath: string): string {
+  // eslint-disable-next-line no-control-regex
+  return /["\\\u0000-\u001f\u007f]/u.test(repoPath) ? quotedDiffPath(prefix, repoPath) : `${prefix}/${repoPath}`;
+}
+
+function untrackedPatch(repoPath: string, text: string, quote: (prefix: 'a' | 'b', repoPath: string) => string = quotedDiffPath): string {
   const normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   const terminalNewline = normalized.endsWith('\n');
   const lines = normalized.split('\n');
@@ -249,13 +259,46 @@ function untrackedPatch(repoPath: string, text: string): string {
   const body = count === 0 ? '' : `${lines.map((line) => `+${line}`).join('\n')}\n`;
   const noNewline = count > 0 && !terminalNewline ? '\\ No newline at end of file\n' : '';
   return [
-    `diff --git ${quotedDiffPath('a', repoPath)} ${quotedDiffPath('b', repoPath)}`,
+    `diff --git ${quote('a', repoPath)} ${quote('b', repoPath)}`,
     'new file mode 100644',
     '--- /dev/null',
-    `+++ ${quotedDiffPath('b', repoPath)}`,
+    `+++ ${quote('b', repoPath)}`,
     `@@ -0,0 +1,${count} @@`,
     `${body}${noNewline}`,
   ].join('\n');
+}
+
+/** `diff --git a/x b/x`, either side quoted when Git quoted it; the new path is captured. */
+const DIFF_SECTION_START = /^diff --git (?:"a\/(?:[^"\\]|\\.)*"|a\/.+?) (?:"b\/((?:[^"\\]|\\.)*)"|b\/(.+))$/u;
+
+function unquoteDiffPath(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(`"${value}"`);
+    return typeof parsed === 'string' ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
+/** A multi-file `git diff` cut into its files, each with the path it ends up at. */
+function diffSections(text: string): { readonly path: string; readonly text: string }[] {
+  const sections: { path: string; lines: string[] }[] = [];
+  for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
+    const start = DIFF_SECTION_START.exec(line);
+    if (start) {
+      sections.push({ path: start[1] !== undefined ? unquoteDiffPath(start[1]) : start[2]!, lines: [line] });
+      continue;
+    }
+    sections.at(-1)?.lines.push(line);
+  }
+  return sections.map((section) => ({ path: section.path, text: section.lines.join('\n').replace(/\n+$/u, '') }));
+}
+
+/** NUL-separated names; with `truncated`, the last record may be cut short and is dropped. */
+function nulRecords(output: { readonly text: string; readonly truncated: boolean }): string[] {
+  const records = output.text.split('\0');
+  if (output.truncated) records.pop();
+  return records.filter(Boolean);
 }
 
 interface CacheEntry {
@@ -417,6 +460,160 @@ export class GitStatusService {
     } catch (error) {
       if (signal?.aborted) throw abortReason(signal);
       return { ok: false, error: 'git-failed' };
+    }
+  }
+
+  /**
+   * A review's scope as one plain `git diff` (the review loop reads it; 기준 브랜치와 비교 shows it):
+   * uncommitted = the working tree against HEAD plus untracked files; base-branch = the working
+   * tree against the merge base with `refs/heads/<baseRef>` plus untracked files. Paths are
+   * relative to `directory`. Same budgets as getDiff, but whole files only: a file that does not fit
+   * is named in `omissions` (the reviewer may read it) instead of being cut in the middle.
+   */
+  async getReviewDiff(directory: string, scope: GitReviewScope, signal?: AbortSignal): Promise<GitReviewDiffResult> {
+    const resolved = await this.resolveDirectory(directory, signal);
+    if (!resolved) return { ok: false, error: 'invalid-path' };
+    try {
+      const inside = (await this.runGit(resolved, ['rev-parse', '--is-inside-work-tree'], signal)).trim();
+      if (inside !== 'true') return { ok: false, error: 'not-a-repository' };
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      return { ok: false, error: isNotRepositoryError(error) ? 'not-a-repository' : 'git-failed' };
+    }
+
+    try {
+      // Paths as Git wrote them, without octal escapes, so they match the names Git lists.
+      const overrides = [...await this.readFilterOverrides(resolved, signal), '-c', 'core.quotePath=false'];
+      const run = (args: readonly string[]): Promise<string> => this.runGit(resolved, args, signal, overrides);
+      const head = await this.headCommit(resolved, signal, overrides);
+      let base = head;
+      let branch: { readonly baseRef: string; readonly mergeBase: string; readonly ahead: number } | undefined;
+      if (scope.kind === 'base-branch') {
+        if (!head) return { ok: false, error: 'no-base' };
+        let mergeBase: string;
+        try {
+          ({ mergeBase } = await resolveMergeBase(run, scope.baseRef, head));
+        } catch {
+          if (signal?.aborted) throw abortReason(signal);
+          return { ok: false, error: 'no-base' };
+        }
+        const ahead = Number.parseInt((await run(['rev-list', '--count', `${mergeBase}..${head}`])).trim(), 10);
+        branch = { baseRef: scope.baseRef, mergeBase, ahead: Number.isSafeInteger(ahead) && ahead > 0 ? ahead : 0 };
+        base = mergeBase;
+      }
+      const [rootText, prefixText, untrackedText] = await this.runConcurrentGit([
+        (batchSignal) => this.runGit(resolved, ['rev-parse', '--show-toplevel'], batchSignal, overrides),
+        (batchSignal) => this.runGit(resolved, ['rev-parse', '--show-prefix'], batchSignal, overrides),
+        (batchSignal) => this.runDiffGit(resolved, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z', '--', '.'], batchSignal, overrides),
+      ] as const, signal);
+      const root = await fs.realpath(rootText.trim());
+      const prefix = prefixText.trim();
+      signal?.throwIfAborted();
+
+      // Against a commit, one diff holds staged and unstaged changes; with no commit yet, the staged
+      // changes and then the unstaged ones.
+      const forms: readonly (readonly string[])[] = base ? [[base]] : [['--cached'], []];
+      const sections: { readonly path: string; readonly text: string }[] = [];
+      const names: string[] = [];
+      let truncated = untrackedText.truncated;
+      for (const form of forms) {
+        const diffArgs = (extra: readonly string[]): string[] => ['diff', '--no-ext-diff', '--no-textconv', '--relative', ...extra, ...form, '--', '.'];
+        const [patch, listed] = await this.runConcurrentGit([
+          (batchSignal) => this.runDiffGit(resolved, diffArgs([]), batchSignal, overrides),
+          (batchSignal) => this.runDiffGit(resolved, diffArgs(['--name-only', '-z']), batchSignal, overrides),
+        ] as const, signal);
+        const parsed = diffSections(patch.text);
+        // Output cut at the read limit ends inside its last file.
+        if (patch.truncated) parsed.pop();
+        sections.push(...parsed);
+        names.push(...nulRecords(listed));
+        truncated ||= patch.truncated || listed.truncated;
+      }
+
+      const omissions: GitDiffOmission[] = [];
+      const omitted = new Set<string>();
+      const omit = (file: string, reason: GitDiffOmissionReason): void => {
+        truncated = true;
+        if (omitted.has(file) || omissions.length >= MAX_OMISSIONS) return;
+        omitted.add(file);
+        omissions.push({ path: file, reason });
+      };
+      let text = '';
+      const append = (piece: string): boolean => {
+        const separator = text.length === 0 ? '' : '\n';
+        if (text.length + separator.length + piece.length > MAX_DIFF_CHARS) return false;
+        text += `${separator}${piece}`;
+        return true;
+      };
+      const included = new Set<string>();
+      for (const section of sections) {
+        if (append(section.text)) included.add(section.path);
+        else omit(section.path, 'budget-exhausted');
+      }
+      for (const name of names) {
+        if (!included.has(name)) omit(name, 'budget-exhausted');
+      }
+
+      const untracked = nulRecords(untrackedText)
+        .map((repoPath) => ({ repoPath, relative: withinPrefix(repoPath, prefix) }))
+        .filter((entry): entry is { repoPath: string; relative: string } => entry.relative !== null && entry.relative.length > 0);
+      for (let index = 0; index < untracked.length; index += 1) {
+        const { repoPath, relative } = untracked[index]!;
+        if (index >= MAX_OMISSIONS) {
+          truncated = true;
+          break;
+        }
+        if (text.length >= MAX_DIFF_CHARS) {
+          omit(relative, 'budget-exhausted');
+          continue;
+        }
+        signal?.throwIfAborted();
+        const read = await this.readUntracked(root, repoPath, signal);
+        if (read.omission) {
+          omit(relative, read.omission);
+          continue;
+        }
+        if (!append(untrackedPatch(relative, read.text ?? '', plainDiffPath).replace(/\n+$/u, ''))) omit(relative, 'budget-exhausted');
+      }
+
+      return { ok: true, text, truncated, omissions, ...(branch ?? {}) };
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      return { ok: false, error: 'git-failed' };
+    }
+  }
+
+  /**
+   * Changes whenever the working folder's Git state does: HEAD, the status (untracked files
+   * included) and the content of the change against HEAD. Undefined when it cannot be read.
+   */
+  async fingerprint(directory: string, signal?: AbortSignal): Promise<string | undefined> {
+    const resolved = await this.resolveDirectory(directory, signal);
+    if (!resolved) return undefined;
+    try {
+      const overrides = await this.readFilterOverrides(resolved, signal);
+      const head = await this.headCommit(resolved, signal, overrides);
+      const [status, diff] = await this.runConcurrentGit([
+        (batchSignal) => this.runDiffGit(resolved, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], batchSignal, overrides),
+        (batchSignal) => this.runDiffGit(resolved, ['diff', '--no-ext-diff', '--no-textconv', ...(head ? [head] : ['--cached']), '--', '.'], batchSignal, overrides),
+      ] as const, signal);
+      return createHash('sha256')
+        .update(`${head ?? 'unborn'}\0${status.text}\0${diff.text}`)
+        .digest('hex');
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      return undefined;
+    }
+  }
+
+  /** HEAD's commit, or undefined before the first commit. */
+  private async headCommit(directory: string, signal: AbortSignal | undefined, overrides: readonly string[]): Promise<string | undefined> {
+    try {
+      const head = (await this.runGit(directory, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], signal, overrides)).trim();
+      return /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(head) ? head : undefined;
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      return undefined;
     }
   }
 

@@ -65,7 +65,7 @@ import type {
   WorktreeRequestOrigin,
   WorktreeResult,
 } from './worktree';
-import type { GitDiffResult, GitDirectoryStatus } from './git-status';
+import type { GitDiffResult, GitDirectoryStatus, GitWorktreeBaseDiffResult, GitWorktreeBaseResult } from './git-status';
 import type { PairingCode } from './pairing';
 import type { RendererRecoveryCheckpoint } from './renderer-recovery';
 import type { ThemeMod } from './theme-schema';
@@ -1535,6 +1535,10 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   getGitStatus: (directory: string) => Promise<GitDirectoryStatus>;
   /** The directory's uncommitted diff against HEAD, bounded. */
   getGitDiff: (directory: string) => Promise<GitDiffResult>;
+  /** Desktop: a worktree workspace's base branch (the branch the project's main checkout has out). */
+  getWorktreeBase?: (workspaceId: string) => Promise<GitWorktreeBaseResult>;
+  /** Desktop, 기준 브랜치와 비교: a worktree workspace's change since it left its base branch, bounded. */
+  getWorktreeBaseDiff?: (workspaceId: string) => Promise<GitWorktreeBaseDiffResult>;
 }
 
 // ── Desktop-only preload bridge API (theme-effects-font M3) ──────────────────

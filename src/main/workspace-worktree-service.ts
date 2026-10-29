@@ -98,6 +98,15 @@ export class WorkspaceWorktreeService {
     return { ok: true, value: { into: baseBranch, commit } };
   }
 
+  /**
+   * The branch this worktree is compared with and merged into: the one the project's main checkout
+   * has out. Undefined when the main checkout is detached or its branch is not a plain local name.
+   */
+  async baseBranch(target: Pick<WorkspaceWorktreeTarget, 'mainRoot'>, signal?: AbortSignal): Promise<string | undefined> {
+    const branch = await this.currentBranch(target.mainRoot, signal);
+    return branch && SAFE_BRANCH.test(branch) ? branch : undefined;
+  }
+
   /** Deletes a branch that is fully merged (git refuses otherwise); its worktree must already be gone. */
   async deleteMergedBranch(mainRoot: string, branch: string, signal?: AbortSignal): Promise<{ readonly deleted: boolean; readonly message?: string }> {
     if (!SAFE_BRANCH.test(branch)) return { deleted: false, message: 'The branch is not a plain local branch name.' };

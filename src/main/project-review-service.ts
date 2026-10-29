@@ -27,6 +27,7 @@ import {
   rehydrateProviderChanges,
 } from './provider-change-rehydrator';
 import type { ProjectWorkspaceService } from './project-workspace-service';
+import { isSafeRef, resolveMergeBase } from './git-ref-safety';
 import { GitCommandError, GitRunner } from './worktree-service';
 
 const MAX_REVIEW_FILES = 2_000;
@@ -148,15 +149,6 @@ function normalizeSourceSelection(request: Partial<ProjectReviewRequest>): Proje
     return { kind: 'agent-turn', historyId: request.historyId, turnId: request.reviewTurnId ?? 'latest' };
   }
   return null;
-}
-
-function isSafeRef(value: string): boolean {
-  return value.length > 0
-    && value.length <= 200
-    && !value.startsWith('-')
-    && !value.includes('\0')
-    && !value.includes('..')
-    && /^[A-Za-z0-9_./-]+$/u.test(value);
 }
 
 function normalizeRepoPath(value: string): string | null {
@@ -859,14 +851,7 @@ export class ProjectReviewService {
         ]);
       } else {
         if (!headCommit) return { ok: false, error: 'git-failed' };
-        const baseRef = request.baseRef ?? 'main';
-        await safeRun(['check-ref-format', `refs/heads/${baseRef}`]);
-        const verified = (await safeRun([
-          'rev-parse',
-          '--verify',
-          `refs/heads/${baseRef}^{commit}`,
-        ])).trim();
-        baseCommit = (await safeRun(['merge-base', verified, headCommit])).trim();
+        baseCommit = (await resolveMergeBase(safeRun, request.baseRef ?? 'main', headCommit)).mergeBase;
         [names, numstat] = await Promise.all([
           safeRun(['diff', '--no-ext-diff', '--no-textconv', '--name-status', '-z', baseCommit, headCommit, '--', '.']),
           safeRun(['diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', baseCommit, headCommit, '--', '.']),

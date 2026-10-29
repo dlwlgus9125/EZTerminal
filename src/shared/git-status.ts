@@ -78,3 +78,37 @@ export type GitDiffResult =
       readonly omissions: readonly GitDiffOmission[];
     }
   | { readonly ok: false; readonly error: GitDiffError };
+
+/** What a review (or 기준 브랜치와 비교) reads: uncommitted changes, or everything since the branch left its base. */
+export type GitReviewScope =
+  | { readonly kind: 'uncommitted' }
+  | { readonly kind: 'base-branch'; readonly baseRef: string };
+
+/**
+ * A scope as one plain `git diff`: a `diff --git` section per file, paths relative to the directory
+ * asked about, tracked files first, then untracked ones. Whole files only: a file that does not fit
+ * the budget is left out and named in `omissions`. `base-branch` covers the commits since the merge
+ * base with the base branch plus uncommitted and untracked files. `no-base`: the base branch is
+ * missing, shares no history with HEAD, or there is no commit yet.
+ */
+export type GitReviewDiffResult =
+  | (Extract<GitDiffResult, { readonly ok: true }> & {
+      readonly baseRef?: string;
+      readonly mergeBase?: string;
+      /** Commits on HEAD since the merge base. */
+      readonly ahead?: number;
+    })
+  | { readonly ok: false; readonly error: GitDiffError | 'no-base' };
+
+/** A worktree conversation's base branch: the branch the project's main checkout has out. */
+export type GitWorktreeBaseResult =
+  | { readonly ok: true; readonly baseRef: string }
+  | { readonly ok: false; readonly error: 'not-found' | 'no-base' };
+
+/**
+ * 기준 브랜치와 비교 for a worktree workspace (the Results tab). A workspace that is gone or is not a
+ * worktree answers `invalid-path`, as a directory the host cannot read would.
+ */
+export type GitWorktreeBaseDiffResult =
+  | (Extract<GitDiffResult, { readonly ok: true }> & { readonly baseRef: string; readonly mergeBase: string; readonly ahead: number })
+  | { readonly ok: false; readonly error: GitDiffError | 'no-base' };

@@ -361,6 +361,10 @@ const api: EzTerminalApi = {
     ipcRenderer.invoke('git:status', directory),
   getGitDiff: (directory: string): Promise<import('../shared/git-status').GitDiffResult> =>
     ipcRenderer.invoke('git:diff', directory),
+  getWorktreeBase: (workspaceId: string): Promise<import('../shared/git-status').GitWorktreeBaseResult> =>
+    ipcRenderer.invoke('git:worktree-base', sessionSurfaceClientId, workspaceId),
+  getWorktreeBaseDiff: (workspaceId: string): Promise<import('../shared/git-status').GitWorktreeBaseDiffResult> =>
+    ipcRenderer.invoke('git:worktree-base-diff', sessionSurfaceClientId, workspaceId),
 
   // Layout persistence (Track A ③): thin invoke wrappers — main validates all.
   loadLayout: () => ipcRenderer.invoke('layout:load'),

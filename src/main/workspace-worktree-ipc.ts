@@ -7,6 +7,17 @@ import type { WorktreeService } from './worktree-service';
 import { createWorkspaceWorktree, removeWorkspaceWorktree } from './workspace-worktree-actions';
 
 /**
+ * A person's worktree workspace by id, from the daemon's records: active, of kind worktree, not
+ * owned by a run, with its project's main checkout. A renderer never names a path.
+ */
+export function worktreeTargetOf(snapshot: DaemonSnapshot | undefined, workspaceId: unknown): WorkspaceWorktreeTarget | undefined {
+  if (!snapshot || typeof workspaceId !== 'string' || workspaceId.length > 200) return undefined;
+  const workspace = snapshot.workspaces.find((entry) => entry.id === workspaceId && entry.kind === 'worktree' && !entry.archivedAt && !isRunOwnedWorkspace(entry.id));
+  const mainRoot = workspace ? snapshot.projects.find((entry) => entry.id === workspace.projectId)?.rootPath : undefined;
+  return workspace && mainRoot ? { workspaceId: workspace.id, rootPath: workspace.rootPath, mainRoot } : undefined;
+}
+
+/**
  * Desktop-only worktree workspaces: create one for a project, read where each
  * stands, commit its changes, merge it into the main checkout's branch and
  * clean it up once merged.
@@ -29,13 +40,7 @@ export function installWorkspaceWorktreeIpc(input: {
     const project = snapshot.projects.find((entry) => entry.id === projectId);
     return project?.rootPath;
   };
-  const targetOf = (workspaceId: unknown): WorkspaceWorktreeTarget | undefined => {
-    if (typeof workspaceId !== 'string' || workspaceId.length > 200) return undefined;
-    const snapshot = getSnapshot();
-    const workspace = snapshot?.workspaces.find((entry) => entry.id === workspaceId && entry.kind === 'worktree' && !entry.archivedAt && !isRunOwnedWorkspace(entry.id));
-    const mainRoot = workspace && snapshot ? mainRootOf(snapshot, workspace.projectId) : undefined;
-    return workspace && mainRoot ? { workspaceId: workspace.id, rootPath: workspace.rootPath, mainRoot } : undefined;
-  };
+  const targetOf = (workspaceId: unknown): WorkspaceWorktreeTarget | undefined => worktreeTargetOf(getSnapshot(), workspaceId);
   const missing: WorkspaceWorktreeIpcResult<never> = { ok: false, reason: 'not-found', message: 'This worktree workspace is no longer available.' };
 
   ipc.handle('workspace-worktrees:create', (_event, projectId: unknown, branch: unknown) => (

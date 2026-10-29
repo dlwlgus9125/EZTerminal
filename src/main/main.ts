@@ -32,6 +32,7 @@ import { ARTIFACT_SCHEME, ARTIFACT_SCHEME_PRIVILEGES, ArtifactPreviewRegistry, h
 import { installArtifactPreviewIpc } from './artifact-preview-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
+import { installWorktreeBaseDiffIpc } from './worktree-base-diff-ipc';
 import { createWorkspaceWorktree } from './workspace-worktree-actions';
 import { ChatAgentProfileStore, installChatAgentProfileIpc } from './chat-agent-profile-store';
 import { WorkflowTemplateStore, installWorkflowTemplateIpc } from './workflow-template-store';
@@ -2747,6 +2748,13 @@ app.on('ready', async () => {
   ipcMain.handle('pairing:revoke', () => { pairingCodeService.revoke(); });
   ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
   ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
+  featureIpcDisposers.push(installWorktreeBaseDiffIpc({
+    ipc: ipcMain,
+    authorized: desktopWindowSender,
+    getSnapshot: () => daemonRouterRef.current?.getSnapshot(),
+    worktrees: new WorkspaceWorktreeService(),
+    git: gitStatusService,
+  }));
   featureIpcDisposers.push(installAgentActionsIpc({
     ipc: ipcMain,
     desktopAgentMutationIngress,
