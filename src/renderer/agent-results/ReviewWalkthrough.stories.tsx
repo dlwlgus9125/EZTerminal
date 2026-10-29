@@ -48,7 +48,7 @@ function services(): ResultsServices {
   return {
     getGitStatus: async () => STATUS,
     getGitDiff: async () => ({ ok: true, text: UNCOMMITTED_DIFF, truncated: false, omissions: [] }),
-    getWorktreeBaseDiff: async (_root, baseRef) => ({ ok: true, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef, ahead: 1 }),
+    getWorktreeBaseDiff: async () => ({ ok: true, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef: 'main', mergeBase: 'a1b2c3d', ahead: 1 }),
     readFilePreview: async (path) => {
       const relative = path.replace(REVIEW_ROOT, '').replace(/^[\\/]+/u, '').replace(/\\/gu, '/');
       const content = REVIEW_FILES[relative];
@@ -80,7 +80,7 @@ function Results({ id, make, args, review, findingIndex, worktree = true, turnAc
   const source: ResultsSource & { sessionId: string } = {
     ownerPanelId: `review-results-panel-${id}`, sessionId, title: '가격 표시와 할인 함수', providerLabel: 'Claude', workspaceRoot: REVIEW_ROOT,
     items: state.items, model, children: [], transcriptFloor: 0, loaded: true, baselineSequence: 0, historyOnly: false, turnActive,
-    ...(worktree ? { baseRef: 'main' } : {}),
+    ...(worktree ? { baseRef: 'main', workspaceId: 'ws-cart' } : {}),
     insertIntoDraft: fn(), sendNow: args.sendNow, reviewAction, openReviewStart: args.openReviewStart, focusDecision: fn(),
   };
   const [navigation] = useState<ResultsNavigation>(() => ({

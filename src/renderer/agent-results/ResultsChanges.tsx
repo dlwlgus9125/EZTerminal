@@ -96,12 +96,15 @@ function gitEntries(diff: GitState['diff'], prefix: string): FileEntry[] {
  * The working folder as git sees it: against the last commit, or (with `baseRef`) since the
  * worktree left its base branch. Read when shown, when a turn ends and when a change record arrives.
  */
-function useGitScope(workspaceRoot: string | undefined, services: ResultsServices, active: boolean, turnActive: boolean, artifactSequence: number, baseRef?: string): [GitState, () => void] {
+function useGitScope(
+  workspaceRoot: string | undefined, services: ResultsServices, active: boolean, turnActive: boolean, artifactSequence: number, baseWorkspaceId?: string,
+): [GitState, () => void] {
   const [state, setState] = useState<GitState>({ phase: 'idle' });
   const request = useRef(0);
   const refresh = (): void => {
-    const readDiff = baseRef
-      ? (services.getWorktreeBaseDiff ? (root: string) => services.getWorktreeBaseDiff!(root, baseRef) : undefined)
+    // The base scope names the workspace; the host finds its folder and base branch.
+    const readDiff = baseWorkspaceId
+      ? (services.getWorktreeBaseDiff ? () => services.getWorktreeBaseDiff!(baseWorkspaceId) : undefined)
       : services.getGitDiff;
     if (!workspaceRoot || !readDiff || !services.getGitStatus) return;
     const id = ++request.current;
@@ -141,7 +144,7 @@ function useGitScope(workspaceRoot: string | undefined, services: ResultsService
 
 export function ResultsChanges({
   sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive,
-  folderReadable = true, onViewFile, baseRef, sendNow, reviewAction, openReviewStart,
+  folderReadable = true, onViewFile, baseRef, workspaceId, sendNow, reviewAction, openReviewStart,
 }: {
   readonly sessionId: string;
   readonly workspaceRoot?: string;
@@ -166,6 +169,8 @@ export function ResultsChanges({
   readonly onViewFile?: (path: string, line?: number) => void;
   /** The conversation works in a worktree off this branch: 기준 브랜치와 비교 is offered. */
   readonly baseRef?: string;
+  /** The conversation's workspace, which 기준 브랜치와 비교 is read for. */
+  readonly workspaceId?: string;
   /** Sends the comments as a message of their own (queued behind a running turn). */
   readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
   /** Fix, dismiss or reopen the problem on screen (host actions). */
@@ -183,10 +188,10 @@ export function ResultsChanges({
   const noteRef = useRef<HTMLTextAreaElement>(null);
   // A remembered folder scope falls back when this conversation has no folder (or no base) to read.
   const gitAvailable = Boolean(workspaceRoot && folderReadable && services.getGitDiff && services.getGitStatus);
-  const baseAvailable = Boolean(workspaceRoot && folderReadable && baseRef && services.getWorktreeBaseDiff && services.getGitStatus);
+  const baseAvailable = Boolean(workspaceRoot && workspaceId && folderReadable && baseRef && services.getWorktreeBaseDiff && services.getGitStatus);
   const scope: ChangeScope = (view.scope === 'git' && !gitAvailable) || (view.scope === 'base' && !baseAvailable) ? 'all' : view.scope;
   const [git, refreshGit] = useGitScope(workspaceRoot, services, scope === 'git', turnActive, derived.artifactSequence);
-  const [base, refreshBase] = useGitScope(workspaceRoot, services, scope === 'base', turnActive, derived.artifactSequence, baseRef);
+  const [base, refreshBase] = useGitScope(workspaceRoot, services, scope === 'base', turnActive, derived.artifactSequence, workspaceId);
   const folder = scope === 'base' ? base : git;
   const folderScope = scope === 'git' || scope === 'base';
 
@@ -424,7 +429,10 @@ export function ResultsChanges({
       {folderScope && folder.phase === 'error' && <Status variant="danger">{copy.gitUnavailable}</Status>}
       {folderScope && folder.diff && !folder.diff.ok && (
         <Status variant={folder.diff.error === 'not-a-repository' || folder.diff.error === 'no-base' ? 'neutral' : 'danger'}>
-          {folder.diff.error === 'not-a-repository' ? copy.gitNotRepository : folder.diff.error === 'no-base' && baseRef ? copy.baseMissing(baseRef) : copy.gitUnavailable}
+          {folder.diff.error === 'not-a-repository' ? copy.gitNotRepository
+            : folder.diff.error === 'no-base' && baseRef ? copy.baseMissing(baseRef)
+              // The base scope's workspace is gone or is not a worktree: not a git failure.
+              : folder.diff.error === 'invalid-path' && scope === 'base' ? copy.baseWorkspaceGone : copy.gitUnavailable}
         </Status>
       )}
       {folderScope && folder.diff?.ok && folder.diff.truncated && <Status variant="warning">{copy.gitTruncated}</Status>}

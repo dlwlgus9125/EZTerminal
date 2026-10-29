@@ -59,6 +59,8 @@ export function ResultsPublisher({ ownerPanelId, ...part }: ResultsPublisherProp
       title: part.title,
       providerLabel: part.providerLabel,
       ...(part.workspaceRoot ? { workspaceRoot: part.workspaceRoot } : {}),
+      ...(part.workspaceId ? { workspaceId: part.workspaceId } : {}),
+      ...(part.baseRef ? { baseRef: part.baseRef } : {}),
       items,
       children,
       transcriptFloor: part.transcriptFloor,
@@ -71,7 +73,7 @@ export function ResultsPublisher({ ownerPanelId, ...part }: ResultsPublisherProp
       ...(hasProjectFiles ? { openProjectFiles: callbacks.openProjectFiles } : {}),
     });
   }, [baselineSequence, callbacks, children, hasProjectFiles, hasRead, hasRelated, historyOnly, items, loaded, ownerPanelId,
-    part.providerLabel, part.title, part.transcriptFloor, part.turnActive, part.workspaceRoot, sessionId]);
+    part.baseRef, part.providerLabel, part.title, part.transcriptFloor, part.turnActive, part.workspaceId, part.workspaceRoot, sessionId]);
   useEffect(() => () => publishResultsDock(ownerPanelId, undefined), [ownerPanelId]);
 
   const fresh = scanned.current.fresh;

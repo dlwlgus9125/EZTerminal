@@ -28,7 +28,7 @@ const STATUS: GitDirectoryStatus = { availability: 'ready', tracked: true, branc
 const services = (): ResultsServices => ({
   getGitStatus: vi.fn(async () => STATUS),
   getGitDiff: vi.fn(async () => ({ ok: true as const, text: UNCOMMITTED_DIFF, truncated: false, omissions: [] })),
-  getWorktreeBaseDiff: vi.fn(async (_root: string, baseRef: string) => ({ ok: true as const, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef, ahead: 1 })),
+  getWorktreeBaseDiff: vi.fn(async () => ({ ok: true as const, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef: 'main', mergeBase: 'a1b2c3d', ahead: 1 })),
   readFilePreview: vi.fn(),
 });
 
@@ -36,7 +36,7 @@ async function show(fixture: ReviewFixture, navigation: ResultsNavigation, extra
   const model = buildChatModel({ items: fixture.items, turns: fixture.turns });
   const source: ResultsSource & { sessionId: string } = {
     ownerPanelId: 'panel-review', sessionId: `s-${fixture.reviewId}`, workspaceRoot: REVIEW_ROOT, items: fixture.items, model, children: [],
-    transcriptFloor: 0, loaded: true, baselineSequence: 0, historyOnly: false, turnActive: false, baseRef: 'main', ...extra,
+    transcriptFloor: 0, loaded: true, baselineSequence: 0, historyOnly: false, turnActive: false, baseRef: 'main', workspaceId: 'ws-cart', ...extra,
   };
   await act(async () => root.render(<AppI18nProvider locale="ko" languages={['ko']}><ConversationResults source={source} services={hostServices} navigation={navigation} /></AppI18nProvider>));
   await act(async () => { await Promise.resolve(); });
@@ -111,6 +111,14 @@ describe('stepping through an AI review in Changes', () => {
     expect(text('results-walkthrough-announce')).toContain('파일이 지워짐');
     expect(container.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
     expect(container.querySelector('[data-testid="results-finding-current"]')).toBeNull();
+  });
+
+  it('reads 기준 브랜치와 비교 for the conversation’s workspace, and says when it is not a worktree any more', async () => {
+    const gone = { ...services(), getWorktreeBaseDiff: vi.fn(async () => ({ ok: false as const, error: 'invalid-path' as const })) };
+    await show(otherAiReview(), { sequence: 1, section: 'changes', review: { reviewId: OTHER_REVIEW_ID } }, {}, gone);
+    expect(gone.getWorktreeBaseDiff).toHaveBeenCalledWith('ws-cart');
+    expect(container.textContent).toContain('이 대화의 작업 공간이 없어졌거나 워크트리가 아니라 기준 브랜치와 비교할 수 없습니다.');
+    expect(container.textContent).not.toContain('작업 폴더를 읽지 못했습니다');
   });
 
   it('opens an uncommitted-changes review in the working folder scope', async () => {

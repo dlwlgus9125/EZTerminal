@@ -379,7 +379,7 @@ function storyServices(): ResultsServices {
   return {
     getGitStatus: async () => STATUS,
     getGitDiff: async () => ({ ok: true, text: UNCOMMITTED_DIFF, truncated: false, omissions: [] }),
-    getWorktreeBaseDiff: async (_root, baseRef) => ({ ok: true, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef, ahead: 1 }),
+    getWorktreeBaseDiff: async () => ({ ok: true, text: BRANCH_DIFF, truncated: false, omissions: [], baseRef: 'main', mergeBase: 'a1b2c3d', ahead: 1 }),
     readFilePreview: async (path) => {
       const relative = path.replace(REVIEW_ROOT, '').replace(/^[\\/]+/u, '').replace(/\\/gu, '/');
       const content = REVIEW_FILES[relative];
@@ -408,7 +408,7 @@ function DeskScreen({ id, make, args, walk = false, skin = 'bubble' }: {
   useEffect(() => {
     publishResultsDock(ownerPanelId, {
       sessionId, title: props.title, providerLabel: 'Claude', workspaceRoot: REVIEW_ROOT, items: host.items, children: [], transcriptFloor: 0,
-      loaded: true, baselineSequence: 0, historyOnly: false, turnActive: fixture.state === 'working', baseRef: 'main',
+      loaded: true, baselineSequence: 0, historyOnly: false, turnActive: fixture.state === 'working', baseRef: 'main', workspaceId: 'ws-cart',
     });
   }, [fixture.state, host.items, ownerPanelId, props.title, sessionId]);
   useEffect(() => () => retractResultsSource(ownerPanelId), [ownerPanelId]);

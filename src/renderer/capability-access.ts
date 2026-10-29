@@ -12,6 +12,7 @@ import type { FileListResult, FileOpResult } from '../shared/files';
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDirectoryStatus,
+  type GitWorktreeBaseResult,
 } from '../shared/git-status';
 import type {
   DaemonLifecycleSettings,
@@ -269,6 +270,8 @@ export interface FileAccess {
    * rather than throwing when the host cannot answer, because a change tag is
    * decoration: its absence must never take the listing down with it. */
   gitStatus: (path: string) => Promise<GitDirectoryStatus>;
+  /** Desktop: a worktree workspace's base branch (기준 브랜치). Optional so test doubles need not supply it. */
+  worktreeBase?: (workspaceId: string) => Promise<GitWorktreeBaseResult>;
 }
 
 export interface CapabilityAccess {
@@ -952,6 +955,12 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       const api = source.readCore();
       if (!api?.getGitStatus) return Promise.resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
       return api.getGitStatus(path).catch(() => UNAVAILABLE_GIT_DIRECTORY_STATUS);
+    },
+    worktreeBase(workspaceId) {
+      const api = source.readCore();
+      const unknown: GitWorktreeBaseResult = { ok: false, error: 'not-found' };
+      if (!api?.getWorktreeBase) return Promise.resolve(unknown);
+      return api.getWorktreeBase(workspaceId).catch(() => unknown);
     },
     openInApp(path) {
       return requireCore('openFileInApp').openFileInApp(path);

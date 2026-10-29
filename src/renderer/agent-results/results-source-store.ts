@@ -28,6 +28,8 @@ export interface ResultsDockPart {
   readonly title: string;
   readonly providerLabel: string;
   readonly workspaceRoot?: string;
+  /** The conversation's workspace: 기준 브랜치와 비교 is read for it (the host finds its folder and base). */
+  readonly workspaceId?: string;
   readonly items: readonly DaemonTranscriptItem[];
   readonly children: readonly ResultsChild[];
   /** Sequence below the oldest loaded item; 0 once everything is loaded. */

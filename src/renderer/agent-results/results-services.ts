@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import type { FilePreviewResult } from '../../shared/file-preview';
-import type { GitDiffError, GitDiffResult, GitDirectoryStatus } from '../../shared/git-status';
+import type { GitDiffResult, GitDirectoryStatus, GitWorktreeBaseDiffResult } from '../../shared/git-status';
 import type { CleanedFolderState } from '../../shared/run-retention';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 
@@ -9,16 +9,17 @@ import { readSessionViewState, saveSessionViewState } from '../session-view-stat
  * A worktree's change since it left its base branch: from the merge base, commits, uncommitted and
  * untracked files together (what a base-branch review reads). `ahead` counts the branch's own commits.
  */
-export type WorktreeBaseDiffResult =
-  | (Extract<GitDiffResult, { readonly ok: true }> & { readonly baseRef: string; readonly ahead: number })
-  | { readonly ok: false; readonly error: GitDiffError | 'no-base' };
+export type WorktreeBaseDiffResult = GitWorktreeBaseDiffResult;
 
 /** What the Results tab asks the host for; every member is optional so stories and Android can omit it. */
 export interface ResultsServices {
   readonly getGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   readonly getGitDiff?: (directory: string) => Promise<GitDiffResult>;
-  /** 기준 브랜치와 비교: the worktree's change since `baseRef` (worktree conversations only). */
-  readonly getWorktreeBaseDiff?: (directory: string, baseRef: string) => Promise<WorktreeBaseDiffResult>;
+  /**
+   * 기준 브랜치와 비교 for the conversation's worktree workspace; the host finds its folder and base. A workspace
+   * that is gone or is not a worktree answers `invalid-path`.
+   */
+  readonly getWorktreeBaseDiff?: (workspaceId: string) => Promise<WorktreeBaseDiffResult>;
   readonly readFilePreview?: (path: string) => Promise<FilePreviewResult>;
   readonly openFileInApp?: (path: string) => Promise<void>;
   readonly openExternalHttpUrl?: (url: string) => void;

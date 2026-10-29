@@ -173,6 +173,7 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               folderReadable={folder.kind === 'live'}
               onViewFile={showFile}
               {...(source.baseRef ? { baseRef: source.baseRef } : {})}
+              {...(source.workspaceId ? { workspaceId: source.workspaceId } : {})}
               {...(source.sendNow ? { sendNow: source.sendNow } : {})}
               {...(source.reviewAction ? { reviewAction: source.reviewAction } : {})}
               {...(source.openReviewStart ? { openReviewStart: source.openReviewStart } : {})}

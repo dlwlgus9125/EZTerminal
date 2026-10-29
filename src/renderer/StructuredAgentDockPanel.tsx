@@ -46,6 +46,8 @@ import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 import { linkedPhaseSettings, type ChatAgentPhaseMap, type ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { REVIEW_LOOP_CAPABILITY } from '../shared/review-findings';
+import { reviewHost } from './review-commands';
 import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
 import { DelegateAgentDialog, type DelegateAgentRequest, type DelegateMode } from './DelegateAgentDialog';
 import { useAppTranslation } from './i18n';
@@ -317,14 +319,16 @@ export function StructuredAgentDockPanel(
     approval.sessionId === sessionId && approval.state === 'pending' && approval.request?.kind === 'plan'
   ));
   const [phaseLinks, setPhaseLinks] = useState<{ readonly profiles: readonly ChatAgentProfile[]; readonly phases: ChatAgentPhaseMap } | null>(null);
+  // The review start form also says which agent another AI reviews as (D8): read where the host reviews.
+  const reviewsOffered = snapshot?.capabilities?.includes(REVIEW_LOOP_CAPABILITY) === true;
   useEffect(() => {
-    if (!planApprovalPending || !profileAccess?.phases) return undefined;
+    if ((!planApprovalPending && !reviewsOffered) || !profileAccess?.phases) return undefined;
     let alive = true;
     void Promise.all([profileAccess.list(), profileAccess.phases()])
       .then(([profiles, phases]) => { if (alive) setPhaseLinks({ profiles, phases }); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [planApprovalPending, profileAccess]);
+  }, [planApprovalPending, profileAccess, reviewsOffered]);
   // 대화로 설정 바꾸기: what this conversation's AI changed (되돌리기) and proposed (decided in the approval dock).
   const sessionApprovals = useMemo(() => (snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId), [snapshot?.approvals, sessionId]);
   const conversationSettings = useConversationSettings({ sessionId: sessionId ?? '', approvals: sessionApprovals, korean, access: window.ezterminal?.settingsChanges });
@@ -891,6 +895,20 @@ export function StructuredAgentDockPanel(
     void readFolders({ sessionId }).then((found) => { if (alive) setConversationFolders(found ?? undefined); }).catch(() => undefined);
     return () => { alive = false; };
   }, [readFolders, folderKey, sessionId]);
+  // A worktree conversation's base branch, by name: the review form and Results › 기준 브랜치와 비교 say it.
+  const folderWorkspace = folderSession ? snapshot?.workspaces.find((candidate) => candidate.id === folderSession.workspaceId) : undefined;
+  const baseWorkspaceId = folderWorkspace?.kind === 'worktree' ? folderWorkspace.id : undefined;
+  const [worktreeBase, setWorktreeBase] = useState<{ readonly workspaceId: string; readonly baseRef: string }>();
+  useEffect(() => {
+    const read = capabilities.files.worktreeBase;
+    if (!baseWorkspaceId || !read) return undefined;
+    let alive = true;
+    void read(baseWorkspaceId).then((result) => {
+      if (alive) setWorktreeBase(result.ok ? { workspaceId: baseWorkspaceId, baseRef: result.baseRef } : undefined);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [baseWorkspaceId, capabilities.files]);
+  const baseRef = worktreeBase && worktreeBase.workspaceId === baseWorkspaceId ? worktreeBase.baseRef : undefined;
 
   if (availability?.state === 'legacy-only-safe-mode' && (sessionId || !props.onOpenTerminal)) {
     return (
@@ -1206,6 +1224,23 @@ export function StructuredAgentDockPanel(
     && agent !== undefined
     && HEARTBEAT_SESSION_STATES.has(agent.state);
 
+  // review-loop-v1: the start form and the card's buttons go to the host; an older host keeps 검토 맡기기.
+  const modelLabel = (forProvider: string, model: string): string => structuredAgentModelOptions(
+    snapshot?.providers.find((candidate) => candidate.id === forProvider)?.capabilities ?? [], model, providerModelCatalogs[forProvider],
+  ).find((option) => option.id === model)?.label ?? model;
+  const reviews = !historyOnly && owner === 'managed' ? reviewHost({
+    snapshot, sessionId, items: transcriptItems, access: commandAccess, locale: korean ? 'ko' : 'en', modelLabel,
+    ...(baseRef ? { baseRef } : {}),
+    ...(phaseLinks ? { reviewAgent: (forProvider: string) => {
+      const link = phaseLinks.phases.review;
+      const profile = link ? phaseLinks.profiles.find((entry) => entry.id === link.profileId) : undefined;
+      return profile?.providerId === forProvider
+        ? { name: profile.name, ...(profile.model ? { model: profile.model } : {}), ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}) }
+        : undefined;
+    } } : {}),
+    ...(props.onOpenSession ? { openSession: openRelatedSession } : {}),
+  }) : undefined;
+
   return (<SettingsProposalContext.Provider value={settingsProposals}><AgentResultsOwnerContext.Provider value={resultsOwner}>
     {resultsOwner && sessionId && (
       <ResultsPublisher
@@ -1215,6 +1250,8 @@ export function StructuredAgentDockPanel(
         title={session?.title ?? createdDraft?.title ?? ''}
         providerLabel={provider?.displayName ?? (providerId || 'Agent')}
         {...(workspaceRoot ? { workspaceRoot } : {})}
+        {...(workspace ? { workspaceId: workspace.id } : {})}
+        {...(baseRef ? { baseRef } : {})}
         items={transcriptItems}
         children={directChildren}
         transcriptFloor={transcriptFloor}
@@ -1323,6 +1360,7 @@ export function StructuredAgentDockPanel(
         ? () => runLifecycleCommand('agent.detach')
         : undefined}
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
+      {...(reviews ? { reviewStart: reviews.reviewStart, onReviewAction: reviews.onReviewAction } : {})}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}

@@ -17,6 +17,7 @@ function hostServices(): ResultsServices {
   return {
     ...(typeof api.getGitStatus === 'function' ? { getGitStatus: (directory: string) => api.getGitStatus(directory) } : {}),
     ...(typeof api.getGitDiff === 'function' ? { getGitDiff: (directory: string) => api.getGitDiff(directory) } : {}),
+    ...(typeof api.getWorktreeBaseDiff === 'function' ? { getWorktreeBaseDiff: (workspaceId: string) => api.getWorktreeBaseDiff!(workspaceId) } : {}),
     ...(typeof api.readFilePreview === 'function' ? { readFilePreview: (path: string) => api.readFilePreview(path) } : {}),
     ...(typeof api.openFileInApp === 'function' ? { openFileInApp: (path: string) => api.openFileInApp(path) } : {}),
     ...(api.runRetention ? {
