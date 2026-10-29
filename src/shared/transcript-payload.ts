@@ -143,6 +143,8 @@ const ReviewPayloadSchema = z.object({
   }).strict(),
   target: ReviewTargetSchema,
   state: z.enum(REVIEW_STATES),
+  /** Queued: behind this conversation's running turn, or for a free run slot (too many conversations running). */
+  waitingFor: z.enum(['turn', 'slot']).optional(),
   reason: ShortText.optional(),
   focus: z.string().max(REVIEW_LIMITS.focus).optional(),
   findings: z.array(ReviewFindingSchema).max(REVIEW_LIMITS.findings).optional(),

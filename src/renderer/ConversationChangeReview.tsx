@@ -1,7 +1,8 @@
-import { useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { Glyph, glyphIcon } from './ui/Glyph';
 import type { DaemonTranscriptItem, DaemonTurn } from '../shared/daemon-protocol';
 import { conversationFileChanges, reviewLines, type ConversationFileChange, type ReviewLine } from '../shared/conversation-changes';
+import type { ReviewExcerpt } from '../shared/review-findings';
 import { Button, Dialog, IconButton, Select } from './ui';
 import { useAppTranslation } from './i18n';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
@@ -11,9 +12,13 @@ import { useChatCopy } from './chat/copy';
 import { buildChatModel } from './chat/model/build-chat-model';
 import { workspacePath } from './chat/model/summary';
 import type { ChatReview, ChatReviewFinding } from './chat/model/types';
-import { canFix, findingWhere, FindingStatusChip, SeverityChip, StaleMark, walkOrder } from './chat/review/review-presentation';
-import { formatReviewComments, isFindingFile, lineRangeLabel, locateFinding, REVIEW_DRAFT_LIMIT } from './agent-results/results-format';
+import {
+  canFix, findingWhere, FindingStatusChip, focusAfterAction, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
+} from './chat/review/review-presentation';
+import { useResultsCopy } from './agent-results/copy';
+import { isFindingFile, lineRangeLabel, locateFinding, type ReviewComment } from './agent-results/results-format';
 import type { ResultsSendResult } from './agent-results/results-source-store';
+import { ReviewCommentTray } from './agent-results/ReviewCommentTray';
 
 interface ReviewState {
   open: boolean;
@@ -21,34 +26,41 @@ interface ReviewState {
   selected?: string;
   reviewed: string[];
   range?: [number, number];
+  /** A range being tapped out: its first line, waiting for the last one. */
+  selecting?: number;
+  /** Comments collected to go together (a state saved before there were any has none). */
+  comments?: ReviewComment[];
   /** `findings`: stepping through an AI review's problems (review loop); otherwise the recorded changes. */
   mode?: 'changes' | 'findings';
   walk?: { readonly reviewId: string; readonly findingId: string };
 }
 
-type SendState = { phase: 'idle' | 'sending' } | { phase: 'sent'; queued: boolean; position?: number } | { phase: 'error'; message: string };
-
 /** Lines shown around a problem's line from the recorded patch. */
 const CONTEXT_LINES = 3;
 
-/** Where an AI review's problem sits: the recorded hunk around its line, else the lines the review kept. */
-function findingLines(changes: readonly ConversationFileChange[], finding: ChatReviewFinding, workspaceRoot?: string):
+type FindingLines =
   | { readonly kind: 'hunk'; readonly lines: readonly ReviewLine[]; readonly focus: number }
-  | { readonly kind: 'excerpt'; readonly startLine: number; readonly lines: readonly string[] }
-  | undefined {
+  /** The latest record that shows the problem's line has other code there: the review's lines, never anchored. */
+  | { readonly kind: 'missing'; readonly excerpt?: ReviewExcerpt }
+  /** No record shows the line: the lines the review read. */
+  | { readonly kind: 'excerpt'; readonly excerpt: ReviewExcerpt };
+
+/** Where an AI review's problem sits: the latest record that shows its line decides; else the lines the review kept. */
+function findingLines(changes: readonly ConversationFileChange[], finding: ChatReviewFinding, workspaceRoot?: string): FindingLines | undefined {
   for (const change of [...changes].reverse()) {
     if (!isFindingFile(change.path, finding.file, workspaceRoot)) continue;
     const place = locateFinding(change, finding);
-    if (!place) continue;
+    if (place.state === 'outside') continue;
+    if (place.state === 'missing') return { kind: 'missing', ...(finding.excerpt && finding.excerpt.lines.length ? { excerpt: finding.excerpt } : {}) };
     const lines = reviewLines(change);
     const from = Math.max(0, place.index - CONTEXT_LINES);
     return { kind: 'hunk', lines: lines.slice(from, place.index + CONTEXT_LINES + 1), focus: place.index - from };
   }
-  return finding.excerpt && finding.excerpt.lines.length ? { kind: 'excerpt', startLine: finding.excerpt.startLine, lines: finding.excerpt.lines } : undefined;
+  return finding.excerpt && finding.excerpt.lines.length ? { kind: 'excerpt', excerpt: finding.excerpt } : undefined;
 }
 
 export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange, openRequest = 0, hideTrigger = false, returnFocusRef,
-  turns, workspaceRoot, findingsRequest, onReviewAction, onSendComments }: {
+  turns, workspaceRoot, findingsRequest, onReviewAction, onSendComments, turnActive = false }: {
   sessionId: string; items: readonly DaemonTranscriptItem[]; wide: boolean; mobile: boolean; ownerDocument?: Document; onQuote?: (text: string) => void; onOpenProjectFiles?: () => void;
   /** Reports whether the review is docked beside the transcript, so the panel can reserve room without :has(). */
   onAsideChange?: (open: boolean) => void;
@@ -66,21 +78,24 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   findingsRequest?: { readonly sequence: number; readonly reviewId: string; readonly findingId?: string };
   /** Fix, dismiss or reopen the problem on screen (host actions). */
   onReviewAction?: (action: ChatReviewAction) => void;
-  /** Sends the selected lines with a note as a message of their own (queued behind a running turn). */
+  /** Sends the collected comments as a message of their own (queued behind a running turn). */
   onSendComments?: (text: string) => Promise<ResultsSendResult>;
+  /** The conversation is answering: sent comments wait in its queue. */
+  turnActive?: boolean;
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const chat = useChatCopy();
+  const results = useResultsCopy();
   const HostOverlay = useContext(ConversationReviewOverlayContext);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const key = `conversation-review:${sessionId}`;
   const [state, setState] = useState<ReviewState>(() => readSessionViewState<ReviewState>(key) ?? { open: false, scope: 'latest', reviewed: [] });
   const [lineLimit, setLineLimit] = useState(400);
   const [note, setNote] = useState('');
-  const [send, setSend] = useState<SendState>({ phase: 'idle' });
   const asideOpen = wide && state.open;
   useEffect(() => { onAsideChange?.(asideOpen); }, [asideOpen, onAsideChange]);
-  const update = (patch: Partial<ReviewState>): void => setState(current => { const next = { ...current, ...patch }; saveSessionViewState(key, next); return next; });
+  const updateWith = (patch: (current: ReviewState) => Partial<ReviewState>): void => setState(current => { const next = { ...current, ...patch(current) }; saveSessionViewState(key, next); return next; });
+  const update = (patch: Partial<ReviewState>): void => updateWith(() => patch);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request opens the review
   useEffect(() => { if (openRequest > 0) update({ open: true, scope: 'latest', mode: 'changes' }); }, [openRequest]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request opens the problem
@@ -90,27 +105,39 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   const visible = changes.filter(change => state.scope === 'all' || change.turnId === latestTurn);
   const selected = visible.find(change => change.id === state.selected) ?? visible[0];
   const lines = useMemo(() => selected ? reviewLines(selected) : [], [selected]);
+  const comments = state.comments ?? [];
   const range = state.range;
   const start = range ? Math.min(...range) : 0; const end = range ? Math.max(...range) : -1;
-  const selectedText = selected && range ? formatReviewComments([{
-    id: selected.id,
-    path: workspacePath(selected.path, workspaceRoot),
-    lines: lineRangeLabel(lines.slice(start, end + 1)),
-    quote: lines.slice(start, end + 1).map(line => line.text),
-    text: note,
-  }], ko ? 'ko' : 'en') : '';
-  const tooLong = selectedText.length > REVIEW_DRAFT_LIMIT;
-  const sendSelected = async (): Promise<void> => {
-    if (!onSendComments || !selectedText || tooLong || send.phase === 'sending') return;
-    setSend({ phase: 'sending' });
-    const result = await onSendComments(selectedText).catch((): ResultsSendResult => ({ ok: false, message: '' }));
-    if (result.ok) {
-      setSend({ phase: 'sent', queued: result.queued, ...(result.position !== undefined ? { position: result.position } : {}) });
-      setNote('');
-      update({ range: undefined });
-    } else {
-      setSend({ phase: 'error', message: result.message });
-    }
+  const selecting = state.selecting;
+  const rangeLabel = selected && range ? lineRangeLabel(lines.slice(start, end + 1)) : '';
+  const commenting = Boolean(onSendComments || onQuote);
+  /**
+   * A tap starts a range, the next tap ends it (the same line again for one line) and a tap after that clears it: no
+   * Shift on a phone. With a mouse, Shift still stretches the range from where it started.
+   */
+  const tapLine = (index: number, event: MouseEvent<HTMLButtonElement>): void => {
+    if (!selected) return;
+    const from = range ? range[0] : selecting;
+    if (event.shiftKey && from !== undefined) { update({ selected: selected.id, range: [from, index], selecting: undefined }); return; }
+    if (selecting !== undefined) { update({ selected: selected.id, range: [selecting, index], selecting: undefined }); return; }
+    if (range) { update({ range: undefined }); setNote(''); return; }
+    update({ selected: selected.id, selecting: index });
+  };
+  const addComment = (text: string): void => {
+    if (!selected || !range) return;
+    const picked = lines.slice(start, end + 1);
+    const comment: ReviewComment = {
+      id: `${selected.id}:${String(start)}:${String(Date.now())}`,
+      path: workspacePath(selected.path, workspaceRoot),
+      lines: lineRangeLabel(picked),
+      quote: picked.map(line => line.text),
+      text,
+      recordId: selected.id,
+      start,
+      end,
+    };
+    updateWith(current => ({ comments: [...(current.comments ?? []), comment], range: undefined, selecting: undefined }));
+    setNote('');
   };
 
   // Review loop: the card's problems one at a time, from the same model the transcript shows.
@@ -126,47 +153,59 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   const index = Math.max(0, order.findIndex(finding => finding.id === state.walk?.findingId));
   const finding = order[index];
   const title = findingsMode && finding ? chat.aiReview.card : ko ? '변경 검토' : 'Review changes';
+  const openFiles = onOpenProjectFiles ? () => { update({ open: false }); onOpenProjectFiles(); } : undefined;
   const changesContent = <div className="conversation-review" data-mode="changes" data-testid="conversation-change-review">
-    <div className="conversation-review__toolbar"><Select aria-label={ko ? '변경 범위' : 'Change scope'} value={state.scope} onChange={event => update({ scope: event.target.value as ReviewState['scope'], selected: undefined, range: undefined })}>
+    <div className="conversation-review__toolbar"><Select aria-label={ko ? '변경 범위' : 'Change scope'} value={state.scope} onChange={event => update({ scope: event.target.value as ReviewState['scope'], selected: undefined, range: undefined, selecting: undefined })}>
       <option value="latest">{ko ? '최근 변경 턴' : 'Latest changed turn'}</option><option value="all">{ko ? '이 대화 전체' : 'This conversation'}</option>
     </Select>{wide && <Button variant="ghost" aria-label={ko ? '검토 닫기' : 'Close review'} onClick={() => update({ open: false })}><Glyph name="x" /></Button>}</div>
     <p className="conversation-review__notice">{ko ? 'AI가 보고한 변경 기록입니다. 현재 작업 폴더 전체의 변경과 다를 수 있습니다.' : 'Changes reported by the AI. These may differ from the current working tree.'}</p>
-    {onOpenProjectFiles && <Button variant="ghost" size="sm" onClick={() => { update({ open: false }); onOpenProjectFiles(); }}>{ko ? '현재 프로젝트 파일 열기' : 'Open current project files'}</Button>}
+    {openFiles && <Button variant="ghost" size="sm" onClick={openFiles}>{ko ? '현재 프로젝트 파일 열기' : 'Open current project files'}</Button>}
     {!visible.length && <p role="status">{ko ? '이 대화에서 확인 가능한 변경 패치가 없습니다.' : 'No recorded patches are available in this conversation.'}</p>}
-    <ul className="conversation-review__files">{visible.map(change => <li key={change.id}><Button variant="ghost" aria-pressed={selected?.id === change.id} onClick={() => update({ selected: change.id, range: undefined })}>
+    <ul className="conversation-review__files">{visible.map(change => <li key={change.id}><Button variant="ghost" aria-pressed={selected?.id === change.id} onClick={() => update({ selected: change.id, range: undefined, selecting: undefined })}>
       <Glyph name="diff" /><span>{change.path}</span>{state.reviewed.includes(change.id) && <span>{ko ? '확인함' : 'Reviewed'}</span>}
     </Button></li>)}</ul>
-    {selected && <><p>{selected.coverage === 'fragment' ? (ko ? '부분 기록 · 파일 줄 번호는 제공되지 않았습니다.' : 'Partial record · file line numbers were not supplied.') : (ko ? '기록된 패치 · 왼쪽은 변경 전, 오른쪽은 변경 후 줄 번호입니다.' : 'Recorded patch · before and after line numbers.')} {ko ? 'Shift로 여러 줄 선택' : 'Shift to select a range'}</p>
+    {selected && <><p>{selected.coverage === 'fragment' ? (ko ? '부분 기록 · 파일 줄 번호는 제공되지 않았습니다.' : 'Partial record · file line numbers were not supplied.') : (ko ? '기록된 패치 · 왼쪽은 변경 전, 오른쪽은 변경 후 줄 번호입니다.' : 'Recorded patch · before and after line numbers.')} {commenting ? results.rangeHint : ''}</p>
+      {selecting !== undefined && (
+        <div className="conversation-review__selecting" data-testid="conversation-review-selecting">
+          <span role="status"><strong>{results.rangeSelecting}</strong> {results.rangeFrom(lineRangeLabel(lines.slice(selecting, selecting + 1)))}</span>
+          <Button variant="secondary" size="sm" aria-label={results.cancelRange} onClick={() => update({ selecting: undefined })} data-testid="conversation-review-selecting-cancel">{results.cancel}</Button>
+        </div>
+      )}
       <div className="conversation-review__patch" role="group" aria-label={selected.path}>
-        {lines.slice(0, lineLimit).map((line, index) => <button key={index} type="button" className="conversation-review__line" data-kind={line.kind} aria-pressed={!!range && index >= start && index <= end}
-          onClick={event => { setSend({ phase: 'idle' }); update({ selected: selected.id, range: event.shiftKey && range ? [range[0], index] : [index, index] }); }}>
+        {lines.slice(0, lineLimit).map((line, index) => <button key={index} type="button" className="conversation-review__line" data-kind={line.kind}
+          aria-pressed={(!!range && index >= start && index <= end) || selecting === index} data-anchor={selecting === index || undefined}
+          onClick={event => tapLine(index, event)}>
           <span className="conversation-review__number">{line.before ?? ''}</span><span className="conversation-review__number">{line.after ?? ''}</span><code>{line.text || ' '}</code>
         </button>)}
       </div>
       {lines.length > lineLimit && <Button variant="ghost" onClick={() => setLineLimit(value => value + 400)}>{ko ? '패치 더 보기' : 'Show more patch lines'}</Button>}
-      {range && (onSendComments || onQuote) && (
-        <label className="conversation-review__note">
-          <span>{ko ? '의견 (선택)' : 'Comment (optional)'}</span>
-          <textarea value={note} rows={2} placeholder={ko ? 'AI가 여기서 무엇을 바꾸면 될까요?' : 'What should the AI change here?'} onChange={event => setNote(event.target.value)} data-testid="conversation-review-note" />
-        </label>
+      {range && commenting && (
+        <div className="conversation-review__comment" role="group" aria-label={results.commentLabel(`${workspacePath(selected.path, workspaceRoot)}:${rangeLabel}`)}>
+          <label className="conversation-review__note">
+            <span>{ko ? '의견 (선택)' : 'Comment (optional)'}</span>
+            <textarea value={note} rows={2} placeholder={results.commentPlaceholder} onChange={event => setNote(event.target.value)} data-testid="conversation-review-note" />
+          </label>
+          <div className="conversation-review__toolbar">
+            <Button variant="primary" size="sm" disabled={!note.trim()} onClick={() => addComment(note.trim())} data-testid="conversation-review-add">{results.addComment}</Button>
+            <Button variant="secondary" size="sm" onClick={() => addComment('')} data-testid="conversation-review-quote-only">{results.quoteOnly}</Button>
+            <Button variant="ghost" size="sm" onClick={() => { update({ range: undefined }); setNote(''); }}>{results.clearSelection}</Button>
+          </div>
+        </div>
       )}
       <div className="conversation-review__toolbar"><Button variant="ghost" onClick={() => update({ reviewed: state.reviewed.includes(selected.id) ? state.reviewed.filter(id => id !== selected.id) : [...state.reviewed, selected.id] })}>
         {state.reviewed.includes(selected.id) ? (ko ? '미확인으로 표시' : 'Mark unread') : (ko ? '확인함으로 표시' : 'Mark reviewed')}
-      </Button>
-      {onSendComments && <Button variant="primary" disabled={!selectedText || tooLong} loading={send.phase === 'sending'} loadingLabel={ko ? '보내는 중…' : 'Sending…'} onClick={() => void sendSelected()} data-testid="conversation-review-send">
-        {ko ? '보내기' : 'Send'}
-      </Button>}
-      {onQuote && <Button variant={onSendComments ? 'secondary' : 'primary'} disabled={!selectedText || tooLong} onClick={() => { onQuote(selectedText); if (!wide) update({ open: false }); }}>{ko ? '선택한 줄 인용' : 'Quote selected lines'}</Button>}</div>
-      {tooLong && <p role="status">{ko ? `인용할 줄을 ${REVIEW_DRAFT_LIMIT.toLocaleString('ko-KR')}자 이내로 줄여 주세요.` : `Select fewer lines (up to ${REVIEW_DRAFT_LIMIT.toLocaleString('en-US')} characters).`}</p>}
-      {send.phase === 'sent' && <p role="status" data-testid="conversation-review-sent">{send.queued
-        ? (send.position !== undefined ? (ko ? `대기열 ${send.position}번째에 넣었습니다.` : `Added to the queue, number ${send.position}.`) : (ko ? '대기열에 넣었습니다.' : 'Added to the queue.'))
-        : (ko ? '대화에 보냈습니다.' : 'Sent to the conversation.')}</p>}
-      {send.phase === 'error' && <p role="alert" className="conversation-review__error"><Glyph name="warn" /><span>{send.message ? (ko ? `보내지 못했습니다: ${send.message}` : `Not sent: ${send.message}`) : (ko ? '보내지 못했습니다.' : 'Not sent.')}</span></p>}
+      </Button></div>
     </>}
+    <ReviewCommentTray comments={comments} turnActive={turnActive}
+      onTaken={ids => updateWith(current => ({ comments: (current.comments ?? []).filter(comment => !ids.includes(comment.id)) }))}
+      onRemove={id => updateWith(current => ({ comments: (current.comments ?? []).filter(comment => comment.id !== id) }))}
+      {...(onSendComments ? { sendNow: onSendComments } : {})}
+      {...(onQuote ? { insertIntoDraft: (text: string) => { onQuote(text); if (!wide) update({ open: false }); } } : {})} />
   </div>;
   const findingsContent = finding && review ? <FindingsView review={review} finding={finding} index={index} total={order.length} changes={changes} workspaceRoot={workspaceRoot}
     onStep={findingId => update({ walk: { reviewId: review.reviewId, findingId } })}
     onAction={onReviewAction}
+    {...(openFiles ? { onViewFile: openFiles } : {})}
     onShowChanges={() => update({ mode: 'changes' })} /> : null;
   const content = findingsContent ?? changesContent;
   return <>
@@ -177,7 +216,7 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
 }
 
 /** One problem of an AI review: where it is, what the reviewer said, the lines around it, and fix or dismiss. */
-function FindingsView({ review, finding, index, total, changes, workspaceRoot, onStep, onAction, onShowChanges }: {
+function FindingsView({ review, finding, index, total, changes, workspaceRoot, onStep, onAction, onShowChanges, onViewFile }: {
   readonly review: ChatReview;
   readonly finding: ChatReviewFinding;
   readonly index: number;
@@ -187,17 +226,29 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
   readonly onStep: (findingId: string) => void;
   readonly onAction?: (action: ChatReviewAction) => void;
   readonly onShowChanges: () => void;
+  /** Opens the project's files (the line it can no longer find is not shown from here). */
+  readonly onViewFile?: () => void;
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const chat = useChatCopy();
+  const results = useResultsCopy();
+  const titleRef = useRef<HTMLParagraphElement>(null);
   // Like a chat code block: long lines scroll sideways in a focusable region, or wrap on request.
   const [wrap, setWrap] = useState(false);
+  const changed = useFindingAnnouncement([finding], chat);
   const order = walkOrder(review);
   const where = findingWhere(finding);
   const position = ko ? `문제 ${index + 1}/${total}` : `Problem ${index + 1} of ${total}`;
   const shown = findingLines(changes, finding, workspaceRoot);
-  const act = (kind: ChatReviewAction['kind']) => () => onAction?.({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
+  const act = (kind: ChatReviewAction['kind']) => () => {
+    onAction?.({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
+    focusAfterAction(titleRef);
+  };
   const severity = finding.severity ? chat.aiReview.severity[finding.severity] : '';
+  const again = finding.status !== 'open';
+  const excerpt = shown?.kind === 'excerpt' || shown?.kind === 'missing' ? shown.excerpt : undefined;
+  // The review's own lines: its line is marked only where the change does not hold other code there now.
+  const excerptFocus = shown?.kind === 'excerpt' && finding.line !== undefined ? finding.line - shown.excerpt.startLine : undefined;
   return <div className="conversation-review" data-mode="findings" data-testid="conversation-change-review">
     <div className="conversation-review__findings-bar">
       <Button variant="ghost" aria-label={ko ? '이전 문제' : 'Previous problem'} disabled={index === 0} onClick={() => onStep(order[index - 1]!.id)} data-testid="conversation-review-previous"><Glyph name="back" /></Button>
@@ -209,15 +260,22 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
       <FindingStatusChip status={finding.status} copy={chat} />
       {finding.stale && <StaleMark copy={chat} />}
     </p>
-    <p className="conversation-review__finding-title">{finding.title}</p>
+    <p ref={titleRef} className="conversation-review__finding-title" tabIndex={-1} data-finding-title="">{finding.title}</p>
+    {finding.status === 'not-changed' && finding.fixReason && <p className="conversation-review__reason">{chat.aiReview.fixReason(finding.fixReason)}</p>}
     {finding.body !== finding.title && <p>{finding.body}</p>}
     {finding.scenario && <p className="conversation-review__scenario"><span>{chat.aiReview.scenario}</span>{finding.scenario}</p>}
+    {shown?.kind === 'missing' && (
+      <div className="conversation-review__missing" role="note" data-testid="conversation-review-missing">
+        <p><strong>{results.walk.missing}</strong> {results.walk.missingDetail(where)}</p>
+        {onViewFile && <Button variant="secondary" size="sm" onClick={onViewFile} data-testid="conversation-review-view-file">{results.walk.viewInFile}</Button>}
+      </div>
+    )}
     {shown?.kind === 'excerpt' && (
       <p className="conversation-review__notice">{ko ? '이 대화의 변경 기록에 이 줄이 없어 검토가 끝날 때 읽은 줄을 보여 줍니다.' : 'This line is not in the conversation’s recorded changes; showing the lines the review read.'}</p>
     )}
-    {shown && (
+    {(shown?.kind === 'hunk' || excerpt) && (
       <div className="conversation-review__code-head">
-        <span>{shown.kind === 'hunk' ? (ko ? '변경 기록에서 그 줄 주변' : 'Around the line in the recorded change') : (ko ? '검토 때 읽은 줄' : 'As the review read it')}</span>
+        <span>{shown?.kind === 'hunk' ? (ko ? '변경 기록에서 그 줄 주변' : 'Around the line in the recorded change') : (ko ? '검토 때 읽은 줄' : 'As the review read it')}</span>
         <IconButton size="sm" icon={glyphIcon('wrap')} aria-label={ko ? '줄 바꿈' : 'Wrap lines'} aria-pressed={wrap} onClick={() => setWrap((value) => !value)}
           data-testid="conversation-review-wrap" />
       </div>
@@ -229,22 +287,25 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
         </div>)}
       </div>
     )}
-    {shown?.kind === 'excerpt' && <>
-      <div className="conversation-review__patch" role="region" tabIndex={0} data-wrap={wrap || undefined} aria-label={ko ? `${where} 검토 때 읽은 줄` : `${where} as the review read it`}>
-        {shown.lines.map((text, offset) => <div key={offset} className="conversation-review__line" data-kind="context" data-focus={offset === 0 || undefined}>
-          <span className="conversation-review__number" /><span className="conversation-review__number">{shown.startLine + offset}</span><code>{text || ' '}</code>
+    {excerpt && (
+      <div className="conversation-review__patch" role="region" tabIndex={0} data-wrap={wrap || undefined} aria-label={results.walk.excerptLabel(where)}>
+        {excerpt.lines.map((text, offset) => <div key={offset} className="conversation-review__line" data-kind="context" data-focus={offset === excerptFocus || undefined}>
+          <span className="conversation-review__number" /><span className="conversation-review__number">{excerpt.startLine + offset}</span><code>{text || ' '}</code>
         </div>)}
       </div>
-    </>}
+    )}
     {!shown && <p className="conversation-review__notice">{ko ? '변경 범위 밖 · 보여 줄 줄이 없습니다.' : 'Outside the change · no lines to show.'}</p>}
     <div className="conversation-review__toolbar conversation-review__finding-actions">
       {onAction && canFix(finding) && <>
-        <Button variant="primary" aria-label={chat.aiReview.fixFinding(where)} onClick={act('fix')} data-testid="conversation-review-fix">{chat.aiReview.fix}</Button>
+        <Button variant="primary" aria-label={again ? chat.aiReview.fixAgainFinding(where) : chat.aiReview.fixFinding(where)} onClick={act('fix')} data-testid="conversation-review-fix">
+          {again ? chat.aiReview.fixAgain : chat.aiReview.fix}
+        </Button>
         <Button variant="secondary" aria-label={chat.aiReview.dismissFinding(where)} onClick={act('dismiss')} data-testid="conversation-review-dismiss">{chat.aiReview.dismiss}</Button>
       </>}
       {onAction && finding.status === 'dismissed' && <Button variant="secondary" aria-label={chat.aiReview.reopenFinding(where)} onClick={act('reopen')} data-testid="conversation-review-reopen">{chat.aiReview.reopen}</Button>}
       <Button variant="ghost" onClick={onShowChanges}>{ko ? '변경 모두 보기' : 'All changes'}</Button>
     </div>
     <p className="ez-ui-visually-hidden" aria-live="polite" aria-atomic="true">{[position, where, severity, finding.title].filter(Boolean).join(' · ')}</p>
+    <p className="ez-ui-visually-hidden" aria-live="polite" data-testid="conversation-review-status">{changed}</p>
   </div>;
 }

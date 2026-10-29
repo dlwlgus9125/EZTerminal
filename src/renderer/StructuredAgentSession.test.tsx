@@ -677,10 +677,13 @@ describe('message-based chat skins', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-review-changes"]')!.click());
     await flush();
     const patch = document.querySelector('[data-testid="conversation-change-review"]')!;
+    // A tap starts the range (kept across skins), a second tap on the same line makes it that one line.
     act(() => patch.querySelector<HTMLButtonElement>('[data-kind="add"]')!.click());
     render(panel({ items, onSend, skin: 'cli' }));
     expect(document.querySelector('[data-kind="add"][aria-pressed="true"]')).not.toBeNull();
-    act(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Quote selected lines')!.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="conversation-change-review"] button[data-kind="add"]')!.click());
+    act(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Quote lines only')!.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="results-insert-comments"]')!.click());
     await flush();
     expect(input().value).toContain('My question'); expect(input().value).toContain('src/a.ts'); expect(input().value).toContain('+new');
     expect(onSend).not.toHaveBeenCalled();

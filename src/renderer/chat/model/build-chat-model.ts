@@ -2,6 +2,7 @@ import type { ApprovalRequest } from '../../../shared/approval-request';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
+import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import type {
@@ -259,14 +260,17 @@ type ReviewEvent =
   | { readonly sequence: number; readonly findingIds: readonly string[]; readonly kind: 'status'; readonly state: 'dismissed' | 'open' }
   | { readonly sequence: number; readonly findingIds: readonly string[]; readonly kind: 'fix'; readonly turnId?: string };
 
-/** A fix is the turn that carries it: asked for, being worked on, finished, or stopped. */
-function fixStatus(turn: DaemonTurn | undefined): ChatReviewFindingStatus {
+/**
+ * A fix is the turn that carries it: asked for, being worked on, or stopped. A finished turn is only as
+ * good as its reply: `fixed` / `not-changed` when it says so for the finding, `unconfirmed` when it does not.
+ */
+function fixStatus(turn: DaemonTurn | undefined, reply: FixReply | undefined): ChatReviewFindingStatus {
   switch (turn?.state) {
     case 'working':
     case 'blocked':
       return 'fixing';
     case 'completed':
-      return 'fixed';
+      return reply?.outcome === 'fixed' ? 'fixed' : reply?.outcome === 'not-changed' ? 'not-changed' : 'unconfirmed';
     case 'failed':
     case 'interrupted':
       return 'fix-stopped';
@@ -290,6 +294,7 @@ function reviewOf(payload: ReviewPayload, item: CoalescedItem, startedAt: string
     reviewer: payload.reviewer,
     target: payload.target,
     state: payload.state,
+    ...(payload.waitingFor ? { waitingFor: payload.waitingFor } : {}),
     ...(payload.reason ? { reason: payload.reason } : {}),
     ...(payload.focus ? { focus: payload.focus } : {}),
     findings: (payload.findings ?? []).map((finding): ChatReviewFinding => ({ ...finding, status: 'open' })),
@@ -307,8 +312,8 @@ function reviewOf(payload: ReviewPayload, item: CoalescedItem, startedAt: string
 
 /**
  * Each finding's state from the events after its review: dismissed or reopened by the person, or
- * sent to be fixed (that turn's state). A finding nobody is fixing whose file changed after the
- * review finished is marked stale.
+ * sent to be fixed (that turn's state and, once it finished, its reply). A finding whose file changed
+ * after the review finished is marked stale, whatever happened to it since.
  */
 function settleFindings(
   review: ChatReview,
@@ -316,6 +321,7 @@ function settleFindings(
   events: readonly ReviewEvent[],
   changes: readonly { readonly sequence: number; readonly path: string }[],
   turnById: ReadonlyMap<string, DaemonTurn>,
+  replyOf: (turnId: string) => ReadonlyMap<string, FixReply>,
 ): ChatReview {
   if (!review.findings.length) return review;
   const findings = review.findings.map((finding): ChatReviewFinding => {
@@ -323,16 +329,17 @@ function settleFindings(
     for (const event of events) {
       if (event.findingIds.includes(finding.id) && (!latest || event.sequence > latest.sequence)) latest = event;
     }
+    const reply = latest?.kind === 'fix' && latest.turnId ? replyOf(latest.turnId).get(finding.id) : undefined;
     const status: ChatReviewFindingStatus = !latest ? 'open'
       : latest.kind === 'status' ? latest.state
-        : fixStatus(latest.turnId ? turnById.get(latest.turnId) : undefined);
-    const settled = status === 'open' || status === 'dismissed' || status === 'fix-stopped';
-    const stale = settled && changes.some((change) => change.sequence > reviewSequence && sameReviewedFile(change.path, finding.file));
+        : fixStatus(latest.turnId ? turnById.get(latest.turnId) : undefined, reply);
+    const stale = changes.some((change) => change.sequence > reviewSequence && sameReviewedFile(change.path, finding.file));
     return {
       ...finding,
       status,
       ...(stale ? { stale: true } : {}),
       ...(latest?.kind === 'fix' && latest.turnId ? { fixTurnId: latest.turnId } : {}),
+      ...(status === 'not-changed' && reply?.outcome === 'not-changed' && reply.reason ? { fixReason: reply.reason } : {}),
     };
   });
   return { ...review, findings };
@@ -368,6 +375,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   const reviewStarted = new Map<string, string>();
   const reviewEvents = new Map<string, ReviewEvent[]>();
   const changeRecords: { readonly sequence: number; readonly path: string }[] = [];
+  // A fix turn's reply lines (`<id>: fixed`) may come in any of its messages.
+  const assistantTextByTurn = new Map<string, string[]>();
   const addReviewEvent = (reviewId: string, event: ReviewEvent): void => {
     const list = reviewEvents.get(reviewId) ?? [];
     list.push(event);
@@ -448,7 +457,10 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
       }
       case 'assistant-message': {
         if (!item.text.trim()) break;
-        if (turnId) lastAssistantByTurn.set(turnId, normalized(item.text));
+        if (turnId) {
+          lastAssistantByTurn.set(turnId, normalized(item.text));
+          assistantTextByTurn.set(turnId, [...(assistantTextByTurn.get(turnId) ?? []), item.text]);
+        }
         push({
           kind: 'assistant', id: `assistant:${item.sourceIds[0] ?? item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id,
@@ -613,10 +625,19 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     }
   }
 
+  const replies = new Map<string, ReadonlyMap<string, FixReply>>();
+  const replyOf = (fixTurnId: string): ReadonlyMap<string, FixReply> => {
+    let parsed = replies.get(fixTurnId);
+    if (!parsed) {
+      parsed = parseFixReply((assistantTextByTurn.get(fixTurnId) ?? []).join('\n'));
+      replies.set(fixTurnId, parsed);
+    }
+    return parsed;
+  };
   for (const [reviewId, { index, sequence }] of reviewRows) {
     const row = rows[index];
     if (row?.kind !== 'review') continue;
-    rows[index] = { ...row, review: settleFindings(row.review, sequence, reviewEvents.get(reviewId) ?? [], changeRecords, turnById) };
+    rows[index] = { ...row, review: settleFindings(row.review, sequence, reviewEvents.get(reviewId) ?? [], changeRecords, turnById, replyOf) };
   }
 
   // Mark tools of finished turns that never got a result.

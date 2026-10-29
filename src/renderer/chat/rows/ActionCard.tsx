@@ -132,7 +132,7 @@ export function ActionCard({
               <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
               <div className="chat-cli-result__body">
                 <span className="chat-cli-result__line">
-                  {message.tone === 'danger' && <span aria-hidden="true">✗ </span>}
+                  {message.tone === 'danger' && <Glyph name="warn" className="chat-cli-action-card__icon" />}
                   {message.label && <strong>{message.label} · </strong>}
                   {message.text}
                 </span>
@@ -149,7 +149,7 @@ export function ActionCard({
           {stale && (
             <div className="chat-cli-result chat-cli-action-card__stale">
               <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
-              <div className="chat-cli-result__body"><span className="chat-cli-result__line"><span aria-hidden="true">↻ </span>{stale}</span></div>
+              <div className="chat-cli-result__body"><span className="chat-cli-result__line"><Glyph name="refresh" className="chat-cli-action-card__icon" />{stale}</span></div>
             </div>
           )}
           {actions.length > 0 && (

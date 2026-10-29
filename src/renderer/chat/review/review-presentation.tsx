@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react';
+
 import { isReviewFailureReason, type ReviewSeverity, type ReviewTarget, type ReviewerRef } from '../../../shared/review-findings';
 import { Glyph, type GlyphName } from '../../ui/Glyph';
 import type { ChatCopy } from '../copy';
@@ -66,33 +68,55 @@ export function walkOrder(review: Pick<ChatReview, 'findings'>): ChatReviewFindi
   return groupFindings(review.findings).flatMap((group) => group.findings);
 }
 
-/** A finding the person can still send to be fixed. */
+/**
+ * A finding the person can send to be fixed: never sent, or sent and stopped, left unchanged or left
+ * without an answer (those three are sent "again").
+ */
 export function canFix(finding: ChatReviewFinding): boolean {
+  return finding.status === 'open' || finding.status === 'fix-stopped' || finding.status === 'not-changed' || finding.status === 'unconfirmed';
+}
+
+/** What 모두 고치기 sends: what was never handled, or stopped. A reply's "not changed" is the AI's answer, not a gap. */
+export function fixAllEligible(finding: ChatReviewFinding): boolean {
   return finding.status === 'open' || finding.status === 'fix-stopped';
 }
 
 export interface ReviewCounts {
   readonly problems: number;
-  /** Sent to be fixed: requested, being fixed or fixed. */
-  readonly fixes: number;
+  /** The fix turn's reply said fixed. */
+  readonly fixed: number;
+  /** Sent and not answered yet: requested or being fixed. */
+  readonly inProgress: number;
+  readonly notChanged: number;
+  /** The fix turn finished without saying. */
+  readonly unconfirmed: number;
   readonly dismissed: number;
-  /** Still fixable (open or stopped). */
-  readonly fixable: number;
   readonly stale: number;
 }
 
 export function reviewCounts(review: Pick<ChatReview, 'findings'>): ReviewCounts {
-  let fixes = 0;
-  let dismissed = 0;
-  let fixable = 0;
-  let stale = 0;
-  for (const finding of review.findings) {
-    if (finding.status === 'requested' || finding.status === 'fixing' || finding.status === 'fixed') fixes += 1;
-    if (finding.status === 'dismissed') dismissed += 1;
-    if (canFix(finding)) fixable += 1;
-    if (finding.stale) stale += 1;
-  }
-  return { problems: review.findings.length, fixes, dismissed, fixable, stale };
+  const count = (test: (finding: ChatReviewFinding) => boolean): number => review.findings.filter(test).length;
+  return {
+    problems: review.findings.length,
+    fixed: count((finding) => finding.status === 'fixed'),
+    inProgress: count((finding) => finding.status === 'requested' || finding.status === 'fixing'),
+    notChanged: count((finding) => finding.status === 'not-changed'),
+    unconfirmed: count((finding) => finding.status === 'unconfirmed'),
+    dismissed: count((finding) => finding.status === 'dismissed'),
+    stale: count((finding) => finding.stale === true),
+  };
+}
+
+/** `문제 6 · 고침 1 · 고치는 중 1 · 안 고침 1 · 확인 필요 1 · 무시 1`: only what is there. */
+export function countsText(counts: ReviewCounts, copy: ChatCopy, withProblems = true): string {
+  return [
+    ...(withProblems ? [copy.aiReview.problems(counts.problems)] : []),
+    ...(counts.fixed ? [copy.aiReview.fixes(counts.fixed)] : []),
+    ...(counts.inProgress ? [copy.aiReview.fixing(counts.inProgress)] : []),
+    ...(counts.notChanged ? [copy.aiReview.notChangedCount(counts.notChanged)] : []),
+    ...(counts.unconfirmed ? [copy.aiReview.unconfirmedCount(counts.unconfirmed)] : []),
+    ...(counts.dismissed ? [copy.aiReview.dismissedCount(counts.dismissed)] : []),
+  ].join(' · ');
 }
 
 const SEVERITY_GLYPH: Readonly<Record<ReviewSeverity, GlyphName>> = {
@@ -117,11 +141,13 @@ const STATUS_GLYPH: Readonly<Record<Exclude<ChatReviewFindingStatus, 'open'>, Gl
   requested: 'send',
   fixing: 'spin',
   fixed: 'check',
+  'not-changed': 'minus',
+  unconfirmed: 'q',
   'fix-stopped': 'x',
   dismissed: 'eyeOff',
 };
 
-/** 고침 요청됨 / 고치는 중 / 고침 끝 / 고침 멈춤 / 무시함; nothing for an open finding. */
+/** 고침 요청됨 / 고치는 중 / 고침 / 안 고침 / 응답 끝 · 확인 필요 / 고침 멈춤 / 무시함; nothing for an open finding. */
 export function FindingStatusChip({ status, copy }: { readonly status: ChatReviewFindingStatus; readonly copy: ChatCopy }): JSX.Element | null {
   if (status === 'open') return null;
   return (
@@ -133,6 +159,35 @@ export function FindingStatusChip({ status, copy }: { readonly status: ChatRevie
 }
 
 /** 검토 뒤에 바뀜: the file changed after the review finished. */
+/**
+ * Says once, politely, what changed on a problem (`src/cart.ts:5 · 고침 요청됨`). The surfaces render
+ * their whole state again on every update, so only the changes since the last render are spoken (a
+ * problem that just came into view says nothing), and the line clears itself.
+ */
+export function useFindingAnnouncement(findings: readonly ChatReviewFinding[], copy: ChatCopy): string {
+  const previous = useRef<ReadonlyMap<string, ChatReviewFindingStatus> | undefined>(undefined);
+  const [announcement, setAnnouncement] = useState('');
+  const signature = findings.map((finding) => `${finding.id}:${finding.status}`).join('|');
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = new Map(findings.map((finding) => [finding.id, finding.status]));
+    if (!before) return undefined;
+    const changed = findings.filter((finding) => before.has(finding.id) && before.get(finding.id) !== finding.status);
+    if (!changed.length) return undefined;
+    setAnnouncement(changed.map((finding) => `${findingWhere(finding)} · ${copy.aiReview.announce[finding.status]}`).join(', '));
+    const timer = window.setTimeout(() => setAnnouncement(''), 6_000);
+    return () => window.clearTimeout(timer);
+    // The signature is the problems' states; the array itself is new on every update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+  return announcement;
+}
+
+/** After 고치기, 무시 or 다시 열기 the pressed button may go away: focus moves to the problem's title, which stays. */
+export function focusAfterAction(title: { readonly current: HTMLElement | null }): void {
+  requestAnimationFrame(() => title.current?.focus());
+}
+
 export function StaleMark({ copy }: { readonly copy: ChatCopy }): JSX.Element {
   return (
     <span className="chat-review-stale" title={copy.aiReview.staleHint}>

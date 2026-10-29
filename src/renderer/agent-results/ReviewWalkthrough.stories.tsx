@@ -12,7 +12,7 @@ import {
 } from '../chat/review/review-fixtures';
 import { AppI18nProvider } from '../i18n';
 import { ConversationResults } from './ConversationResults';
-import type { ResultsNavigation, ResultsSendResult, ResultsSource } from './results-source-store';
+import type { ResultsNavigation, ResultsReviewStart, ResultsSendResult, ResultsSource } from './results-source-store';
 import type { ResultsServices } from './results-services';
 import '../index.css';
 import '../structured-agent.css';
@@ -26,7 +26,7 @@ import '../structured-agent.css';
 interface Args {
   readonly reviewAction: (action: ChatReviewAction) => void;
   readonly sendNow: (text: string) => Promise<ResultsSendResult>;
-  readonly openReviewStart: () => void;
+  readonly openReviewStart: (start?: ResultsReviewStart) => void;
 }
 
 const meta = {
@@ -128,6 +128,21 @@ export const WalkthroughOutside: Story = {
     await expect(within(canvasElement).getByTestId('results-walkthrough-outside')).toHaveTextContent('src/cart.ts:1 줄은 지금 보는 변경에 없습니다.');
   },
 };
+/**
+ * The AI's own records (이 대화 전체): a later turn rewrote the cart loop, so line 5 holds other code — 이 줄을 찾을 수
+ * 없음, the lines the review read and 파일에서 보기; nothing is marked in the diff.
+ */
+export const WalkthroughMissing: Story = {
+  render: (args) => <Results id="walk-missing" make={(now) => mixedSelfReview(now)} args={args} review findingIndex={2} worktree={false} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await position(canvasElement)).toHaveTextContent('문제 3/3');
+    await userEvent.selectOptions(canvas.getByRole('combobox', { name: '변경 범위' }), 'all');
+    await waitFor(() => expect(canvas.getByTestId('results-walkthrough-missing')).toHaveTextContent('이 줄을 찾을 수 없음'));
+    await expect(canvasElement.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
+    await expect(canvas.getByTestId('results-walkthrough-announce')).toHaveTextContent('이 줄을 찾을 수 없음');
+  },
+};
 /** Claude's uncommitted-changes review in the working folder scope, on the problem being fixed. */
 export const WalkthroughUncommitted: Story = {
   render: (args) => <Results id="walk-uncommitted" make={(now) => mixedSelfReview(now)} args={args} review worktree={false} />,
@@ -155,7 +170,18 @@ export const CommentSend: Story = {
     await expect(send).toHaveTextContent('보내기 · 대기열에 추가');
     await userEvent.click(send);
     await waitFor(() => expect(args.sendNow).toHaveBeenCalledWith(expect.stringContaining('검토 의견 (1)')));
-    await waitFor(() => expect(canvas.getByTestId('results-send-status')).toHaveTextContent('대기열 2번째에 넣었습니다.'));
+    await waitFor(() => expect(canvas.getByTestId('results-send-status')).toHaveTextContent('대기열 2번째'));
+  },
+};
+/** The host did not say where in the queue: 대기열에 추가됨, no number made up. */
+export const CommentQueued: Story = {
+  args: { sendNow: fn(async (): Promise<ResultsSendResult> => ({ ok: true, queued: true })) },
+  render: (args) => <Results id="send-queued" make={() => otherAiReview()} args={args} review turnActive />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await addComment(canvasElement, '역할 순서를 비교하기 전에 알 수 없는 역할은 거부해 주세요');
+    await userEvent.click(canvas.getByTestId('results-send-comments'));
+    await waitFor(() => expect(canvas.getByTestId('results-send-status')).toHaveTextContent('대기열에 추가됨'));
   },
 };
 /** Not sent: the reason, and the comments stay. */
@@ -170,14 +196,16 @@ export const CommentSendFailed: Story = {
     await expect(canvasElement.querySelectorAll('.results-tray__item')).toHaveLength(1);
   },
 };
-/** 기준 브랜치와 비교 (main): commits, uncommitted and new files since the worktree left main. */
+/** 기준 브랜치와 비교 (main): commits, uncommitted and new files since the worktree left main; 검토 starts on the same. */
 export const BranchScope: Story = {
   render: (args) => <Results id="branch" make={() => otherAiReview()} args={args} />,
-  play: async ({ canvasElement }) => {
+  play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await userEvent.selectOptions(await canvas.findByRole('combobox', { name: '변경 범위' }), 'base');
     await waitFor(() => expect(canvas.getByText('커밋 안 한 변경 포함 · main에서 갈라진 지점부터 · 앞선 커밋 1', { exact: false })).toBeVisible());
     await expect(canvas.getByRole('button', { name: /^src\/auth\.ts/u })).toBeVisible();
+    await userEvent.click(canvas.getByTestId('results-start-review'));
+    await expect(args.openReviewStart).toHaveBeenCalledWith({ target: { kind: 'base-branch', baseRef: 'main' } });
   },
 };
 /** Not a worktree: no base-branch scope; 검토 starts a review from here. */

@@ -75,20 +75,21 @@ export interface TodoChange {
 
 /**
  * Where a finding stands on its card: untouched, sent to this conversation to fix (and that
- * turn's state), or dismissed by the person. A fix turn that failed or was interrupted is
- * `fix-stopped`: the finding can be sent again.
+ * turn's state), or dismissed by the person. A finished fix turn's reply decides the rest:
+ * `fixed` or `not-changed` (with the AI's reason) when it says so for that finding, `unconfirmed`
+ * when it does not. A fix turn that failed or was interrupted is `fix-stopped`.
  */
-export type ChatReviewFindingStatus = 'open' | 'requested' | 'fixing' | 'fixed' | 'fix-stopped' | 'dismissed';
+export type ChatReviewFindingStatus =
+  | 'open' | 'requested' | 'fixing' | 'fixed' | 'not-changed' | 'unconfirmed' | 'fix-stopped' | 'dismissed';
 
 export interface ChatReviewFinding extends ReviewFinding {
   readonly status: ChatReviewFindingStatus;
-  /**
-   * A change record for this file arrived after the review finished, so the reported line may
-   * have moved. Set only for findings nobody is fixing (open, dismissed, fix-stopped).
-   */
+  /** A change record for this file arrived after the review finished, so the reported line may have moved. */
   readonly stale?: boolean;
   /** The turn the finding was last sent to be fixed in. */
   readonly fixTurnId?: string;
+  /** `not-changed`: why the fix turn left it, in the AI's words. */
+  readonly fixReason?: string;
 }
 
 /** One AI review (`review-loop-v1`): the latest of its rows, with each finding's state from the rows after it. */
@@ -97,6 +98,8 @@ export interface ChatReview {
   readonly reviewer: ReviewerRef;
   readonly target: ReviewTarget;
   readonly state: ReviewState;
+  /** Queued: behind this conversation's running turn, or for a free run slot. */
+  readonly waitingFor?: 'turn' | 'slot';
   readonly reason?: string;
   readonly focus?: string;
   readonly findings: readonly ChatReviewFinding[];

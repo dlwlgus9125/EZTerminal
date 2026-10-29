@@ -12,7 +12,7 @@ import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
 import { createResultsFileResolver } from './agent-results/results-file-links';
-import { publishResultsModel, publishResultsSession, type ResultsSendResult } from './agent-results/results-source-store';
+import { publishResultsModel, publishResultsSession, type ResultsReviewStart, type ResultsSendResult } from './agent-results/results-source-store';
 import { useResultsCopy } from './agent-results/copy';
 import {
   memo,
@@ -60,6 +60,7 @@ import { conversationFileChanges } from '../shared/conversation-changes';
 import { SettingPill } from './chat/composer/SettingPill';
 import { FolderPill } from './chat/composer/FolderPill';
 import type { ConversationFolders } from '../shared/conversation-folders';
+import type { ReviewTarget } from '../shared/review-findings';
 import { UsagePill, type UsagePillCopy } from './chat/composer/UsagePill';
 import type { AgentUsage } from '../shared/agent-usage';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
@@ -72,7 +73,8 @@ import { SideQuestionSurface } from './side-question/SideQuestionSurface';
 import { useSideQuestionThread } from './side-question/use-side-question-thread';
 
 export type StructuredAgentUiResult =
-  | { readonly ok: true }
+  /** `queuePosition`: where the host put a message sent while the AI answers, when it says. */
+  | { readonly ok: true; readonly queuePosition?: number }
   | { readonly ok: false; readonly message: string; readonly deliveryUncertain?: boolean };
 
 export type { ChatComposerDraft, ChatSkin } from './chat-view-state';
@@ -2311,6 +2313,12 @@ export function StructuredAgentSessionPanel({
   const startAvailable = reviewStart !== undefined && reviewsHere;
   const hostReviews = onReviewAction !== undefined && reviewsHere;
   const [reviewStartOpen, setReviewStartOpen] = useState(false);
+  /** What the start form begins on: the Results tab passes the changes being viewed; elsewhere the form's default. */
+  const [reviewStartTarget, setReviewStartTarget] = useState<ReviewTarget>();
+  const openReviewStart = (target?: ReviewTarget): void => {
+    setReviewStartTarget(target);
+    setReviewStartOpen(true);
+  };
   const [findingsRequest, setFindingsRequest] = useState<{ readonly sequence: number; readonly reviewId: string; readonly findingId?: string }>();
   const reviewAction = useCallback((action: ChatReviewAction): void => {
     if (action.kind !== 'walkthrough') { onReviewAction?.(action); return; }
@@ -2321,7 +2329,7 @@ export function StructuredAgentSessionPanel({
   }, [onReviewAction, results]);
   /** `/review <focus>`: this AI reviews the uncommitted changes with that focus, without the form. */
   const startSelfReview = (focus: string): boolean => {
-    if (!reviewStart || reviewStart.options.self.unavailableReason) { setReviewStartOpen(true); return false; }
+    if (!reviewStart || reviewStart.options.self.unavailableReason) { openReviewStart(); return false; }
     reviewStart.onStart({ reviewer: { mode: 'self', providerId }, target: { kind: 'uncommitted' }, focus });
     return true;
   };
@@ -2330,7 +2338,10 @@ export function StructuredAgentSessionPanel({
   const sendComments = async (text: string): Promise<ResultsSendResult> => {
     const queued = turnCurrent;
     const result = await sendWithCapabilities(text, undefined, onSend).catch((): StructuredAgentUiResult => ({ ok: false, message: copy.sendFailed }));
-    return result.ok ? { ok: true, queued, ...(queued ? { position: queuedCount + 1 } : {}) } : { ok: false, message: result.message || copy.sendFailed };
+    // A queue place only when the host confirmed one; never worked out from the queue this panel shows.
+    return result.ok
+      ? { ok: true, queued, ...(queued && result.queuePosition !== undefined ? { position: result.queuePosition } : {}) }
+      : { ok: false, message: result.message || copy.sendFailed };
   };
   const appCommands: readonly AppCommand[] = [
     ...(!settingsReadOnly ? [{
@@ -2354,7 +2365,7 @@ export function StructuredAgentSessionPanel({
     // Reserved only where the host reviews: elsewhere `/review` stays the provider's own command.
     ...(startAvailable ? [{
       name: 'review', description: copy.reviewCommand, takesText: true,
-      run: (text?: string) => (text?.trim() ? startSelfReview(text.trim()) : (setReviewStartOpen(true), true)),
+      run: (text?: string) => (text?.trim() ? startSelfReview(text.trim()) : (openReviewStart(), true)),
       ...(reviewStart?.options.disabledReason ? { disabledReason: reviewStart.options.disabledReason } : {}),
     }] : []),
   ];
@@ -2365,14 +2376,14 @@ export function StructuredAgentSessionPanel({
     focus: () => boolean;
     send: (text: string) => Promise<ResultsSendResult>;
     review: (action: ChatReviewAction) => void;
-    openStart: () => void;
+    openStart: (start?: ResultsReviewStart) => void;
   }>({ insert: () => undefined, focus: () => false, send: async () => ({ ok: false, message: '' }), review: () => undefined, openStart: () => undefined });
   resultsActions.current = {
     insert: (text: string) => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }),
     focus: () => focusDecision(),
     send: sendComments,
     review: reviewAction,
-    openStart: () => setReviewStartOpen(true),
+    openStart: (start?: ResultsReviewStart) => openReviewStart(start?.target),
   };
   useEffect(() => {
     if (!results) return undefined;
@@ -2381,7 +2392,7 @@ export function StructuredAgentSessionPanel({
       focusDecision: () => { resultsActions.current.focus(); },
       ...(canSendComments ? { sendNow: (text: string) => resultsActions.current.send(text) } : {}),
       ...(hostReviews ? { reviewAction: (action: ChatReviewAction) => resultsActions.current.review(action) } : {}),
-      ...(startAvailable ? { openReviewStart: () => resultsActions.current.openStart() } : {}),
+      ...(startAvailable ? { openReviewStart: (start?: ResultsReviewStart) => resultsActions.current.openStart(start) } : {}),
     });
     return undefined;
   }, [canInsertDraft, canSendComments, historyOnly, hostReviews, results, startAvailable]);
@@ -2753,7 +2764,7 @@ export function StructuredAgentSessionPanel({
               )}
               {/* A host that reviews offers 검토… (this AI or another, as a result card); older hosts keep 검토 맡기기…. */}
               {startAvailable ? (
-                <MenuItem icon={glyphIcon('search')} onSelect={() => setReviewStartOpen(true)} data-testid="structured-agent-review">{copy.reviewMenu}</MenuItem>
+                <MenuItem icon={glyphIcon('search')} onSelect={() => openReviewStart()} data-testid="structured-agent-review">{copy.reviewMenu}</MenuItem>
               ) : onDelegate && !providerOwned && !historyOnly && (
                 <MenuItem icon={glyphIcon('search')} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
               )}
@@ -2812,7 +2823,8 @@ export function StructuredAgentSessionPanel({
         {...(workspace.path ? { workspaceRoot: workspace.path } : {})}
         {...(findingsRequest ? { findingsRequest } : {})}
         {...(hostReviews ? { onReviewAction } : {})}
-        {...(canSendComments ? { onSendComments: sendComments } : {})} />}
+        {...(canSendComments ? { onSendComments: sendComments } : {})}
+        turnActive={turnCurrent} />}
       {full && workflowContext}
       {full && <StructuredAgentTranscript
         beforeMessages={beforeMessages}
@@ -2855,6 +2867,7 @@ export function StructuredAgentSessionPanel({
       {startAvailable && reviewStart && (
         <ReviewStartDialog open={reviewStartOpen} onOpenChange={setReviewStartOpen}
           options={{ ...reviewStart.options, busy: reviewStart.options.busy ?? turnCurrent }} onStart={reviewStart.onStart}
+          {...(reviewStartTarget ? { initialTarget: reviewStartTarget } : {})}
           mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument} />
       )}
       {full && variant !== 'mobile' && heartbeatControl !== undefined && (

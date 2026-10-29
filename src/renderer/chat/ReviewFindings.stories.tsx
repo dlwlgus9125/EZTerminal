@@ -8,6 +8,7 @@ import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructur
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
 import type { GitDirectoryStatus } from '../../shared/git-status';
+import type { ReviewTarget } from '../../shared/review-findings';
 import { AgentResultsOwnerContext, type AgentResultsOwner } from '../agent-results/AgentResultsContext';
 import { ConversationResults } from '../agent-results/ConversationResults';
 import {
@@ -21,7 +22,8 @@ import type { ChatReviewAction } from './ChatContext';
 import type { ChatSkin } from '../chat-view-state';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import {
-  applyReviewAction, BRANCH_DIFF, emptyReview, failedReview, inSession, interruptedReview, mixedSelfReview, otherAiReview, queuedOtherReview,
+  applyReviewAction, BRANCH_DIFF, emptyReview, failedReview, fixOutcomesReview, inSession, interruptedReview, mixedSelfReview, otherAiReview, queuedOtherReview,
+  slotQueuedReview,
   REVIEW_FILES, REVIEW_ROOT, reviewerConversation, REVIEWER_SESSION, runningSelfReview, truncatedReview, UNCOMMITTED_DIFF, unsupportedReview,
   type FixtureLanguage, type ReviewFixture,
 } from './review/review-fixtures';
@@ -159,6 +161,15 @@ function chat(id: string, make: (now: number) => ReviewFixture, options: ChatOpt
 export const SameAiRunning: Story = chat('same-running', runningSelfReview);
 /** Codex is asked while Claude still answers: the review waits for the turn to finish (no amber — nothing waits on the person). */
 export const OtherAiQueued: Story = chat('other-queued', queuedOtherReview);
+/** The conversation is idle but too many conversations already run: the review says it waits for its turn to run, not for a reply. */
+export const OtherAiQueuedSlot: Story = {
+  ...chat('other-queued-slot', slotQueuedReview),
+  play: async ({ canvasElement }) => {
+    const review = await card(canvasElement);
+    await expect(review).toHaveTextContent('동시에 실행 중인 대화가 많아 차례를 기다립니다.');
+    await showCard(canvasElement);
+  },
+};
 /**
  * Claude's result, a while later: the format problem is being fixed (a normal turn of this conversation), the
  * discount one was dismissed, and src/cart.ts changed after the review (검토 뒤에 바뀜).
@@ -171,7 +182,10 @@ export const ClaudeComplete: Story = {
     // Fix one: the host takes it as a turn of this conversation, queued behind the running fix.
     await userEvent.click(canvas.getByRole('button', { name: 'src/cart.ts:5 고치기' }));
     await waitFor(() => expect(args.onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'fix' })));
-    await waitFor(() => expect(review.querySelector('[data-testid="chat-review-counts"]')).toHaveTextContent('문제 3 · 고침 2 · 무시 1'));
+    // Sent, not fixed yet: counted apart from 고침. The pressed button went; focus is on the problem's title, and the change is said once.
+    await waitFor(() => expect(review.querySelector('[data-testid="chat-review-counts"]')).toHaveTextContent('문제 3 · 고치는 중 2 · 무시 1'));
+    await waitFor(() => expect(document.activeElement).toBe(canvas.getByRole('button', { name: /^The loop runs to index/u })));
+    await expect(canvas.getByTestId('chat-review-announce')).toHaveTextContent('src/cart.ts:5 · 고침 요청됨');
     // Reopen the dismissed one, then dismiss it again.
     await userEvent.click(canvas.getByRole('button', { name: 'src/discount.ts:4 다시 열기' }));
     await waitFor(() => expect(canvas.getByRole('button', { name: 'src/discount.ts:4 무시' })).toBeVisible());
@@ -181,12 +195,26 @@ export const ClaudeComplete: Story = {
     const title = canvas.getByRole('button', { name: /^The loop runs to index/u });
     await userEvent.click(title);
     await expect(title).toHaveAttribute('aria-expanded', 'true');
-    await expect(review).toHaveTextContent('어떻게 틀리나');
+    await expect(review).toHaveTextContent('문제가 생기는 경우');
     await showCard(canvasElement);
   },
 };
 /** Codex, as the other AI, on the branch since main: five problems, and the review conversation can be opened. */
 export const CodexOtherComplete: Story = chat('codex-other', otherAiReview);
+/**
+ * After a fix turn, each problem says what came of it, never more: 고침 only where the reply said fixed, 안 고침 with
+ * the AI's reason (다시 고치기 or 무시), 응답 끝 · 확인 필요 where the reply did not say; 고치는 중 is counted apart.
+ */
+export const FixOutcomes: Story = {
+  ...chat('fix-outcomes', fixOutcomesReview),
+  play: async ({ canvasElement }) => {
+    const review = await card(canvasElement);
+    await expect(within(review).getByTestId('chat-review-counts')).toHaveTextContent('문제 5 · 고침 1 · 고치는 중 1 · 안 고침 1 · 확인 필요 1 · 무시 1');
+    await expect(review).toHaveTextContent('이유: 호출하는 쪽이 이미 0.15 같은 비율을 넘깁니다.');
+    await expect(within(review).getByRole('button', { name: 'src/discount.ts:4 다시 고치기' })).toBeVisible();
+    await showCard(canvasElement);
+  },
+};
 /** Nothing found. */
 export const Empty: Story = chat('empty', emptyReview);
 /** The reviewer answered in prose: the reason, its own words on request, and 다시 검토. */
@@ -207,7 +235,10 @@ export const Interrupted: Story = chat('interrupted', interruptedReview);
 export const Truncated: Story = {
   ...chat('truncated', truncatedReview),
   play: async ({ canvasElement }) => {
-    const notes = (await card(canvasElement)).querySelector<HTMLElement>('.chat-action-card__notes');
+    const review = await card(canvasElement);
+    // The fix message for all 32 does not fit: 모두 고치기 becomes the first batch that does, naming what is left.
+    await expect(within(review).getByRole('button', { name: /^처음 \d+개 고치기 · 나머지 \d+개$/u })).toBeVisible();
+    const notes = review.querySelector<HTMLElement>('.chat-action-card__notes');
     if (notes) scrollToTop(notes);
   },
 };
@@ -235,6 +266,7 @@ export const CliClaudeComplete: Story = {
   },
 };
 export const CliCodexOtherComplete: Story = chat('cli-codex-other', otherAiReview, { skin: 'cli' });
+export const CliFixOutcomes: Story = chat('cli-fix-outcomes', fixOutcomesReview, { skin: 'cli' });
 export const CliEmpty: Story = chat('cli-empty', emptyReview, { skin: 'cli' });
 export const CliFailed: Story = chat('cli-failed', failedReview, { skin: 'cli' });
 export const CliUnsupported: Story = chat('cli-unsupported', unsupportedReview, { skin: 'cli' });
@@ -257,7 +289,12 @@ function ReviewerScreen(): JSX.Element {
 }
 
 // ── 3. Starting a review ─────────────────────────────────────────────────────────────────────────────
-function StartScreen({ args, options, fixture = emptyReview }: { readonly args: Args; readonly options: ReviewStartOptions; readonly fixture?: (now: number) => ReviewFixture }): JSX.Element {
+function StartScreen({ args, options, fixture = emptyReview, initialTarget }: {
+  readonly args: Args;
+  readonly options: ReviewStartOptions;
+  readonly fixture?: (now: number) => ReviewFixture;
+  readonly initialTarget?: ReviewTarget;
+}): JSX.Element {
   const locale = useContext(StoryLocale);
   const [open, setOpen] = useState(true);
   const [items] = useState(() => inSession(fixture(Date.now()), 'review-story-start'));
@@ -265,7 +302,7 @@ function StartScreen({ args, options, fixture = emptyReview }: { readonly args: 
     <Desk>
       <StructuredAgentSessionPanel {...panelProps('review-story-start', items, items.state, locale)} items={items.items.filter((entry) => entry.payload?.type !== 'review')}
         reviewStart={{ options, onStart: args.onStart }} />
-      <ReviewStartDialog open={open} onOpenChange={setOpen} options={options} onStart={args.onStart} />
+      <ReviewStartDialog open={open} onOpenChange={setOpen} options={options} onStart={args.onStart} {...(initialTarget ? { initialTarget } : {})} />
     </Desk>
   );
 }
@@ -279,6 +316,15 @@ export const StartMenu: Story = {
     await userEvent.type(dialog.getByRole('textbox'), '금액 계산과 권한 검사');
     await userEvent.click(dialog.getByRole('button', { name: '검토 시작' }));
     await expect(args.onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산과 권한 검사' });
+  },
+};
+/** From Results › Changes on 기준 브랜치와 비교 (main): the form opens on the branch and says exactly what the review reads. */
+export const StartMenuFromBranch: Story = {
+  render: (args) => <StartScreen args={args} options={START_OPTIONS} initialTarget={{ kind: 'base-branch', baseRef: 'main' }} />,
+  play: async () => {
+    const dialog = within(await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="review-start-dialog"]'); expect(element).not.toBeNull(); return element!; }));
+    await expect(dialog.getByRole('radio', { name: /기준 브랜치와 비교/u })).toBeChecked();
+    await expect(dialog.getByTestId('review-start-target')).toHaveTextContent('main에서 갈라진 지점 이후 + 커밋 안 한 변경 + 새 파일');
   },
 };
 /** Another AI on the branch since main. */
@@ -439,10 +485,11 @@ function PhoneScreen({ id, make, args, width, height }: {
   const sessionId = `review-story-${id}`;
   const [fixture] = useState(() => inSession(make(Date.now()), sessionId));
   const host = useStoryHost(fixture, args.onReviewAction);
+  const [openFiles] = useState(() => fn());
   return (
     <Phone width={width} height={height}>
       <MobileStructuredAgentSession {...panelProps(sessionId, host, fixture.state, locale)} folders={undefined}
-        onReviewAction={host.onReviewAction} reviewStart={{ options: START_OPTIONS, onStart: args.onStart }} onBack={fn()} />
+        onReviewAction={host.onReviewAction} reviewStart={{ options: START_OPTIONS, onStart: args.onStart }} onBack={fn()} onOpenProjectFiles={openFiles} />
     </Phone>
   );
 }
@@ -473,7 +520,11 @@ async function openFindingSheet(canvasElement: HTMLElement, where: string): Prom
     return sheet!;
   });
 }
-/** Phone: tapping a location opens the review sheet on that problem — ‹ ›, the recorded lines around it, 고치기 / 무시. */
+/**
+ * Phone: tapping a location opens the review sheet on that problem — ‹ ›, 고치기 / 무시. The cart loop was rewritten after
+ * the review, so its line 5 holds other code now: 이 줄을 찾을 수 없음, the lines the review read (unmarked) and the
+ * way to the files, never a mark on today's line 5. After 고치기 the buttons go; focus moves to the problem's title.
+ */
 export const PhoneFindingsSheet: Story = {
   render: (args) => <PhoneScreen id="phone-sheet" make={mixedSelfReview} args={args} width={412} height={915} />,
   play: async ({ canvasElement, args }) => {
@@ -482,8 +533,53 @@ export const PhoneFindingsSheet: Story = {
     await userEvent.click(within(sheet).getByRole('button', { name: '이전 문제' }));
     await expect(sheet.querySelector('.conversation-review__position')).toHaveTextContent('문제 2/3');
     await userEvent.click(within(sheet).getByRole('button', { name: '다음 문제' }));
+    await expect(within(sheet).getByTestId('conversation-review-missing')).toHaveTextContent('이 줄을 찾을 수 없음');
+    await expect(within(sheet).getByRole('button', { name: '파일에서 보기' })).toBeVisible();
+    await expect(sheet.querySelector('.conversation-review__line[data-focus]')).toBeNull();
     await userEvent.click(within(sheet).getByRole('button', { name: 'src/cart.ts:5 고치기' }));
     await waitFor(() => expect(args.onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'fix' })));
+    await waitFor(() => expect(document.activeElement).toBe(sheet.querySelector('[data-finding-title]')));
+    await expect(within(sheet).getByTestId('conversation-review-status')).toHaveTextContent('src/cart.ts:5 · 고침 요청됨');
+  },
+};
+/** Phone: a problem whose line the recorded change still holds — the lines around it, its line marked (being fixed: no buttons). */
+export const PhoneFindingsSheetLines: Story = {
+  render: (args) => <PhoneScreen id="phone-sheet-lines" make={mixedSelfReview} args={args} width={412} height={915} />,
+  play: async ({ canvasElement }) => {
+    const sheet = await openFindingSheet(canvasElement, 'src/format.ts:2');
+    await expect(sheet.querySelector('.conversation-review__line[data-focus]')).toHaveTextContent('const dollars = cents / 10;');
+  },
+};
+/**
+ * Phone 360×800: comments without Shift. A tap starts a range (범위 선택 중, with 취소), the next tap ends it and the
+ * comment joins the tray, which sends them together; every line, the selection's controls and the tray are 44px targets.
+ */
+export const PhoneComments360: Story = {
+  render: (args) => <PhoneScreen id="phone-comments-360" make={mixedSelfReview} args={args} width={360} height={800} />,
+  play: async ({ canvasElement }) => {
+    await card(canvasElement);
+    await userEvent.click(canvasElement.querySelector<HTMLButtonElement>('[data-testid="structured-agent-review-changes"]')!);
+    const sheet = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-testid="conversation-change-review"][data-mode="changes"]');
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const line = (text: string): HTMLButtonElement => [...sheet.querySelectorAll<HTMLButtonElement>('button.conversation-review__line')].find((element) => element.textContent?.includes(text))!;
+    await userEvent.click(line('+  for (let i = 0'));
+    await userEvent.click(line('+    total += items[i]'));
+    await userEvent.type(within(sheet).getByTestId('conversation-review-note'), '<로 돌려 주세요');
+    await userEvent.click(within(sheet).getByTestId('conversation-review-add'));
+    await expect(sheet.querySelectorAll('.results-tray__item')).toHaveLength(1);
+    // The next range is being tapped out: its first line and 취소.
+    await userEvent.click(line('   let total = 0;'));
+    await expect(within(sheet).getByTestId('conversation-review-selecting')).toHaveTextContent('범위 선택 중');
+    const targets = [
+      ...sheet.querySelectorAll<HTMLElement>('button.conversation-review__line'),
+      within(sheet).getByTestId('conversation-review-selecting-cancel'),
+      ...sheet.querySelectorAll<HTMLElement>('.results-tray button'),
+    ];
+    // 44 CSS px (2.75rem); at some UI scales layout lands a hair under it (43.99997).
+    for (const target of targets) await expect(target.getBoundingClientRect().height).toBeGreaterThanOrEqual(43.99);
   },
 };
 /**

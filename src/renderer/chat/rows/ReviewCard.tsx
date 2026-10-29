@@ -1,13 +1,14 @@
-import { Fragment } from 'react';
+import { Fragment, useRef, type RefObject } from 'react';
 
-import { REVIEW_LIMITS } from '../../../shared/review-findings';
+import { composeFixPrompt, REVIEW_LIMITS } from '../../../shared/review-findings';
 import { Glyph } from '../../ui/Glyph';
 import { formatClock, useChatCopy, type ChatCopy } from '../copy';
 import { useChatContext, useNow, type ChatReviewAction } from '../ChatContext';
 import { formatDuration } from '../model/summary';
 import type { ChatReview, ChatReviewFinding, ChatRow } from '../model/types';
 import {
-  canFix, findingWhere, FindingStatusChip, groupFindings, reasonText, reviewCounts, reviewerText, scopeText, SeverityChip, StaleMark, walkOrder,
+  canFix, countsText, findingWhere, FindingStatusChip, fixAllEligible, focusAfterAction, groupFindings, providerName, reasonText, reviewCounts, reviewerText,
+  scopeText, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
 } from '../review/review-presentation';
 import { ActionCard, type ActionCardAction, type ActionCardNote, type ActionCardState } from './ActionCard';
 
@@ -41,7 +42,7 @@ function stateText(review: ChatReview, copy: ChatCopy, elapsed: string | undefin
 function message(review: ChatReview, copy: ChatCopy): { readonly text: string; readonly tone?: 'danger'; readonly label?: string } | undefined {
   const reason = review.reason ? reasonText(review.reason, review.reviewer, copy) : undefined;
   switch (review.state) {
-    case 'queued': return { text: copy.aiReview.detail.queued };
+    case 'queued': return { text: review.waitingFor === 'slot' ? copy.aiReview.detail.queuedSlot : copy.aiReview.detail.queued };
     case 'running': return { text: copy.aiReview.detail.running };
     case 'complete':
       if (!review.findings.length) return { text: review.overall ? `${copy.aiReview.detail.empty} ${review.overall}` : copy.aiReview.detail.empty };
@@ -62,6 +63,19 @@ function notes(review: ChatReview, copy: ChatCopy): ActionCardNote[] {
   ];
 }
 
+/**
+ * What 모두 고치기 sends, in the reviewer's order (most severe first): every eligible finding when their fix message
+ * fits, else the first batch that fits, named with how many are left. After that batch is sent, the next one is offered.
+ */
+function fixAllBatch(review: ChatReview): { readonly ids: readonly string[]; readonly label: (copy: ChatCopy) => string } | undefined {
+  const eligible = review.findings.filter(fixAllEligible);
+  if (!eligible.length) return undefined;
+  const prompt = composeFixPrompt({ reviewerLabel: providerName(review.reviewer.providerId), findings: eligible });
+  if (prompt.ok) return { ids: eligible.map((finding) => finding.id), label: (copy) => copy.aiReview.fixAll(eligible.length) };
+  if (prompt.fits <= 0) return undefined;
+  return { ids: eligible.slice(0, prompt.fits).map((finding) => finding.id), label: (copy) => copy.aiReview.fixFirst(prompt.fits, eligible.length - prompt.fits) };
+}
+
 function cardActions(review: ChatReview, copy: ChatCopy, onAction: ReviewActionHandler | undefined): ActionCardAction[] {
   if (!onAction) return [];
   const act = (kind: ChatReviewAction['kind'], findingIds?: readonly string[]) => () => onAction({ kind, reviewId: review.reviewId, ...(findingIds ? { findingIds } : {}) });
@@ -73,9 +87,9 @@ function cardActions(review: ChatReview, copy: ChatCopy, onAction: ReviewActionH
     case 'complete': {
       if (!review.findings.length) return openReviewer;
       const counts = reviewCounts(review);
-      const fixable = review.findings.filter(canFix).map((finding) => finding.id);
+      const batch = fixAllBatch(review);
       return [
-        ...(fixable.length ? [{ id: 'fix-all', label: copy.aiReview.fixAll(fixable.length), primary: true, onSelect: act('fix-all', fixable), testId: 'chat-review-fix-all' }] : []),
+        ...(batch ? [{ id: 'fix-all', label: batch.label(copy), primary: true, onSelect: act('fix-all', batch.ids), testId: 'chat-review-fix-all' }] : []),
         { id: 'walkthrough', label: copy.aiReview.walkthrough, onSelect: act('walkthrough'), testId: 'chat-review-walkthrough' },
         ...(counts.stale > 0 ? [{ id: 'retry', label: copy.aiReview.retry, onSelect: act('retry'), testId: 'chat-review-retry' }] : []),
         ...openReviewer,
@@ -88,18 +102,29 @@ function cardActions(review: ChatReview, copy: ChatCopy, onAction: ReviewActionH
   }
 }
 
-function FindingActions({ review, finding, onAction, cli }: {
+/**
+ * 고치기 (다시 고치기 after a stop or a reply), 무시, 다시 열기. The pressed button may go away with the new state, so
+ * focus then moves to the problem's title, which stays.
+ */
+function FindingActions({ review, finding, onAction, cli, titleRef }: {
   readonly review: ChatReview;
   readonly finding: ChatReviewFinding;
   readonly onAction: ReviewActionHandler;
   readonly cli: boolean;
+  readonly titleRef: RefObject<HTMLElement>;
 }): JSX.Element | null {
   const copy = useChatCopy();
   const where = findingWhere(finding);
-  const act = (kind: ChatReviewAction['kind']) => () => onAction({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
+  const act = (kind: ChatReviewAction['kind']) => () => {
+    onAction({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
+    focusAfterAction(titleRef);
+  };
+  const again = finding.status !== 'open';
   const actions = canFix(finding)
     ? [
-      { kind: 'fix' as const, label: copy.aiReview.fix, name: copy.aiReview.fixFinding(where) },
+      again
+        ? { kind: 'fix' as const, label: copy.aiReview.fixAgain, name: copy.aiReview.fixAgainFinding(where) }
+        : { kind: 'fix' as const, label: copy.aiReview.fix, name: copy.aiReview.fixFinding(where) },
       { kind: 'dismiss' as const, label: copy.aiReview.dismiss, name: copy.aiReview.dismissFinding(where) },
     ]
     : finding.status === 'dismissed' ? [{ kind: 'reopen' as const, label: copy.aiReview.reopen, name: copy.aiReview.reopenFinding(where) }] : [];
@@ -142,6 +167,15 @@ function FindingDetail({ finding, cli }: { readonly finding: ChatReviewFinding; 
   );
 }
 
+/** `안 고침`: why, in the AI's words. */
+function FixReason({ finding, cli }: { readonly finding: ChatReviewFinding; readonly cli: boolean }): JSX.Element | null {
+  const copy = useChatCopy();
+  if (finding.status !== 'not-changed' || !finding.fixReason) return null;
+  return cli
+    ? <span className="chat-cli-result__line chat-review-finding__reason">{copy.aiReview.fixReason(finding.fixReason)}</span>
+    : <p className="chat-review-finding__reason">{copy.aiReview.fixReason(finding.fixReason)}</p>;
+}
+
 function BubbleFinding({ review, finding, onAction }: {
   readonly review: ChatReview;
   readonly finding: ChatReviewFinding;
@@ -149,6 +183,7 @@ function BubbleFinding({ review, finding, onAction }: {
 }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
+  const titleRef = useRef<HTMLElement>(null);
   const key = `review:${review.reviewId}:${finding.id}`;
   const open = context.isExpanded(key, false);
   const where = findingWhere(finding);
@@ -168,19 +203,21 @@ function BubbleFinding({ review, finding, onAction }: {
           )
           : <span className="chat-review-finding__where">{lineText}</span>)}
         {expandable ? (
-          <button type="button" className="chat-review-finding__title" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
+          <button ref={titleRef as RefObject<HTMLButtonElement>} type="button" className="chat-review-finding__title" aria-expanded={open}
+            onClick={() => context.setExpanded(key, !open)} data-finding-title="">
             <span>{finding.title}</span>
             <Glyph name="next" className="chat-chevron" />
           </button>
-        ) : <span className="chat-review-finding__title">{finding.title}</span>}
+        ) : <span ref={titleRef as RefObject<HTMLSpanElement>} className="chat-review-finding__title" tabIndex={-1} data-finding-title="">{finding.title}</span>}
         {(finding.status !== 'open' || finding.stale) && (
           <span className="chat-review-finding__marks">
             <FindingStatusChip status={finding.status} copy={copy} />
             {finding.stale && <StaleMark copy={copy} />}
           </span>
         )}
-        {onAction && <FindingActions review={review} finding={finding} onAction={onAction} cli={false} />}
+        {onAction && <FindingActions review={review} finding={finding} onAction={onAction} cli={false} titleRef={titleRef} />}
       </div>
+      <FixReason finding={finding} cli={false} />
       {open && expandable && <FindingDetail finding={finding} cli={false} />}
     </li>
   );
@@ -193,6 +230,7 @@ function CliFinding({ review, finding, onAction }: {
 }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
+  const titleRef = useRef<HTMLElement>(null);
   const key = `review:${review.reviewId}:${finding.id}`;
   const open = context.isExpanded(key, false);
   const where = findingWhere(finding);
@@ -217,7 +255,7 @@ function CliFinding({ review, finding, onAction }: {
           )}
           {' '}
           {/* Text, not a button: a long title wraps like terminal output; 자세히 opens the rest. */}
-          <span className="chat-cli-review-finding__title">{finding.title}</span>
+          <span ref={titleRef as RefObject<HTMLSpanElement>} className="chat-cli-review-finding__title" tabIndex={-1} data-finding-title="">{finding.title}</span>
           {finding.status !== 'open' && <span className="chat-cli-review-status" data-status={finding.status}> [{copy.aiReview.status[finding.status]}]</span>}
           {finding.stale && <span className="chat-cli-dim chat-cli-review-finding__stale" title={copy.aiReview.staleHint}> · {copy.aiReview.stale}</span>}
           {expandable && (
@@ -227,8 +265,9 @@ function CliFinding({ review, finding, onAction }: {
               </button>
             </span>
           )}
-          {onAction && <FindingActions review={review} finding={finding} onAction={onAction} cli />}
+          {onAction && <FindingActions review={review} finding={finding} onAction={onAction} cli titleRef={titleRef} />}
         </span>
+        <FixReason finding={finding} cli />
         {open && expandable && <FindingDetail finding={finding} cli />}
       </div>
     </li>
@@ -281,11 +320,8 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
   const text = stateText(review, copy, elapsed);
   const clock = formatClock(review.updatedAt, context.locale);
   const took = review.state === 'complete' && review.durationMs !== undefined ? copy.aiReview.took(formatDuration(review.durationMs, context.locale)) : undefined;
-  const countText = review.findings.length ? [
-    copy.aiReview.problems(counts.problems),
-    ...(counts.fixes ? [copy.aiReview.fixes(counts.fixes)] : []),
-    ...(counts.dismissed ? [copy.aiReview.dismissedCount(counts.dismissed)] : []),
-  ].join(' · ') : undefined;
+  const countText = review.findings.length ? countsText(counts, copy) : undefined;
+  const announcement = useFindingAnnouncement(review.findings, copy);
   const onAction = context.onReviewAction;
   const cli = context.skin === 'cli';
   const meta = (
@@ -298,8 +334,8 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
     </>
   );
   // The CLI header already says how many problems; it adds what happened to them.
-  const cliCounts = [...(counts.fixes ? [copy.aiReview.fixes(counts.fixes)] : []), ...(counts.dismissed ? [copy.aiReview.dismissedCount(counts.dismissed)] : [])];
-  const cliMeta = [scope, ...cliCounts, ...(running ? [] : [took ?? clock])].join(' · ');
+  const cliCounts = review.findings.length ? countsText(counts, copy, false) : '';
+  const cliMeta = [scope, ...(cliCounts ? [cliCounts] : []), ...(running ? [] : [took ?? clock])].join(' · ');
   return (
     <ActionCard
       kind="review"
@@ -344,6 +380,7 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
         </div>
       ))}
       <RawAnswer review={review} cli={cli} />
+      <span className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-review-announce">{announcement}</span>
     </ActionCard>
   );
 }

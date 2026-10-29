@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  composeFixPrompt, composeReviewPrompt, findingId, fromStructuredJson, normalizeFindingPath, parseStructuredText,
+  composeFixPrompt, composeReviewPrompt, findingId, fromStructuredJson, normalizeFindingPath, parseFixReply, parseStructuredText,
   relocateExcerpt, REVIEW_LIMITS, reviewSummaryText, type ReviewFinding,
 } from './review-findings';
 import { parseTranscriptPayload } from './transcript-payload';
@@ -169,6 +169,43 @@ describe('composeFixPrompt', () => {
   });
 });
 
+describe('parseFixReply', () => {
+  const A = findingId('r', 'src/format.ts', 2, 'a');
+  const B = findingId('r', 'src/discount.ts', 4, 'b');
+  const C = findingId('r', 'src/cart.ts', 5, 'c');
+
+  it('reads the per-id lines the fix prompt asks for, around other prose', () => {
+    const reply = [
+      'I changed `formatPrice` to divide by 100 and left the discount alone.',
+      '',
+      `${A}: fixed`,
+      `${B}: not changed (percent is already a fraction in every caller)`,
+      'Let me know if you want tests.',
+    ].join('\n');
+    expect(parseFixReply(reply)).toEqual(new Map([
+      [A, { outcome: 'fixed' }],
+      [B, { outcome: 'not-changed', reason: 'percent is already a fraction in every caller' }],
+    ]));
+  });
+
+  it('accepts markdown bullets, backticks or bold around ids and any keyword case', () => {
+    const reply = [`- \`${A}\`: Fixed`, `* **${B}**: NOT CHANGED — the bound is right`, `1. ${C}: Not changed`].join('\n');
+    const parsed = parseFixReply(reply);
+    expect(parsed.get(A)).toEqual({ outcome: 'fixed' });
+    expect(parsed.get(B)).toEqual({ outcome: 'not-changed', reason: 'the bound is right' });
+    expect(parsed.get(C)).toEqual({ outcome: 'not-changed' });
+  });
+
+  it('ignores lines that are not finding ids or name no outcome', () => {
+    const reply = ['src/format.ts: fixed', 'f-123: fixed', `${A} was the hard one`, `I think ${B}: fixed is wrong`].join('\n');
+    expect(parseFixReply(reply).size).toBe(0);
+  });
+
+  it('lets the last line for an id win', () => {
+    expect(parseFixReply(`${A}: not changed (first pass)\n${A}: fixed`).get(A)).toEqual({ outcome: 'fixed' });
+  });
+});
+
 describe('reviewSummaryText', () => {
   it('reads on its own for old clients', () => {
     const findings = CLAUDE_ANSWER.findings.map((entry, index) => ({ id: String(index), file: entry.file, line: entry.line, title: entry.title, body: entry.body }));
@@ -178,6 +215,8 @@ describe('reviewSummaryText', () => {
     // A reason code reads as English for clients that only show the row's text.
     expect(reviewSummaryText({ reviewerLabel: 'Claude', state: 'failed', reason: 'invalid-output' })).toBe('Review (Claude) failed: the reviewer did not answer in the findings format');
     expect(reviewSummaryText({ reviewerLabel: 'Codex', state: 'unsupported', reason: 'provider-too-old' })).toBe('Review (Codex) is not available: the installed version cannot run a read-only review');
+    expect(reviewSummaryText({ reviewerLabel: 'Codex', state: 'queued' })).toBe('Review (Codex) waits for the current turn to finish.');
+    expect(reviewSummaryText({ reviewerLabel: 'Codex', state: 'queued', waitingFor: 'slot' })).toBe('Review (Codex) waits for a free run slot.');
   });
 });
 
@@ -202,5 +241,12 @@ describe('review transcript payloads', () => {
     expect(parseTranscriptPayload({ ...card, findings: [{ ...card.findings[0], title: 'x'.repeat(REVIEW_LIMITS.title + 1) }] })).toBeUndefined();
     expect(parseTranscriptPayload({ v: 1, type: 'review-status', reviewId: 'r1', findingIds: ['f-1'], state: 'dismissed' })).toMatchObject({ type: 'review-status' });
     expect(parseTranscriptPayload({ v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [] })).toBeUndefined();
+  });
+
+  it('says why a review is queued: behind this conversation’s turn or for a free run slot', () => {
+    const queued = { v: 1, type: 'review', reviewId: 'r2', reviewer: { mode: 'other', providerId: 'codex' }, target: { kind: 'uncommitted' }, state: 'queued' };
+    expect(parseTranscriptPayload({ ...queued, waitingFor: 'slot' })).toMatchObject({ waitingFor: 'slot' });
+    expect(parseTranscriptPayload({ ...queued, waitingFor: 'turn' })).toMatchObject({ waitingFor: 'turn' });
+    expect(parseTranscriptPayload({ ...queued, waitingFor: 'nap' })).toBeUndefined();
   });
 });

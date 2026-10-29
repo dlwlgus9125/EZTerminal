@@ -16,10 +16,9 @@ import { orderedRange, PatchLineList, selectedLines, type LineRange } from './Pa
 import { PathLabel } from './PathLabel';
 import { FindingAnnotation, ReviewWalkthrough } from './ReviewWalkthrough';
 import { useResultsCopy } from './copy';
-import {
-  formatReviewComments, isFindingFile, lineRangeLabel, locateFinding, REVIEW_DRAFT_LIMIT, resolveWorkspacePath, samePath, type ReviewComment,
-} from './results-format';
-import type { ResultsSendResult } from './results-source-store';
+import { isFindingFile, lineRangeLabel, locateFinding, resolveWorkspacePath, samePath, type ReviewComment } from './results-format';
+import { ReviewCommentTray } from './ReviewCommentTray';
+import type { ResultsReviewStart, ResultsSendResult } from './results-source-store';
 import { useResultsViewState, type ResultsServices, type WorktreeBaseDiffResult } from './results-services';
 
 /** `base`: the worktree since it left its base branch (기준 브랜치와 비교). */
@@ -56,11 +55,6 @@ interface ReviewState {
   /** Stepping through an AI review: which one, and the problem on screen. */
   readonly walk?: { readonly reviewId: string; readonly findingId: string };
 }
-
-type SendState =
-  | { readonly phase: 'idle' | 'sending' }
-  | { readonly phase: 'sent'; readonly queued: boolean; readonly position?: number }
-  | { readonly phase: 'error'; readonly message: string };
 
 const KIND_ICON = { add: glyphIcon('plus'), delete: glyphIcon('minus'), rename: glyphIcon('link'), update: glyphIcon('edit') } as const;
 
@@ -176,8 +170,8 @@ export function ResultsChanges({
   readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
   /** Fix, dismiss or reopen the problem on screen (host actions). */
   readonly reviewAction?: (action: ChatReviewAction) => void;
-  /** Opens the conversation's review start form. */
-  readonly openReviewStart?: () => void;
+  /** Opens the conversation's review start form, on the changes being viewed. */
+  readonly openReviewStart?: (start?: ResultsReviewStart) => void;
 }): JSX.Element {
   const copy = useResultsCopy();
   const locale = useChatLocale();
@@ -186,8 +180,6 @@ export function ResultsChanges({
   const [selection, setSelection] = useState<{ readonly recordId: string; readonly range: LineRange }>();
   const [composing, setComposing] = useState(false);
   const [note, setNote] = useState('');
-  const [inserted, setInserted] = useState(false);
-  const [sendState, setSendState] = useState<SendState>({ phase: 'idle' });
   const noteRef = useRef<HTMLTextAreaElement>(null);
   // A remembered folder scope falls back when this conversation has no folder (or no base) to read.
   const gitAvailable = Boolean(workspaceRoot && folderReadable && services.getGitDiff && services.getGitStatus);
@@ -245,25 +237,34 @@ export function ResultsChanges({
   const walkFindings = useMemo(() => (walkReview ? walkOrder(walkReview) : []), [walkReview]);
   const walkFinding = walkFindings.find((finding) => finding.id === view.walk?.findingId);
   const walkFile = walkFinding ? entries.find((entry) => isFindingFile(entry.path, walkFinding.file, workspaceRoot)) : undefined;
-  /** Each record's problems by line, and where the current one is. */
+  /**
+   * Each record's problems by line, and where the current one is. The latest record that shows a
+   * problem's line decides: there it is found, or its code changed (`missing`, never anchored).
+   */
   const walkPlacement = useMemo(() => {
     const byRecord = new Map<string, Map<number, { finding: ChatReviewFinding; moved?: number }[]>>();
     let current: { recordId: string; index: number; moved?: number } | undefined;
-    if (!walkFinding || !walkFile) return { byRecord, current };
+    let missing = false;
+    if (!walkFinding || !walkFile) return { byRecord, current, missing };
     for (const finding of walkFindings.filter((entry) => entry.file === walkFinding.file)) {
-      for (const record of walkFile.records) {
+      for (const record of [...walkFile.records].reverse()) {
         const place = locateFinding(record.change, finding);
-        if (!place) continue;
+        if (place.state === 'outside') continue;
+        if (place.state === 'missing') {
+          if (finding.id === walkFinding.id) missing = true;
+          break;
+        }
         const lines = byRecord.get(record.id) ?? new Map<number, { finding: ChatReviewFinding; moved?: number }[]>();
         lines.set(place.index, [...(lines.get(place.index) ?? []), { finding, ...(place.moved !== undefined ? { moved: place.moved } : {}) }]);
         byRecord.set(record.id, lines);
-        if (finding.id === walkFinding.id && !current) current = { recordId: record.id, index: place.index, ...(place.moved !== undefined ? { moved: place.moved } : {}) };
+        if (finding.id === walkFinding.id) current = { recordId: record.id, index: place.index, ...(place.moved !== undefined ? { moved: place.moved } : {}) };
         break;
       }
     }
-    return { byRecord, current };
+    return { byRecord, current, missing };
   }, [walkFile, walkFinding, walkFindings]);
-  const walkOutside = Boolean(walkFinding && !walkPlacement.current);
+  const walkMissing = Boolean(walkFinding && walkPlacement.missing);
+  const walkOutside = Boolean(walkFinding && !walkPlacement.current && !walkMissing);
   const step = (findingId: string): void => {
     const finding = walkFindings.find((entry) => entry.id === findingId);
     if (!finding || !view.walk) return;
@@ -298,31 +299,9 @@ export function ResultsChanges({
     setSelection(undefined);
     setComposing(false);
     setNote('');
-    setInserted(false);
-    setSendState({ phase: 'idle' });
   };
-  const draftText = formatReviewComments(view.comments, locale);
-  const tooLong = draftText.length > REVIEW_DRAFT_LIMIT;
-  const insert = (): void => {
-    if (!insertIntoDraft || tooLong || !draftText) return;
-    insertIntoDraft(draftText);
-    setView((current) => ({ ...current, comments: [] }));
-    setInserted(true);
-    setSendState({ phase: 'idle' });
-  };
-  // Sent as a message of its own; the comments stay until the conversation took them.
-  const send = async (): Promise<void> => {
-    if (!sendNow || tooLong || !draftText || sendState.phase === 'sending') return;
-    setSendState({ phase: 'sending' });
-    setInserted(false);
-    const result = await sendNow(draftText).catch((): ResultsSendResult => ({ ok: false, message: '' }));
-    if (result.ok) {
-      setView((current) => ({ ...current, comments: [] }));
-      setSendState({ phase: 'sent', queued: result.queued, ...(result.position !== undefined ? { position: result.position } : {}) });
-    } else {
-      setSendState({ phase: 'error', message: result.message });
-    }
-  };
+  /** Only the comments that went: ones added while a send was on its way stay. */
+  const takeComments = (ids: readonly string[]): void => setView((current) => ({ ...current, comments: current.comments.filter((comment) => !ids.includes(comment.id)) }));
   useEffect(() => { if (composing) noteRef.current?.focus(); }, [composing]);
   const lineLabels = useMemo(() => ({
     showMore: copy.showMoreLines,
@@ -332,6 +311,27 @@ export function ResultsChanges({
   const pendingEarlier = scope === 'all' && transcriptFloor > 0 && backfill.phase !== 'done';
   const baseDiff = base.diff?.ok && 'ahead' in base.diff ? base.diff : undefined;
   const findingPath = walkFinding ? resolveWorkspacePath(walkFinding.file, workspaceRoot) ?? walkFinding.file : undefined;
+  // Never the line number's current code: the place is named, with the lines the review read and the way to the file.
+  const missingNote = walkFinding && walkMissing ? (
+    <div className="results-walk-outside results-walk-missing" role="note" data-testid="results-walkthrough-missing">
+      <Glyph name="info" />
+      <span><strong>{copy.walk.missing}</strong>{' '}{copy.walk.missingDetail(findingWhere(walkFinding))}</span>
+      {onViewFile && findingPath && (
+        <Button variant="ghost" size="sm" onClick={() => onViewFile(findingPath)}>{copy.walk.viewInFile}</Button>
+      )}
+      {walkFinding.excerpt && walkFinding.excerpt.lines.length > 0 && <span className="results-walk-excerpt__heading">{copy.walk.excerptHeading}</span>}
+      {walkFinding.excerpt && walkFinding.excerpt.lines.length > 0 && (
+        <div className="results-walk-excerpt" role="region" tabIndex={0} aria-label={copy.walk.excerptLabel(findingWhere(walkFinding))}>
+          {walkFinding.excerpt.lines.map((line, offset) => (
+            <div key={offset} className="results-walk-excerpt__line">
+              <span className="results-walk-excerpt__number">{walkFinding.excerpt!.startLine + offset}</span>
+              <code>{line || ' '}</code>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
   const outsideNote = walkFinding && walkOutside ? (
     <div className="results-walk-outside" role="note" data-testid="results-walkthrough-outside">
       <Glyph name="info" />
@@ -385,7 +385,10 @@ export function ResultsChanges({
           <IconButton size="sm" icon={glyphIcon('refresh')} aria-label={copy.refresh} onClick={scope === 'base' ? refreshBase : refreshGit} disabled={folder.phase === 'loading'} />
         )}
         {openReviewStart && (
-          <Button size="sm" variant="secondary" leadingIcon={<Glyph name="search" />} title={copy.startReviewHint} onClick={openReviewStart} data-testid="results-start-review">
+          // The review starts on what is being viewed: the branch since its base, else the uncommitted changes.
+          <Button size="sm" variant="secondary" leadingIcon={<Glyph name="search" />} title={copy.startReviewHint}
+            onClick={() => openReviewStart(scope === 'base' && baseRef ? { target: { kind: 'base-branch', baseRef } } : scope === 'git' ? { target: { kind: 'uncommitted' } } : undefined)}
+            data-testid="results-start-review">
             {copy.startReview}
           </Button>
         )}
@@ -399,7 +402,7 @@ export function ResultsChanges({
         <p className="results-note">{copy.scopeSelectedTurn(formatClock(selectedTurn.createdAt, locale))}</p>
       )}
       {walkReview && walkFinding && (
-        <ReviewWalkthrough review={walkReview} findingId={walkFinding.id} outside={walkOutside} onStep={step} onClose={closeWalk}
+        <ReviewWalkthrough review={walkReview} findingId={walkFinding.id} outside={walkOutside} missing={walkMissing} onStep={step} onClose={closeWalk}
           {...(reviewAction ? { onAction: reviewAction } : {})} />
       )}
       {pendingEarlier && (
@@ -470,7 +473,7 @@ export function ResultsChanges({
                   )}
                 </span>
               </header>
-              {walkFile === selected && outsideNote}
+              {walkFile === selected && (missingNote ?? outsideNote)}
               <p className="results-note">{selected.records.some((record) => record.change.coverage === 'fragment') ? copy.fragmentNote : copy.patchNote}</p>
               {selected.records.map((record, index) => {
                 const commented = new Set<number>();
@@ -530,47 +533,9 @@ export function ResultsChanges({
         </>
       )}
 
-      {(view.comments.length > 0 || inserted || sendState.phase === 'sent') && (
-        <section className="results-tray" aria-label={copy.comments(view.comments.length)}>
-          {view.comments.length > 0 && (
-            <>
-              <ul className="results-tray__list">
-                {view.comments.map((comment) => (
-                  <li key={comment.id} className="results-tray__item">
-                    <span className="results-tray__where">{comment.lines ? `${comment.path}:${comment.lines}` : comment.path}</span>
-                    {comment.text && <span className="results-tray__text">{comment.text}</span>}
-                    <IconButton size="sm" icon={glyphIcon('x')} aria-label={copy.removeComment}
-                      onClick={() => setView((current) => ({ ...current, comments: current.comments.filter((entry) => entry.id !== comment.id) }))} />
-                  </li>
-                ))}
-              </ul>
-              <div className="results-tray__footer">
-                {sendNow && (
-                  <Button variant="primary" size="sm" disabled={tooLong || sendState.phase === 'sending'} loading={sendState.phase === 'sending'} loadingLabel={copy.sending}
-                    onClick={() => void send()} title={copy.sendHint} data-testid="results-send-comments">
-                    {turnActive ? copy.sendQueued : copy.send}
-                  </Button>
-                )}
-                <Button variant={sendNow ? 'secondary' : 'primary'} size="sm" disabled={!insertIntoDraft || tooLong} onClick={insert} title={copy.insertDraftHint}>
-                  {copy.insertDraft} · {copy.comments(view.comments.length)}
-                </Button>
-                <span className="results-note">
-                  {tooLong ? copy.tooLong : !insertIntoDraft && !sendNow ? (draftUnavailable === 'history' ? copy.draftHistory : copy.draftDisabled) : sendNow ? copy.sendHint : copy.insertDraftHint}
-                </span>
-              </div>
-              {sendState.phase === 'error' && (
-                <p className="results-tray__error" role="alert" data-testid="results-send-error"><Glyph name="warn" /><span>{sendState.message ? copy.sendFailed(sendState.message) : copy.sendFailedPlain}</span></p>
-              )}
-            </>
-          )}
-          {sendState.phase === 'sent' && view.comments.length === 0 && (
-            <p className="results-note" role="status" data-testid="results-send-status">
-              {sendState.queued ? (sendState.position !== undefined ? copy.queuedAt(sendState.position) : copy.queuedPlain) : copy.sent}
-            </p>
-          )}
-          {inserted && view.comments.length === 0 && sendState.phase !== 'sent' && <p className="results-note" role="status">{copy.insertedDraft}</p>}
-        </section>
-      )}
+      <ReviewCommentTray comments={view.comments} turnActive={turnActive} onTaken={takeComments}
+        onRemove={(id) => setView((current) => ({ ...current, comments: current.comments.filter((entry) => entry.id !== id) }))}
+        {...(sendNow ? { sendNow } : {})} {...(insertIntoDraft ? { insertIntoDraft } : {})} {...(draftUnavailable ? { draftUnavailable } : {})} />
     </div>
   );
 }

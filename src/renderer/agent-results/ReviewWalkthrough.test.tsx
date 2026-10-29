@@ -7,7 +7,7 @@ import type { GitDirectoryStatus } from '../../shared/git-status';
 import { buildChatModel } from '../chat/model/build-chat-model';
 import { AppI18nProvider } from '../i18n';
 import {
-  BRANCH_DIFF, mixedSelfReview, otherAiReview, OTHER_REVIEW_ID, REVIEW_ROOT, UNCOMMITTED_DIFF, type ReviewFixture,
+  BRANCH_DIFF, mixedSelfReview, otherAiReview, OTHER_REVIEW_ID, REVIEW_ROOT, REVIEW_SESSION, UNCOMMITTED_DIFF, walkFindingId, type ReviewFixture,
 } from '../chat/review/review-fixtures';
 import { clearSessionViewStates } from '../session-view-state';
 import { ConversationResults } from './ConversationResults';
@@ -70,10 +70,32 @@ describe('stepping through an AI review in Changes', () => {
     expect(container.querySelector('[data-testid="results-walkthrough-outside"]')).toBeNull();
     await click('results-walkthrough-fix');
     expect(reviewAction).toHaveBeenCalledWith({ kind: 'fix', reviewId: OTHER_REVIEW_ID, findingIds: [expect.stringMatching(/^f-/u)] });
+    // The pressed button may go with the new state: focus is on the problem's title, which stays.
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="results-walkthrough"] [data-finding-title]'));
     await click('results-walkthrough-previous');
     expect(text('results-walkthrough-position')).toBe('문제 2/5');
     await click('results-walkthrough-close');
     expect(container.querySelector('[data-testid="results-walkthrough"]')).toBeNull();
+  });
+
+  it('never puts a problem on a line whose code changed: says it cannot find it and shows what the review read', async () => {
+    // Only the AI's records: the cart loop was rewritten in a later turn, so line 5 now holds other code.
+    const fixture = mixedSelfReview(Date.parse('2026-10-29T00:50:00.000Z'));
+    const readFilePreview = vi.fn(async () => ({ ok: false as const, error: 'unavailable' as const }));
+    await show(fixture, { sequence: 1, section: 'changes', review: { reviewId: fixture.reviewId, findingId: walkFindingId(fixture, 2)! } }, { baseRef: undefined, sessionId: REVIEW_SESSION },
+      { readFilePreview } as ResultsServices);
+    expect(text('results-walkthrough-position')).toBe('문제 3/3');
+    const missing = text('results-walkthrough-missing');
+    expect(missing).toContain('이 줄을 찾을 수 없음');
+    expect(missing).toContain('for (let index = 0; index <= items.length; index += 1) {');
+    expect(text('results-walkthrough-announce')).toContain('이 줄을 찾을 수 없음');
+    expect(container.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
+    expect(container.querySelector('[data-testid="results-finding-current"]')).toBeNull();
+    expect(container.querySelector('[data-testid="results-walkthrough-outside"]')).toBeNull();
+    const view = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="results-walkthrough-missing"] button')].find((button) => button.textContent === '파일에서 보기')!;
+    await act(async () => view.click());
+    expect(container.querySelector('[data-testid="results-files"]')).not.toBeNull();
   });
 
   it('opens an uncommitted-changes review in the working folder scope', async () => {
@@ -101,13 +123,43 @@ describe('stepping through an AI review in Changes', () => {
     answer = { ok: true, queued: true, position: 2 };
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="results-send-comments"]')!.click());
     expect(container.querySelectorAll('.results-tray__item')).toHaveLength(0);
-    expect(text('results-send-status')).toBe('대기열 2번째에 넣었습니다.');
+    expect(text('results-send-status')).toBe('대기열 2번째');
   });
 
-  it('offers to start a review from the toolbar when the conversation can', async () => {
+  it('takes off only the comments that were sent, and names a queue place only when the host gave one', async () => {
+    let finish: (result: ResultsSendResult) => void = () => undefined;
+    const sendNow = vi.fn(() => new Promise<ResultsSendResult>((resolve) => { finish = resolve; }));
+    await show(otherAiReview(), { sequence: 1, section: 'changes', review: { reviewId: OTHER_REVIEW_ID } }, { sendNow, turnActive: true, insertIntoDraft: vi.fn() });
+    const quoteLine = async (line: HTMLButtonElement): Promise<void> => {
+      await act(async () => line.click());
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '줄만 인용')!.click());
+    };
+    const lines = (): HTMLButtonElement[] => [...container.querySelectorAll<HTMLButtonElement>('.results-patch__line')];
+    await quoteLine(lines().find((line) => line.dataset.focus === 'true')!);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="results-send-comments"]')!.click());
+    expect(sendNow).toHaveBeenCalledTimes(1);
+    // While it is on its way, another comment is collected: it stays when the first one went.
+    await quoteLine(lines().find((line) => line.dataset.focus !== 'true')!);
+    expect(container.querySelectorAll('.results-tray__item')).toHaveLength(2);
+    await act(async () => { finish({ ok: true, queued: true }); await Promise.resolve(); });
+    const left = [...container.querySelectorAll('.results-tray__item')];
+    expect(left).toHaveLength(1);
+    expect(left[0]!.textContent).not.toContain('src/auth.ts:6');
+    expect(text('results-send-status')).toBe('대기열에 추가됨');
+  });
+
+  it('starts a review from the toolbar on the changes being viewed', async () => {
     const openReviewStart = vi.fn();
-    await show(otherAiReview(), { sequence: 1, section: 'changes' }, { openReviewStart });
+    // The branch since it left main: the review reads the same.
+    await show(otherAiReview(), { sequence: 1, section: 'changes', review: { reviewId: OTHER_REVIEW_ID } }, { openReviewStart });
+    expect((container.querySelector('select') as HTMLSelectElement).value).toBe('base');
     await click('results-start-review');
-    expect(openReviewStart).toHaveBeenCalledTimes(1);
+    expect(openReviewStart).toHaveBeenLastCalledWith({ target: { kind: 'base-branch', baseRef: 'main' } });
+    // The working folder: the uncommitted changes.
+    const fixture = mixedSelfReview(Date.parse('2026-10-29T00:50:00.000Z'));
+    await show(fixture, { sequence: 2, section: 'changes', review: { reviewId: fixture.reviewId } }, { openReviewStart, baseRef: undefined });
+    expect((container.querySelector('select') as HTMLSelectElement).value).toBe('git');
+    await click('results-start-review');
+    expect(openReviewStart).toHaveBeenLastCalledWith({ target: { kind: 'uncommitted' } });
   });
 });

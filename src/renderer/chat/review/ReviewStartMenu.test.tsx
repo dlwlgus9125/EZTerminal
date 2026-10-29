@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ReviewTarget } from '../../../shared/review-findings';
 import { AppI18nProvider } from '../../i18n';
 import { ReviewStartForm, type ReviewStartOptions } from './ReviewStartMenu';
 
@@ -23,8 +24,10 @@ afterEach(() => {
 
 const BASE: ReviewStartOptions = { self: { providerId: 'claude' }, others: [{ providerId: 'codex' }] };
 
-function render(options: ReviewStartOptions, onStart = vi.fn()): typeof onStart {
-  act(() => root.render(<AppI18nProvider locale="ko" languages={['ko']}><ReviewStartForm key={JSON.stringify(options)} options={options} onStart={onStart} onCancel={vi.fn()} /></AppI18nProvider>));
+function render(options: ReviewStartOptions, onStart = vi.fn(), initialTarget?: ReviewTarget): typeof onStart {
+  act(() => root.render(<AppI18nProvider locale="ko" languages={['ko']}>
+    <ReviewStartForm key={JSON.stringify([options, initialTarget])} options={options} onStart={onStart} onCancel={vi.fn()} {...(initialTarget ? { initialTarget } : {})} />
+  </AppI18nProvider>));
   return onStart;
 }
 
@@ -59,6 +62,22 @@ describe('the review start form', () => {
     act(() => get('review-start-other').click());
     act(() => get('review-start-submit').click());
     expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'other', providerId: 'codex' }, target: { kind: 'base-branch', baseRef: 'main' } });
+  });
+
+  it('opens on the changes the person was viewing and says exactly what the review reads', () => {
+    const target = (): string => container.querySelector('[data-testid="review-start-target"]')!.textContent!;
+    const onStart = render({ ...BASE, baseRef: 'main' }, vi.fn(), { kind: 'base-branch', baseRef: 'main' });
+    expect(get('review-start-branch').checked).toBe(true);
+    expect(target()).toBe('검토 대상main에서 갈라진 지점 이후 + 커밋 안 한 변경 + 새 파일');
+    act(() => get('review-start-uncommitted').click());
+    expect(target()).toBe('검토 대상커밋 안 한 변경 + 새 파일');
+    act(() => get('review-start-branch').click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="review-start-submit"]')!.click());
+    expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'base-branch', baseRef: 'main' } });
+    // The working folder: the uncommitted changes, even where a base branch is offered.
+    render({ ...BASE, baseRef: 'main' }, vi.fn(), { kind: 'uncommitted' });
+    expect(get('review-start-uncommitted').checked).toBe(true);
+    expect(target()).toBe('검토 대상커밋 안 한 변경 + 새 파일');
   });
 
   it('shows the cost of a long Claude conversation only for this AI', () => {

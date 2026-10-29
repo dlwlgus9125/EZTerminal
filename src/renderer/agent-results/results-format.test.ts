@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import type { RecordedFileChange } from '../../shared/conversation-changes';
 import {
   fileViewKind,
   formatReviewComments,
   isInsideWorkspace,
   lineRangeLabel,
+  locateFinding,
   resolveWorkspacePath,
   samePath,
   type ReviewComment,
@@ -65,5 +67,39 @@ describe('paths in the working folder', () => {
     expect(fileViewKind('doc.pdf')).toBe('pdf');
     expect(fileViewKind('shot.png')).toBe('image');
     expect(fileViewKind('src/app.ts')).toBe('code');
+  });
+});
+
+describe('where a review problem is in a recorded patch', () => {
+  // The cart file as the review read it: line 5 is the loop it flagged (with a line of context each side).
+  const EXCERPT = { startLine: 4, lines: ['  let total = 0;', '  for (let index = 0; index <= items.length; index += 1) {', '    total += items[index].price;'] } as const;
+  const finding = { line: 5, endLine: 5, excerpt: EXCERPT };
+  const patch = (body: string): RecordedFileChange => ({ path: 'C:\\Work\\cart-kit\\src\\cart.ts', patch: body, coverage: 'patch' });
+
+  it('finds the line where the review read it', () => {
+    const change = patch('@@ -3,4 +3,4 @@\n export function cartTotal(items) {\n   let total = 0;\n-  for (const item of items) {\n+  for (let index = 0; index <= items.length; index += 1) {\n     total += items[index].price;');
+    expect(locateFinding(change, finding)).toEqual({ state: 'found', index: 4 });
+  });
+
+  it('follows the lines when they moved since the review', () => {
+    const change = patch('@@ -1,5 +1,7 @@\n+// Totals in cents.\n+\n import { Item } from "./item";\n \n export function cartTotal(items) {\n   let total = 0;\n   for (let index = 0; index <= items.length; index += 1) {');
+    expect(locateFinding(change, { ...finding, excerpt: { startLine: 4, lines: EXCERPT.lines.slice(0, 2) } })).toMatchObject({ state: 'found', moved: 7 });
+  });
+
+  it('never puts the problem on whatever code holds its old line number now', () => {
+    // A later edit rewrote the loop: line 5 now holds other code, and the review's lines are nowhere in the patch.
+    const change = patch('@@ -4,3 +4,3 @@\n   let total = 0;\n-  for (let index = 0; index <= items.length; index += 1) {\n-    total += items[index].price;\n+  for (const item of items) {\n+    total += item.price;');
+    expect(locateFinding(change, finding)).toEqual({ state: 'missing' });
+  });
+
+  it('says the line is outside the patch when the patch does not show it', () => {
+    const change = patch('@@ -20,2 +20,2 @@\n-export const VERSION = 1;\n+export const VERSION = 2;\n export default cartTotal;');
+    expect(locateFinding(change, finding)).toEqual({ state: 'outside' });
+  });
+
+  it('anchors on the line number alone when the review kept no lines to check', () => {
+    const change = patch('@@ -4,2 +4,2 @@\n   let total = 0;\n-  for (const item of items) {\n+  for (let index = 0; index <= items.length; index += 1) {');
+    expect(locateFinding(change, { line: 5, endLine: 5 })).toEqual({ state: 'found', index: 3 });
+    expect(locateFinding(change, { line: 9 })).toEqual({ state: 'outside' });
   });
 });

@@ -131,31 +131,47 @@ export function isFindingFile(path: string, findingFile: string, workspaceRoot?:
   return samePath(path, findingFile) || samePath(path, resolveWorkspacePath(findingFile, workspaceRoot) ?? findingFile);
 }
 
+/** Where a review problem is in one recorded patch. */
+export type FindingPlace =
+  /** `index`: the first new-side patch line it covers; `moved`: its line now, when the review's lines moved. */
+  | { readonly state: 'found'; readonly index: number; readonly moved?: number }
+  /** The patch shows the problem's line, but not the code the review read there: it is never anchored on it. */
+  | { readonly state: 'missing' }
+  /** The patch does not show the problem's line (or the review gave none). */
+  | { readonly state: 'outside' };
+
 /**
- * Where a finding's line is in a patch: the index of the first new-side line it covers. When the
- * review kept the anchor lines and they are elsewhere in the patch now, the finding follows them
- * (`moved`, the new line). Undefined when the line is outside the patch.
+ * Where a finding's line is in a patch. With the lines the review read (its excerpt), the finding
+ * follows them when they moved, and is `missing` when the patch shows that place holding other code:
+ * a line number alone never anchors it there. Without an excerpt, the line number is all there is.
  */
-export function locateFinding(
-  change: RecordedFileChange,
-  finding: Pick<ReviewFinding, 'line' | 'endLine' | 'excerpt'>,
-): { readonly index: number; readonly moved?: number } | undefined {
-  if (finding.line === undefined) return undefined;
+export function locateFinding(change: RecordedFileChange, finding: Pick<ReviewFinding, 'line' | 'endLine' | 'excerpt'>): FindingPlace {
+  if (finding.line === undefined) return { state: 'outside' };
   const lines = reviewLines(change);
   let first = finding.line;
   let moved: number | undefined;
   if (finding.excerpt && change.coverage === 'patch') {
-    const current: string[] = [];
+    // The new side as far as the patch shows it; lines between hunks stay unknown.
+    const current: (string | undefined)[] = [];
     for (const line of lines) {
       if (line.after !== undefined && (line.kind === 'add' || line.kind === 'context')) current[line.after - 1] = line.text.slice(1);
     }
-    const where = relocateExcerpt(finding.excerpt, current);
+    const { excerpt } = finding;
+    const where = relocateExcerpt(excerpt, current as string[]);
     if (where.state === 'moved') {
-      moved = finding.line + (where.line - finding.excerpt.startLine);
+      moved = finding.line + (where.line - excerpt.startLine);
       first = moved;
+    } else if (where.state === 'missing') {
+      if (current[finding.line - 1] === undefined) return { state: 'outside' };
+      // Some of the review's lines are outside the patch: what it does show must still be the review's code.
+      const differs = excerpt.lines.some((text, offset) => {
+        const now = current[excerpt.startLine - 1 + offset];
+        return now !== undefined && now !== text;
+      });
+      if (differs) return { state: 'missing' };
     }
   }
   const last = finding.endLine !== undefined && finding.endLine > finding.line ? first + (finding.endLine - finding.line) : first;
   const index = lines.findIndex((line) => (line.kind === 'add' || line.kind === 'context') && line.after !== undefined && line.after >= first && line.after <= last);
-  return index < 0 ? undefined : { index, ...(moved !== undefined && moved !== finding.line ? { moved } : {}) };
+  return index < 0 ? { state: 'outside' } : { state: 'found', index, ...(moved !== undefined && moved !== finding.line ? { moved } : {}) };
 }

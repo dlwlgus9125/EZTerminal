@@ -149,6 +149,14 @@
   color: var(--ui-text-secondary);
 }
 
+/* A status glyph inside a `⎿` line (the `⏺ ⎿ ✻` markers stay text): one glyph cell, like an attachment's. */
+.chat-cli-action-card__icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: var(--ui-space-1);
+  vertical-align: -0.0625rem;
+}
+
 .chat-action-card__actions {
   display: flex;
   flex-wrap: wrap;
@@ -390,6 +398,15 @@ span.chat-review-finding__title {
 
 .chat-review-finding__action:hover {
   background: var(--ui-surface-hover);
+}
+
+/* 안 고침: the AI's reason, under the problem (two classes: the transcript resets paragraph margins). */
+.chat-review-finding > .chat-review-finding__reason {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
 }
 
 .chat-review-finding__detail {
@@ -775,6 +792,24 @@ span.chat-cli-review-finding__where {
   margin: 0;
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
+}
+
+/* Exactly what the review reads, for the choice above. */
+.review-start__target {
+  margin-bottom: 0;
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.review-start__target-label {
+  display: block;
+  color: var(--ui-text-secondary);
+  font: 600 var(--ui-font-size-2xs) / 1.4 var(--ui-font-label);
 }
 
 .review-start__note > svg {

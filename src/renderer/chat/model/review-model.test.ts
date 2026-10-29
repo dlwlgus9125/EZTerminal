@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { encodeFileChanges } from '../../../shared/conversation-changes';
 import type { DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import {
-  CLAUDE_DISCOUNT, CLAUDE_FORMAT, MIXED_REVIEW_ID, mixedSelfReview, otherAiReview, reviewerConversation, reviewPayload, withId,
+  applyReviewAction, CLAUDE_CART, CLAUDE_DISCOUNT, CLAUDE_FORMAT, MIXED_REVIEW_ID, mixedSelfReview, otherAiReview, reviewerConversation, reviewPayload,
+  truncatedReview, withId,
 } from '../review/review-fixtures';
 import { buildChatModel } from './build-chat-model';
 import { findRows, rowSearchText } from './find';
@@ -20,6 +22,7 @@ function turn(id: string, state: DaemonTurn['state']): DaemonTurn {
 
 const FORMAT = withId('r1', CLAUDE_FORMAT);
 const DISCOUNT = withId('r1', CLAUDE_DISCOUNT);
+const CART = withId('r1', CLAUDE_CART);
 
 function review(sequence: number, state: 'queued' | 'running' | 'complete', findings = [FORMAT, DISCOUNT], createdAt = AT): DaemonTranscriptItem {
   return item(sequence, 'notice', `Review (Claude) ${state}`, {
@@ -100,7 +103,8 @@ describe('review cards in the chat model', () => {
       item(sequence, 'user-message', 'Fix only the review findings below…', { turnId, payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [FORMAT.id] } });
     const states: [DaemonTurn['state'] | undefined, string][] = [
       ['queued', 'requested'], ['submitting', 'requested'], ['delivery-uncertain', 'requested'], ['working', 'fixing'], ['blocked', 'fixing'],
-      ['completed', 'fixed'], ['failed', 'fix-stopped'], ['interrupted', 'fix-stopped'], [undefined, 'requested'],
+      // A finished turn whose reply says nothing about the finding is not a fix: someone has to look.
+      ['completed', 'unconfirmed'], ['failed', 'fix-stopped'], ['interrupted', 'fix-stopped'], [undefined, 'requested'],
     ];
     for (const [state, expected] of states) {
       const model = buildChatModel({ items: [review(1, 'complete'), fix(2, 'fix-turn')], turns: state ? [turn('fix-turn', state)] : [] });
@@ -111,6 +115,38 @@ describe('review cards in the chat model', () => {
       const user = model.rows.find((row) => row.kind === 'user');
       expect(user).toMatchObject({ origin: 'review-fix', review: { reviewId: 'r1', findingIds: [FORMAT.id] } });
     }
+  });
+
+  it('reads what the fix turn replied for each finding: fixed, not changed with its reason, or nothing', () => {
+    const model = buildChatModel({
+      items: [
+        review(1, 'complete', [FORMAT, DISCOUNT, CART]),
+        item(2, 'user-message', 'Fix only the review findings below…', { turnId: 'fix', payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [FORMAT.id, DISCOUNT.id, CART.id] } }),
+        item(3, 'assistant-message', `Done.
+
+- \`${FORMAT.id}\`: fixed
+- ${DISCOUNT.id}: not changed (callers already pass a fraction)`, { turnId: 'fix' }),
+      ],
+      turns: [turn('fix', 'completed')],
+    });
+    const findings = reviewRows(model.rows)[0]!.review.findings;
+    expect(findings.map((finding) => finding.status)).toEqual(['fixed', 'not-changed', 'unconfirmed']);
+    expect(findings[1]!.fixReason).toBe('callers already pass a fraction');
+    expect(findings[0]!.fixReason).toBeUndefined();
+  });
+
+  it('keeps the stale mark on a finding sent to be fixed', () => {
+    const model = buildChatModel({
+      items: [
+        review(1, 'complete'),
+        item(2, 'user-message', 'fix', { turnId: 'fix', payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [FORMAT.id] } }),
+        item(3, 'tool-result', encodeFileChanges([{ path: 'C:\\Work\\cart-kit\\src\\format.ts', patch: '@@ -2,1 +2,1 @@\n-  const dollars = cents / 10;\n+  const dollars = cents / 100;', coverage: 'patch' }])!, {
+          turnId: 'fix', payload: { v: 1, type: 'tool', callId: 'e1', name: 'Edit', category: 'edit', phase: 'result', status: 'completed' },
+        }),
+      ],
+      turns: [turn('fix', 'working')],
+    });
+    expect(reviewRows(model.rows)[0]!.review.findings[0]).toMatchObject({ status: 'fixing', stale: true });
   });
 
   it('lets the latest event win between a fix and a dismissal', () => {
@@ -125,7 +161,7 @@ describe('review cards in the chat model', () => {
     expect(reviewRows(model.rows)[0]!.review.findings[1]!.status).toBe('dismissed');
   });
 
-  it('marks a finding stale when its file changes after the review, unless it is being fixed', () => {
+  it('marks a finding stale when its file changes after the review', () => {
     const fixture = mixedSelfReview(Date.parse(AT));
     const model = buildChatModel({ items: fixture.items, turns: fixture.turns });
     const card = reviewRows(model.rows).find((row) => row.review.reviewId === MIXED_REVIEW_ID)!;
@@ -143,6 +179,14 @@ describe('review cards in the chat model', () => {
   it('shows an other-AI reviewer request as a chip in the reviewer conversation', () => {
     const model = buildChatModel({ items: reviewerConversation() });
     expect(model.rows[0]).toMatchObject({ kind: 'user', origin: 'review-request', review: { target: { kind: 'base-branch', baseRef: 'main' }, focus: '금액 계산과 권한 검사' } });
+  });
+
+  it('story wiring sends no fix request when the fix message does not fit', () => {
+    const fixture = truncatedReview();
+    const ids = reviewRows(buildChatModel(fixture).rows)[0]!.review.findings.map((finding) => finding.id);
+    const after = applyReviewAction(fixture, { kind: 'fix-all', reviewId: fixture.reviewId, findingIds: ids }, Date.parse(AT));
+    expect(after).toBe(fixture);
+    expect(after.items.filter((entry) => entry.kind === 'user-message' && !entry.text)).toEqual([]);
   });
 
   it('makes findings searchable by place and title', () => {

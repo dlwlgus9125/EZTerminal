@@ -66,7 +66,7 @@ describe('the AI review card', () => {
     expect(card.getAttribute('aria-label')).toBe('AI 검토 결과 · Claude · 검토 끝');
     expect(card.querySelector('.ez-ui-led')?.getAttribute('data-tone')).toBe('ok');
     expect(card.textContent).toContain('커밋 안 한 변경');
-    expect(card.querySelector('[data-testid="chat-review-counts"]')?.textContent).toBe('문제 3 · 고침 1 · 무시 1');
+    expect(card.querySelector('[data-testid="chat-review-counts"]')?.textContent).toBe('문제 3 · 고치는 중 1 · 무시 1');
     expect([...card.querySelectorAll('.chat-review-file__path')].map((element) => element.textContent)).toEqual(['src/format.ts', 'src/discount.ts', 'src/cart.ts']);
     const statuses = [...card.querySelectorAll('[data-testid="chat-review-finding"]')].map((element) => element.getAttribute('data-status'));
     expect(statuses).toEqual(['fixing', 'dismissed', 'open']);
@@ -110,7 +110,7 @@ describe('the AI review card', () => {
     expect(title.getAttribute('aria-expanded')).toBe('false');
     act(() => title.click());
     expect(title.getAttribute('aria-expanded')).toBe('true');
-    expect(container.textContent).toContain('어떻게 틀리나');
+    expect(container.textContent).toContain('문제가 생기는 경우');
     expect(container.textContent).toContain("cartTotal([{ price: 500, quantity: 2 }]) throws");
   });
 
@@ -130,7 +130,7 @@ describe('the AI review card', () => {
     const lines = [...card.querySelectorAll('.chat-cli-review-finding')].map((element) => element.querySelector('.chat-cli-result__line')?.textContent ?? '');
     expect(lines[2]).toMatch(/^src\/cart\.ts:5 \[심각도 높음\] The loop runs .* · 검토 뒤에 바뀜자세히고치기 · 무시$/u);
     act(() => button('src/cart.ts:5 자세히').click());
-    expect(card.textContent).toContain("어떻게 틀리나: cartTotal([{ price: 500, quantity: 2 }]) throws");
+    expect(card.textContent).toContain("문제가 생기는 경우: cartTotal([{ price: 500, quantity: 2 }]) throws");
     expect(card.querySelector('.chat-cli-action-card__actions')?.textContent).toContain('✻');
     act(() => button('src/cart.ts:5 무시').click());
     expect(onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'dismiss' }));

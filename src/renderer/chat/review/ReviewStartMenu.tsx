@@ -49,17 +49,19 @@ function firstChoice(options: ReviewStartOptions): { mode: Mode; other: string }
  * Who reviews, what it reads and what to look at. Reviews never start on their own: this form
  * (from `/review`, the ⋯ menu or the Results tab) is how a person asks for one.
  */
-export function ReviewStartForm({ options, onStart, onCancel }: {
+export function ReviewStartForm({ options, onStart, onCancel, initialTarget }: {
   readonly options: ReviewStartOptions;
   readonly onStart: (request: ReviewStartRequest) => void;
   readonly onCancel: () => void;
+  /** The changes the person was looking at (Results › Changes): chosen to begin with. */
+  readonly initialTarget?: ReviewTarget;
 }): JSX.Element {
   const copy = useChatCopy().aiReview.start;
   const id = useId();
   const initial = firstChoice(options);
   const [mode, setMode] = useState<Mode>(initial.mode);
   const [other, setOther] = useState(initial.other);
-  const [scope, setScope] = useState<'uncommitted' | 'base-branch'>('uncommitted');
+  const [scope, setScope] = useState<'uncommitted' | 'base-branch'>(initialTarget?.kind === 'base-branch' && options.baseRef ? 'base-branch' : 'uncommitted');
   const [focus, setFocus] = useState('');
   const disabled = Boolean(options.disabledReason);
   const otherChoice = options.others.find((choice) => choice.providerId === other);
@@ -137,6 +139,10 @@ export function ReviewStartForm({ options, onStart, onCancel }: {
           </span>
         </label>
       </fieldset>
+      <p className="review-start__target" data-testid="review-start-target">
+        <span className="review-start__target-label">{copy.target}</span>
+        {branch ? copy.targetBranch(options.baseRef!) : copy.targetUncommitted}
+      </p>
       <div className="review-start__focus">
         <label htmlFor={`${id}-focus`}>{copy.focus}</label>
         <textarea id={`${id}-focus`} rows={2} value={focus} maxLength={REVIEW_LIMITS.focus} placeholder={copy.focusPlaceholder} disabled={disabled}
@@ -158,13 +164,15 @@ export function ReviewStartForm({ options, onStart, onCancel }: {
 }
 
 /** The start form in a dialog (desktop) or a sheet (phone); it opens fresh every time. */
-export function ReviewStartDialog({ open, onOpenChange, options, onStart, mobile = false, ownerDocument }: {
+export function ReviewStartDialog({ open, onOpenChange, options, onStart, mobile = false, ownerDocument, initialTarget }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly options: ReviewStartOptions;
   readonly onStart: (request: ReviewStartRequest) => void;
   readonly mobile?: boolean;
   readonly ownerDocument?: Document;
+  /** What the form chooses to begin with each time it opens. */
+  readonly initialTarget?: ReviewTarget;
 }): JSX.Element {
   const copy = useChatCopy();
   const [generation, setGeneration] = useState(0);
@@ -176,7 +184,7 @@ export function ReviewStartDialog({ open, onOpenChange, options, onStart, mobile
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title={copy.aiReview.start.title} description={copy.aiReview.start.description}
       size="sm" variant={mobile ? 'sheet' : 'dialog'} closeLabel={copy.aiReview.start.close} ownerDocument={ownerDocument} testId="review-start-dialog">
-      <ReviewStartForm key={generation} options={options} onCancel={() => onOpenChange(false)}
+      <ReviewStartForm key={generation} options={options} onCancel={() => onOpenChange(false)} {...(initialTarget ? { initialTarget } : {})}
         onStart={(request) => { onStart(request); onOpenChange(false); }} />
     </Dialog>
   );

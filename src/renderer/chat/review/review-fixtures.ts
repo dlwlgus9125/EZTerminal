@@ -127,6 +127,20 @@ const PATCH_CART = [
   ' }',
 ].join('\n');
 
+/** The fix turn's edits in the outcomes fixture. */
+const PATCH_AUTH_FIX = [
+  '@@ -5,2 +5,2 @@',
+  '   const need = ORDER.indexOf(required);',
+  '-  return have >= -1 || have >= need;',
+  '+  return have >= 0 && need >= 0 && have >= need;',
+].join('\n');
+
+const PATCH_CART_FIX = [
+  '@@ -5,1 +5,1 @@',
+  '-  for (let index = 0; index <= items.length; index += 1) {',
+  '+  for (let index = 0; index < items.length; index += 1) {',
+].join('\n');
+
 const PATCH_CART_RENAME = [
   '@@ -4,4 +4,4 @@',
   '   let total = 0;',
@@ -262,7 +276,10 @@ export function reviewPayload(payload: Omit<ReviewPayload, 'v' | 'type' | 'findi
 function reviewRow(sequence: number, payload: Omit<ReviewPayload, 'v' | 'type' | 'findings'> & { readonly findings?: readonly ReviewFinding[] }, createdAt?: string): DaemonTranscriptItem {
   const full = reviewPayload(payload);
   const label = `${payload.reviewer.providerId === 'codex' ? 'Codex' : 'Claude'}${payload.reviewer.mode === 'other' ? ' (other AI)' : ''}`;
-  const text = reviewSummaryText({ reviewerLabel: label, state: payload.state, ...(payload.findings ? { findings: payload.findings } : {}), ...(payload.reason ? { reason: payload.reason } : {}) });
+  const text = reviewSummaryText({
+    reviewerLabel: label, state: payload.state, ...(payload.findings ? { findings: payload.findings } : {}), ...(payload.reason ? { reason: payload.reason } : {}),
+    ...(payload.waitingFor ? { waitingFor: payload.waitingFor } : {}),
+  });
   return item(sequence, 'notice', text, { payload: full, ...(createdAt ? { createdAt } : {}) });
 }
 
@@ -294,8 +311,21 @@ export function queuedOtherReview(now: number): ReviewFixture {
     items: [
       ...firstTurn(),
       item(10, 'user-message', PERSON.ko.tests, { turnId: 'turn-2', createdAt: new Date(now - 21_000).toISOString() }),
-      reviewRow(12, { reviewId, reviewer: { mode: 'other', providerId: 'codex' }, target: BRANCH, state: 'queued', focus: '금액 계산과 권한 검사' }, new Date(now - 6_000).toISOString()),
+      reviewRow(12, { reviewId, reviewer: { mode: 'other', providerId: 'codex' }, target: BRANCH, state: 'queued', waitingFor: 'turn', focus: '금액 계산과 권한 검사' }, new Date(now - 6_000).toISOString()),
       item(13, 'assistant-message', PERSON.ko.testing, { turnId: 'turn-2', isDelta: true, createdAt: new Date(now - 4_000).toISOString() }),
+    ],
+  };
+}
+
+/** The conversation is idle, but as many conversations as may run at once already do: the Codex review waits its turn. */
+export function slotQueuedReview(now: number): ReviewFixture {
+  const reviewId = 'review-codex-slot';
+  return {
+    reviewId, state: 'idle',
+    turns: [finishedFirstTurn()],
+    items: [
+      ...firstTurn(),
+      reviewRow(12, { reviewId, reviewer: { mode: 'other', providerId: 'codex' }, target: BRANCH, state: 'queued', waitingFor: 'slot', focus: '금액 계산과 권한 검사' }, new Date(now - 6_000).toISOString()),
     ],
   };
 }
@@ -432,6 +462,47 @@ export function cancelledReview(): ReviewFixture {
   };
 }
 
+export const OUTCOMES_REVIEW_ID = 'review-codex-outcomes';
+
+/**
+ * What a fix turn leaves behind, one problem each: Codex's branch review after a fix turn whose reply says the access
+ * check was fixed and the discount was left on purpose (with why), and does not mention the cart loop it edited
+ * (응답 끝 · 확인 필요). The format problem is being fixed now and the item check was dismissed.
+ */
+export function fixOutcomesReview(now: number): ReviewFixture {
+  const reviewId = OUTCOMES_REVIEW_ID;
+  const findings = [CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM].map((draft) => withId(reviewId, draft));
+  const [auth, cart, discount, format, itemCheck] = findings;
+  const first = composeFixPrompt({ reviewerLabel: 'Codex', findings: [auth!, cart!, discount!] });
+  const second = composeFixPrompt({ reviewerLabel: 'Codex', findings: [format!] });
+  return {
+    reviewId, state: 'working',
+    turns: [finishedFirstTurn(), turn('turn-2', 'completed', iso(130), iso(170)), turn('turn-3', 'working', new Date(now - 12_000).toISOString())],
+    items: [
+      ...firstTurn(),
+      reviewRow(22, {
+        reviewId, reviewer: OTHER_CODEX, target: BRANCH, state: 'complete', focus: '금액 계산과 권한 검사', findings, durationMs: 39_000,
+        overall: 'The branch has an always-true access check and three money bugs: cart totals throw, discounts go negative and prices show ten times too high.',
+      }, iso(111)),
+      item(30, 'user-message', first.ok ? first.text : '', {
+        turnId: 'turn-2', createdAt: iso(130), payload: { v: 1, type: 'review-fix', reviewId, findingIds: [auth!.id, cart!.id, discount!.id] },
+      }),
+      ...edit(31, 'turn-2', 'src/auth.ts', PATCH_AUTH_FIX),
+      ...edit(33, 'turn-2', 'src/cart.ts', PATCH_CART_FIX),
+      item(35, 'assistant-message', [
+        '권한 검사는 역할을 모를 때 거부하도록 고쳤고, 장바구니 루프는 마지막 항목에서 멈추게 했습니다.',
+        '',
+        `- \`${auth!.id}\`: fixed`,
+        `- \`${discount!.id}\`: not changed (호출하는 쪽이 이미 0.15 같은 비율을 넘깁니다. 여기서 100으로 나누면 그쪽이 깨집니다.)`,
+      ].join('\n'), { turnId: 'turn-2', createdAt: iso(168) }),
+      item(36, 'notice', 'Review finding dismissed.', { payload: { v: 1, type: 'review-status', reviewId, findingIds: [itemCheck!.id], state: 'dismissed' }, createdAt: iso(172) }),
+      item(40, 'user-message', second.ok ? second.text : '', {
+        turnId: 'turn-3', createdAt: new Date(now - 12_000).toISOString(), payload: { v: 1, type: 'review-fix', reviewId, findingIds: [format!.id] },
+      }),
+    ],
+  };
+}
+
 const MODULES = ['orders', 'payments', 'refunds', 'invoices', 'coupons', 'shipping', 'tax', 'returns'] as const;
 
 /** A large change: the reviewer sent more than a card keeps, and some paths were outside the folder. */
@@ -509,10 +580,12 @@ export function applyReviewAction(
   if ((action.kind === 'fix' || action.kind === 'fix-all') && review && action.findingIds?.length) {
     const findings = (review.findings ?? []).filter((finding) => action.findingIds!.includes(finding.id));
     const prompt = composeFixPrompt({ reviewerLabel: review.reviewer.providerId === 'codex' ? 'Codex' : 'Claude', findings });
+    // A message that does not fit is never sent; the card only offers batches that fit.
+    if (!prompt.ok) return state;
     const turnId = `fix-${String(sequence)}`;
     const busy = state.turns.some((entry) => ACTIVE_TURN.has(entry.state));
     return {
-      items: [...state.items, { ...base, kind: 'user-message', turnId, text: prompt.ok ? prompt.text : '',
+      items: [...state.items, { ...base, kind: 'user-message', turnId, text: prompt.text,
         payload: { v: 1, type: 'review-fix', reviewId: action.reviewId, findingIds: [...action.findingIds] } }],
       turns: [...state.turns, turn(turnId, busy ? 'queued' : 'working', at)].map((entry) => ({ ...entry, sessionId })),
     };

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import type { DaemonTranscriptItem, ManagedAgentState } from '../../shared/daemon-protocol';
+import type { ReviewTarget } from '../../shared/review-findings';
 import type { ChatReviewAction } from '../chat/ChatContext';
 import type { ChatModel } from '../chat/model/types';
 
@@ -45,7 +46,10 @@ export interface ResultsDockPart {
   readonly openProjectFiles?: () => void;
 }
 
-/** Review comments sent as their own message: sent now, or queued behind the running turn (`position` in the queue). */
+/**
+ * Review comments sent as their own message: sent now, or queued behind the running turn. `position` is
+ * the queue place the host confirmed; the UI never works it out from what it shows.
+ */
 export type ResultsSendResult =
   | { readonly ok: true; readonly queued: boolean; readonly position?: number }
   | { readonly ok: false; readonly message: string };
@@ -62,8 +66,13 @@ export interface ResultsSessionPart {
   readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
   /** Review card actions on the host (fix, dismiss, reopen) from the walkthrough. */
   readonly reviewAction?: (action: ChatReviewAction) => void;
-  /** Opens the conversation's review start form (the host reviews: `review-loop-v1`). */
-  readonly openReviewStart?: () => void;
+  /** Opens the conversation's review start form (the host reviews: `review-loop-v1`), on what is being viewed. */
+  readonly openReviewStart?: (start?: ResultsReviewStart) => void;
+}
+
+/** What the start form opens on: the changes the person was looking at. */
+export interface ResultsReviewStart {
+  readonly target?: ReviewTarget;
 }
 
 export interface ResultsSource extends Partial<ResultsDockPart>, ResultsSessionPart {

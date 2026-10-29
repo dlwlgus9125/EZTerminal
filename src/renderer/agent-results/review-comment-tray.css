@@ -1,0 +1,101 @@
+/*
+ * The review comments tray (Results › Changes on the PC, the review sheet on the phone). Shared with
+ * the Android WebView 74, so spacing is margins, not flex gap. `:not(:first-child)` keeps a child's
+ * own margin reset from undoing the spacing whichever stylesheet loads last.
+ */
+.results-tray {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  margin: 0 calc(var(--ui-space-3) * -1) calc(var(--ui-space-3) * -1);
+  border-top: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface-raised);
+}
+
+.results-tray > :not(:first-child) {
+  margin-top: var(--ui-space-2);
+}
+
+.results-tray__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 9rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.results-tray__list > :not(:first-child) {
+  margin-top: var(--ui-space-1);
+}
+
+.results-tray__item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.results-tray__item > :not(:first-child) {
+  margin-left: var(--ui-space-2);
+}
+
+.results-tray__where {
+  flex-shrink: 0;
+  max-width: 50%;
+  overflow: hidden;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.results-tray__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wrapping rows: each control keeps its space on the right and below; the footer takes back the last row's. */
+.results-tray__footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: calc(var(--ui-space-2) * -1);
+}
+
+.results-tray .results-tray__footer > * {
+  margin: 0 var(--ui-space-2) var(--ui-space-2) 0;
+}
+
+.results-tray__note {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.results-tray__error {
+  display: flex;
+  align-items: flex-start;
+  margin: 0;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-danger-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-danger-muted);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.results-tray__error > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.1em var(--ui-space-2) 0 0;
+  color: var(--ui-danger);
+}

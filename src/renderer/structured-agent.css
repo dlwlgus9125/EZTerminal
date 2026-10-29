@@ -1735,3 +1735,17 @@ div.conversation-review__line { cursor: default; }
 .mobile-action-sheet .conversation-review .ez-ui-icon-button,
 .ez-ui-dialog[data-variant='sheet'] .conversation-review .ez-ui-button,
 .ez-ui-dialog[data-variant='sheet'] .conversation-review .ez-ui-icon-button { min-height: 2.75rem; min-width: 2.75rem; }
+/* Comments on a phone: a tap starts a range and the next ends it, so each patch line is a 44px target and the
+   range being tapped out says so (a dashed outline on its first line, a line of text and 취소). */
+.mobile-action-sheet .conversation-review button.conversation-review__line,
+.ez-ui-dialog[data-variant='sheet'] .conversation-review button.conversation-review__line { align-items: center; min-height: 2.75rem; }
+.conversation-review__line[data-anchor] { outline: 2px dashed var(--ui-accent); outline-offset: -2px; }
+.conversation-review__selecting { display: flex; flex-wrap: wrap; align-items: center; padding: var(--ui-space-1) var(--ui-space-2); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); }
+.conversation-review__selecting > span { flex: 1 1 12rem; min-width: 0; margin: var(--ui-space-1) var(--ui-space-2) var(--ui-space-1) 0; color: var(--ui-text-secondary); }
+.conversation-review__selecting strong { color: var(--ui-text-primary); }
+.conversation-review__comment > * + * { margin-top: var(--ui-space-2); }
+/* The line the review read is not there any more: said, with the way to the file; the lines below are the review's. */
+.conversation-review__missing { padding: var(--ui-space-2); border: 1px dashed var(--ui-border-strong); border-radius: var(--ui-radius-sm); background: var(--ui-surface-inset); }
+.conversation-review__missing > * + * { margin-top: var(--ui-space-2); }
+.conversation-review .conversation-review__missing strong { color: var(--ui-text-primary); }
+.conversation-review__finding-title:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }

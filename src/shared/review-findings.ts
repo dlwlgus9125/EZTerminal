@@ -338,6 +338,32 @@ export function composeFixPrompt(input: { readonly reviewerLabel: string; readon
   return { ok: false, reason: 'too-long', fits };
 }
 
+export type FixReply = { readonly outcome: 'fixed' } | { readonly outcome: 'not-changed'; readonly reason?: string };
+
+/** One reply line: optional list mark, the id (backticks or emphasis allowed), the outcome, then any reason. */
+const FIX_REPLY_LINE = /^\s*(?:>\s*)*(?:[-*+•]\s+|\d+[.)]\s+)?[`*_]*(f-[0-9a-f]{8}(?:-\d+)?)[`*_]*\s*[:：]\s*[`*_]*(fixed|not[\s_-]+changed)\b[`*_]*\s*(.*)$/iu;
+
+/**
+ * What a fix turn's reply says about each finding, read from the lines `composeFixPrompt` asks for:
+ * `<id>: fixed` or `<id>: not changed (<why>)`. Other prose, list marks, backticks and emphasis around the
+ * id and the keyword's case are tolerated; lines that name no finding id are ignored; the last line for an
+ * id wins. An id without a line is absent: the reply did not say.
+ */
+export function parseFixReply(text: string): Map<string, FixReply> {
+  const replies = new Map<string, FixReply>();
+  for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
+    const match = FIX_REPLY_LINE.exec(line);
+    if (!match) continue;
+    const id = match[1]!.toLowerCase();
+    if (/^fixed$/iu.test(match[2]!)) { replies.set(id, { outcome: 'fixed' }); continue; }
+    const tail = match[3]!.trim();
+    const reason = (tail.startsWith('(') ? tail.slice(1, tail.lastIndexOf(')') > 0 ? tail.lastIndexOf(')') : undefined) : tail.replace(/^[-–—:：]\s*/u, ''))
+      .replace(/[`*_]+$/u, '').trim();
+    replies.set(id, { outcome: 'not-changed', ...(reason ? { reason: clip(reason, REVIEW_LIMITS.body) } : {}) });
+  }
+  return replies;
+}
+
 // ── Readable row text (old clients show only this) ───────────────────────────
 
 export function reviewSummaryText(input: {
@@ -345,6 +371,7 @@ export function reviewSummaryText(input: {
   readonly state: ReviewState;
   readonly findings?: readonly ReviewFinding[];
   readonly reason?: string;
+  readonly waitingFor?: 'turn' | 'slot';
 }): string {
   const findings = input.findings ?? [];
   switch (input.state) {
@@ -353,7 +380,9 @@ export function reviewSummaryText(input: {
       const first = findings.slice(0, 3).map((finding) => `${finding.file}${finding.line ? `:${String(finding.line)}` : ''}`).join(', ');
       return `Review (${input.reviewerLabel}): ${String(findings.length)} ${findings.length === 1 ? 'problem' : 'problems'} — ${first}${findings.length > 3 ? ', …' : ''}`;
     }
-    case 'queued': return `Review (${input.reviewerLabel}) waits for the current turn to finish.`;
+    case 'queued': return input.waitingFor === 'slot'
+      ? `Review (${input.reviewerLabel}) waits for a free run slot.`
+      : `Review (${input.reviewerLabel}) waits for the current turn to finish.`;
     case 'running': return `Review (${input.reviewerLabel}) is running.`;
     case 'failed': return `Review (${input.reviewerLabel}) failed${input.reason ? `: ${reviewReasonText(input.reason)}` : '.'}`;
     case 'unsupported': return `Review (${input.reviewerLabel}) is not available${input.reason ? `: ${reviewReasonText(input.reason)}` : '.'}`;
