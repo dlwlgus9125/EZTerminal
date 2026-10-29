@@ -7,6 +7,7 @@ import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
 import { Prose } from '../parts/Prose';
 import { cleanOutput, hasToolDetail, ToolDetail } from '../parts/ToolDetail';
+import { ReviewTurnChip } from './ReviewCard';
 import { cliToolName, MessageActions, turnStatusText, useFold } from './shared';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
@@ -17,6 +18,7 @@ export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'review-fix' || row.origin === 'review-request') return <ReviewTurnChip row={row} />;
   if (row.origin === 'subagent-report' && row.from) {
     const from = row.from;
     return (

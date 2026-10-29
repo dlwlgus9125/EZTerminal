@@ -22,6 +22,7 @@ const storySources = [
   'src/renderer/workbench/PhoneScreens.stories.tsx',
   'src/renderer/ui/Overlays.stories.tsx',
   'src/renderer/ui/Feedback.stories.tsx',
+  'src/renderer/chat/ReviewFindings.stories.tsx',
 ].map((path) => readFileSync(resolve(process.cwd(), path), 'utf8')).join('\n');
 
 function sorted(values: readonly string[]): string[] {

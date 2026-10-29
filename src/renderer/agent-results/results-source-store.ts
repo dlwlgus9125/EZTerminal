@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import type { DaemonTranscriptItem, ManagedAgentState } from '../../shared/daemon-protocol';
+import type { ChatReviewAction } from '../chat/ChatContext';
 import type { ChatModel } from '../chat/model/types';
 
 /**
@@ -37,10 +38,17 @@ export interface ResultsDockPart {
   readonly historyOnly: boolean;
   /** A turn is running; the working-folder view refreshes when it ends. */
   readonly turnActive: boolean;
+  /** The conversation works in a worktree off this branch: Changes offers 기준 브랜치와 비교. */
+  readonly baseRef?: string;
   readonly readTranscriptPage?: (afterSequence: number, limit: number) => Promise<readonly DaemonTranscriptItem[]>;
   readonly openRelatedSession?: (sessionId: string) => void;
   readonly openProjectFiles?: () => void;
 }
+
+/** Review comments sent as their own message: sent now, or queued behind the running turn (`position` in the queue). */
+export type ResultsSendResult =
+  | { readonly ok: true; readonly queued: boolean; readonly position?: number }
+  | { readonly ok: false; readonly message: string };
 
 /** Published by the conversation panel (what the composer accepts). */
 export interface ResultsSessionPart {
@@ -50,6 +58,12 @@ export interface ResultsSessionPart {
   readonly draftUnavailable?: 'history' | 'disabled';
   /** Brings the decision above the composer into view. */
   readonly focusDecision?: () => void;
+  /** Sends text to the conversation as a message of its own; absent where it cannot send. */
+  readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
+  /** Review card actions on the host (fix, dismiss, reopen) from the walkthrough. */
+  readonly reviewAction?: (action: ChatReviewAction) => void;
+  /** Opens the conversation's review start form (the host reviews: `review-loop-v1`). */
+  readonly openReviewStart?: () => void;
 }
 
 export interface ResultsSource extends Partial<ResultsDockPart>, ResultsSessionPart {
@@ -64,6 +78,8 @@ export interface ResultsNavigation {
   readonly turnId?: string;
   readonly path?: string;
   readonly line?: number;
+  /** Changes: step through an AI review's findings, starting at `findingId` (else the first). */
+  readonly review?: { readonly reviewId: string; readonly findingId?: string };
 }
 
 interface Entry {

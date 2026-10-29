@@ -13,7 +13,7 @@ beforeEach(() => { container = document.createElement('div'); document.body.appe
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 const derived = (paths: readonly string[]): DerivedResults => ({
-  changes: [], turns: [], running: [], pendingDecisions: 0, artifactSequence: 0,
+  changes: [], turns: [], running: [], pendingDecisions: 0, artifactSequence: 0, reviews: [],
   files: paths.map(path => ({ path, kind: 'update' })) as unknown as DerivedResults['files'],
 });
 const ROOT = 'C:\\work\\attempt-1';

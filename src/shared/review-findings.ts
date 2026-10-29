@@ -47,6 +47,38 @@ export interface ReviewerRef {
 export const REVIEW_STATES = ['queued', 'running', 'complete', 'failed', 'unsupported', 'cancelled', 'interrupted'] as const;
 export type ReviewState = (typeof REVIEW_STATES)[number];
 
+/**
+ * Why a review failed, could not run or stopped: the `reason` of a `review` row. Clients show
+ * their own words for these codes; any other text a host sends is shown as given.
+ */
+export const REVIEW_FAILURE_REASONS = [
+  'invalid-output', 'timeout', 'provider-error', 'provider-unavailable', 'provider-too-old', 'not-git', 'no-changes',
+  'conversation-closed', 'settings-changed', 'app-closed',
+] as const;
+export type ReviewFailureReason = (typeof REVIEW_FAILURE_REASONS)[number];
+
+export function isReviewFailureReason(value: string | undefined): value is ReviewFailureReason {
+  return REVIEW_FAILURE_REASONS.some((reason) => reason === value);
+}
+
+/** The reason in English for clients that only read a row's text; unknown text stays as given. */
+const FAILURE_TEXT: Readonly<Record<ReviewFailureReason, string>> = {
+  'invalid-output': 'the reviewer did not answer in the findings format',
+  timeout: 'it did not finish in time',
+  'provider-error': 'the AI returned an error',
+  'provider-unavailable': 'the AI is not available',
+  'provider-too-old': 'the installed version cannot run a read-only review',
+  'not-git': 'the working folder is not a Git repository',
+  'no-changes': 'there are no changes to review',
+  'conversation-closed': 'the conversation was closed',
+  'settings-changed': 'the conversation settings changed',
+  'app-closed': 'EZTerminal closed',
+};
+
+export function reviewReasonText(reason: string): string {
+  return isReviewFailureReason(reason) ? FAILURE_TEXT[reason] : reason;
+}
+
 export interface ReviewExcerpt {
   readonly startLine: number;
   readonly lines: readonly string[];
@@ -323,8 +355,8 @@ export function reviewSummaryText(input: {
     }
     case 'queued': return `Review (${input.reviewerLabel}) waits for the current turn to finish.`;
     case 'running': return `Review (${input.reviewerLabel}) is running.`;
-    case 'failed': return `Review (${input.reviewerLabel}) failed${input.reason ? `: ${input.reason}` : '.'}`;
-    case 'unsupported': return `Review (${input.reviewerLabel}) is not available${input.reason ? `: ${input.reason}` : '.'}`;
+    case 'failed': return `Review (${input.reviewerLabel}) failed${input.reason ? `: ${reviewReasonText(input.reason)}` : '.'}`;
+    case 'unsupported': return `Review (${input.reviewerLabel}) is not available${input.reason ? `: ${reviewReasonText(input.reason)}` : '.'}`;
     case 'cancelled': return `Review (${input.reviewerLabel}) was stopped.`;
     case 'interrupted': return `Review (${input.reviewerLabel}) was interrupted when EZTerminal closed.`;
   }

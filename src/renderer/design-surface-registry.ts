@@ -48,4 +48,6 @@ export const MOBILE_AUXILIARY_STORIES = {
   dialog: { storyId: 'primitives-dialogs-and-panels--dialog-open', readySelector: '[role="dialog"]' },
   toast: { storyId: 'primitives-feedback--toast-variants', readySelector: '[role="status"]' },
   offline: { storyId: 'compositions-mobile-active-surfaces--agents-offline', readySelector: '[data-testid="mobile-agent-view"]' },
+  /** Review loop: a review card's problem opened in the conversation's review sheet (시안, Production/ReviewLoop/Mockup). */
+  'review-findings': { storyId: 'production-reviewloop-mockup--phone-findings-sheet', readySelector: '[data-testid="conversation-change-review"][data-mode="findings"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;

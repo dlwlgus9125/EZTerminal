@@ -1,7 +1,7 @@
 import { conversationFileChanges, decodeFileChanges, type ConversationFileChange, type FileChangeKind } from '../../shared/conversation-changes';
 import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import { parseTranscriptPayload, type TodoItem, type ToolCategory } from '../../shared/transcript-payload';
-import type { ChatModel } from '../chat/model/types';
+import type { ChatModel, ChatReview } from '../chat/model/types';
 
 /**
  * What the Results tab shows, derived from what the conversation already
@@ -56,6 +56,8 @@ export interface DerivedResults {
   readonly pendingDecisions: number;
   /** Highest sequence of an item that is an artifact (change, plan, task list); 0 if none. */
   readonly artifactSequence: number;
+  /** AI reviews on the conversation's cards, oldest first (the walkthrough steps through one). */
+  readonly reviews: readonly ChatReview[];
 }
 
 function overallKind(first: FileChangeKind | undefined, last: FileChangeKind | undefined): FileChangeKind {
@@ -140,7 +142,9 @@ export function deriveResults({ sessionId, items, model, earlierChanges }: {
   const rows = model?.rows ?? [];
   let plan: ResultsPlan | undefined;
   const running: ResultsRunningTool[] = [];
+  const reviews: ChatReview[] = [];
   for (const row of rows) {
+    if (row.kind === 'review') reviews.push(row.review);
     if (row.kind === 'plan') {
       plan = {
         markdown: row.markdown,
@@ -173,5 +177,6 @@ export function deriveResults({ sessionId, items, model, earlierChanges }: {
     running,
     pendingDecisions: model?.pendingCount ?? 0,
     artifactSequence,
+    reviews,
   };
 }

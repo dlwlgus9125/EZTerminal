@@ -8,6 +8,7 @@ import { DiffView } from '../parts/DiffView';
 import { Prose } from '../parts/Prose';
 import { ToolDetail, hasToolDetail } from '../parts/ToolDetail';
 import { ToolIcon } from '../parts/ToolIcon';
+import { ReviewTurnChip } from './ReviewCard';
 import { MessageActions, toolMeta, turnStatusText, useFold } from './shared';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
@@ -16,6 +17,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
   const copy = useChatCopy();
   const context = useChatContext();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'review-fix' || row.origin === 'review-request') return <ReviewTurnChip row={row} />;
   if (row.origin === 'subagent-report' && row.from) {
     // Sent by the delegated child when it finished, not typed by the person.
     const from = row.from;

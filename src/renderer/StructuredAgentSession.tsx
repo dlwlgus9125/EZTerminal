@@ -1,7 +1,8 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider } from './chat/ChatContext';
+import { ChatProvider, type ChatReviewAction } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
+import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest } from './chat/review/ReviewStartMenu';
 import { chatCopy, useChatLocale } from './chat/copy';
 import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
 import { proposedPlan, withoutRow } from './chat/model/proposed-plan';
@@ -11,7 +12,7 @@ import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
 import { createResultsFileResolver } from './agent-results/results-file-links';
-import { publishResultsModel, publishResultsSession } from './agent-results/results-source-store';
+import { publishResultsModel, publishResultsSession, type ResultsSendResult } from './agent-results/results-source-store';
 import { useResultsCopy } from './agent-results/copy';
 import {
   memo,
@@ -235,6 +236,10 @@ interface StructuredAgentCopy {
   readonly heartbeatMenu: string;
   readonly delegateHandoff: string;
   readonly delegateReview: string;
+  /** ⋯ › 검토… when the host reviews (`review-loop-v1`); replaces delegateReview. */
+  readonly reviewMenu: string;
+  readonly reviewCommand: string;
+  readonly sendFailed: string;
   readonly heartbeatOn: string;
   readonly changedFiles: (count: number) => string;
   readonly close: string;
@@ -259,6 +264,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     tabSection: 'Tab', keepTab: 'Keep open', splitRight: 'Split right', splitBelow: 'Split down',
     moveToNewWindow: 'Move to new window', moveToMainWindow: 'Move to main window', closeTab: 'Close tab',
     conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat', delegateHandoff: 'Hand off…', delegateReview: 'Ask for review…',
+    reviewMenu: 'Review…', reviewCommand: 'Have an AI review this conversation’s changes (read-only)', sendFailed: 'The comments could not be sent.',
     changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
     copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
     replyMessage: 'Reply', reuseMessage: 'Use as draft', removeReply: 'Remove reply',
@@ -378,6 +384,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     tabSection: '탭', keepTab: '탭으로 고정', splitRight: '오른쪽으로 나누기', splitBelow: '아래로 나누기',
     moveToNewWindow: '새 창으로 옮기기', moveToMainWindow: '메인 창으로 옮기기', closeTab: '탭 닫기',
     conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트', delegateHandoff: '맡기기…', delegateReview: '검토 맡기기…',
+    reviewMenu: '검토…', reviewCommand: '이 대화의 변경을 AI가 검토 (읽기만 함)', sendFailed: '의견을 보내지 못했습니다.',
     changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
     copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
     replyMessage: '답장', reuseMessage: '입력에 가져오기', removeReply: '답장 취소',
@@ -952,6 +959,8 @@ export interface StructuredAgentTranscriptProps {
   readonly planAccess?: PlanAccessChoice;
   /** The host can allow a command or edit for the rest of the conversation. */
   readonly approvalSession?: boolean;
+  /** Review card actions (fix, dismiss, walkthrough…); absent: the cards are read-only. */
+  readonly onReviewAction?: (action: ChatReviewAction) => void;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -992,6 +1001,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   planAccess,
   planReview,
   approvalSession = false,
+  onReviewAction,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
@@ -1031,6 +1041,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(onOpenLink ? { onOpenLink } : {})}
       {...(onOpenRelatedSession ? { onOpenRelated: onOpenRelatedSession } : {})}
       {...(results ? { onOpenResults: openResults, resolveFileLink } : onReviewChanges ? { onReviewChanges } : {})}
+      {...(onReviewAction ? { onReviewAction } : {})}
     >
       <ChatTranscript
         model={model}
@@ -1851,6 +1862,14 @@ export interface StructuredAgentSessionPanelProps {
   readonly sideQuestion?: { readonly client: AgentSideQuestionClient; readonly available: boolean };
   /** Hand this conversation's work, or a review of it, to a new child agent. */
   readonly onDelegate?: (mode: 'handoff' | 'review') => void;
+  /**
+   * The host reviews this conversation's changes (`review-loop-v1`): the ⋯ menu offers 검토… instead of
+   * 검토 맡기기…, `/review` opens the start form (`/review <focus>` starts this AI's review of the
+   * uncommitted changes) and the Results tab gets a 검토 button. Reviews never start on their own.
+   */
+  readonly reviewStart?: { readonly options: ReviewStartOptions; readonly onStart: (request: ReviewStartRequest) => void };
+  /** Review card actions for the host (fix, dismiss, reopen, stop, retry…). The walkthrough opens here, not on the host. */
+  readonly onReviewAction?: (action: ChatReviewAction) => void;
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
   readonly heartbeatActive?: boolean;
@@ -2001,6 +2020,8 @@ export function StructuredAgentSessionPanel({
   subagentType,
   parentApprovalPending = false,
   onDelegate,
+  reviewStart,
+  onReviewAction,
   onNewConversation,
   onClearConversation,
   sideQuestion,
@@ -2115,6 +2136,8 @@ export function StructuredAgentSessionPanel({
     const measure = (): void => {
       const { width, height } = element.getBoundingClientRect();
       element.dataset.compact = width < 600 ? 'true' : 'false';
+      // Under ~460px a card is too narrow for a row and its title side by side (the review card's problems stack).
+      element.dataset.narrow = width < 460 ? 'true' : 'false';
       element.dataset.short = height < 480 ? 'true' : 'false';
       setWideReview(width >= 1280);
     };
@@ -2283,6 +2306,32 @@ export function StructuredAgentSessionPanel({
   const openSide = (): void => setSideOpen(true);
   /** False when the thread refuses it (one already pending, or too long): the caller keeps the text. */
   const askSide = (text: string): boolean => { const accepted = sideThread.ask(text); setSideOpen(true); return accepted; };
+  // Review loop: the host runs reviews and their fixes; the walkthrough is this window's own navigation.
+  const reviewsHere = !historyOnly && !providerOwned;
+  const startAvailable = reviewStart !== undefined && reviewsHere;
+  const hostReviews = onReviewAction !== undefined && reviewsHere;
+  const [reviewStartOpen, setReviewStartOpen] = useState(false);
+  const [findingsRequest, setFindingsRequest] = useState<{ readonly sequence: number; readonly reviewId: string; readonly findingId?: string }>();
+  const reviewAction = useCallback((action: ChatReviewAction): void => {
+    if (action.kind !== 'walkthrough') { onReviewAction?.(action); return; }
+    const findingId = action.findingIds?.[0];
+    // Desktop: the Results tab steps through the change; elsewhere the review sheet does.
+    if (results) results.open({ activate: true, target: { section: 'changes', review: { reviewId: action.reviewId, ...(findingId ? { findingId } : {}) } } });
+    else setFindingsRequest((current) => ({ sequence: (current?.sequence ?? 0) + 1, reviewId: action.reviewId, ...(findingId ? { findingId } : {}) }));
+  }, [onReviewAction, results]);
+  /** `/review <focus>`: this AI reviews the uncommitted changes with that focus, without the form. */
+  const startSelfReview = (focus: string): boolean => {
+    if (!reviewStart || reviewStart.options.self.unavailableReason) { setReviewStartOpen(true); return false; }
+    reviewStart.onStart({ reviewer: { mode: 'self', providerId }, target: { kind: 'uncommitted' }, focus });
+    return true;
+  };
+  /** Review comments sent as a message of their own (queued behind a running turn), never mixed into the draft. */
+  const canSendComments = !historyOnly && !composerDisabled && !disabled && !sendDisabled;
+  const sendComments = async (text: string): Promise<ResultsSendResult> => {
+    const queued = turnCurrent;
+    const result = await sendWithCapabilities(text, undefined, onSend).catch((): StructuredAgentUiResult => ({ ok: false, message: copy.sendFailed }));
+    return result.ok ? { ok: true, queued, ...(queued ? { position: queuedCount + 1 } : {}) } : { ok: false, message: result.message || copy.sendFailed };
+  };
   const appCommands: readonly AppCommand[] = [
     ...(!settingsReadOnly ? [{
       name: 'plan', description: planOn ? copy.planCommandOff : copy.planCommandOn,
@@ -2302,22 +2351,40 @@ export function StructuredAgentSessionPanel({
     // Always reserved: `/btw …` is never a prompt. Chosen from the list (no text) it opens the window.
     { name: 'btw', description: copy.btwCommand, takesText: true, run: (text?: string) => (text?.trim() ? askSide(text) : (openSide(), true)),
       ...(btwReason ? { disabledReason: btwReason } : {}) },
+    // Reserved only where the host reviews: elsewhere `/review` stays the provider's own command.
+    ...(startAvailable ? [{
+      name: 'review', description: copy.reviewCommand, takesText: true,
+      run: (text?: string) => (text?.trim() ? startSelfReview(text.trim()) : (setReviewStartOpen(true), true)),
+      ...(reviewStart?.options.disabledReason ? { disabledReason: reviewStart.options.disabledReason } : {}),
+    }] : []),
   ];
   // The Results tab puts review comments into this draft (never sends) and can point at the decision above.
   const canInsertDraft = !historyOnly && !composerDisabled;
-  const resultsActions = useRef<{ insert: (text: string) => void; focus: () => boolean }>({ insert: () => undefined, focus: () => false });
+  const resultsActions = useRef<{
+    insert: (text: string) => void;
+    focus: () => boolean;
+    send: (text: string) => Promise<ResultsSendResult>;
+    review: (action: ChatReviewAction) => void;
+    openStart: () => void;
+  }>({ insert: () => undefined, focus: () => false, send: async () => ({ ok: false, message: '' }), review: () => undefined, openStart: () => undefined });
   resultsActions.current = {
     insert: (text: string) => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }),
     focus: () => focusDecision(),
+    send: sendComments,
+    review: reviewAction,
+    openStart: () => setReviewStartOpen(true),
   };
   useEffect(() => {
     if (!results) return undefined;
     publishResultsSession(results.ownerPanelId, {
       ...(canInsertDraft ? { insertIntoDraft: (text: string) => resultsActions.current.insert(text) } : { draftUnavailable: historyOnly ? 'history' : 'disabled' }),
       focusDecision: () => { resultsActions.current.focus(); },
+      ...(canSendComments ? { sendNow: (text: string) => resultsActions.current.send(text) } : {}),
+      ...(hostReviews ? { reviewAction: (action: ChatReviewAction) => resultsActions.current.review(action) } : {}),
+      ...(startAvailable ? { openReviewStart: () => resultsActions.current.openStart() } : {}),
     });
     return undefined;
-  }, [canInsertDraft, historyOnly, results]);
+  }, [canInsertDraft, canSendComments, historyOnly, hostReviews, results, startAvailable]);
   useEffect(() => (results ? () => publishResultsSession(results.ownerPanelId, undefined) : undefined), [results]);
   /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
   const focusDecision = (): boolean => {
@@ -2680,11 +2747,14 @@ export function StructuredAgentSessionPanel({
                   {skin === 'bubble' ? copy.bubbleSkin : copy.cliSkin}
                 </MenuRadioItem>
               ))}
-              {onDelegate && !providerOwned && !historyOnly && <MenuSeparator />}
+              {(onDelegate || startAvailable) && !providerOwned && !historyOnly && <MenuSeparator />}
               {onDelegate && !providerOwned && !historyOnly && (
                 <MenuItem icon={glyphIcon('next')} onSelect={() => onDelegate('handoff')} data-testid="structured-agent-delegate">{copy.delegateHandoff}</MenuItem>
               )}
-              {onDelegate && !providerOwned && !historyOnly && (
+              {/* A host that reviews offers 검토… (this AI or another, as a result card); older hosts keep 검토 맡기기…. */}
+              {startAvailable ? (
+                <MenuItem icon={glyphIcon('search')} onSelect={() => setReviewStartOpen(true)} data-testid="structured-agent-review">{copy.reviewMenu}</MenuItem>
+              ) : onDelegate && !providerOwned && !historyOnly && (
                 <MenuItem icon={glyphIcon('search')} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
               )}
               {heartbeatControl !== undefined && variant !== 'mobile' && <MenuSeparator />}
@@ -2737,7 +2807,12 @@ export function StructuredAgentSessionPanel({
         hideTrigger={variant !== 'mobile' || compactRow}
         returnFocusRef={reviewButtonRef}
         onOpenProjectFiles={onOpenProjectFiles}
-        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />}
+        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined}
+        {...(turns ? { turns } : {})}
+        {...(workspace.path ? { workspaceRoot: workspace.path } : {})}
+        {...(findingsRequest ? { findingsRequest } : {})}
+        {...(hostReviews ? { onReviewAction } : {})}
+        {...(canSendComments ? { onSendComments: sendComments } : {})} />}
       {full && workflowContext}
       {full && <StructuredAgentTranscript
         beforeMessages={beforeMessages}
@@ -2768,6 +2843,7 @@ export function StructuredAgentSessionPanel({
         {...(!settingsReadOnly && !composerDisabled && !planProposals ? {
           planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
         } : {})}
+        {...(hostReviews ? { onReviewAction: reviewAction } : {})}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -2776,6 +2852,11 @@ export function StructuredAgentSessionPanel({
       )}
       {full && settingsTrack}
       {full && variant === 'mobile' && heartbeatControl}
+      {startAvailable && reviewStart && (
+        <ReviewStartDialog open={reviewStartOpen} onOpenChange={setReviewStartOpen}
+          options={{ ...reviewStart.options, busy: reviewStart.options.busy ?? turnCurrent }} onStart={reviewStart.onStart}
+          mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument} />
+      )}
       {full && variant !== 'mobile' && heartbeatControl !== undefined && (
         <Dialog open={heartbeatOpen} onOpenChange={setHeartbeatOpen} title={copy.heartbeatOn} ownerDocument={panelRef.current?.ownerDocument} closeLabel={copy.close}>
           {heartbeatControl}

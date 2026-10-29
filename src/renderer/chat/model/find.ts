@@ -23,6 +23,13 @@ export function rowSearchText(row: ChatRow): string {
         : '')).join('\n');
     case 'turn-status':
       return '';
+    case 'review':
+      return [
+        row.review.overall,
+        row.review.reason,
+        row.review.focus,
+        ...row.review.findings.map((finding) => `${finding.file}${finding.line ? `:${String(finding.line)}` : ''} ${finding.title}`),
+      ].filter(Boolean).join('\n');
   }
 }
 

@@ -9,6 +9,7 @@ import {
 import {
   CliActivity, CliAssistant, CliChanges, CliNotice, CliPlan, CliQuestion, CliTodo, CliTurnStatus, CliUser,
 } from './rows/CliRows';
+import { ReviewCard } from './rows/ReviewCard';
 
 /** One transcript row in the active skin. Both skins render the same rows and offer the same actions. */
 export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
@@ -26,6 +27,7 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
       case 'question': return <CliQuestion row={row} />;
       case 'todo': return <CliTodo row={row} />;
       case 'changes': return <CliChanges row={row} />;
+      case 'review': return <ReviewCard row={row} />;
       case 'notice':
       case 'child':
       case 'error': return <CliNotice row={row} />;
@@ -40,6 +42,7 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
     case 'question': return <BubbleQuestion row={row} />;
     case 'todo': return <BubbleTodo row={row} />;
     case 'changes': return <BubbleChanges row={row} />;
+    case 'review': return <ReviewCard row={row} />;
     case 'notice':
     case 'child': return <BubbleNotice row={row} />;
     case 'error': return <BubbleError row={row} />;

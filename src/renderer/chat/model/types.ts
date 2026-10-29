@@ -2,6 +2,7 @@ import type { ApprovalRequest } from '../../../shared/approval-request';
 import type { ChatMessageContext } from '../../../shared/chat-message';
 import type { DaemonApproval, DaemonTurn } from '../../../shared/daemon-protocol';
 import type { RecordedFileChange } from '../../../shared/conversation-changes';
+import type { ReviewFinding, ReviewState, ReviewTarget, ReviewerRef } from '../../../shared/review-findings';
 import type { TodoItem, ToolCategory, ToolStatus } from '../../../shared/transcript-payload';
 
 /**
@@ -72,6 +73,59 @@ export interface TodoChange {
   readonly added: readonly string[];
 }
 
+/**
+ * Where a finding stands on its card: untouched, sent to this conversation to fix (and that
+ * turn's state), or dismissed by the person. A fix turn that failed or was interrupted is
+ * `fix-stopped`: the finding can be sent again.
+ */
+export type ChatReviewFindingStatus = 'open' | 'requested' | 'fixing' | 'fixed' | 'fix-stopped' | 'dismissed';
+
+export interface ChatReviewFinding extends ReviewFinding {
+  readonly status: ChatReviewFindingStatus;
+  /**
+   * A change record for this file arrived after the review finished, so the reported line may
+   * have moved. Set only for findings nobody is fixing (open, dismissed, fix-stopped).
+   */
+  readonly stale?: boolean;
+  /** The turn the finding was last sent to be fixed in. */
+  readonly fixTurnId?: string;
+}
+
+/** One AI review (`review-loop-v1`): the latest of its rows, with each finding's state from the rows after it. */
+export interface ChatReview {
+  readonly reviewId: string;
+  readonly reviewer: ReviewerRef;
+  readonly target: ReviewTarget;
+  readonly state: ReviewState;
+  readonly reason?: string;
+  readonly focus?: string;
+  readonly findings: readonly ChatReviewFinding[];
+  readonly overall?: string;
+  /** The reviewer sent more findings than a card keeps. */
+  readonly truncated?: boolean;
+  /** Findings left out because their path was outside the working folder or missing. */
+  readonly dropped?: number;
+  /** The reviewer's own answer when it could not be read as findings. */
+  readonly rawText?: string;
+  /** Files changed while the read-only reviewer ran. */
+  readonly wroteFiles?: boolean;
+  readonly durationMs?: number;
+  /** The latest row's readable text (what clients without the card show). */
+  readonly text: string;
+  /** When the first `running` row arrived: the elapsed clock of a running review. */
+  readonly startedAt?: string;
+  /** When the latest row arrived. */
+  readonly updatedAt: string;
+}
+
+/** A user row the review loop wrote: a fix turn, or the request an other-AI reviewer received. */
+export interface ChatReviewTurn {
+  readonly reviewId: string;
+  readonly findingIds?: readonly string[];
+  readonly target?: ReviewTarget;
+  readonly focus?: string;
+}
+
 interface RowBase {
   /** Stable React key. */
   readonly id: string;
@@ -86,10 +140,13 @@ export type ChatRow =
       /**
        * Not the person: a subagent's first row is what its parent agent asked
        * (`parent-agent`); a delegated child's reported result arrives in its parent
-       * as a message (`subagent-report`, from `from`).
+       * as a message (`subagent-report`, from `from`). The review loop writes the
+       * person's fix turns (`review-fix`) and an other-AI reviewer's request
+       * (`review-request`); both show as a compact chip with the full text on demand.
        */
-      readonly origin?: 'parent-agent' | 'subagent-report';
+      readonly origin?: 'parent-agent' | 'subagent-report' | 'review-fix' | 'review-request';
       readonly from?: ChatSubagentLink;
+      readonly review?: ChatReviewTurn;
       readonly context?: ChatMessageContext;
       /** Identity a reply quotes (first source item). */
       readonly messageId: string;
@@ -135,7 +192,9 @@ export type ChatRow =
       readonly startedAt?: string;
       readonly finishedAt?: string;
     })
-  | (RowBase & { readonly kind: 'changes'; readonly files: readonly ChatToolFile[]; readonly changes: readonly RecordedFileChange[] });
+  | (RowBase & { readonly kind: 'changes'; readonly files: readonly ChatToolFile[]; readonly changes: readonly RecordedFileChange[] })
+  /** One card per review id, at the place its first row arrived, updated in place by later rows. */
+  | (RowBase & { readonly kind: 'review'; readonly review: ChatReview });
 
 export type ChatRowKind = ChatRow['kind'];
 

@@ -1,20 +1,29 @@
-import { glyphIcon } from '../ui/Glyph';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Glyph, glyphIcon } from '../ui/Glyph';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { gitDiffFileChanges, patchKind, type ConversationFileChange, type FileChangeKind, type RecordedFileChange, type ReviewLine } from '../../shared/conversation-changes';
 import type { GitDiffResult, GitDirectoryStatus } from '../../shared/git-status';
+import type { ReviewTarget } from '../../shared/review-findings';
+import type { ChatReviewAction } from '../chat/ChatContext';
 import { formatClock, useChatLocale } from '../chat/copy';
 import { workspacePath } from '../chat/model/summary';
+import type { ChatReview, ChatReviewFinding } from '../chat/model/types';
+import { findingWhere, walkOrder } from '../chat/review/review-presentation';
 import { Button, EmptyState, IconButton, LoadingState, Select, Status } from '../ui';
 import type { BackfillState } from './ConversationResults';
 import type { DerivedResults } from './derive-results';
 import { orderedRange, PatchLineList, selectedLines, type LineRange } from './PatchLineList';
 import { PathLabel } from './PathLabel';
+import { FindingAnnotation, ReviewWalkthrough } from './ReviewWalkthrough';
 import { useResultsCopy } from './copy';
-import { formatReviewComments, lineRangeLabel, REVIEW_DRAFT_LIMIT, resolveWorkspacePath, samePath, type ReviewComment } from './results-format';
-import { useResultsViewState, type ResultsServices } from './results-services';
+import {
+  formatReviewComments, isFindingFile, lineRangeLabel, locateFinding, REVIEW_DRAFT_LIMIT, resolveWorkspacePath, samePath, type ReviewComment,
+} from './results-format';
+import type { ResultsSendResult } from './results-source-store';
+import { useResultsViewState, type ResultsServices, type WorktreeBaseDiffResult } from './results-services';
 
-export type ChangeScope = 'turn' | 'all' | 'git';
+/** `base`: the worktree since it left its base branch (기준 브랜치와 비교). */
+export type ChangeScope = 'turn' | 'all' | 'git' | 'base';
 
 interface ChangeRecord {
   readonly id: string;
@@ -34,7 +43,7 @@ interface FileEntry {
 interface GitState {
   readonly phase: 'idle' | 'loading' | 'ready' | 'error';
   readonly status?: GitDirectoryStatus;
-  readonly diff?: GitDiffResult;
+  readonly diff?: GitDiffResult | WorktreeBaseDiffResult;
   readonly at?: number;
 }
 
@@ -44,7 +53,14 @@ interface ReviewState {
   readonly path?: string;
   readonly reviewed: readonly string[];
   readonly comments: readonly ReviewComment[];
+  /** Stepping through an AI review: which one, and the problem on screen. */
+  readonly walk?: { readonly reviewId: string; readonly findingId: string };
 }
+
+type SendState =
+  | { readonly phase: 'idle' | 'sending' }
+  | { readonly phase: 'sent'; readonly queued: boolean; readonly position?: number }
+  | { readonly phase: 'error'; readonly message: string };
 
 const KIND_ICON = { add: glyphIcon('plus'), delete: glyphIcon('minus'), rename: glyphIcon('link'), update: glyphIcon('edit') } as const;
 
@@ -67,7 +83,7 @@ function groupRecords(changes: readonly ConversationFileChange[]): FileEntry[] {
   });
 }
 
-function gitEntries(diff: GitDiffResult | undefined): FileEntry[] {
+function gitEntries(diff: GitState['diff'], prefix: string): FileEntry[] {
   if (!diff?.ok) return [];
   return gitDiffFileChanges(diff.text).map((change) => {
     let added = 0;
@@ -78,18 +94,25 @@ function gitEntries(diff: GitDiffResult | undefined): FileEntry[] {
       else if (inHunk && line.startsWith('+')) added += 1;
       else if (inHunk && line.startsWith('-')) removed += 1;
     }
-    return { key: `git:${change.path}`, path: change.path, kind: patchKind(change), added, removed, records: [{ id: `git:${change.path}`, change }] };
+    return { key: `${prefix}:${change.path}`, path: change.path, kind: patchKind(change), added, removed, records: [{ id: `${prefix}:${change.path}`, change }] };
   });
 }
 
-function useGitScope(workspaceRoot: string | undefined, services: ResultsServices, active: boolean, turnActive: boolean, artifactSequence: number): [GitState, () => void] {
+/**
+ * The working folder as git sees it: against the last commit, or (with `baseRef`) since the
+ * worktree left its base branch. Read when shown, when a turn ends and when a change record arrives.
+ */
+function useGitScope(workspaceRoot: string | undefined, services: ResultsServices, active: boolean, turnActive: boolean, artifactSequence: number, baseRef?: string): [GitState, () => void] {
   const [state, setState] = useState<GitState>({ phase: 'idle' });
   const request = useRef(0);
   const refresh = (): void => {
-    if (!workspaceRoot || !services.getGitDiff || !services.getGitStatus) return;
+    const readDiff = baseRef
+      ? (services.getWorktreeBaseDiff ? (root: string) => services.getWorktreeBaseDiff!(root, baseRef) : undefined)
+      : services.getGitDiff;
+    if (!workspaceRoot || !readDiff || !services.getGitStatus) return;
     const id = ++request.current;
     setState((current) => ({ ...current, phase: current.phase === 'ready' ? 'ready' : 'loading' }));
-    void Promise.all([services.getGitStatus(workspaceRoot), services.getGitDiff(workspaceRoot)])
+    void Promise.all([services.getGitStatus(workspaceRoot), readDiff(workspaceRoot)])
       .then(([status, diff]) => { if (request.current === id) setState({ phase: 'ready', status, diff, at: Date.now() }); })
       .catch(() => { if (request.current === id) setState({ phase: 'error', at: Date.now() }); });
   };
@@ -122,7 +145,10 @@ function useGitScope(workspaceRoot: string | undefined, services: ResultsService
   return [state, () => refreshRef.current()];
 }
 
-export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive, folderReadable = true, onViewFile }: {
+export function ResultsChanges({
+  sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive,
+  folderReadable = true, onViewFile, baseRef, sendNow, reviewAction, openReviewStart,
+}: {
   readonly sessionId: string;
   readonly workspaceRoot?: string;
   readonly derived: DerivedResults;
@@ -133,12 +159,25 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   readonly services: ResultsServices;
   readonly insertIntoDraft?: (text: string) => void;
   readonly draftUnavailable?: 'history' | 'disabled';
-  /** A turn or file the conversation asked to show. */
-  readonly target?: { readonly sequence: number; readonly turnId?: string; readonly path?: string };
+  /** A turn, file or AI review the conversation asked to show. */
+  readonly target?: {
+    readonly sequence: number;
+    readonly turnId?: string;
+    readonly path?: string;
+    readonly review?: { readonly reviewId: string; readonly findingId?: string };
+  };
   readonly turnActive: boolean;
   /** The work folder may be read (false while the host is asked, or once it was cleaned up: 작업 폴더 정리). */
   readonly folderReadable?: boolean;
-  readonly onViewFile?: (path: string) => void;
+  readonly onViewFile?: (path: string, line?: number) => void;
+  /** The conversation works in a worktree off this branch: 기준 브랜치와 비교 is offered. */
+  readonly baseRef?: string;
+  /** Sends the comments as a message of their own (queued behind a running turn). */
+  readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
+  /** Fix, dismiss or reopen the problem on screen (host actions). */
+  readonly reviewAction?: (action: ChatReviewAction) => void;
+  /** Opens the conversation's review start form. */
+  readonly openReviewStart?: () => void;
 }): JSX.Element {
   const copy = useResultsCopy();
   const locale = useChatLocale();
@@ -148,37 +187,91 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   const [composing, setComposing] = useState(false);
   const [note, setNote] = useState('');
   const [inserted, setInserted] = useState(false);
+  const [sendState, setSendState] = useState<SendState>({ phase: 'idle' });
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  // A remembered Working folder scope falls back when this conversation has no folder to read.
+  // A remembered folder scope falls back when this conversation has no folder (or no base) to read.
   const gitAvailable = Boolean(workspaceRoot && folderReadable && services.getGitDiff && services.getGitStatus);
-  const scope: ChangeScope = view.scope === 'git' && !gitAvailable ? 'all' : view.scope;
+  const baseAvailable = Boolean(workspaceRoot && folderReadable && baseRef && services.getWorktreeBaseDiff && services.getGitStatus);
+  const scope: ChangeScope = (view.scope === 'git' && !gitAvailable) || (view.scope === 'base' && !baseAvailable) ? 'all' : view.scope;
   const [git, refreshGit] = useGitScope(workspaceRoot, services, scope === 'git', turnActive, derived.artifactSequence);
+  const [base, refreshBase] = useGitScope(workspaceRoot, services, scope === 'base', turnActive, derived.artifactSequence, baseRef);
+  const folder = scope === 'base' ? base : git;
+  const folderScope = scope === 'git' || scope === 'base';
 
-  // A turn or file link from the conversation picks the scope and file it points at.
+  /** Where a review's diff lives: its own scope when this tab can read it, else what the AI reported. */
+  const scopeFor = (reviewTarget: ReviewTarget): ChangeScope => (reviewTarget.kind === 'base-branch'
+    ? (baseAvailable && baseRef === reviewTarget.baseRef ? 'base' : gitAvailable ? 'git' : 'all')
+    : gitAvailable ? 'git' : 'all');
+
+  // A turn, file or review from the conversation picks the scope and file it points at.
   const handled = useRef(0);
   useEffect(() => {
     if (!target || target.sequence === handled.current) return;
     handled.current = target.sequence;
+    const review = target.review ? derived.reviews.find((entry) => entry.reviewId === target.review!.reviewId) : undefined;
+    const order = review ? walkOrder(review) : [];
+    const finding = order.find((entry) => entry.id === target.review?.findingId) ?? order[0];
+    if (review && finding) {
+      setView((current) => ({ ...current, scope: scopeFor(review.target), path: finding.file, walk: { reviewId: review.reviewId, findingId: finding.id } }));
+      setSelection(undefined);
+      return;
+    }
     setView((current) => ({
       ...current,
-      scope: target.turnId ? 'turn' : current.scope === 'git' ? 'all' : current.scope,
+      scope: target.turnId ? 'turn' : current.scope === 'git' || current.scope === 'base' ? 'all' : current.scope,
       ...(target.turnId ? { turnId: target.turnId } : {}),
       ...(target.path ? { path: target.path } : {}),
     }));
     setSelection(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new target is handled once, with the reviews it finds then
   }, [setView, target]);
 
   const latestTurn = derived.turns.at(-1);
   const turnId = view.turnId && derived.turns.some((turn) => turn.turnId === view.turnId) ? view.turnId : latestTurn?.turnId;
   const selectedTurn = derived.turns.find((turn) => turn.turnId === turnId);
   const entries = useMemo(() => {
-    if (scope === 'git') return gitEntries(git.diff);
+    if (scope === 'git') return gitEntries(git.diff, 'git');
+    if (scope === 'base') return gitEntries(base.diff, 'base');
     const changes = scope === 'all' ? derived.changes : derived.changes.filter((change) => change.turnId === turnId);
     return groupRecords(changes);
-  }, [derived.changes, git.diff, scope, turnId]);
-  const selected = entries.find((entry) => view.path && samePath(entry.path, view.path)) ?? entries[0];
+  }, [base.diff, derived.changes, git.diff, scope, turnId]);
+  const matches = (path: string, wanted: string): boolean => samePath(path, wanted) || isFindingFile(path, wanted, workspaceRoot);
+  const selected = entries.find((entry) => view.path && matches(entry.path, view.path)) ?? entries[0];
   const reviewed = new Set(view.reviewed);
   const display = (path: string): string => workspacePath(path, workspaceRoot);
+
+  // The review being stepped through, and the problem on screen.
+  const walkReview: ChatReview | undefined = view.walk ? derived.reviews.find((entry) => entry.reviewId === view.walk!.reviewId) : undefined;
+  const walkFindings = useMemo(() => (walkReview ? walkOrder(walkReview) : []), [walkReview]);
+  const walkFinding = walkFindings.find((finding) => finding.id === view.walk?.findingId);
+  const walkFile = walkFinding ? entries.find((entry) => isFindingFile(entry.path, walkFinding.file, workspaceRoot)) : undefined;
+  /** Each record's problems by line, and where the current one is. */
+  const walkPlacement = useMemo(() => {
+    const byRecord = new Map<string, Map<number, { finding: ChatReviewFinding; moved?: number }[]>>();
+    let current: { recordId: string; index: number; moved?: number } | undefined;
+    if (!walkFinding || !walkFile) return { byRecord, current };
+    for (const finding of walkFindings.filter((entry) => entry.file === walkFinding.file)) {
+      for (const record of walkFile.records) {
+        const place = locateFinding(record.change, finding);
+        if (!place) continue;
+        const lines = byRecord.get(record.id) ?? new Map<number, { finding: ChatReviewFinding; moved?: number }[]>();
+        lines.set(place.index, [...(lines.get(place.index) ?? []), { finding, ...(place.moved !== undefined ? { moved: place.moved } : {}) }]);
+        byRecord.set(record.id, lines);
+        if (finding.id === walkFinding.id && !current) current = { recordId: record.id, index: place.index, ...(place.moved !== undefined ? { moved: place.moved } : {}) };
+        break;
+      }
+    }
+    return { byRecord, current };
+  }, [walkFile, walkFinding, walkFindings]);
+  const walkOutside = Boolean(walkFinding && !walkPlacement.current);
+  const step = (findingId: string): void => {
+    const finding = walkFindings.find((entry) => entry.id === findingId);
+    if (!finding || !view.walk) return;
+    setView((current) => ({ ...current, path: finding.file, walk: { reviewId: view.walk!.reviewId, findingId } }));
+    setSelection(undefined);
+    setComposing(false);
+  };
+  const closeWalk = (): void => setView((current) => ({ ...current, walk: undefined }));
 
   const choose = (path: string): void => { setView((current) => ({ ...current, path })); setSelection(undefined); setComposing(false); };
   const toggleReviewed = (entry: FileEntry): void => {
@@ -206,6 +299,7 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
     setComposing(false);
     setNote('');
     setInserted(false);
+    setSendState({ phase: 'idle' });
   };
   const draftText = formatReviewComments(view.comments, locale);
   const tooLong = draftText.length > REVIEW_DRAFT_LIMIT;
@@ -214,6 +308,20 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
     insertIntoDraft(draftText);
     setView((current) => ({ ...current, comments: [] }));
     setInserted(true);
+    setSendState({ phase: 'idle' });
+  };
+  // Sent as a message of its own; the comments stay until the conversation took them.
+  const send = async (): Promise<void> => {
+    if (!sendNow || tooLong || !draftText || sendState.phase === 'sending') return;
+    setSendState({ phase: 'sending' });
+    setInserted(false);
+    const result = await sendNow(draftText).catch((): ResultsSendResult => ({ ok: false, message: '' }));
+    if (result.ok) {
+      setView((current) => ({ ...current, comments: [] }));
+      setSendState({ phase: 'sent', queued: result.queued, ...(result.position !== undefined ? { position: result.position } : {}) });
+    } else {
+      setSendState({ phase: 'error', message: result.message });
+    }
   };
   useEffect(() => { if (composing) noteRef.current?.focus(); }, [composing]);
   const lineLabels = useMemo(() => ({
@@ -221,14 +329,42 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
     line: (line: ReviewLine) => copy.patchLine(line.kind, line.after ?? line.before, line.text),
   }), [copy]);
 
-  const scopeValue = scope;
   const pendingEarlier = scope === 'all' && transcriptFloor > 0 && backfill.phase !== 'done';
+  const baseDiff = base.diff?.ok && 'ahead' in base.diff ? base.diff : undefined;
+  const findingPath = walkFinding ? resolveWorkspacePath(walkFinding.file, workspaceRoot) ?? walkFinding.file : undefined;
+  const outsideNote = walkFinding && walkOutside ? (
+    <div className="results-walk-outside" role="note" data-testid="results-walkthrough-outside">
+      <Glyph name="info" />
+      <span>
+        <strong>{copy.walk.outside}</strong>{' '}
+        {walkFinding.line === undefined ? copy.walk.noLine : copy.walk.outsideDetail(findingWhere(walkFinding))}
+      </span>
+      {onViewFile && findingPath && (
+        <Button variant="ghost" size="sm" onClick={() => onViewFile(findingPath, walkFinding.line)}>{copy.walk.viewInFile}</Button>
+      )}
+    </div>
+  ) : null;
+  const annotationsFor = (recordId: string): ReadonlyMap<number, ReactNode> | undefined => {
+    const lines = walkPlacement.byRecord.get(recordId);
+    if (!lines) return undefined;
+    const map = new Map<number, ReactNode>();
+    for (const [index, found] of lines) {
+      map.set(index, (
+        <>
+          {found.map(({ finding, moved }) => (
+            <FindingAnnotation key={finding.id} finding={finding} current={finding.id === walkFinding?.id} {...(moved !== undefined ? { moved } : {})} onJump={step} />
+          ))}
+        </>
+      ));
+    }
+    return map;
+  };
 
   return (
     <div className="results-changes" data-testid="results-changes">
       <div className="results-toolbar">
         <label className="results-visually-hidden" htmlFor={scopeId}>{copy.scope}</label>
-        <Select id={scopeId} aria-label={copy.scope} value={scopeValue === 'turn' && turnId ? `turn:${turnId}` : scopeValue}
+        <Select id={scopeId} aria-label={copy.scope} value={scope === 'turn' && turnId ? `turn:${turnId}` : scope}
           onChange={(event) => {
             const value = event.target.value;
             setSelection(undefined);
@@ -243,18 +379,28 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
           ))}
           <option value="all">{copy.scopeAll}</option>
           {gitAvailable && <option value="git">{copy.scopeGit}</option>}
+          {baseAvailable && baseRef && <option value="base">{copy.scopeBase(baseRef)}</option>}
         </Select>
-        {scope === 'git' && (
-          <IconButton size="sm" icon={glyphIcon('refresh')} aria-label={copy.refresh} onClick={refreshGit} disabled={git.phase === 'loading'} />
+        {folderScope && (
+          <IconButton size="sm" icon={glyphIcon('refresh')} aria-label={copy.refresh} onClick={scope === 'base' ? refreshBase : refreshGit} disabled={folder.phase === 'loading'} />
+        )}
+        {openReviewStart && (
+          <Button size="sm" variant="secondary" leadingIcon={<Glyph name="search" />} title={copy.startReviewHint} onClick={openReviewStart} data-testid="results-start-review">
+            {copy.startReview}
+          </Button>
         )}
       </div>
       <p className="results-note">
-        {scope === 'git' ? copy.gitNotice : copy.reportedNotice}
-        {scope === 'git' && git.at && <> · {copy.refreshedAt(formatClock(new Date(git.at).toISOString(), locale))}</>}
-        {scope === 'git' && git.status?.availability === 'ready' && git.status.branch && <> · {copy.branch(git.status.branch)}</>}
+        {scope === 'base' ? (baseDiff ? copy.baseNotice(baseDiff.baseRef, baseDiff.ahead) : copy.baseLoading) : scope === 'git' ? copy.gitNotice : copy.reportedNotice}
+        {folderScope && folder.at && <> · {copy.refreshedAt(formatClock(new Date(folder.at).toISOString(), locale))}</>}
+        {folderScope && folder.status?.availability === 'ready' && folder.status.branch && <> · {copy.branch(folder.status.branch)}</>}
       </p>
       {scope === 'turn' && selectedTurn && view.turnId && view.turnId !== latestTurn?.turnId && selectedTurn.createdAt && (
         <p className="results-note">{copy.scopeSelectedTurn(formatClock(selectedTurn.createdAt, locale))}</p>
+      )}
+      {walkReview && walkFinding && (
+        <ReviewWalkthrough review={walkReview} findingId={walkFinding.id} outside={walkOutside} onStep={step} onClose={closeWalk}
+          {...(reviewAction ? { onAction: reviewAction } : {})} />
       )}
       {pendingEarlier && (
         <div className="results-banner" role="status">
@@ -265,57 +411,66 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
               : <><span>{copy.earlierPending(transcriptFloor)}</span>{onLoadEarlier && <Button variant="ghost" size="sm" onClick={onLoadEarlier}>{copy.loadEarlier}</Button>}</>}
         </div>
       )}
-      {scope === 'git' && git.phase === 'loading' && !git.diff && <LoadingState label={copy.gitLoading} />}
-      {scope === 'git' && git.phase === 'error' && <Status variant="danger">{copy.gitUnavailable}</Status>}
-      {scope === 'git' && git.diff && !git.diff.ok && (
-        <Status variant={git.diff.error === 'not-a-repository' ? 'neutral' : 'danger'}>{git.diff.error === 'not-a-repository' ? copy.gitNotRepository : copy.gitUnavailable}</Status>
+      {folderScope && folder.phase === 'loading' && !folder.diff && <LoadingState label={scope === 'base' ? copy.baseLoading : copy.gitLoading} />}
+      {folderScope && folder.phase === 'error' && <Status variant="danger">{copy.gitUnavailable}</Status>}
+      {folderScope && folder.diff && !folder.diff.ok && (
+        <Status variant={folder.diff.error === 'not-a-repository' || folder.diff.error === 'no-base' ? 'neutral' : 'danger'}>
+          {folder.diff.error === 'not-a-repository' ? copy.gitNotRepository : folder.diff.error === 'no-base' && baseRef ? copy.baseMissing(baseRef) : copy.gitUnavailable}
+        </Status>
       )}
-      {scope === 'git' && git.diff?.ok && git.diff.truncated && <Status variant="warning">{copy.gitTruncated}</Status>}
-      {scope === 'git' && git.diff?.ok && git.diff.omissions.length > 0 && <Status variant="neutral">{copy.gitOmitted(git.diff.omissions.length)}</Status>}
+      {folderScope && folder.diff?.ok && folder.diff.truncated && <Status variant="warning">{copy.gitTruncated}</Status>}
+      {folderScope && folder.diff?.ok && folder.diff.omissions.length > 0 && <Status variant="neutral">{copy.gitOmitted(folder.diff.omissions.length)}</Status>}
 
       {entries.length === 0 ? (
-        scope === 'git'
-          ? (git.diff?.ok && <EmptyState title={copy.gitClean} />)
-          : derived.changes.length === 0
-            ? <EmptyState title={copy.noChanges} description={copy.noChangesHint} />
-            : <p className="results-note">{copy.noTurnChanges}</p>
+        <>
+          {outsideNote}
+          {folderScope
+            ? (folder.diff?.ok && <EmptyState title={copy.gitClean} />)
+            : derived.changes.length === 0
+              ? <EmptyState title={copy.noChanges} description={copy.noChangesHint} />
+              : <p className="results-note">{copy.noTurnChanges}</p>}
+        </>
       ) : (
         <>
           <ul className="results-file-list" aria-label={copy.fileList}>
             {entries.map((entry) => {
               const Icon = KIND_ICON[entry.kind];
               const done = entry.records.every((record) => reviewed.has(record.id));
+              const flagged = walkFindings.filter((finding) => isFindingFile(entry.path, finding.file, workspaceRoot)).length;
               return (
                 <li key={entry.key}>
                   <button type="button" className="results-file" aria-pressed={selected?.key === entry.key} onClick={() => choose(entry.path)} data-kind={entry.kind}>
                     <Icon className="results-file__icon" aria-hidden="true" />
                     <PathLabel path={display(entry.path)} />
                     {entry.kind !== 'update' && <span className="results-file__kind">{entry.kind === 'add' ? copy.created : entry.kind === 'delete' ? copy.deleted : copy.renamed}</span>}
+                    {flagged > 0 && <span className="results-file__findings">{copy.walk.fileProblems(flagged)}</span>}
                     <span className="results-file__counts">
                       {entry.added > 0 && <span className="results-added">+{entry.added}</span>}
                       {entry.removed > 0 && <span className="results-removed">−{entry.removed}</span>}
                     </span>
-                    {done && scope !== 'git' && <span className="results-file__reviewed">{copy.reviewed}</span>}
+                    {done && !folderScope && <span className="results-file__reviewed">{copy.reviewed}</span>}
                   </button>
                 </li>
               );
             })}
           </ul>
+          {walkFinding && !walkFile && outsideNote}
           {selected && (
             <section className="results-diff" aria-label={display(selected.path)}>
               <header className="results-diff__header">
                 <PathLabel path={display(selected.path)} className="results-diff__path" />
                 <span className="results-diff__actions">
                   {onViewFile && selected.kind !== 'delete' && (
-                    <Button variant="ghost" size="sm" onClick={() => onViewFile(scope === 'git' ? resolveWorkspacePath(selected.path, workspaceRoot) ?? selected.path : selected.path)}>{copy.viewFile}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => onViewFile(folderScope ? resolveWorkspacePath(selected.path, workspaceRoot) ?? selected.path : selected.path)}>{copy.viewFile}</Button>
                   )}
-                  {scope !== 'git' && (
+                  {!folderScope && (
                     <Button variant="ghost" size="sm" onClick={() => toggleReviewed(selected)}>
                       {selected.records.every((record) => reviewed.has(record.id)) ? copy.markUnread : copy.markReviewed}
                     </Button>
                   )}
                 </span>
               </header>
+              {walkFile === selected && outsideNote}
               <p className="results-note">{selected.records.some((record) => record.change.coverage === 'fragment') ? copy.fragmentNote : copy.patchNote}</p>
               {selected.records.map((record, index) => {
                 const commented = new Set<number>();
@@ -323,6 +478,8 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
                   if (comment.recordId !== record.id || comment.start === undefined || comment.end === undefined) continue;
                   for (let line = comment.start; line <= comment.end; line += 1) commented.add(line);
                 }
+                const annotations = walkFile === selected ? annotationsFor(record.id) : undefined;
+                const focusIndex = walkPlacement.current?.recordId === record.id && walkFile === selected ? walkPlacement.current.index : undefined;
                 return (
                   <div key={record.id} className="results-diff__record">
                     {selected.records.length > 1 && (
@@ -336,6 +493,8 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
                       onSelect={(range) => { setSelection(range ? { recordId: record.id, range } : undefined); if (!range) setComposing(false); }}
                       onComment={() => setComposing(true)}
                       labels={lineLabels}
+                      {...(annotations ? { annotations } : {})}
+                      {...(focusIndex !== undefined ? { focusIndex } : {})}
                     />
                     {selection?.recordId === record.id && (
                       <div className="results-comment" role="group" aria-label={copy.commentLabel(`${display(selected.path)}:${lineRangeLabel(selectedLines(record.change, selection.range))}`)}>
@@ -371,7 +530,7 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
         </>
       )}
 
-      {(view.comments.length > 0 || inserted) && (
+      {(view.comments.length > 0 || inserted || sendState.phase === 'sent') && (
         <section className="results-tray" aria-label={copy.comments(view.comments.length)}>
           {view.comments.length > 0 && (
             <>
@@ -386,16 +545,30 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
                 ))}
               </ul>
               <div className="results-tray__footer">
-                <Button variant="primary" size="sm" disabled={!insertIntoDraft || tooLong} onClick={insert} title={copy.insertDraftHint}>
+                {sendNow && (
+                  <Button variant="primary" size="sm" disabled={tooLong || sendState.phase === 'sending'} loading={sendState.phase === 'sending'} loadingLabel={copy.sending}
+                    onClick={() => void send()} title={copy.sendHint} data-testid="results-send-comments">
+                    {turnActive ? copy.sendQueued : copy.send}
+                  </Button>
+                )}
+                <Button variant={sendNow ? 'secondary' : 'primary'} size="sm" disabled={!insertIntoDraft || tooLong} onClick={insert} title={copy.insertDraftHint}>
                   {copy.insertDraft} · {copy.comments(view.comments.length)}
                 </Button>
                 <span className="results-note">
-                  {tooLong ? copy.tooLong : !insertIntoDraft ? (draftUnavailable === 'history' ? copy.draftHistory : copy.draftDisabled) : copy.insertDraftHint}
+                  {tooLong ? copy.tooLong : !insertIntoDraft && !sendNow ? (draftUnavailable === 'history' ? copy.draftHistory : copy.draftDisabled) : sendNow ? copy.sendHint : copy.insertDraftHint}
                 </span>
               </div>
+              {sendState.phase === 'error' && (
+                <p className="results-tray__error" role="alert" data-testid="results-send-error"><Glyph name="warn" /><span>{sendState.message ? copy.sendFailed(sendState.message) : copy.sendFailedPlain}</span></p>
+              )}
             </>
           )}
-          {inserted && view.comments.length === 0 && <p className="results-note" role="status">{copy.insertedDraft}</p>}
+          {sendState.phase === 'sent' && view.comments.length === 0 && (
+            <p className="results-note" role="status" data-testid="results-send-status">
+              {sendState.queued ? (sendState.position !== undefined ? copy.queuedAt(sendState.position) : copy.queuedPlain) : copy.sent}
+            </p>
+          )}
+          {inserted && view.comments.length === 0 && sendState.phase !== 'sent' && <p className="results-note" role="status">{copy.insertedDraft}</p>}
         </section>
       )}
     </div>

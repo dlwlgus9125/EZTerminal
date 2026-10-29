@@ -24,6 +24,8 @@ function estimate(row: ChatRow | undefined): number {
     case 'turn-status': return 24;
     case 'plan': return 240;
     case 'changes': return 96;
+    // Header, overall line and footer, plus one folded line per finding and a path line per file.
+    case 'review': return 112 + Math.min(row.review.findings.length, 16) * 52 + new Set(row.review.findings.map((finding) => finding.file)).size * 24;
     default: return 36;
   }
 }

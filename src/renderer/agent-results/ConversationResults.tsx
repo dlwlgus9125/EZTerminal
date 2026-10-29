@@ -79,14 +79,19 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
   const cancelEarlier = useCallback(() => { backfillAbort.current?.abort(); setBackfill(IDLE); }, []);
 
   // Navigation from the conversation: a section, and a turn or file in it.
-  const [changesTarget, setChangesTarget] = useState<{ sequence: number; turnId?: string; path?: string }>();
+  const [changesTarget, setChangesTarget] = useState<{ sequence: number; turnId?: string; path?: string; review?: ResultsNavigation['review'] }>();
   const [filesTarget, setFilesTarget] = useState<{ sequence: number; path?: string; line?: number }>();
   const handled = useRef(0);
   useEffect(() => {
     if (!navigation || navigation.sequence === handled.current) return;
     handled.current = navigation.sequence;
     setSection(navigation.section);
-    if (navigation.section === 'changes') setChangesTarget({ sequence: navigation.sequence, ...(navigation.turnId ? { turnId: navigation.turnId } : {}), ...(navigation.path ? { path: navigation.path } : {}) });
+    if (navigation.section === 'changes') {
+      setChangesTarget({
+        sequence: navigation.sequence, ...(navigation.turnId ? { turnId: navigation.turnId } : {}), ...(navigation.path ? { path: navigation.path } : {}),
+        ...(navigation.review ? { review: navigation.review } : {}),
+      });
+    }
     if (navigation.section === 'files' && navigation.path) setFilesTarget({ sequence: navigation.sequence, path: navigation.path, ...(navigation.line ? { line: navigation.line } : {}) });
   }, [navigation, setSection]);
   const localSequence = useRef(1_000_000_000);
@@ -95,9 +100,9 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
     setChangesTarget({ sequence: localSequence.current, path });
     setSection('changes');
   }, [setSection]);
-  const showFile = useCallback((path: string) => {
+  const showFile = useCallback((path: string, line?: number) => {
     localSequence.current += 1;
-    setFilesTarget({ sequence: localSequence.current, path });
+    setFilesTarget({ sequence: localSequence.current, path, ...(line ? { line } : {}) });
     setSection('files');
   }, [setSection]);
 
@@ -167,6 +172,10 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               turnActive={source.turnActive ?? false}
               folderReadable={folder.kind === 'live'}
               onViewFile={showFile}
+              {...(source.baseRef ? { baseRef: source.baseRef } : {})}
+              {...(source.sendNow ? { sendNow: source.sendNow } : {})}
+              {...(source.reviewAction ? { reviewAction: source.reviewAction } : {})}
+              {...(source.openReviewStart ? { openReviewStart: source.openReviewStart } : {})}
             />
           )}
         </TabPanel>

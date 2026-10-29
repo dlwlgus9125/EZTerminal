@@ -175,6 +175,9 @@ describe('reviewSummaryText', () => {
     expect(reviewSummaryText({ reviewerLabel: 'Claude', state: 'complete', findings })).toBe('Review (Claude): 2 problems — src/format.ts:2, src/discount.ts:4');
     expect(reviewSummaryText({ reviewerLabel: 'Codex · other AI', state: 'complete', findings: [] })).toBe('Review (Codex · other AI): no problems found.');
     expect(reviewSummaryText({ reviewerLabel: 'Claude', state: 'failed', reason: 'timed out' })).toBe('Review (Claude) failed: timed out');
+    // A reason code reads as English for clients that only show the row's text.
+    expect(reviewSummaryText({ reviewerLabel: 'Claude', state: 'failed', reason: 'invalid-output' })).toBe('Review (Claude) failed: the reviewer did not answer in the findings format');
+    expect(reviewSummaryText({ reviewerLabel: 'Codex', state: 'unsupported', reason: 'provider-too-old' })).toBe('Review (Codex) is not available: the installed version cannot run a read-only review');
   });
 });
 

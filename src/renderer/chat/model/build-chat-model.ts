@@ -2,9 +2,12 @@ import type { ApprovalRequest } from '../../../shared/approval-request';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
-import { parseTranscriptPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
+import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
-import type { ChatActivity, ChatModel, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile, PendingInteraction, TodoChange } from './types';
+import type {
+  ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
+  PendingInteraction, TodoChange,
+} from './types';
 
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
@@ -251,6 +254,90 @@ function subagentLinks(items: readonly DaemonTranscriptItem[]): Map<string, Chat
   return links;
 }
 
+/** What happened to findings after their review: the latest event per finding decides its state. */
+type ReviewEvent =
+  | { readonly sequence: number; readonly findingIds: readonly string[]; readonly kind: 'status'; readonly state: 'dismissed' | 'open' }
+  | { readonly sequence: number; readonly findingIds: readonly string[]; readonly kind: 'fix'; readonly turnId?: string };
+
+/** A fix is the turn that carries it: asked for, being worked on, finished, or stopped. */
+function fixStatus(turn: DaemonTurn | undefined): ChatReviewFindingStatus {
+  switch (turn?.state) {
+    case 'working':
+    case 'blocked':
+      return 'fixing';
+    case 'completed':
+      return 'fixed';
+    case 'failed':
+    case 'interrupted':
+      return 'fix-stopped';
+    default:
+      // Queued, being delivered, delivery unknown, or a turn this view has no record of: it was asked for.
+      return 'requested';
+  }
+}
+
+/** A change record's path (often absolute) names the finding's workspace-relative file. */
+function sameReviewedFile(changePath: string, findingFile: string): boolean {
+  const normalize = (value: string): string => value.replace(/<WORKSPACE>[\\/]+/gu, '').replace(/[\\/]+/gu, '/').toLowerCase();
+  const change = normalize(changePath);
+  const file = normalize(findingFile);
+  return change === file || change.endsWith(`/${file}`);
+}
+
+function reviewOf(payload: ReviewPayload, item: CoalescedItem, startedAt: string | undefined): ChatReview {
+  return {
+    reviewId: payload.reviewId,
+    reviewer: payload.reviewer,
+    target: payload.target,
+    state: payload.state,
+    ...(payload.reason ? { reason: payload.reason } : {}),
+    ...(payload.focus ? { focus: payload.focus } : {}),
+    findings: (payload.findings ?? []).map((finding): ChatReviewFinding => ({ ...finding, status: 'open' })),
+    ...(payload.overall ? { overall: payload.overall } : {}),
+    ...(payload.truncated ? { truncated: true } : {}),
+    ...(payload.dropped ? { dropped: payload.dropped } : {}),
+    ...(payload.rawText ? { rawText: payload.rawText } : {}),
+    ...(payload.wroteFiles ? { wroteFiles: true } : {}),
+    ...(payload.durationMs !== undefined ? { durationMs: payload.durationMs } : {}),
+    text: item.text,
+    ...(startedAt ? { startedAt } : {}),
+    updatedAt: item.createdAt,
+  };
+}
+
+/**
+ * Each finding's state from the events after its review: dismissed or reopened by the person, or
+ * sent to be fixed (that turn's state). A finding nobody is fixing whose file changed after the
+ * review finished is marked stale.
+ */
+function settleFindings(
+  review: ChatReview,
+  reviewSequence: number,
+  events: readonly ReviewEvent[],
+  changes: readonly { readonly sequence: number; readonly path: string }[],
+  turnById: ReadonlyMap<string, DaemonTurn>,
+): ChatReview {
+  if (!review.findings.length) return review;
+  const findings = review.findings.map((finding): ChatReviewFinding => {
+    let latest: ReviewEvent | undefined;
+    for (const event of events) {
+      if (event.findingIds.includes(finding.id) && (!latest || event.sequence > latest.sequence)) latest = event;
+    }
+    const status: ChatReviewFindingStatus = !latest ? 'open'
+      : latest.kind === 'status' ? latest.state
+        : fixStatus(latest.turnId ? turnById.get(latest.turnId) : undefined);
+    const settled = status === 'open' || status === 'dismissed' || status === 'fix-stopped';
+    const stale = settled && changes.some((change) => change.sequence > reviewSequence && sameReviewedFile(change.path, finding.file));
+    return {
+      ...finding,
+      status,
+      ...(stale ? { stale: true } : {}),
+      ...(latest?.kind === 'fix' && latest.turnId ? { fixTurnId: latest.turnId } : {}),
+    };
+  });
+  return { ...review, findings };
+}
+
 /** Build the presentation model for one conversation. */
 export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
@@ -275,6 +362,17 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     return payload?.type === 'tool' ? [payload.callId] : [];
   }));
   const legacyTasks = hasTodoPayloads ? undefined : new LegacyTaskList();
+  // Review loop: one card per review id at its first row (index), updated in place; the
+  // sequence of its latest row dates the findings for the stale check.
+  const reviewRows = new Map<string, { readonly index: number; readonly sequence: number }>();
+  const reviewStarted = new Map<string, string>();
+  const reviewEvents = new Map<string, ReviewEvent[]>();
+  const changeRecords: { readonly sequence: number; readonly path: string }[] = [];
+  const addReviewEvent = (reviewId: string, event: ReviewEvent): void => {
+    const list = reviewEvents.get(reviewId) ?? [];
+    list.push(event);
+    reviewEvents.set(reviewId, list);
+  };
 
   const turnActive = (turnId: string | undefined): boolean => {
     if (!turnId) return false;
@@ -316,6 +414,9 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         if (turnId && userTextByTurn.get(key) === text) break;
         if (turnId) userTextByTurn.set(key, text);
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+        if (payload?.type === 'review-fix') {
+          addReviewEvent(payload.reviewId, { sequence: item.sequence, findingIds: payload.findingIds, kind: 'fix', ...(turnId ? { turnId } : {}) });
+        }
         push({
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
@@ -323,6 +424,13 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           ...(payload?.type === 'subagent' && payload.role === 'result' && payload.childSessionId ? {
             origin: 'subagent-report' as const,
             from: { sessionId: payload.childSessionId, ...(payload.title ? { title: payload.title } : {}), ...(payload.state ? { state: payload.state } : {}) },
+          } : {}),
+          ...(payload?.type === 'review-fix' ? {
+            origin: 'review-fix' as const, review: { reviewId: payload.reviewId, findingIds: payload.findingIds },
+          } : {}),
+          ...(payload?.type === 'review-request' ? {
+            origin: 'review-request' as const,
+            review: { reviewId: payload.reviewId, target: payload.target, ...(payload.focus ? { focus: payload.focus } : {}) },
           } : {}),
           messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id, sensitive: item.isSensitive,
         });
@@ -434,6 +542,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
             break;
           }
         }
+        for (const change of tool.changes ?? []) changeRecords.push({ sequence: item.sequence, path: change.path });
         if (tool.changes?.length && turnId) {
           const entry = turnFiles.get(turnId) ?? { files: [], changes: [] };
           entry.changes.push(...tool.changes);
@@ -446,6 +555,28 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
         if (payload?.type === 'todo') {
           recordTodo(item, [...payload.items]);
+          break;
+        }
+        // A review keeps the place of its first row; each later row replaces what the card shows.
+        // Replaced in place, not pushed: the card does not end the run of tool lines around it.
+        if (payload?.type === 'review') {
+          const startedAt = reviewStarted.get(payload.reviewId) ?? (payload.state === 'running' ? item.createdAt : undefined);
+          if (startedAt) reviewStarted.set(payload.reviewId, startedAt);
+          const review = reviewOf(payload, item, startedAt);
+          const known = reviewRows.get(payload.reviewId);
+          const current = known ? rows[known.index] : undefined;
+          if (known && current?.kind === 'review') {
+            rows[known.index] = { ...current, review };
+            reviewRows.set(payload.reviewId, { index: known.index, sequence: item.sequence });
+          } else {
+            push({ kind: 'review', id: `review:${payload.reviewId}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, review });
+            reviewRows.set(payload.reviewId, { index: rows.length - 1, sequence: item.sequence });
+          }
+          break;
+        }
+        // Dismissed or reopened on a card: it changes the card, nothing else shows.
+        if (payload?.type === 'review-status') {
+          addReviewEvent(payload.reviewId, { sequence: item.sequence, findingIds: payload.findingIds, kind: 'status', state: payload.state });
           break;
         }
         // A subagent's start is shown on the call that started it.
@@ -482,6 +613,12 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     }
   }
 
+  for (const [reviewId, { index, sequence }] of reviewRows) {
+    const row = rows[index];
+    if (row?.kind !== 'review') continue;
+    rows[index] = { ...row, review: settleFindings(row.review, sequence, reviewEvents.get(reviewId) ?? [], changeRecords, turnById) };
+  }
+
   // Mark tools of finished turns that never got a result.
   for (const tool of toolsByCallId.values()) {
     if (tool.status !== 'running') continue;
@@ -511,7 +648,10 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     }
     if (row.kind === 'turn-status' && ACTIVE_TURN_STATES.has(row.state)) liveStatus.set(row.turnId, row);
     else finalRows.push(row);
-    const next = rows[index + 1];
+    // A review card stays where it was asked for, also inside a running turn; that turn's rollups still close the turn.
+    let after = index + 1;
+    while (rows[after]?.kind === 'review' && !rows[after]!.turnId) after += 1;
+    const next = rows[after];
     if (row.turnId && next?.turnId !== row.turnId) {
       const entry = turnFiles.get(row.turnId);
       if (entry) {

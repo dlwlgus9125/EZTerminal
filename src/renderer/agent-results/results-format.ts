@@ -1,4 +1,5 @@
-import type { ReviewLine } from '../../shared/conversation-changes';
+import { reviewLines, type RecordedFileChange, type ReviewLine } from '../../shared/conversation-changes';
+import { relocateExcerpt, type ReviewFinding } from '../../shared/review-findings';
 import type { ChatLocale } from '../chat/model/summary';
 
 /** Pure helpers shared by the Results tab sections and their tests. */
@@ -123,4 +124,38 @@ export function fileLanguage(path: string): string | undefined {
   const name = fileName(path).toLowerCase();
   if (name === 'dockerfile') return 'dockerfile';
   return extension;
+}
+
+/** A changed file's path (repository-relative from git, often absolute from the AI) names the finding's file. */
+export function isFindingFile(path: string, findingFile: string, workspaceRoot?: string): boolean {
+  return samePath(path, findingFile) || samePath(path, resolveWorkspacePath(findingFile, workspaceRoot) ?? findingFile);
+}
+
+/**
+ * Where a finding's line is in a patch: the index of the first new-side line it covers. When the
+ * review kept the anchor lines and they are elsewhere in the patch now, the finding follows them
+ * (`moved`, the new line). Undefined when the line is outside the patch.
+ */
+export function locateFinding(
+  change: RecordedFileChange,
+  finding: Pick<ReviewFinding, 'line' | 'endLine' | 'excerpt'>,
+): { readonly index: number; readonly moved?: number } | undefined {
+  if (finding.line === undefined) return undefined;
+  const lines = reviewLines(change);
+  let first = finding.line;
+  let moved: number | undefined;
+  if (finding.excerpt && change.coverage === 'patch') {
+    const current: string[] = [];
+    for (const line of lines) {
+      if (line.after !== undefined && (line.kind === 'add' || line.kind === 'context')) current[line.after - 1] = line.text.slice(1);
+    }
+    const where = relocateExcerpt(finding.excerpt, current);
+    if (where.state === 'moved') {
+      moved = finding.line + (where.line - finding.excerpt.startLine);
+      first = moved;
+    }
+  }
+  const last = finding.endLine !== undefined && finding.endLine > finding.line ? first + (finding.endLine - finding.line) : first;
+  const index = lines.findIndex((line) => (line.kind === 'add' || line.kind === 'context') && line.after !== undefined && line.after >= first && line.after <= last);
+  return index < 0 ? undefined : { index, ...(moved !== undefined && moved !== finding.line ? { moved } : {}) };
 }

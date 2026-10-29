@@ -14,6 +14,19 @@ export interface ChatResultsTarget {
   readonly line?: number;
 }
 
+export type ChatReviewActionKind =
+  | 'fix' | 'fix-all' | 'dismiss' | 'reopen' | 'walkthrough' | 'cancel' | 'retry' | 'open-reviewer' | 'review-with-other';
+
+/**
+ * Something the person did on an AI review card. Fixes always go to this conversation as an
+ * ordinary turn; `walkthrough` opens the changes at a finding (`findingIds[0]`, else the first).
+ */
+export interface ChatReviewAction {
+  readonly kind: ChatReviewActionKind;
+  readonly reviewId: string;
+  readonly findingIds?: readonly string[];
+}
+
 export interface ChatContextValue {
   readonly skin: ChatSkin;
   readonly locale: ChatLocale;
@@ -30,6 +43,8 @@ export interface ChatContextValue {
   readonly onOpenResults?: (section: 'changes' | 'files' | 'summary', target?: ChatResultsTarget) => void;
   /** Which file references in messages are links (they open in the Results tab). */
   readonly resolveFileLink?: ResolveFileLink;
+  /** Review card actions. Absent (history, a host without reviews): the card is read-only. */
+  readonly onReviewAction?: (action: ChatReviewAction) => void;
   /** Disclosure state that survives virtualized unmounts and skin switches. */
   readonly isExpanded: (key: string, fallback: boolean) => boolean;
   readonly setExpanded: (key: string, open: boolean) => void;
@@ -45,6 +60,7 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({
   children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
+  onReviewAction,
 }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
@@ -65,10 +81,10 @@ export function ChatProvider({
   // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
   const context = useMemo<ChatContextValue>(() => ({
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    isExpanded, setExpanded,
+    onReviewAction, isExpanded, setExpanded,
   }), [
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    isExpanded, setExpanded,
+    onReviewAction, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }
