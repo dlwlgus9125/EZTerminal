@@ -277,6 +277,9 @@ describe('review.start: same AI in a read-only fork', () => {
         excerpt: { startLine: 2, lines: ['  const dollars = cents / 10;'] },
       });
       expect(done).toMatchObject({ dropped: 1, overall: 'One price bug.' });
+      // A finding was left out, so the reviewer's own answer stays beside the card (원문 보기).
+      expect(done.rawText).toBe(JSON.stringify(ANSWER));
+      expect(done.clipped).toBeUndefined();
       expect(done.wroteFiles).toBeUndefined();
       const row = h.rows('chat').filter((item) => parseTranscriptPayload(item.payload)?.type === 'review').at(-1)!;
       expect(row).toMatchObject({ kind: 'notice', text: 'Review (Codex): 1 problem — src/format.ts:2' });
@@ -284,6 +287,30 @@ describe('review.start: same AI in a read-only fork', () => {
       expect(h.codex.forks).toHaveLength(1);
       expect(h.router.getSnapshot().turns.filter((turn) => turn.sessionId === 'chat')).toHaveLength(1);
       expect(h.saved()).toEqual({});
+    } finally {
+      await dispose(h);
+    }
+  });
+
+  it('keeps the reviewer’s answer beside a complete card only when text was cut', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('codex', {});
+      const long = { findings: [{ ...ANSWER.findings[0], body: 'x'.repeat(700) }], overall: 'One price bug.' };
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-1', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } });
+      await until(() => h.codex.forks.length === 1, 'the first fork');
+      h.codex.forks[0]!.resolve({ text: JSON.stringify(long) });
+      await until(() => h.card('review-1')?.state === 'complete', 'the first card');
+      expect(h.card('review-1')).toMatchObject({ clipped: true, rawText: JSON.stringify(long) });
+      expect(h.card('review-1')!.findings![0]!.body.endsWith('…')).toBe(true);
+
+      const clean = { findings: [ANSWER.findings[0]], overall: 'One price bug.' };
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-2', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } });
+      await until(() => h.codex.forks.length === 2, 'the second fork');
+      h.codex.forks[1]!.resolve({ text: JSON.stringify(clean) });
+      await until(() => h.card('review-2')?.state === 'complete', 'the second card');
+      expect(h.card('review-2')!.rawText).toBeUndefined();
+      expect(h.card('review-2')!.clipped).toBeUndefined();
     } finally {
       await dispose(h);
     }

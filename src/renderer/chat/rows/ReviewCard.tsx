@@ -60,6 +60,7 @@ function notes(review: ChatReview, copy: ChatCopy): ActionCardNote[] {
     ...(review.wroteFiles ? [{ id: 'wrote', text: copy.aiReview.note.wroteFiles, tone: 'danger' as const }] : []),
     ...(review.truncated ? [{ id: 'truncated', text: copy.aiReview.note.truncated(REVIEW_LIMITS.findings) }] : []),
     ...(review.dropped ? [{ id: 'dropped', text: copy.aiReview.note.dropped(review.dropped) }] : []),
+    ...(review.clipped ? [{ id: 'clipped', text: copy.aiReview.note.clipped }] : []),
   ];
 }
 

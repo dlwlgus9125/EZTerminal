@@ -108,6 +108,8 @@ export interface ChatReview {
   readonly truncated?: boolean;
   /** Findings left out because their path was outside the working folder or missing. */
   readonly dropped?: number;
+  /** Some finding text was cut to the limits; the raw answer is kept (원문 보기). */
+  readonly clipped?: boolean;
   /** The reviewer's own answer when it could not be read as findings. */
   readonly rawText?: string;
   /** Files changed while the read-only reviewer ran. */

@@ -301,6 +301,7 @@ function reviewOf(payload: ReviewPayload, item: CoalescedItem, startedAt: string
     ...(payload.overall ? { overall: payload.overall } : {}),
     ...(payload.truncated ? { truncated: true } : {}),
     ...(payload.dropped ? { dropped: payload.dropped } : {}),
+    ...(payload.clipped ? { clipped: true } : {}),
     ...(payload.rawText ? { rawText: payload.rawText } : {}),
     ...(payload.wroteFiles ? { wroteFiles: true } : {}),
     ...(payload.durationMs !== undefined ? { durationMs: payload.durationMs } : {}),

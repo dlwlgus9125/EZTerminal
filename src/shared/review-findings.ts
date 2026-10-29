@@ -3,11 +3,13 @@
  *
  * A review reads the change in a scope the host chose (uncommitted changes, or the
  * branch since it left its base), from a read-only reviewer: a fork of the
- * conversation (same AI) or a read-only managed child (other AI). Both AIs answer
- * in REVIEW_FINDINGS_JSON_SCHEMA through their own schema-enforcing channel
- * (Claude `outputFormat`, Codex `outputSchema`); the host normalizes the answer
- * here before anything is stored or shown. Real-provider evidence:
- * docs/ux/overhaul/approvals.md (2026-10-29 리뷰 루프).
+ * conversation (same AI) or a read-only managed child (other AI). Answers follow
+ * REVIEW_FINDINGS_JSON_SCHEMA: a same-AI fork is asked for it as JSON text, which
+ * keeps the conversation's prompt cache, and is retried once with the schema
+ * enforced (Claude `outputFormat`, Codex `outputSchema`) if the text does not
+ * read; other-AI reviewers always answer schema-enforced. The host normalizes the
+ * answer here before anything is stored or shown. Real-provider evidence:
+ * docs/ux/overhaul/approvals.md (2026-10-29 리뷰 루프, 2026-10-30 바뀐 결정).
  */
 
 export const REVIEW_LOOP_CAPABILITY = 'review-loop-v1';
@@ -63,7 +65,7 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
  */
 export const REVIEW_FAILURE_REASONS = [
   'invalid-output', 'timeout', 'provider-error', 'provider-unavailable', 'provider-too-old', 'not-git', 'no-changes',
-  'conversation-closed', 'settings-changed', 'app-closed',
+  'conversation-closed', 'app-closed',
 ] as const;
 export type ReviewFailureReason = (typeof REVIEW_FAILURE_REASONS)[number];
 
@@ -81,7 +83,6 @@ const FAILURE_TEXT: Readonly<Record<ReviewFailureReason, string>> = {
   'not-git': 'the working folder is not a Git repository',
   'no-changes': 'there are no changes to review',
   'conversation-closed': 'the conversation was closed',
-  'settings-changed': 'the conversation settings changed',
   'app-closed': 'EZTerminal closed',
 };
 
@@ -214,6 +215,8 @@ export type NormalizedReview =
     readonly truncated: boolean;
     /** Findings left out because their path was outside the working folder or missing. */
     readonly dropped: number;
+    /** Some text was cut to REVIEW_LIMITS; the reviewer's own answer is worth keeping beside the card. */
+    readonly clipped: boolean;
   }
   | { readonly ok: false; readonly reason: 'not-an-object' | 'no-findings-array' };
 
@@ -228,6 +231,8 @@ export function fromStructuredJson(value: unknown, context: { readonly reviewId:
   const findings: ReviewFinding[] = [];
   const seen = new Set<string>();
   let dropped = 0;
+  let clipped = false;
+  const longer = (value: unknown, limit: number): boolean => typeof value === 'string' && value.replace(/\r\n?/gu, '\n').trim().length > limit;
   for (const entry of record.findings.slice(0, REVIEW_LIMITS.findings)) {
     const raw = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
     const file = typeof raw.file === 'string' ? normalizeFindingPath(raw.file, context.workspaceRoot) : undefined;
@@ -241,6 +246,8 @@ export function fromStructuredJson(value: unknown, context: { readonly reviewId:
     seen.add(id);
     const scenario = clip(raw.scenario, REVIEW_LIMITS.scenario);
     const category = clip(raw.category, REVIEW_LIMITS.category);
+    clipped ||= longer(raw.title, REVIEW_LIMITS.title) || longer(raw.body, REVIEW_LIMITS.body)
+      || longer(raw.scenario, REVIEW_LIMITS.scenario) || longer(raw.category, REVIEW_LIMITS.category);
     findings.push({
       id, file, title, body: clip(raw.body, REVIEW_LIMITS.body) ?? title,
       ...(line !== undefined ? { line } : {}),
@@ -251,7 +258,8 @@ export function fromStructuredJson(value: unknown, context: { readonly reviewId:
     });
   }
   const overall = clip(record.overall, REVIEW_LIMITS.overall);
-  return { ok: true, findings, ...(overall ? { overall } : {}), truncated: record.findings.length > REVIEW_LIMITS.findings, dropped };
+  clipped ||= longer(record.overall, REVIEW_LIMITS.overall);
+  return { ok: true, findings, ...(overall ? { overall } : {}), truncated: record.findings.length > REVIEW_LIMITS.findings, dropped, clipped };
 }
 
 /** Parses the text a Codex review turn ends with (its final agent message is the JSON). */

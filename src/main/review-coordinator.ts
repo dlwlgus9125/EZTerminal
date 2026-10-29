@@ -96,6 +96,7 @@ export interface ReviewRowInput {
   readonly overall?: string;
   readonly truncated?: boolean;
   readonly dropped?: number;
+  readonly clipped?: boolean;
   readonly rawText?: string;
   readonly wroteFiles?: boolean;
   readonly durationMs?: number;
@@ -119,6 +120,7 @@ export function reviewRowItem(input: ReviewRowInput): DaemonTranscriptItemInput 
     ...(input.overall ? { overall: input.overall.slice(0, REVIEW_LIMITS.overall) } : {}),
     ...(input.truncated ? { truncated: true } : {}),
     ...(input.dropped ? { dropped: input.dropped } : {}),
+    ...(input.clipped ? { clipped: true } : {}),
     ...(input.rawText ? { rawText: input.rawText.slice(0, REVIEW_LIMITS.rawText) } : {}),
     ...(input.wroteFiles ? { wroteFiles: true } : {}),
     ...(input.durationMs !== undefined ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {}),
@@ -613,6 +615,10 @@ export class ReviewCoordinator implements DaemonReviewHost {
           ...(normalized.overall ? { overall: normalized.overall } : {}),
           ...(normalized.truncated ? { truncated: true } : {}),
           ...(normalized.dropped ? { dropped: normalized.dropped } : {}),
+          ...(normalized.clipped ? { clipped: true } : {}),
+          // Anything cut, left out or over the count: keep what the reviewer said beside the card (원문 보기).
+          ...((normalized.clipped || normalized.dropped || normalized.truncated) && rawAnswer(output, text)
+            ? { rawText: rawAnswer(output, text) } : {}),
           ...(wroteFiles ? { wroteFiles } : {}),
         }
       // Never a made-up result: the card says the format was wrong and shows what the reviewer said.
@@ -620,7 +626,7 @@ export class ReviewCoordinator implements DaemonReviewHost {
   }
 
   /** Writes the review's final row, then lets go of everything it holds. */
-  private async end(job: Job, row: Pick<ReviewRowInput, 'state' | 'reason' | 'findings' | 'overall' | 'truncated' | 'dropped' | 'rawText' | 'wroteFiles'>): Promise<void> {
+  private async end(job: Job, row: Pick<ReviewRowInput, 'state' | 'reason' | 'findings' | 'overall' | 'truncated' | 'dropped' | 'clipped' | 'rawText' | 'wroteFiles'>): Promise<void> {
     if (job.phase === 'done' || this.disposed) return;
     const durationMs = job.startedAt !== undefined && row.state !== 'unsupported' ? this.now().getTime() - job.startedAt : undefined;
     await this.write(job, { ...row, ...(durationMs !== undefined ? { durationMs } : {}) }, true);
@@ -758,6 +764,13 @@ export class ReviewCoordinator implements DaemonReviewHost {
   private report(context: string, error: unknown): void {
     this.options.reportError?.(context, error);
   }
+}
+
+/** The reviewer's own answer for 원문 보기: its text as sent, or the enforced output it returned. */
+function rawAnswer(output: unknown, text: string | undefined): string | undefined {
+  const said = text?.trim();
+  if (said) return said;
+  return output === undefined ? undefined : JSON.stringify(output, null, 2);
 }
 
 /** Accepts only the shape this build writes; anything else is dropped rather than trusted. */

@@ -145,6 +145,21 @@ describe('the AI review card', () => {
     expect(chip.querySelector('.chat-review-turn__text')?.textContent).toContain('Fix only the review findings below');
   });
 
+  it('keeps the reviewer’s answer under 원문 보기 when a complete review had text cut', () => {
+    const fixture = mixedSelfReview(NOW);
+    const raw = '{"findings":[{"file":"src/format.ts","body":"a very long explanation"}]}';
+    const items = fixture.items.map((entry) => (entry.payload?.type === 'review' ? { ...entry, payload: { ...entry.payload, clipped: true, rawText: raw } } : entry));
+    render(buildChatModel({ items, turns: fixture.turns }).rows);
+    const card = container.querySelector<HTMLElement>(`[data-testid="chat-review-card"]`)!;
+    expect(card.textContent).toContain('일부 설명은 길어서 잘렸습니다. 검토자의 원래 답은 원문 보기에서 볼 수 있습니다.');
+    act(() => button('원문 보기').click());
+    expect(card.querySelector('.chat-review-raw')?.textContent).toBe(raw);
+    // A review with nothing cut shows neither.
+    render(rows(mixedSelfReview(NOW)));
+    expect(container.textContent).not.toContain('일부 설명은 길어서 잘렸습니다');
+    expect(container.querySelector('.chat-review-raw-block')).toBeNull();
+  });
+
   it('says why a review stopped and how to go on', () => {
     const onReviewAction = vi.fn();
     render(rows(failedReview()), { onReviewAction });

@@ -151,6 +151,8 @@ const ReviewPayloadSchema = z.object({
   overall: z.string().max(REVIEW_LIMITS.overall).optional(),
   truncated: z.boolean().optional(),
   dropped: z.number().int().nonnegative().optional(),
+  /** Some finding text was cut to the limits; `rawText` then holds the reviewer's own answer. */
+  clipped: z.boolean().optional(),
   rawText: z.string().max(REVIEW_LIMITS.rawText).optional(),
   wroteFiles: z.boolean().optional(),
   durationMs: z.number().int().nonnegative().optional(),

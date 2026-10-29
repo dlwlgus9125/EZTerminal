@@ -67,7 +67,7 @@ describe('fromStructuredJson', () => {
     ]);
     expect(result.findings[0]).toMatchObject({ endLine: 2, category: 'correctness', scenario: expect.stringContaining('$12.34') });
     expect(result.overall).toBe('Two money bugs in the uncommitted changes.');
-    expect(result).toMatchObject({ truncated: false, dropped: 0 });
+    expect(result).toMatchObject({ truncated: false, dropped: 0, clipped: false });
   });
 
   it('normalizes a Codex final message with absolute paths and null fields', () => {
@@ -95,6 +95,7 @@ describe('fromStructuredJson', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.findings).toHaveLength(REVIEW_LIMITS.findings);
     expect(result.truncated).toBe(true);
+    expect(result.clipped).toBe(true);
     expect(result.findings[0]!.title.length).toBeLessThanOrEqual(REVIEW_LIMITS.title);
     expect(result.findings[0]!.body.length).toBeLessThanOrEqual(REVIEW_LIMITS.body);
     expect(new Set(result.findings.map((finding) => finding.id)).size).toBe(REVIEW_LIMITS.findings);
