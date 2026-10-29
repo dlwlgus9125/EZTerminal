@@ -135,6 +135,12 @@ both Desktop and Android. An explicit app Quit durably interrupts active turns a
 expires pending approvals, and keeps provider-backed sessions resumable without retrying uncertain
 delivery.
 
+**Review…** in a conversation's menu (or `/review`) has an AI review the conversation's uncommitted
+changes or, in a worktree, its branch since it left the base branch. The conversation's own AI reads
+them in a read-only fork of the conversation; another AI reads them in a read-only conversation of its
+own. Findings arrive as a card by file and line. Fixing sends the chosen ones to the same conversation as
+an ordinary message, and no review runs until a person asks for one.
+
 If the structured Agent database cannot be opened or migrated safely, EZTerminal latches into
 terminal-only safe mode for that app process. Existing local and remote terminals keep working while
 Agent history, events, commands, and creation fail closed with a concrete recovery explanation.

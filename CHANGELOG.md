@@ -38,6 +38,21 @@
   or 반복 — a card in the conversation that a person applies (the phone applies
   view and agent changes only). Off by default, 자문 (`ask_advisor`) lets the AI
   ask the linked review agent a read-only question a few times per conversation.
+- AI review of a conversation's changes: 검토… in the conversation menu
+  (replacing 검토 맡기기… on PCs that support it) and `/review` open a start form.
+  The conversation's own AI reviews in a read-only fork of the conversation that
+  reuses its prompt cache, or another AI reviews in a read-only conversation of
+  its own, archived once it answers. Reviewers only read (Claude with Read, Grep
+  and Glob and no MCP servers; Codex in its read-only sandbox, approvals off,
+  configured MCP servers switched off). The scope is the uncommitted changes or,
+  in a worktree, everything since the branch left its base, uncommitted and new
+  files included. The result is an "AI 검토 결과" card with problems by file and
+  line: fix one or all (sent to the same conversation as a message, queued
+  behind a running turn, each outcome read from the AI's reply), dismiss or
+  reopen, and step through them in Results › Changes or the phone's change
+  sheet. Reviews never start on their own. Results › Changes also compares a
+  worktree with its base branch and sends review comments as a message of their
+  own. Needs Claude Code 2.1.312 or Codex 0.165.0 or later.
 - Remote protocol 18 (Android versionCode 81); older phones get a reduced view.
 
 ### Changed

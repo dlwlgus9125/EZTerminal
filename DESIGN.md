@@ -71,6 +71,8 @@ runtime theme registry만 정의한다.
   icon 또는 구조로도 전달한다. 계기판 언어에서 호박색(warning)은 **사람을 기다리는 것**(승인·질문)이고, 그 판의
   작은 글자는 muted보다 한 단계 밝게 둔다.
 - 램프는 상태를 보여 주지만 혼자 말하지 않는다. 램프 옆에는 항상 같은 상태를 글자로 쓴다.
+- AI 검토 결과 같은 결과 카드는 결과이지 사람을 기다리는 것이 아니다. 호박색과 주의 점을 쓰지 않는다. 심각도는
+  늘 글자와 glyph로 쓰고 색은 따라오기만 한다.
 - Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Dark, Light와 High Contrast에서는
   형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다. Matrix 안에서도
   glow는 focus, 활성 pane, 실행 중 상태처럼 살아 있는 signal에만 쓰고 dialog나 hover 같은
