@@ -14,6 +14,9 @@ import { readProviderCaptureFixture, replayProviderFixture, replayReviewFork } f
  * the conversation adapters with the reviewer context the runtime gives a `review-` conversation.
  */
 const REVIEWER = { readOnlyReviewer: true, managedExecution: true, permissionPreset: 'plan' } as const;
+/** A user's Codex MCP servers as config/read reports them (the recordings ran with servers like these on). */
+const CONFIGURED_MCP = { mcp_servers: { 'user-mcp-server-1': { command: 'node', args: ['server.js'] }, 'user-mcp-server-2': { url: 'https://mcp.example/' } } };
+const MCP_OFF = { 'user-mcp-server-1': { enabled: false }, 'user-mcp-server-2': { enabled: false } };
 
 function answerOf(items: readonly { readonly kind: string; readonly text: string; readonly isDelta: boolean; readonly turnId?: string }[]): string | undefined {
   return items.filter((item) => item.kind === 'assistant-message' && !item.isDelta && item.turnId === 'replay-turn-1').at(-1)?.text;
@@ -53,9 +56,14 @@ describe('recorded reviewer conversations replayed through the adapters', () => 
     const golden = await replayProviderFixture(readProviderCaptureFixture('codex-review-child'), {
       session: REVIEWER,
       onCodexRequest: (method, params) => requests.push({ method, params }),
+      codexConfig: CONFIGURED_MCP,
     });
+    // Its folder's configured MCP servers, read first, start switched off.
+    const order = requests.map((request) => request.method);
+    expect(order.indexOf('config/read')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('config/read')).toBeLessThan(order.indexOf('thread/start'));
     const start = requests.find((request) => request.method === 'thread/start')?.params as Record<string, unknown>;
-    expect(start).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { 'features.multi_agent': false } });
+    expect(start).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { 'features.multi_agent': false, mcp_servers: MCP_OFF } });
     const turn = requests.find((request) => request.method === 'turn/start')?.params as Record<string, unknown>;
     expect(turn.outputSchema).toEqual(REVIEW_FINDINGS_JSON_SCHEMA);
     expect(turn.collaborationMode).toBeUndefined();
@@ -116,12 +124,17 @@ describe('recorded review forks replayed through reviewFork', () => {
     const fixture = readProviderCaptureFixture('codex-review-fork-json');
     expectCurrentPrompt(fixture.meta.prompt);
     const requests: { readonly method: string; readonly params: unknown }[] = [];
-    const { result, events } = await replayReviewFork(fixture, 'json-text', { onCodexRequest: (method, params) => requests.push({ method, params }) });
-    expect(requests.map((request) => request.method)).toEqual(['thread/fork', 'turn/start', 'thread/unsubscribe']);
-    expect(requests[0]!.params).toEqual({
-      threadId: parentOf('codex-review-fork-json'), ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', sandbox: 'read-only', approvalPolicy: 'never',
+    const { result, events } = await replayReviewFork(fixture, 'json-text', {
+      onCodexRequest: (method, params) => requests.push({ method, params }), codexConfig: CONFIGURED_MCP,
     });
-    expect((requests[1]!.params as Record<string, unknown>).outputSchema).toBeUndefined();
+    expect(requests.map((request) => request.method)).toEqual(['config/read', 'thread/fork', 'turn/start', 'thread/unsubscribe']);
+    expect(requests[0]!.params).toEqual({ cwd: expect.any(String), includeLayers: false });
+    // The recording predates switching the servers off; the request the adapter sends now does.
+    expect(requests[1]!.params).toEqual({
+      threadId: parentOf('codex-review-fork-json'), ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', sandbox: 'read-only', approvalPolicy: 'never',
+      config: { mcp_servers: MCP_OFF },
+    });
+    expect((requests[2]!.params as Record<string, unknown>).outputSchema).toBeUndefined();
     expect(events.every((event) => event.kind === 'usage' && event.sessionId === undefined)).toBe(true);
     expect(result.output).toBeUndefined();
     const normalized = readAnswer(result);
@@ -148,11 +161,12 @@ describe('recorded review forks replayed through reviewFork', () => {
   it('Codex enforced: an ephemeral read-only fork answers in its final message; its frames stay out of the app and it is let go', async () => {
     const requests: { readonly method: string; readonly params: unknown }[] = [];
     const { result, events } = await replayReviewFork(readProviderCaptureFixture('codex-review-fork'), 'enforced', { onCodexRequest: (method, params) => requests.push({ method, params }) });
-    expect(requests.map((request) => request.method)).toEqual(['thread/fork', 'turn/start', 'thread/unsubscribe']);
-    expect(requests[0]!.params).toEqual({
+    // No MCP server configured (the replay's default): the fork carries no config.
+    expect(requests.map((request) => request.method)).toEqual(['config/read', 'thread/fork', 'turn/start', 'thread/unsubscribe']);
+    expect(requests[1]!.params).toEqual({
       threadId: parentOf('codex-review-fork'), ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', sandbox: 'read-only', approvalPolicy: 'never',
     });
-    expect((requests[1]!.params as Record<string, unknown>).outputSchema).toEqual(REVIEW_FINDINGS_JSON_SCHEMA);
+    expect((requests[2]!.params as Record<string, unknown>).outputSchema).toEqual(REVIEW_FINDINGS_JSON_SCHEMA);
     // Only the account-wide limits pass through; no row, turn, usage or error of the conversation.
     expect(events.every((event) => event.kind === 'usage' && event.sessionId === undefined)).toBe(true);
     const normalized = fromStructuredJson(parseStructuredText(result.text ?? ''), { reviewId: 'r1', workspaceRoot: 'C:\\replay-workspace' });

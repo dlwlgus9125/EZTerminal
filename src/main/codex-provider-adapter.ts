@@ -38,7 +38,7 @@ import type {
   ProviderReviewForkResult,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
-import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
+import { ProviderReviewError, ProviderSideQuestionError, REVIEW_READ_ONLY_UNVERIFIED } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import {
@@ -352,17 +352,43 @@ function sideQuestionPrompt(question: string, history: readonly SideQuestionExch
 }
 
 /**
+ * A review thread's config that switches off each MCP server configured for its folder (review loop).
+ * A nested table, so a name is a key and needs no quoting: Codex 0.165 splits a dotted key path, and a
+ * quoted one (`mcp_servers."a b".enabled`) fails the thread start with "invalid transport".
+ */
+function codexMcpServersOff(names: readonly string[]): JsonObject {
+  return names.length ? { mcp_servers: Object.fromEntries(names.map((name) => [name, { enabled: false }])) } : {};
+}
+
+/** A reviewer conversation's thread config with its MCP servers off, beside any it is given (orchestration). */
+function withMcpServersOff(config: JsonObject, off: JsonObject | undefined): JsonObject {
+  if (!off?.mcp_servers) return config;
+  return { ...config, mcp_servers: { ...asObject(config.mcp_servers), ...asObject(off.mcp_servers) } };
+}
+
+class CodexReviewReadOnlyError extends Error {
+  readonly code = REVIEW_READ_ONLY_UNVERIFIED;
+
+  constructor() {
+    super('Codex could not read its MCP server settings, so the review did not start with them on.');
+    this.name = 'CodexReviewReadOnlyError';
+  }
+}
+
+/**
  * A same-AI review fork (`review-loop-v1`): an ephemeral, read-only, approval-free fork of the thread,
  * which keeps the thread's model, effort and prompt cache (fork-cache probe G0, 2026-10-29). `json-text`
  * asks for the JSON in the prompt; `enforced` adds the findings schema as the turn's `outputSchema`
  * (probe c7, fixture codex-review-fork), which costs the cache: the host's one retry when JSON text
  * does not read as findings. Either way the final message is the JSON.
  */
-function codexReviewForkRequest(input: ProviderReviewForkInput): { readonly fork: JsonObject; readonly turn: JsonObject } {
+function codexReviewForkRequest(input: ProviderReviewForkInput, mcpServersOff: JsonObject): { readonly fork: JsonObject; readonly turn: JsonObject } {
   return {
     fork: {
       threadId: input.providerSessionId, ephemeral: true, excludeTurns: true, threadSource: 'ezterminal',
       sandbox: 'read-only', approvalPolicy: 'never',
+      // The fork still reads the conversation's prompt cache (probe 2026-10-29, scripts/probe-codex-review-mcp.mjs).
+      ...(Object.keys(mcpServersOff).length ? { config: mcpServersOff } : {}),
     },
     turn: {
       input: [{ type: 'text', text: input.prompt, text_elements: [] }],
@@ -1225,10 +1251,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+      const mcpOff = context.readOnlyReviewer ? await this.reviewMcpServersOff(this.requireConnection(), context.workspaceRoot, signal) : undefined;
+      const config = withMcpServersOff({ ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
         ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
         ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
-        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
+        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) }, mcpOff);
       const exitsBeforeStart = this.appServerExits;
       const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
@@ -1272,10 +1299,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+      const mcpOff = context.readOnlyReviewer ? await this.reviewMcpServersOff(this.requireConnection(), context.workspaceRoot, signal) : undefined;
+      const config = withMcpServersOff({ ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
         ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
         ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
-        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
+        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) }, mcpOff);
       const exitsBeforeResume = this.appServerExits;
       const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
@@ -1683,11 +1711,29 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   /**
+   * A review thread (fork or reviewer conversation) switches off each MCP server configured for its folder,
+   * as Codex reads its config now (config/read; probe 2026-10-29: they then load disabled). The apps
+   * connector is no configured server and stays: under approvals never, Codex refuses its tools that need
+   * approval. Fails closed: when the servers cannot be read, no review runs with them on.
+   */
+  private async reviewMcpServersOff(connection: CodexAppServerConnection, workspaceRoot: string, signal?: AbortSignal): Promise<JsonObject> {
+    let servers: JsonObject | undefined;
+    try {
+      const config = asObject(asObject(await connection.request('config/read', { cwd: workspaceRoot, includeLayers: false }, { signal }))?.config);
+      servers = config && (config.mcp_servers === undefined ? {} : asObject(config.mcp_servers));
+    } catch {
+      servers = undefined;
+    }
+    if (!servers) throw new CodexReviewReadOnlyError();
+    return codexMcpServersOff(Object.keys(servers));
+  }
+
+  /**
    * `review-loop-v1`, same AI: one review on an ephemeral read-only fork of the conversation's thread
-   * (approvals never; whatever it asks is declined). The fork's frames reach only this review: no row,
-   * usage, approval or provider error. It is unsubscribed however the review ends, also when the
-   * conversation is released meanwhile. The answer is the fork's final message. No timeout here: the
-   * host bounds it through `signal`.
+   * (approvals never; whatever it asks is declined; its configured MCP servers off). The fork's frames reach
+   * only this review: no row, usage, approval or provider error. It is unsubscribed however the review ends,
+   * also when the conversation is released meanwhile. The answer is the fork's final message. No timeout
+   * here: the host bounds it through `signal`.
    */
   async reviewFork(input: ProviderReviewForkInput, signal: AbortSignal): Promise<ProviderReviewForkResult> {
     if (this.disposed) throw new ProviderReviewError('unavailable');
@@ -1700,7 +1746,6 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const connection = this.connection;
     if (!connection) throw new ProviderReviewError('unavailable');
     const exitsAtStart = this.appServerExits;
-    const request = codexReviewForkRequest(input);
     return new Promise<ProviderReviewForkResult>((resolve, reject) => {
       let settled = false;
       let turnDone = false;
@@ -1763,6 +1808,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       this.sideQuestions.add(fork);
       signal.addEventListener('abort', onAbort, { once: true });
       void (async () => {
+        let mcpOff: JsonObject;
+        try {
+          mcpOff = await this.reviewMcpServersOff(connection, input.workspaceRoot, signal);
+        } catch {
+          finish(signal.aborted ? 'cancelled' : REVIEW_READ_ONLY_UNVERIFIED);
+          return;
+        }
+        if (settled) return;
+        const request = codexReviewForkRequest(input, mcpOff);
         let forked: JsonObject | undefined;
         try {
           forked = asObject(await connection.request('thread/fork', request.fork, { timeoutMs: SIDE_QUESTION_FORK_TIMEOUT_MS }));

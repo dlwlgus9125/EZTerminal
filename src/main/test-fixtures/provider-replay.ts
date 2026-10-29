@@ -167,6 +167,11 @@ export interface ProviderReplayOptions {
   readonly onClaudeQuery?: (options: Options) => void;
   /** Sees each request the Codex adapter makes, with its params. */
   readonly onCodexRequest?: (method: string, params: unknown) => void;
+  /**
+   * The Codex config `config/read` answers with (a review thread reads its MCP servers there). A recording
+   * never holds it, being the user's config; by default no MCP server is configured.
+   */
+  readonly codexConfig?: JsonObject;
 }
 
 export async function replayProviderFixture(
@@ -238,7 +243,7 @@ export async function replayReviewFork(
         await adapter.dispose();
       }
     }
-    const connection = new CodexReplayConnection(fixture, options.onCodexRequest);
+    const connection = new CodexReplayConnection(fixture, options.onCodexRequest, options.codexConfig);
     const adapter = new CodexProviderAdapter({
       connection, now: () => new Date(REPLAY_NOW), idFactory: sequentialIds('replay-codex'), deltaCoalescer: REPLAY_DELTA_COALESCER,
     });
@@ -569,10 +574,13 @@ class CodexReplayConnection implements CodexAppServerConnection {
   constructor(
     private readonly fixture: ProviderCaptureFixture,
     private readonly onRequest?: (method: string, params: unknown) => void,
+    private readonly config: JsonObject = {},
   ) {}
 
   request(method: string, params?: unknown): Promise<unknown> {
     this.onRequest?.(method, params);
+    // Not in a recording (it is the user's config): answered here.
+    if (method === 'config/read') return Promise.resolve({ config: this.config });
     return new Promise((resolve, reject) => {
       this.calls.push({ method, params, resolve, reject });
       this.callArrived.resolve();
@@ -715,7 +723,7 @@ function recordedCodexDecision(fixture: ProviderCaptureFixture, id: string | num
 
 async function replayCodex(fixture: ProviderCaptureFixture, options: ProviderReplayOptions): Promise<ProviderReplayGolden> {
   const harness = createHarness(fixture, options);
-  const connection = new CodexReplayConnection(fixture, options.onCodexRequest);
+  const connection = new CodexReplayConnection(fixture, options.onCodexRequest, options.codexConfig);
   const adapter = new CodexProviderAdapter({
     connection,
     now: () => new Date(REPLAY_NOW),

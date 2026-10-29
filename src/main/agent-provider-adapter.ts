@@ -322,8 +322,18 @@ export interface ProviderReviewForkResult {
   readonly text?: string;
 }
 
-/** `unavailable`: the AI cannot start; `unsupported`: this version cannot fork read-only; `failed`: it ran and erred. */
-export type ProviderReviewFailure = 'cancelled' | 'unavailable' | 'unsupported' | 'failed';
+/**
+ * A review thread whose read-only setup could not be confirmed for this run (Codex: the MCP servers to
+ * switch off could not be read), so it did not run. Also the `errorCode` of a reviewer conversation's
+ * turn that did not start for this reason.
+ */
+export const REVIEW_READ_ONLY_UNVERIFIED = 'read-only-unverified';
+
+/**
+ * `unavailable`: the AI cannot start; `unsupported`: this version cannot fork read-only;
+ * `read-only-unverified`: see REVIEW_READ_ONLY_UNVERIFIED; `failed`: it ran and erred.
+ */
+export type ProviderReviewFailure = 'cancelled' | 'unavailable' | 'unsupported' | typeof REVIEW_READ_ONLY_UNVERIFIED | 'failed';
 
 /** Carries only a code: provider errors could echo the reviewed code. */
 export class ProviderReviewError extends Error {

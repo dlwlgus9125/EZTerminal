@@ -27,7 +27,7 @@ import {
   type ReviewTarget,
 } from '../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload } from '../shared/transcript-payload';
-import { ProviderReviewError, type AgentProviderAdapter } from './agent-provider-adapter';
+import { ProviderReviewError, REVIEW_READ_ONLY_UNVERIFIED, type AgentProviderAdapter } from './agent-provider-adapter';
 import type { DaemonSystemTransitionPlanner } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
 import { finalAssistantText, type TranscriptReader } from './managed-child-transcript';
@@ -529,7 +529,9 @@ export class ReviewCoordinator implements DaemonReviewHost {
           const code = error instanceof ProviderReviewError ? error.code : 'failed';
           await this.end(job, code === 'unavailable' ? { state: 'unsupported', reason: 'provider-unavailable' }
             : code === 'unsupported' ? { state: 'unsupported', reason: 'provider-too-old' }
-              : { state: 'failed', reason: 'provider-error' });
+              // Its MCP servers could not be switched off: no review this run rather than one with them on.
+              : code === REVIEW_READ_ONLY_UNVERIFIED ? { state: 'unsupported', reason: 'provider-error' }
+                : { state: 'failed', reason: 'provider-error' });
         }
         return;
       }
@@ -587,7 +589,8 @@ export class ReviewCoordinator implements DaemonReviewHost {
       // Stopped from the reviewer conversation itself.
       await this.end(job, { state: 'cancelled' });
     } else if (turn.state === 'failed') {
-      await this.end(job, { state: 'failed', reason: 'provider-error' });
+      // A reviewer that could not start read-only (its MCP servers not switched off) did not review this run.
+      await this.end(job, turn.errorCode === REVIEW_READ_ONLY_UNVERIFIED ? { state: 'unsupported', reason: 'provider-error' } : { state: 'failed', reason: 'provider-error' });
     } else {
       const text = finalAssistantText(this.options.readTranscript, child.sessionId, turn.id);
       const snapshot = this.options.getSnapshot();

@@ -2694,13 +2694,15 @@ describe('Codex side questions (/btw)', () => {
 });
 
 describe('Codex review fork (review loop)', () => {
-  async function reviewFixture() {
+  /** `configRead`: what config/read answers (the folder's Codex config); by default no MCP server. */
+  async function reviewFixture(configRead: () => Promise<unknown> = async () => ({ config: {} })) {
     const connection = new FakeCodexConnection();
     const adapter = await attachedAdapter(connection);
     const events: AgentProviderEvent[] = [];
     adapter.subscribe((event) => events.push(event));
     connection.requestImpl = async (method, params) => {
       const threadId = (params as { threadId?: string }).threadId ?? '';
+      if (method === 'config/read') return configRead();
       if (method === 'thread/fork') return { thread: { id: 'review-fork-1' } };
       if (method === 'turn/start') return { turn: { id: `${threadId}-turn`, status: 'inProgress', items: [] } };
       if (method === 'turn/interrupt') return {};
@@ -2751,6 +2753,92 @@ describe('Codex review fork (review loop)', () => {
     await expect(cancelled).rejects.toMatchObject({ name: 'ProviderReviewError', code: 'cancelled' });
     expect(sent('turn/interrupt')).toContainEqual({ threadId: 'review-fork-1', turnId: 'review-fork-1-turn' });
     expect(sent('thread/unsubscribe')).toContainEqual({ threadId: 'review-fork-1' });
+    await adapter.dispose();
+  });
+
+  it('switches off each MCP server configured for the folder, by its name as given, before forking', async () => {
+    const { adapter, connection, sent, frame, review, started } = await reviewFixture(async () => ({ config: { model: 'gpt-5.6-sol', mcp_servers: {
+      'docs.search': { command: 'node', args: ['docs.js'] }, 'team wiki': { url: 'https://wiki.example/mcp' },
+      'say "hi"': { command: 'hi' }, plain_server: { command: 'plain', enabled: false },
+    } } }));
+    const answered = review('json-text');
+    await started();
+    expect(sent('config/read')).toEqual([{ cwd: context().workspaceRoot, includeLayers: false }]);
+    const order = connection.requests.map((request) => request.method);
+    expect(order.indexOf('config/read')).toBeLessThan(order.indexOf('thread/fork'));
+    // A nested table: names with dots, spaces or quotes stay whole keys (a dotted key path would split them).
+    expect((sent('thread/fork')[0] as Record<string, unknown>).config).toEqual({ mcp_servers: {
+      'docs.search': { enabled: false }, 'team wiki': { enabled: false }, 'say "hi"': { enabled: false }, plain_server: { enabled: false },
+    } });
+    await frame('turn/completed', { turn: { id: 'review-fork-1-turn', status: 'completed', items: [] } });
+    await expect(answered).resolves.toEqual({});
+    await adapter.dispose();
+  });
+
+  it('forks without MCP config when none is configured', async () => {
+    for (const answer of [{ config: { model: 'gpt-5.6-sol' } }, { config: { mcp_servers: {} } }]) {
+      const { adapter, sent, frame, review, started } = await reviewFixture(async () => answer);
+      const answered = review('json-text');
+      await started();
+      expect(sent('thread/fork')).toEqual([{ threadId: 'thread-1', ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', sandbox: 'read-only', approvalPolicy: 'never' }]);
+      await frame('turn/completed', { turn: { id: 'review-fork-1-turn', status: 'completed', items: [] } });
+      await expect(answered).resolves.toEqual({});
+      await adapter.dispose();
+    }
+  });
+
+  it('does not fork when the MCP servers cannot be read: no review with them on', async () => {
+    const answers: Array<() => Promise<unknown>> = [
+      async () => { throw new CodexJsonRpcError('config/read', -32603, 'config unreadable'); },
+      async () => ({}),
+      async () => ({ config: { mcp_servers: ['not', 'a', 'table'] } }),
+    ];
+    for (const configRead of answers) {
+      const { adapter, sent, review } = await reviewFixture(configRead);
+      await expect(review('json-text')).rejects.toMatchObject({ name: 'ProviderReviewError', code: 'read-only-unverified' });
+      expect(sent('thread/fork')).toEqual([]);
+      await adapter.dispose();
+    }
+  });
+});
+
+describe('Codex reviewer conversation (review loop)', () => {
+  const reviewer = context({ sessionId: 'review-codex-1', permissionPreset: 'plan', managedExecution: true, readOnlyReviewer: true });
+
+  function reviewerAdapter(configRead: () => Promise<unknown>) {
+    const connection = new FakeCodexConnection();
+    const threads = ['thread-review', 'thread-chat'];
+    connection.requestImpl = async (method) => {
+      if (method === 'config/read') return configRead();
+      if (method === 'thread/start') return { thread: { id: threads.shift() }, model: 'gpt-5.6-sol' };
+      if (method === 'thread/resume') return { thread: { id: 'thread-review' }, model: 'gpt-5.6-sol' };
+      if (method === 'thread/unsubscribe') return { status: 'notLoaded' };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-10-30T03:00:00.000Z') });
+    const sent = (method: string): unknown[] => connection.requests.filter((request) => request.method === method).map((request) => request.params);
+    return { adapter, connection, sent };
+  }
+
+  it('starts and resumes a reviewer thread with its folder’s MCP servers off; an ordinary conversation reads no MCP config', async () => {
+    const { adapter, sent } = reviewerAdapter(async () => ({ config: { mcp_servers: { 'docs.search': { command: 'node' }, 'team wiki': { url: 'https://wiki.example/mcp' } } } }));
+    const off = { 'docs.search': { enabled: false }, 'team wiki': { enabled: false } };
+    await adapter.createSession(reviewer);
+    expect(sent('config/read')).toEqual([{ cwd: reviewer.workspaceRoot, includeLayers: false }]);
+    expect(sent('thread/start')[0]).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { 'features.multi_agent': false, mcp_servers: off } });
+    await adapter.disposeSession('review-codex-1', 'thread-review');
+    await adapter.resumeSession({ ...reviewer, providerSessionId: 'thread-review' });
+    expect(sent('thread/resume')[0]).toMatchObject({ config: { mcp_servers: off } });
+    await adapter.createSession(context({ sessionId: 'chat-1' }));
+    expect(sent('config/read')).toHaveLength(2);
+    expect((sent('thread/start')[1] as { config?: Record<string, unknown> }).config?.mcp_servers).toBeUndefined();
+    await adapter.dispose();
+  });
+
+  it('does not start a reviewer whose MCP servers cannot be read, and says why in its error code', async () => {
+    const { adapter, sent } = reviewerAdapter(async () => { throw new Error('app-server closed'); });
+    await expect(adapter.createSession(reviewer)).rejects.toMatchObject({ code: 'read-only-unverified' });
+    expect(sent('thread/start')).toEqual([]);
     await adapter.dispose();
   });
 });

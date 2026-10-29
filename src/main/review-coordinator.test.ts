@@ -15,6 +15,7 @@ import { composeFixPrompt, REVIEW_LIMITS, type ReviewFinding } from '../shared/r
 import { parseTranscriptPayload, type ReviewPayload } from '../shared/transcript-payload';
 import {
   ProviderReviewError,
+  REVIEW_READ_ONLY_UNVERIFIED,
   type AgentProviderAdapter,
   type AgentProviderEvent,
   type ProviderProbeResult,
@@ -392,6 +393,23 @@ describe('review.start: same AI in a read-only fork', () => {
     }
   });
 
+  it('does not review this run when the fork could not switch off its MCP servers', async () => {
+    const h = await harness();
+    try {
+      await h.conversation();
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-1', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } });
+      await until(() => h.codex.forks.length === 1, 'the fork');
+      h.codex.forks[0]!.reject(new ProviderReviewError(REVIEW_READ_ONLY_UNVERIFIED));
+      await until(() => h.card()?.state === 'unsupported', 'the unsupported card');
+      expect(h.card()).toMatchObject({ reason: 'provider-error' });
+      // Not asked again in another shape: that fork would load the same servers.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(h.codex.forks).toHaveLength(1);
+    } finally {
+      await dispose(h);
+    }
+  });
+
   it('says why a review cannot run: no changes, not a repository, an AI too old', async () => {
     const h = await harness({ claudeMinimum: '9.0.0' });
     try {
@@ -502,6 +520,21 @@ describe('review.start: a reviewer conversation of its own', () => {
       expect(h.rows('chat').some((item) => item.kind === 'child-summary')).toBe(false);
       expect(h.router.getSnapshot().turns.filter((entry) => entry.sessionId === 'chat')).toHaveLength(2);
       await until(() => Boolean(h.router.getSnapshot().sessions.find((session) => session.id === 'review-claude-1')?.archivedAt), 'the archived reviewer');
+    } finally {
+      await dispose(h);
+    }
+  });
+
+  it('does not review this run when the reviewer could not start with its MCP servers off, and archives it', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('claude');
+      vi.mocked(h.codex.createSession).mockRejectedValueOnce(Object.assign(new Error('Codex could not read its MCP server settings.'), { code: REVIEW_READ_ONLY_UNVERIFIED }));
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-1', target: { kind: 'uncommitted' }, reviewer: { kind: 'other', providerId: 'codex', reviewerSessionId: 'review-codex-1' } });
+      await until(() => h.card()?.state === 'unsupported', 'the unsupported card');
+      expect(h.card()).toMatchObject({ reason: 'provider-error' });
+      expect(vi.mocked(h.codex.submit).mock.calls.some(([input]) => input.sessionId === 'review-codex-1')).toBe(false);
+      await until(() => Boolean(h.router.getSnapshot().sessions.find((session) => session.id === 'review-codex-1')?.archivedAt), 'the archived reviewer');
     } finally {
       await dispose(h);
     }
