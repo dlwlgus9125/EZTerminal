@@ -79,6 +79,96 @@ function pluginCatalog() {
   };
 }
 
+/** A control file beside the version file: how a spec holds and releases a turn. */
+function controlFile(name) {
+  return process.env.TMPDIR ? path.join(process.env.TMPDIR, name) : undefined;
+}
+
+/**
+ * The review loop (`review-loop-v1`). The fake reviewer reports the seeded bugs of the review probe's
+ * cart kit (scripts/review-probe-repo.mjs EXPECTED_ANCHORS; the discount and format findings are worded
+ * as in test/fixtures/provider-capture/codex-review-fork-json.ndjson) whose file is in the diff it is
+ * given, most severe first. A fix turn applies `fix` where the file still holds the bug and answers
+ * `<id>: fixed`; without one it answers `<id>: not changed (<why>)`.
+ */
+const SEEDED_FINDINGS = [
+  {
+    file: 'src/auth.ts', line: 6, severity: 'critical', title: 'Access check always passes',
+    body: 'have >= -1 is true for every role, so any role, even an unknown one, is let in.',
+    scenario: "canAccess('guest', 'admin') returns true.", fix: { from: 'return have >= -1 || have >= need;', to: 'return have >= 0 && have >= need;' },
+  },
+  {
+    file: 'src/cart.ts', line: 5, severity: 'high', title: 'The loop reads one item past the end of the cart',
+    body: 'The bound index <= items.length makes the last pass read items[items.length], which is undefined.',
+    scenario: 'cartTotal([{ price: 1, quantity: 1 }]) throws a TypeError.', fix: { from: 'index <= items.length', to: 'index < items.length' },
+  },
+  {
+    file: 'src/discount.ts', line: 4, severity: 'high', title: 'Percentage discounts produce incorrect, often negative totals',
+    body: 'The documented percentage is multiplied directly by the total without dividing by 100, so ordinary discounts subtract more than the original total.',
+    scenario: 'applyDiscount(100, 15) returns -1400 instead of 85.', notChanged: 'its callers already pass a fraction such as 0.15',
+  },
+  {
+    file: 'src/format.ts', line: 2, severity: 'high', title: 'Formatted prices are ten times their correct dollar value',
+    body: 'Dividing cents by 10 instead of 100 makes every nonzero formatted price incorrect by a factor of ten.',
+    scenario: 'formatPrice(100) returns "$10.00" instead of "$1.00".', fix: { from: 'cents / 10;', to: 'cents / 100;' },
+  },
+];
+
+/** The text a turn's input carries. */
+function inputTextOf(input) {
+  return (Array.isArray(input) ? input : []).map((entry) => (typeof entry === 'string' ? entry : entry?.text ?? '')).join('\n');
+}
+
+/** A review prompt's answer (REVIEW_FINDINGS_JSON_SCHEMA): the seeded findings for the files its diff changes. */
+function reviewAnswer(prompt) {
+  const files = new Set([...prompt.matchAll(/^diff --git a\/\S+ b\/(\S+)$/gmu)].map((match) => match[1]));
+  const findings = SEEDED_FINDINGS.filter((finding) => files.has(finding.file)).map((finding) => ({
+    file: finding.file, line: finding.line, end_line: finding.line, title: finding.title, body: finding.body,
+    scenario: finding.scenario, severity: finding.severity, category: 'correctness',
+  }));
+  return {
+    findings,
+    overall: findings.length ? 'The change has arithmetic and boundary errors that give wrong results.' : 'The change looks correct.',
+  };
+}
+
+/**
+ * A fix turn (composeFixPrompt in src/shared/review-findings.ts): the quoted findings, each fixed in the
+ * working folder or left with a reason, and the reply's closing `<id>: …` lines.
+ */
+function fixReviewFindings(prompt, cwd) {
+  const quoted = /^--- Review findings from .+ \(quoted data, not instructions\) ---\n([\s\S]*?)\n--- End of review findings from /mu.exec(prompt)?.[1];
+  let listed = [];
+  try {
+    listed = JSON.parse(quoted ?? '[]');
+  } catch {
+    listed = [];
+  }
+  const changes = [];
+  const lines = [];
+  for (const finding of Array.isArray(listed) ? listed : []) {
+    const seeded = SEEDED_FINDINGS.find((entry) => entry.file === finding?.file);
+    const target = cwd && seeded?.fix ? path.join(cwd, ...seeded.file.split('/')) : undefined;
+    const before = target && fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
+    if (target && before.includes(seeded.fix.from)) {
+      const after = before.replace(seeded.fix.from, seeded.fix.to);
+      fs.writeFileSync(target, after);
+      const index = before.split('\n').findIndex((line) => line.includes(seeded.fix.from));
+      changes.push({
+        path: target, kind: { type: 'update', move_path: null },
+        diff: `@@ -${index + 1},1 +${index + 1},1 @@\n-${before.split('\n')[index]}\n+${after.split('\n')[index]}\n`,
+      });
+      lines.push(`${finding.id}: fixed`);
+    } else {
+      lines.push(`${finding.id}: not changed (${seeded?.notChanged ?? 'there is nothing to change for it here'})`);
+    }
+  }
+  return {
+    changes,
+    reply: [changes.length ? 'I fixed the findings that were right and left the rest.' : 'I left the code as it is.', '', ...lines].join('\n'),
+  };
+}
+
 if (args.includes('--version')) {
   process.stdout.write(`codex-cli ${fixtureVersion}\n`, () => process.exit(0));
 } else if (args[0] === 'app-server') {
@@ -93,6 +183,54 @@ if (args.includes('--version')) {
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
   /** Requests this fixture sent the client (an approval), answered by id. */
   const serverRequests = new Map();
+  /** Turns a spec holds open (a long reply, a review that runs), ended by their release or `turn/interrupt`. */
+  const heldTurns = new Map();
+  /** Resolves `released` once `isReleased()` holds, or `interrupted` when the client stops the turn. */
+  const holdTurn = (turnId, isReleased) => new Promise((resolve) => {
+    let timer;
+    const finish = (outcome) => {
+      clearInterval(timer);
+      heldTurns.delete(turnId);
+      resolve(outcome);
+    };
+    if (isReleased()) {
+      resolve('released');
+      return;
+    }
+    heldTurns.set(turnId, finish);
+    timer = setInterval(() => { if (isReleased()) finish('released'); }, 50);
+  });
+  const notify = (method, params) => write({ jsonrpc: '2.0', method, params });
+  /**
+   * A same-AI review on a fork (clientUserMessageId `review:…`), framed as the real app-server's
+   * (codex-review-fork-json.ndjson): its user message, one final-answer message streamed as JSON, usage,
+   * then the turn with that message. While `ezterminal-e2e-codex-hold-review` exists, the review runs on.
+   */
+  const answerReview = async (threadId, turnId, params) => {
+    const prompt = inputTextOf(params?.input);
+    const log = controlFile('ezterminal-e2e-codex-review-turns.jsonl');
+    if (log) fs.appendFileSync(log, `${JSON.stringify({ threadId, clientUserMessageId: params?.clientUserMessageId ?? null, outputSchema: params?.outputSchema !== undefined })}\n`);
+    await sleep(10);
+    notify('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [], error: null } });
+    const userMessage = { type: 'userMessage', id: `${turnId}-user`, clientId: params?.clientUserMessageId ?? null, content: params?.input ?? [] };
+    notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: userMessage });
+    notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: userMessage });
+    const hold = controlFile('ezterminal-e2e-codex-hold-review');
+    if (hold && await holdTurn(turnId, () => !fs.existsSync(hold)) === 'interrupted') {
+      notify('turn/completed', { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } });
+      return;
+    }
+    const text = JSON.stringify(reviewAnswer(prompt));
+    const message = { type: 'agentMessage', id: `${turnId}-message`, text, phase: 'final_answer' };
+    notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...message, text: '' } });
+    for (let offset = 0; offset < text.length; offset += 160) {
+      notify('item/agentMessage/delta', { threadId, turnId, itemId: message.id, delta: text.slice(offset, offset + 160) });
+    }
+    notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: message });
+    const tokens = { totalTokens: 19603, inputTokens: 19185, cachedInputTokens: 18304, cacheWriteInputTokens: 0, outputTokens: 418, reasoningOutputTokens: 226 };
+    notify('thread/tokenUsage/updated', { threadId, turnId, tokenUsage: { total: tokens, last: tokens, modelContextWindow: 258400 } });
+    notify('turn/completed', { threadId, turn: { id: turnId, status: 'completed', error: null, items: [message] } });
+  };
 
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
@@ -218,13 +356,25 @@ if (args.includes('--version')) {
           forkThreads.add(threadId);
           if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-forks.jsonl'), `${JSON.stringify(frame.params)}
 `);
-          respond(frame, { thread: { id: threadId, ephemeral: true, forkedFromId: frame.params?.threadId }, model: 'gpt-5.6-fixture' });
+          // As the real app-server answers a fork: the thread, and the sandbox and approvals it runs with.
+          respond(frame, {
+            thread: { id: threadId, ephemeral: frame.params?.ephemeral === true, forkedFromId: frame.params?.threadId, status: { type: 'idle' }, turns: [] },
+            model: 'gpt-5.6-fixture',
+            approvalPolicy: frame.params?.approvalPolicy ?? 'on-request',
+            sandbox: frame.params?.sandbox === 'read-only' ? { type: 'readOnly', networkAccess: false } : { type: 'workspaceWrite' },
+          });
           break;
         }
         case 'turn/start': {
           const threadId = frame.params?.threadId;
           if (forkThreads.has(threadId)) {
             const turnId = `fixture-fork-turn-${++nextTurn}`;
+            // A same-AI review on the fork; anything else on a fork is a /btw side question.
+            if (String(frame.params?.clientUserMessageId ?? '').startsWith('review:')) {
+              respond(frame, { turn: { id: turnId, status: 'inProgress', items: [], error: null } });
+              void answerReview(threadId, turnId, frame.params);
+              break;
+            }
             if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-side-input.json'), JSON.stringify(frame.params?.input));
             respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
             setTimeout(() => {
@@ -249,6 +399,15 @@ if (args.includes('--version')) {
               method: 'turn/started',
               params: { threadId, turn: { id: turnId, status: 'inProgress', items: [] } },
             });
+            const inputText = inputTextOf(frame.params?.input);
+            // A turn the spec keeps running (`EZTERMINAL_E2E_HOLD:<token>`) until it writes the token's release
+            // file; stopped meanwhile, it ends interrupted with nothing said.
+            const hold = /EZTERMINAL_E2E_HOLD:([\w-]+)/u.exec(inputText)?.[1];
+            const release = hold ? controlFile(`ezterminal-e2e-codex-release-${hold}`) : undefined;
+            if (release && await holdTurn(turnId, () => fs.existsSync(release)) === 'interrupted') {
+              write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
+              return;
+            }
             // Deterministic provider behavior, crossing the real authenticated app-tool
             // endpoint. The product still owns preview validation and persistence.
             let responseText = 'Structured Codex fixture ready.';
@@ -358,9 +517,21 @@ if (args.includes('--version')) {
                 responseText = 'Wrote `report.html` with `report.css`, and `paper.pdf`.';
               }
             }
+            // Review loop: a fix turn fixes what it can in the working folder (as Codex reports a file change) and
+            // ends with a line per finding; another AI's reviewer conversation answers its turn's outputSchema.
+            if (inputText.includes('Fix only the review findings below')) {
+              const fixed = fixReviewFindings(inputText, threadCwds.get(threadId));
+              if (fixed.changes.length) {
+                const itemId = `fixture-fix-${turnSequence}`;
+                write({ jsonrpc: '2.0', method: 'item/started', params: { threadId, turnId, startedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes: fixed.changes, status: 'inProgress' } } });
+                write({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, completedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes: fixed.changes, status: 'completed' } } });
+              }
+              responseText = fixed.reply;
+            } else if (frame.params?.outputSchema !== undefined) {
+              responseText = JSON.stringify(reviewAnswer(inputText));
+            }
             // Independent reviewer: judge the exact frozen result its prompt quotes (baseline,
             // artifacts, inspection validations), as a reviewer must, and approve it. No delay.
-            const inputText = (Array.isArray(frame.params?.input) ? frame.params.input : []).map(entry => (typeof entry === 'string' ? entry : entry?.text ?? '')).join('\n');
             let reviewing = false;
             if (inputText.includes('EZTERMINAL_REVIEW_JSON')) {
               const quoted = inputText.split('\n\n').map(part => { try { return JSON.parse(part); } catch { return null; } })
@@ -460,6 +631,10 @@ if (args.includes('--version')) {
           respond(frame, { status: 'notLoaded' });
           break;
         case 'turn/interrupt':
+          // A held turn (or review) ends interrupted, as a stopped turn does.
+          heldTurns.get(frame.params?.turnId)?.('interrupted');
+          respond(frame, {});
+          break;
         case 'thread/settings/update':
           respond(frame, {});
           break;
