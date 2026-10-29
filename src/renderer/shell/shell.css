@@ -583,6 +583,9 @@
 .ez-shell-launch__composer .conversation-start,
 .ez-shell-launch__composer .structured-agent {
   height: auto;
+  /* One line tall here: the settings menus open upward over the board instead of being cut to the bar
+     (which hid the AI choices at the top of the model menu). */
+  overflow: visible;
   background: transparent;
 }
 
