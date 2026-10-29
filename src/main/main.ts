@@ -31,7 +31,7 @@ import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-co
 import { ARTIFACT_SCHEME, ARTIFACT_SCHEME_PRIVILEGES, ArtifactPreviewRegistry, handleArtifactRequest } from './artifact-preview';
 import { installArtifactPreviewIpc } from './artifact-preview-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
-import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
+import { installWorkspaceWorktreeIpc, worktreeTargetOf } from './workspace-worktree-ipc';
 import { installWorktreeBaseDiffIpc } from './worktree-base-diff-ipc';
 import { createWorkspaceWorktree } from './workspace-worktree-actions';
 import { ChatAgentProfileStore, installChatAgentProfileIpc } from './chat-agent-profile-store';
@@ -135,6 +135,7 @@ import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
+import { ReviewCoordinator } from './review-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
 import { BUILTIN_THEME_IDS } from '../shared/layout-schema';
 import { createDaemonCommand, type DaemonPrincipal, type DaemonSnapshot } from '../shared/daemon-protocol';
@@ -957,7 +958,8 @@ app.on('ready', async () => {
   // 대화로 설정 바꾸기 + 자문: the authority is set once the profile and template stores are read (below).
   const settingsRef: { authority?: SettingsAuthority; advisor?: AgentAdvisor; remote?: (enabled: boolean) => Promise<unknown> } = {};
   const preparedHostSession = (sessionId: string): boolean => Boolean(planningRuntimeRef.current?.preparedSessionSettings(sessionId)
-    || planningRuntimeRef.results?.preparedSessionSettings(sessionId) || settingsRef.advisor?.preparedSessionSettings(sessionId));
+    || planningRuntimeRef.results?.preparedSessionSettings(sessionId) || settingsRef.advisor?.preparedSessionSettings(sessionId)
+    || reviewCoordinator.preparedSessionSettings(sessionId));
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
   /** Who sent the turn the conversation runs now: undefined between turns, null when it cannot be told. */
   const settingsTurnPrincipal = (snapshot: DaemonSnapshot, sessionId: string): DaemonPrincipal['kind'] | null | undefined => {
@@ -1030,7 +1032,42 @@ app.on('ready', async () => {
   const pendingSettingsFile = new JsonFile(app.getPath('userData'), 'agent-pending-settings.json');
   // Bound once the project workspace service exists, below; until then sessions keep one folder.
   const conversationFoldersRef: { current?: ConversationFolderResolver } = {};
+  // 리뷰 루프: reviewer conversations are recognised by their id from the start (read-only, frozen).
+  const reviewJobsFile = new JsonFile(app.getPath('userData'), 'review-jobs.json');
+  const reviewWorktrees = new WorkspaceWorktreeService();
+  const reviewCoordinator = new ReviewCoordinator({
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit),
+    execute: (command) => daemonRouterRef.current!.execute(command),
+    onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    providers: providerRegistry,
+    git: new GitStatusService(),
+    worktreeBase: async (snapshot, workspaceId) => {
+      const target = worktreeTargetOf(snapshot, workspaceId);
+      return target ? reviewWorktrees.baseBranch(target).catch(() => undefined) : undefined;
+    },
+    conversationFolders: (snapshot, target) => conversationFoldersRef.current?.(snapshot, target) ?? Promise.resolve(undefined),
+    // D8: another AI reviews as the 단계 연결 review agent when that agent is that AI.
+    reviewAgent: (providerId) => {
+      const link = chatAgentProfileStore.phases().review;
+      const profile = link ? chatAgentProfileStore.list().find((entry) => entry.id === link.profileId) : undefined;
+      return profile?.providerId === providerId
+        ? { ...(profile.model ? { model: profile.model } : {}), ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}) }
+        : undefined;
+    },
+    store: {
+      load: async () => { await reviewJobsFile.init(); return reviewJobsFile.read(); },
+      save: (jobs) => reviewJobsFile.enqueue(() => reviewJobsFile.writeAtomic(JSON.stringify(jobs))),
+    },
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonAgentRuntime = new DaemonAgentRuntime({
+    reviews: reviewCoordinator,
     providers: providerRegistry,
     agentUsageStore: {
       load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
@@ -1055,12 +1092,15 @@ app.on('ready', async () => {
     canDispatchTurn: (turn) => (planningRuntimeRef.current?.canDispatchTurn(turn)
       ?? !/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId))
       // The planning AI is gone (I5-10): a session it left behind never dispatches.
-      && !turn.sessionId.startsWith('planning-ai-'),
+      && !turn.sessionId.startsWith('planning-ai-')
+      // A reviewer's turn waits for its prompt (the change, read once the reviewed turn ended).
+      && reviewCoordinator.canDispatchTurn(turn),
     beforeProviderDispatch: (turn) => planningRuntimeRef.current?.beforeProviderDispatch(turn)
       ?? Promise.resolve(!/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId)),
     preparedSessionSettings: (sessionId) => planningRuntimeRef.current?.preparedSessionSettings(sessionId)
       ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId)
-      ?? settingsRef.advisor?.preparedSessionSettings(sessionId),
+      ?? settingsRef.advisor?.preparedSessionSettings(sessionId)
+      ?? reviewCoordinator.preparedSessionSettings(sessionId),
     orchestrationForSession: (sessionId) => (
       agentOrchestrationMcpServer.descriptorForSession(sessionId)
     ),
@@ -1099,6 +1139,7 @@ app.on('ready', async () => {
     attention: (snapshot) => hostAttentionRef.current?.attention(snapshot),
     sideQuestionSessions: (snapshot) => daemonAgentRuntime.sideQuestionSessionIds(snapshot),
     pendingAgentSettings: (snapshot) => daemonAgentRuntime.pendingAgentSettings(snapshot),
+    reviewSupport: (snapshot) => reviewCoordinator.support(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -1161,7 +1202,10 @@ app.on('ready', async () => {
       unsubscribeDaemonAutomationWake();
     },
     closeProviderIngress: uninstallDaemonProviderIpc,
-    beginAgentShutdown: () => daemonAgentRuntime.beginShutdown(),
+    beginAgentShutdown: () => {
+      daemonAgentRuntime.beginShutdown();
+      reviewCoordinator.dispose();
+    },
     stopAutomation: async () => {
       // The repeat schedule stops first: a launch it is sending still reaches a running execution side.
       await workflowRepeatRef.current?.dispose();
@@ -2285,6 +2329,8 @@ app.on('ready', async () => {
       }
       await daemonAgentRuntime.start();
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
+      await reviewCoordinator.start();
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await daemonAutomationRuntime.start();
       if (daemonAuthorityShutdown.isStopping()) {
         await daemonAutomationRuntime.dispose();
@@ -2296,6 +2342,7 @@ app.on('ready', async () => {
       // A rejected authority promise must mean there is no surviving partial
       // listener, provider attachment, or automation dispatcher.
       daemonAgentRuntime.beginShutdown();
+      reviewCoordinator.dispose();
       await Promise.allSettled([
         daemonAutomationRuntime.dispose(),
         daemonAgentRuntime.dispose('process-loss'),

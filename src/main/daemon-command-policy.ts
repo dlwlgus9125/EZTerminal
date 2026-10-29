@@ -1,7 +1,8 @@
-import type {
-  DaemonCommand,
-  DaemonCommandError,
-  DaemonCommandType,
+import {
+  REVIEWER_SESSION_PREFIX,
+  type DaemonCommand,
+  type DaemonCommandError,
+  type DaemonCommandType,
 } from '../shared/daemon-protocol';
 
 export interface DaemonAuthorizationContext {
@@ -33,6 +34,10 @@ const ANDROID_COMMANDS = new Set<DaemonCommandType>([
   'agent.cancel',
   'agent.archive',
   'agent.detach',
+  'review.start',
+  'review.fix',
+  'review.resolve',
+  'review.cancel',
   'permission.resolve',
 ]);
 
@@ -76,6 +81,10 @@ function getTargetSessionId(command: DaemonCommand): string | undefined {
     case 'agent.cancel':
     case 'agent.archive':
     case 'agent.detach':
+    case 'review.start':
+    case 'review.fix':
+    case 'review.resolve':
+    case 'review.cancel':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
     case 'browser.open':
@@ -118,6 +127,12 @@ export function authorizeDaemonCommand(
       const rootSessionId = command.principal.sessionId;
       if (!rootSessionId || !MCP_COMMANDS.has(command.type)) {
         return denied(command, 'The session-scoped orchestration capability cannot perform this command.');
+      }
+      // A review's reviewer conversation belongs to the person who asked for the review, not to the reviewed AI.
+      const named = [getTargetSessionId(command), 'sessionId' in command.payload ? command.payload.sessionId : undefined,
+        command.type === 'agent.resume' ? command.payload.sourceSessionId : undefined];
+      if (named.some((sessionId) => typeof sessionId === 'string' && sessionId.startsWith(REVIEWER_SESSION_PREFIX))) {
+        return denied(command, 'A review conversation is not an agent’s to direct.');
       }
 
       if (command.type === 'agent.create') {

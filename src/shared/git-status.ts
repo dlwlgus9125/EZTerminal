@@ -79,6 +79,19 @@ export type GitDiffResult =
     }
   | { readonly ok: false; readonly error: GitDiffError };
 
+/**
+ * A branch name a client may hand the host: a plain local name that cannot be read as an option,
+ * a range or a revision expression. The host still resolves it under `refs/heads` (git-ref-safety).
+ */
+export function isSafeRef(value: string): boolean {
+  return value.length > 0
+    && value.length <= 200
+    && !value.startsWith('-')
+    && !value.includes('\0')
+    && !value.includes('..')
+    && /^[A-Za-z0-9_./-]+$/u.test(value);
+}
+
 /** What a review (or 기준 브랜치와 비교) reads: uncommitted changes, or everything since the branch left its base. */
 export type GitReviewScope =
   | { readonly kind: 'uncommitted' }

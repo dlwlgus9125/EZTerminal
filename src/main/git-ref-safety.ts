@@ -3,16 +3,9 @@
  * review loop's base branch). Only a plain local branch name is accepted: no option, range or
  * revision syntax, resolved under `refs/heads` and checked by Git itself before use.
  */
+import { isSafeRef } from '../shared/git-status';
 
-/** A name that cannot be read as an option, a range or a revision expression. */
-export function isSafeRef(value: string): boolean {
-  return value.length > 0
-    && value.length <= 200
-    && !value.startsWith('-')
-    && !value.includes('\0')
-    && !value.includes('..')
-    && /^[A-Za-z0-9_./-]+$/u.test(value);
-}
+export { isSafeRef };
 
 /** Runs one Git command in the repository (callers add their own safe prefix and filters). */
 export type GitRefRun = (args: readonly string[]) => Promise<string>;

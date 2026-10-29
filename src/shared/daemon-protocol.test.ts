@@ -57,6 +57,41 @@ describe('daemon protocol', () => {
     }).success).toBe(false);
   });
 
+  it('parses review commands and refuses unsafe or unreviewed review fields', () => {
+    const base = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      commandId: 'command-review',
+      idempotencyKey: 'desktop:command-review',
+      expectedRevision: 3,
+      issuedAt: '2026-10-29T10:00:00.000Z',
+      principal,
+    };
+    const start = (payload: Record<string, unknown>) => safeParseDaemonCommand({ ...base, type: 'review.start', payload: { sessionId: 's', reviewId: 'r', target: { kind: 'uncommitted' }, ...payload } });
+    expect(start({ reviewer: { kind: 'self' }, focus: 'prices' }).success).toBe(true);
+    // D14 was dropped: no "this AI without the conversation" reviewer.
+    expect(start({ reviewer: { kind: 'self-fresh', reviewerSessionId: 'review-1' } }).success).toBe(false);
+    expect(start({ reviewer: { kind: 'other', providerId: 'claude', reviewerSessionId: 'review-2', model: 'claude-fable-5', reasoningEffort: 'high' } }).success).toBe(true);
+    expect(start({ reviewer: { kind: 'self' }, target: { kind: 'base-branch' } }).success).toBe(true);
+    expect(start({ reviewer: { kind: 'self' }, target: { kind: 'base-branch', baseRef: 'feature/login' } }).success).toBe(true);
+    // A reviewer conversation is host-owned: its id carries the prefix.
+    expect(start({ reviewer: { kind: 'other', providerId: 'claude', reviewerSessionId: 'chat-2' } }).success).toBe(false);
+    expect(start({ reviewer: { kind: 'other', providerId: 'claude', reviewerSessionId: 'review-' } }).success).toBe(false);
+    expect(start({ reviewer: { kind: 'other', providerId: 'claude' } }).success).toBe(false);
+    for (const baseRef of ['--output=x', 'main..HEAD', 'main^', '']) {
+      expect(start({ reviewer: { kind: 'self' }, target: { kind: 'base-branch', baseRef } }).success, baseRef).toBe(false);
+    }
+    expect(start({ reviewer: { kind: 'self' }, focus: 'x'.repeat(2_001) }).success).toBe(false);
+    expect(start({ reviewer: { kind: 'self', permissionPreset: 'full-access' } }).success).toBe(false);
+    const fix = (findingIds: unknown, extra: Record<string, unknown> = {}) => safeParseDaemonCommand({ ...base, type: 'review.fix', payload: { sessionId: 's', reviewId: 'r', findingIds, ...extra } });
+    expect(fix(['f-00000001'], { note: 'Keep cents.' }).success).toBe(true);
+    expect(fix([]).success).toBe(false);
+    expect(fix(Array.from({ length: 33 }, (_, index) => `f-${String(index)}`)).success).toBe(false);
+    expect(fix(['f-00000001'], { prompt: 'Delete everything.' }).success).toBe(false);
+    expect(safeParseDaemonCommand({ ...base, type: 'review.resolve', payload: { sessionId: 's', reviewId: 'r', findingIds: ['f-1'], state: 'dismissed' } }).success).toBe(true);
+    expect(safeParseDaemonCommand({ ...base, type: 'review.resolve', payload: { sessionId: 's', reviewId: 'r', findingIds: ['f-1'], state: 'fixed' } }).success).toBe(false);
+    expect(safeParseDaemonCommand({ ...base, type: 'review.cancel', payload: { sessionId: 's', reviewId: 'r' } }).success).toBe(true);
+  });
+
   it('requires session scope for MCP principals', () => {
     expect(safeParseDaemonCommand({
       protocolVersion: DAEMON_PROTOCOL_VERSION,

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { ApprovalResponseSchema, type ApprovalRequest, type ApprovalResponse } from './approval-request';
 import { ChatMessageContextSchema, type ChatMessageContext } from './chat-message';
+import { isSafeRef } from './git-status';
+import { REVIEW_LIMITS, type ReviewFailureReason } from './review-findings';
 import type { TranscriptPayload } from './transcript-payload';
 
 export const DAEMON_PROTOCOL_VERSION = 12 as const;
@@ -265,7 +267,43 @@ export interface DaemonSnapshot {
   readonly sideQuestionSessionIds?: readonly string[];
   /** Settings queued for each live session's next request (`agent-settings-v2`); host memory, never stored. */
   readonly pendingAgentSettings?: Readonly<Record<string, DaemonPendingAgentSettings>>;
+  /** `review-loop-v1`: which AIs can review on this host now, by provider id; host memory, never stored. */
+  readonly reviewSupport?: Readonly<Record<string, DaemonReviewSupport>>;
 }
+
+/** Whether one AI can review now (`review-loop-v1`). */
+export interface DaemonReviewSupport {
+  /** As a conversation's own AI, in a read-only fork of that conversation (`reviewer.kind: 'self'`). */
+  readonly self: boolean;
+  /** As another AI's reviewer, in a read-only conversation of its own (`reviewer.kind: 'other'`). */
+  readonly reviewer: boolean;
+  /** Why not, when either is false. */
+  readonly reason?: ReviewFailureReason;
+}
+
+/** Who reviews (`review.start`, `review-loop-v1`). */
+export type DaemonReviewer =
+  /** The conversation's AI in a read-only fork that keeps the conversation (its prompt cache too). */
+  | { readonly kind: 'self' }
+  /**
+   * Another AI in a read-only conversation of its own. Without a model or effort the host uses the
+   * 단계 연결 review agent when it is this AI, else the AI's own defaults.
+   */
+  | {
+      readonly kind: 'other';
+      readonly providerId: string;
+      readonly reviewerSessionId: string;
+      readonly model?: string;
+      readonly reasoningEffort?: string;
+    };
+
+/** What a review reads. Without `baseRef` the host compares with the worktree's base branch. */
+export type DaemonReviewTarget =
+  | { readonly kind: 'uncommitted' }
+  | { readonly kind: 'base-branch'; readonly baseRef?: string };
+
+/** Reviewer conversations are host-owned and read-only; their ids carry this prefix. */
+export const REVIEWER_SESSION_PREFIX = 'review-';
 
 /** Hosts that queue a person's settings changes for the next request and take one-request efforts. */
 export const AGENT_SETTINGS_CAPABILITY = 'agent-settings-v2';
@@ -307,6 +345,10 @@ export const DAEMON_COMMAND_TYPES = [
   'agent.archive',
   'agent.detach',
   'agent.release',
+  'review.start',
+  'review.fix',
+  'review.resolve',
+  'review.cancel',
   'permission.resolve',
   'provider.enable',
   'provider.disable',
@@ -423,6 +465,33 @@ export interface DaemonCommandPayloads {
   readonly 'agent.detach': { readonly sessionId: string };
   /** Stops the live provider of an idle conversation (Desktop, after `/clear`); nothing stored changes and the next message reattaches it. */
   readonly 'agent.release': { readonly sessionId: string };
+  /**
+   * `review-loop-v1`: a person asks for a review of the conversation's changes. `reviewId` is the
+   * client's (a retry with the same command replays). The card is the conversation's `review` rows.
+   */
+  readonly 'review.start': {
+    readonly sessionId: string;
+    readonly reviewId: string;
+    readonly reviewer: DaemonReviewer;
+    readonly target: DaemonReviewTarget;
+    readonly focus?: string;
+  };
+  /** Sends the findings to the conversation as a person's message (queued behind a running turn). */
+  readonly 'review.fix': {
+    readonly sessionId: string;
+    readonly reviewId: string;
+    readonly findingIds: readonly string[];
+    readonly note?: string;
+  };
+  /** Dismisses or reopens findings on the card; nothing reaches the AI. */
+  readonly 'review.resolve': {
+    readonly sessionId: string;
+    readonly reviewId: string;
+    readonly findingIds: readonly string[];
+    readonly state: 'dismissed' | 'open';
+  };
+  /** Stops a review that waits or runs. */
+  readonly 'review.cancel': { readonly sessionId: string; readonly reviewId: string };
   readonly 'permission.resolve': {
     readonly approvalId: string;
     readonly decision: 'allow' | 'deny';
@@ -646,6 +715,26 @@ const ProviderEnableSchema = z.object({
 const SessionIdSchema = z.object({ sessionId: IdentifierSchema }).strict();
 const ScheduleIdSchema = z.object({ scheduleId: IdentifierSchema }).strict();
 
+const ReviewerSessionIdSchema = IdentifierSchema.refine(
+  (value) => value.startsWith(REVIEWER_SESSION_PREFIX) && value.length > REVIEWER_SESSION_PREFIX.length,
+  `A reviewer conversation id starts with ${REVIEWER_SESSION_PREFIX}.`,
+);
+const ReviewerSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('self') }).strict(),
+  z.object({
+    kind: z.literal('other'),
+    providerId: IdentifierSchema,
+    reviewerSessionId: ReviewerSessionIdSchema,
+    model: NonEmptyStringSchema.optional(),
+    reasoningEffort: z.string().min(1).max(32).optional(),
+  }).strict(),
+]);
+const ReviewTargetCommandSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('uncommitted') }).strict(),
+  z.object({ kind: z.literal('base-branch'), baseRef: z.string().refine(isSafeRef, 'The base branch must be a plain branch name.').optional() }).strict(),
+]);
+const ReviewFindingIdsSchema = z.array(IdentifierSchema).min(1).max(REVIEW_LIMITS.findings);
+
 const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'project.create': z.object({ projectId: IdentifierSchema, name: NonEmptyStringSchema, rootPath: NonEmptyStringSchema.optional() }).strict(),
   'project.update': z.object({ projectId: IdentifierSchema, name: NonEmptyStringSchema.optional(), rootPath: NonEmptyStringSchema.optional() }).strict(),
@@ -696,6 +785,26 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'agent.archive': SessionIdSchema,
   'agent.detach': SessionIdSchema,
   'agent.release': SessionIdSchema,
+  'review.start': z.object({
+    sessionId: IdentifierSchema,
+    reviewId: IdentifierSchema,
+    reviewer: ReviewerSchema,
+    target: ReviewTargetCommandSchema,
+    focus: z.string().max(REVIEW_LIMITS.focus).optional(),
+  }).strict(),
+  'review.fix': z.object({
+    sessionId: IdentifierSchema,
+    reviewId: IdentifierSchema,
+    findingIds: ReviewFindingIdsSchema,
+    note: z.string().max(REVIEW_LIMITS.focus).optional(),
+  }).strict(),
+  'review.resolve': z.object({
+    sessionId: IdentifierSchema,
+    reviewId: IdentifierSchema,
+    findingIds: ReviewFindingIdsSchema,
+    state: z.enum(['dismissed', 'open']),
+  }).strict(),
+  'review.cancel': z.object({ sessionId: IdentifierSchema, reviewId: IdentifierSchema }).strict(),
   'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']), response: ApprovalResponseSchema.optional() }).strict(),
   'provider.enable': ProviderEnableSchema,
   'provider.disable': z.object({ providerId: IdentifierSchema }).strict(),

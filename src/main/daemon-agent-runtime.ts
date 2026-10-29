@@ -7,6 +7,7 @@ import { validateChatMessageContext, type ChatMessageContext, type ChatReplyRefe
 
 import {
   DAEMON_HARD_LIMITS,
+  REVIEWER_SESSION_PREFIX,
   type DaemonAgent,
   type DaemonCommand,
   type DaemonCommandError,
@@ -55,6 +56,8 @@ import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 import type { ConversationFolderResolver } from './conversation-roots';
 import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
+import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
+import { readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -68,6 +71,10 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.archive'
   | 'agent.detach'
   | 'agent.release'
+  | 'review.start'
+  | 'review.fix'
+  | 'review.resolve'
+  | 'review.cancel'
   | 'permission.resolve'
   | 'provider.enable'
   | 'provider.disable'
@@ -79,7 +86,9 @@ export interface DaemonAgentRuntimeOptions {
   readonly beforeProviderDispatch?: (turn: DaemonTurn) => Promise<boolean | void>;
   readonly canDispatchTurn?: (turn: DaemonTurn) => boolean;
   /** A prepared (workflow) session's fixed settings; a chain conversation's permission follows its current stage. */
-  readonly preparedSessionSettings?: (sessionId: string) => (Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled'> & { readonly permissionPreset?: DaemonAgent['permissionPreset'] }) | undefined;
+  readonly preparedSessionSettings?: (sessionId: string) => (Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled' | 'readOnlyReviewer'> & { readonly permissionPreset?: DaemonAgent['permissionPreset'] }) | undefined;
+  /** `review-loop-v1`: runs the reviews `review.*` commands start; without it they are refused. */
+  readonly reviews?: DaemonReviewHost;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -457,6 +466,10 @@ export class DaemonAgentRuntime {
       'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
       'agent.detach': (command, context) => this.runCommand(() => this.detach(command, context)),
       'agent.release': (command, context) => this.runCommand(() => this.release(command, context)),
+      'review.start': (command, context) => this.runCommand(() => this.startReview(command, context)),
+      'review.fix': (command, context) => this.runCommand(() => this.fixReview(command, context)),
+      'review.resolve': (command, context) => this.runCommand(() => this.resolveReview(command, context)),
+      'review.cancel': (command, context) => this.runCommand(() => this.cancelReview(command, context)),
       'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
       'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
@@ -1055,13 +1068,43 @@ export class DaemonAgentRuntime {
   ): Promise<DaemonCommandExecutionResult> {
     const expected = interruptFirst ? 'agent.interrupt-and-submit' : 'agent.submit';
     if (command.type !== expected) return commandError('invalid-command', `Unexpected ${expected} command.`);
+    if (command.payload.sessionId.startsWith(REVIEWER_SESSION_PREFIX)) {
+      return commandError('invalid-state', 'This is a read-only review conversation. Fixes go to the conversation the review is for.');
+    }
     if (this.options.preparedSessionSettings?.(command.payload.sessionId)
       && command.principal.id !== 'planning-runtime' && command.principal.id !== 'planning-result-runtime' && command.principal.id !== 'planning-ai-runtime') {
       return commandError('invalid-state', 'This conversation belongs to a frozen execution attempt. Use a new task or the execution retry controls for additional instructions.');
     }
+    return this.queueTurn(command, context, {
+      sessionId: command.payload.sessionId,
+      prompt: command.payload.prompt,
+      ...(command.payload.context ? { context: command.payload.context } : {}),
+      ...(command.type === 'agent.submit' && command.payload.reportOf ? { reportOf: command.payload.reportOf } : {}),
+      interruptFirst,
+    });
+  }
+
+  /**
+   * A message queued in a conversation as its next turn (behind a running one): the turn, the user
+   * row (with `payload`) and the queue count, under every check a person's message gets. Shared by
+   * `agent.submit` and `review.fix`; the turn's prompt is the user row's text.
+   */
+  private async queueTurn(
+    command: DaemonCommand,
+    context: DaemonCommandExecutionContext,
+    input: {
+      readonly sessionId: string;
+      readonly prompt: string;
+      readonly context?: ChatMessageContext;
+      readonly reportOf?: string;
+      readonly payload?: DaemonTranscriptItemInput['payload'];
+      readonly interruptFirst: boolean;
+    },
+  ): Promise<DaemonCommandExecutionResult> {
+    const interruptFirst = input.interruptFirst;
     const snapshot = context.snapshot;
-    const session = snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
-    const agent = snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
+    const session = snapshot.sessions.find((entry) => entry.id === input.sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
     if (!session || !agent || session.kind !== 'agent') {
       return commandError('not-found', 'Agent Session was not found.');
     }
@@ -1072,7 +1115,7 @@ export class DaemonAgentRuntime {
     if (!workspace) {
       return commandError('not-found', 'Active Workspace was not found.');
     }
-    const suppliedContext = command.payload.context;
+    const suppliedContext = input.context;
     if (suppliedContext?.workflow) return commandError('invalid-command', 'Stage reference snapshots are resolved by the host, not supplied by a client.');
     let messageContext = suppliedContext;
     try {
@@ -1094,7 +1137,7 @@ export class DaemonAgentRuntime {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
     }
     let reportPayload: DaemonTranscriptItemInput['payload'];
-    const reportOf = command.type === 'agent.submit' ? command.payload.reportOf : undefined;
+    const reportOf = input.reportOf;
     if (reportOf) {
       const child = snapshot.sessions.find((entry) => entry.id === reportOf);
       const managed = snapshot.agentRelations.some((relation) => (
@@ -1152,12 +1195,12 @@ export class DaemonAgentRuntime {
           session.id,
           turnId,
           command.commandId,
-          command.payload.prompt,
+          input.prompt,
           now,
           messageContext,
           messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
         ),
-        ...(reportPayload ? { payload: reportPayload } : {}),
+        ...(reportPayload ?? input.payload ? { payload: reportPayload ?? input.payload } : {}),
       }]),
     );
     return {
@@ -1652,6 +1695,220 @@ export class DaemonAgentRuntime {
       } },
       ...rebase,
     ] } };
+  }
+
+  /** The conversation a review command acts on: an agent conversation that is not archived. */
+  private reviewedConversation(snapshot: DaemonSnapshot, sessionId: string): { readonly ok: true; readonly session: DaemonSession; readonly agent: DaemonAgent } | { readonly ok: false; readonly result: DaemonCommandExecutionResult } {
+    if (!this.options.reviews) return { ok: false, result: commandError('invalid-state', 'This host does not run reviews.') };
+    const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    if (!session || !agent || session.kind !== 'agent') return { ok: false, result: commandError('not-found', 'Agent Session was not found.') };
+    if (session.archivedAt || session.state === 'archived' || agent.state === 'archived') {
+      return { ok: false, result: commandError('invalid-state', 'This conversation is archived.') };
+    }
+    if (session.id.startsWith(REVIEWER_SESSION_PREFIX) || this.options.preparedSessionSettings?.(session.id)) {
+      return { ok: false, result: commandError('invalid-state', 'Reviews belong to a person’s own conversations, not to a workflow, planning or reviewer conversation.') };
+    }
+    return { ok: true, session, agent };
+  }
+
+  /**
+   * `review.start` (`review-loop-v1`): the card, and for another AI's reviewer conversation that
+   * conversation with its one queued turn — inside the person's own command, as a person's hand-off
+   * needs no orchestration switch. The coordinator runs the review. An AI that cannot review here
+   * gets an `unsupported` card with the reason, not a refusal.
+   */
+  private async startReview(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'review.start') return commandError('invalid-command', 'Unexpected review start command.');
+    const { snapshot } = context;
+    const payload = command.payload;
+    const reviewed = this.reviewedConversation(snapshot, payload.sessionId);
+    if (!reviewed.ok) return reviewed.result;
+    const reviews = this.options.reviews!;
+    const { session, agent } = reviewed;
+    if (reviews.knows(payload.reviewId) || readReviewHistory(this.options.readTranscript, session.id, payload.reviewId)) {
+      return commandError('invalid-state', 'This review already exists.');
+    }
+    const workspace = findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId);
+    if (!workspace) return commandError('not-found', 'Active Workspace was not found.');
+    let target: ReviewTarget = { kind: 'uncommitted' };
+    if (payload.target.kind === 'base-branch') {
+      const baseRef = payload.target.baseRef ?? await reviews.worktreeBase(snapshot, workspace.id);
+      if (!baseRef) return commandError('invalid-state', 'This conversation does not work in a worktree with a base branch. Review its uncommitted changes instead.');
+      target = { kind: 'base-branch', baseRef };
+    }
+    const { reviewer } = payload;
+    const providerId = reviewer.kind === 'other' ? reviewer.providerId : agent.providerId;
+    const support = reviews.support(snapshot)[providerId];
+    const focus = payload.focus?.trim();
+    const now = this.isoNow();
+    const current = agent.currentTurnId ? snapshot.turns.find((turn) => turn.id === agent.currentTurnId) : undefined;
+    // D13: a conversation that is answering is reviewed once that turn ends.
+    const waitTurnId = current && ACTIVE_TURN_STATES.has(current.state) ? current.id : undefined;
+    const card = (ref: ReviewerRef, state: 'queued' | 'running' | 'unsupported', reason?: string) => reviewRowItem({
+      id: stableId('review-row', payload.reviewId, 'start'),
+      sessionId: session.id,
+      reviewId: payload.reviewId,
+      reviewer: ref,
+      target,
+      ...(focus ? { focus } : {}),
+      state,
+      ...(state === 'queued' ? { waitingFor: 'turn' as const } : {}),
+      ...(reason ? { reason } : {}),
+      createdAt: now,
+    });
+    const job = (ref: ReviewerRef) => ({
+      reviewId: payload.reviewId, sessionId: session.id, reviewer: ref, target,
+      ...(focus ? { focus } : {}), ...(waitTurnId ? { waitTurnId } : {}),
+    });
+
+    if (reviewer.kind === 'self') {
+      const ref: ReviewerRef = { mode: 'self', providerId, ...(agent.model ? { model: agent.model } : {}) };
+      const reason = unsupportedReason(support, 'self');
+      if (reason) return { ok: true, commit: { mutations: this.transcriptMutations([card(ref, 'unsupported', reason)]) } };
+      if (!agent.providerSessionId) {
+        return commandError('invalid-state', 'This AI has not started in this conversation yet. Send it a message first, or review with another AI.');
+      }
+      return {
+        ok: true,
+        commit: { mutations: this.transcriptMutations([card(ref, waitTurnId ? 'queued' : 'running')]) },
+        afterCommit: () => reviews.begin(job(ref)),
+      };
+    }
+
+    const childId = reviewer.reviewerSessionId;
+    // D8: another AI reviews as the 단계 연결 review agent when the client named no model or effort.
+    const linked = !reviewer.model && !reviewer.reasoningEffort ? reviews.reviewAgent(providerId) : undefined;
+    const model = reviewer.model ?? linked?.model;
+    const reasoningEffort = reviewer.reasoningEffort ?? linked?.reasoningEffort;
+    const ref: ReviewerRef = { mode: 'other', providerId, ...(model ? { model } : {}) };
+    const reason = unsupportedReason(support, 'reviewer')
+      ?? (this.options.providers.enabledAdapter(snapshot, providerId).ok ? undefined : 'provider-unavailable');
+    if (reason) return { ok: true, commit: { mutations: this.transcriptMutations([card(ref, 'unsupported', reason)]) } };
+    if (snapshot.sessions.some((entry) => entry.id === childId)) return commandError('invalid-state', 'Session already exists.');
+    const relation = this.planChildRelation(snapshot, session.id, session.projectId, command.principal);
+    if (!relation.ok) return relation.result;
+    const turnId = stableId('turn', command.commandId);
+    const childRef: ReviewerRef = { ...ref, sessionId: childId };
+    return {
+      ok: true,
+      commit: { mutations: [
+        { kind: 'session.upsert', value: {
+          id: childId, projectId: session.projectId, workspaceId: session.workspaceId, kind: 'agent',
+          title: `검토 · ${session.title}`.slice(0, 200), state: 'idle', source: 'structured',
+        } },
+        { kind: 'agent.upsert', value: {
+          sessionId: childId, providerId, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}),
+          permissionPreset: 'plan', state: 'queued', queuedTurnCount: 1, orchestrationEnabled: false,
+        } },
+        ...this.transcriptMutations([{
+          id: managedChildOriginId(childId), sessionId: childId, kind: 'notice', text: `Started from: ${session.title}`,
+          isDelta: false, isSensitive: false, createdAt: now, relatedSessionId: session.id,
+          payload: { v: 1, type: 'subagent', role: 'link', parentSessionId: session.id },
+        }]),
+        // Held by the coordinator until its prompt (the change, read once the reviewed turn ended) is in place.
+        { kind: 'turn.upsert', value: { id: turnId, sessionId: childId, commandId: command.commandId, enqueueSequence: command.expectedRevision + 1, state: 'queued' } },
+        { kind: 'agent-relation.upsert', value: {
+          id: stableId('relation', relation.value.treeId, childId), treeId: relation.value.treeId,
+          parentSessionId: session.id, childSessionId: childId, owner: 'managed', depth: relation.value.depth,
+        } },
+        ...this.transcriptMutations([card(childRef, waitTurnId ? 'queued' : 'running')]),
+      ] },
+      afterCommit: () => reviews.begin({ ...job(childRef), child: { sessionId: childId, turnId } }),
+    };
+  }
+
+  /**
+   * `review.fix`: the chosen findings go to the reviewed conversation as a person's message (queued
+   * behind a running turn), quoted as data with the reviewer named. Dismissed findings and findings
+   * whose fix is still asked for or being worked on are refused; so is a batch over the message budget,
+   * with how many fit.
+   */
+  private async fixReview(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'review.fix') return commandError('invalid-command', 'Unexpected review fix command.');
+    const payload = command.payload;
+    const reviewed = this.reviewedConversation(context.snapshot, payload.sessionId);
+    if (!reviewed.ok) return reviewed.result;
+    const history = readReviewHistory(this.options.readTranscript, payload.sessionId, payload.reviewId);
+    if (!history || history.review.state !== 'complete' || !history.review.findings?.length) {
+      return commandError('not-found', 'This review has no findings to fix.');
+    }
+    const requested = new Set(payload.findingIds);
+    const findings = history.review.findings.filter((finding) => requested.has(finding.id));
+    if (findings.length !== requested.size) return commandError('invalid-command', 'Some findings are not part of this review.');
+    for (const finding of findings) {
+      const event = history.latest.get(finding.id);
+      if (event?.kind === 'status' && event.state === 'dismissed') {
+        return commandError('invalid-state', 'A dismissed finding is not sent. Reopen it first.');
+      }
+      const fixTurn = event?.kind === 'fix' && event.turnId ? context.snapshot.turns.find((turn) => turn.id === event.turnId) : undefined;
+      if (fixTurn && !TERMINAL_TURN_STATES.has(fixTurn.state)) return commandError('invalid-state', 'This finding is already being fixed.');
+    }
+    const note = payload.note?.trim();
+    const fix = composeFixPrompt({ reviewerLabel: reviewerLabel(history.review.reviewer.providerId), findings, ...(note ? { note } : {}) });
+    if (!fix.ok) {
+      return { ok: false, error: {
+        code: 'invalid-state',
+        message: fix.fits > 0 ? `These findings do not fit in one message. Fix the first ${String(fix.fits)}, then the rest.` : 'This finding does not fit in one message.',
+        retryable: false,
+        details: { fits: fix.fits },
+      } };
+    }
+    return this.queueTurn(command, context, {
+      sessionId: payload.sessionId,
+      prompt: fix.text,
+      payload: { v: 1, type: 'review-fix', reviewId: payload.reviewId, findingIds: findings.map((finding) => finding.id) },
+      interruptFirst: false,
+    });
+  }
+
+  /** `review.resolve`: dismisses or reopens findings on the card; nothing reaches the AI. */
+  private resolveReview(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {
+    if (command.type !== 'review.resolve') return commandError('invalid-command', 'Unexpected review resolve command.');
+    const payload = command.payload;
+    const reviewed = this.reviewedConversation(context.snapshot, payload.sessionId);
+    if (!reviewed.ok) return reviewed.result;
+    const history = readReviewHistory(this.options.readTranscript, payload.sessionId, payload.reviewId);
+    const known = new Set(history?.review.findings?.map((finding) => finding.id) ?? []);
+    if (!known.size) return commandError('not-found', 'This review has no findings.');
+    if (payload.findingIds.some((id) => !known.has(id))) return commandError('invalid-command', 'Some findings are not part of this review.');
+    const count = payload.findingIds.length;
+    const noun = count === 1 ? 'review finding' : 'review findings';
+    return { ok: true, commit: { mutations: this.transcriptMutations([{
+      id: stableId('review-status', command.commandId),
+      sessionId: payload.sessionId,
+      kind: 'notice',
+      text: payload.state === 'dismissed' ? `Dismissed ${String(count)} ${noun}.` : `Reopened ${String(count)} ${noun}.`,
+      isDelta: false,
+      isSensitive: false,
+      createdAt: this.isoNow(),
+      payload: { v: 1, type: 'review-status', reviewId: payload.reviewId, findingIds: [...payload.findingIds], state: payload.state },
+    }]) } };
+  }
+
+  /** `review.cancel`: the card says stopped now; the coordinator stops what still runs. */
+  private cancelReview(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {
+    if (command.type !== 'review.cancel') return commandError('invalid-command', 'Unexpected review cancel command.');
+    const payload = command.payload;
+    const reviewed = this.reviewedConversation(context.snapshot, payload.sessionId);
+    if (!reviewed.ok) return reviewed.result;
+    const reviews = this.options.reviews!;
+    const job = reviews.active(payload.reviewId);
+    if (!job || job.sessionId !== payload.sessionId) return commandError('invalid-state', 'This review is not waiting or running.');
+    return {
+      ok: true,
+      commit: { mutations: this.transcriptMutations([reviewRowItem({
+        id: stableId('review-row', payload.reviewId, 'cancel'),
+        sessionId: payload.sessionId,
+        reviewId: payload.reviewId,
+        reviewer: job.reviewer,
+        target: job.target,
+        ...(job.focus ? { focus: job.focus } : {}),
+        state: 'cancelled',
+        createdAt: this.isoNow(),
+      })]) },
+      afterCommit: () => reviews.cancel(payload.reviewId),
+    };
   }
 
   private async resolveApproval(
@@ -2650,7 +2907,9 @@ export class DaemonAgentRuntime {
           && relation.owner === 'managed'
           && relation.detachedAt === undefined
         ));
-        const parent = parentRelation
+        // A reviewer's answer reaches the reviewed conversation as its review card (ReviewCoordinator),
+        // never as a summary row or a report.
+        const parent = parentRelation && !event.sessionId.startsWith(REVIEWER_SESSION_PREFIX)
           ? snapshot.sessions.find((candidate) => candidate.id === parentRelation.parentSessionId)
           : undefined;
         // What the parent hears is the child's last answer; a provider's summary can be a status line.

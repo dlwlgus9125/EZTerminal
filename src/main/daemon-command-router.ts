@@ -60,6 +60,8 @@ export interface DaemonCommandRouterOptions {
   readonly sideQuestionSessions?: (snapshot: DaemonSnapshot) => readonly string[];
   /** Settings queued for each session's next request (DaemonAgentRuntime.pendingAgentSettings). */
   readonly pendingAgentSettings?: (snapshot: DaemonSnapshot) => DaemonSnapshot['pendingAgentSettings'];
+  /** Which AIs can review now (ReviewCoordinator.support); `review-loop-v1`. */
+  readonly reviewSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['reviewSupport'];
 }
 
 function commandError(
@@ -130,6 +132,10 @@ function providerNativeMutationTarget(
     case 'agent.archive':
     case 'agent.detach':
     case 'agent.release':
+    case 'review.start':
+    case 'review.fix':
+    case 'review.resolve':
+    case 'review.cancel':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
       return providerNativeRelation(snapshot, command.payload.sessionId)?.childSessionId;
@@ -175,6 +181,7 @@ export class DaemonCommandRouter {
   private readonly pendingAgentSettings: DaemonCommandRouterOptions['pendingAgentSettings'];
   private readonly attention: DaemonCommandRouterOptions['attention'];
   private readonly sideQuestionSessions: DaemonCommandRouterOptions['sideQuestionSessions'];
+  private readonly reviewSupport: DaemonCommandRouterOptions['reviewSupport'];
   private acceptingCommands = true;
 
   constructor(
@@ -187,6 +194,7 @@ export class DaemonCommandRouter {
     this.attention = options.attention;
     this.sideQuestionSessions = options.sideQuestionSessions;
     this.pendingAgentSettings = options.pendingAgentSettings;
+    this.reviewSupport = options.reviewSupport;
   }
 
   getSnapshot(): DaemonSnapshot {
@@ -195,12 +203,14 @@ export class DaemonCommandRouter {
     const attention = this.attention?.(snapshot);
     const sideQuestionSessionIds = this.sideQuestionSessions?.(snapshot);
     const pendingAgentSettings = this.pendingAgentSettings?.(snapshot);
+    const reviewSupport = this.reviewSupport?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
       ...(attention ? { attention } : {}),
       ...(sideQuestionSessionIds?.length ? { sideQuestionSessionIds } : {}),
       ...(pendingAgentSettings ? { pendingAgentSettings } : {}),
+      ...(reviewSupport && Object.keys(reviewSupport).length ? { reviewSupport } : {}),
     };
   }
 
