@@ -175,10 +175,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-capability-service.ts",
-          "startLine": 28,
-          "endLine": 63,
-          "lineDigest": "sha256:88148784c2958fda1e2b84322f767eed72e75d9448f04cd0308a5fb8fcc1f470",
-          "claim": "The reviewed provider supplies native metadata; built-in workflow skill appears only when tools are bound. Stable revisions include native configuration identity and host scope."
+          "startLine": 137,
+          "endLine": 172,
+          "lineDigest": "sha256:532d5ebf952e82ce4f2864e29c8ea648f9adcabb663171f95d68664e5c225b85",
+          "claim": "Provider metadata; the workflow skill only with bound tools. The PC-wide view reads a neutral folder and changes project installs only through an app workspace. Revisions include configuration identity and host scope."
         }
       ]
     },
@@ -248,9 +248,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-capability-service.ts",
-          "startLine": 99,
-          "endLine": 150,
-          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "startLine": 211,
+          "endLine": 264,
+          "lineDigest": "sha256:16870f048a81bcdd2e4a07aa687f2cc61c567383b93ded67fc43eb5a6685010c",
           "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
         }
       ]
@@ -324,18 +324,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 980,
-          "endLine": 1069,
-          "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
-          "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
+          "startLine": 1046,
+          "endLine": 1141,
+          "lineDigest": "sha256:68f52ed35fd65c2c0321c6b82f4b695f2b660c7d8a3ea1daba5bd711d7372ddf",
+          "claim": "Codex metadata uses model, skill, installed-plugin (plus local marketplaces PC-wide), MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1263,
-          "endLine": 1344,
-          "lineDigest": "sha256:a958bb4b7c0e4048efce6a81065ae8e22dd0d3cff4f23b6f56c37dc80aeea5cf",
-          "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt; concurrent callers for one folder share that launch."
+          "startLine": 1308,
+          "endLine": 1419,
+          "lineDigest": "sha256:ef2cd5a1c4f429872f5b7fdd79bf4e329545eda4ce5ec819685130ae1b47db2a",
+          "claim": "Claude discovery runs an ephemeral empty-input SDK query (user settings only PC-wide), reads models/commands/MCP, CLI plugins and marketplaces, then closes it without a prompt; callers for one folder share that launch."
         }
       ]
     },
@@ -463,10 +463,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-capability-service.ts",
-          "startLine": 28,
-          "endLine": 63,
-          "lineDigest": "sha256:88148784c2958fda1e2b84322f767eed72e75d9448f04cd0308a5fb8fcc1f470",
-          "claim": "The reviewed provider supplies native metadata; built-in workflow skill appears only when tools are bound. Stable revisions include native configuration identity and host scope."
+          "startLine": 137,
+          "endLine": 172,
+          "lineDigest": "sha256:532d5ebf952e82ce4f2864e29c8ea648f9adcabb663171f95d68664e5c225b85",
+          "claim": "Provider metadata; the workflow skill only with bound tools. The PC-wide view reads a neutral folder and changes project installs only through an app workspace. Revisions include configuration identity and host scope."
         }
       ]
     },
@@ -480,10 +480,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 980,
-          "endLine": 1069,
-          "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
-          "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
+          "startLine": 1046,
+          "endLine": 1141,
+          "lineDigest": "sha256:68f52ed35fd65c2c0321c6b82f4b695f2b660c7d8a3ea1daba5bd711d7372ddf",
+          "claim": "Codex metadata uses model, skill, installed-plugin (plus local marketplaces PC-wide), MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }
       ]
     },
@@ -497,9 +497,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-capability-service.ts",
-          "startLine": 99,
-          "endLine": 150,
-          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "startLine": 211,
+          "endLine": 264,
+          "lineDigest": "sha256:16870f048a81bcdd2e4a07aa687f2cc61c567383b93ded67fc43eb5a6685010c",
           "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
         }
       ]
@@ -514,9 +514,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-capability-service.ts",
-          "startLine": 99,
-          "endLine": 150,
-          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "startLine": 211,
+          "endLine": 264,
+          "lineDigest": "sha256:16870f048a81bcdd2e4a07aa687f2cc61c567383b93ded67fc43eb5a6685010c",
           "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
         }
       ]

@@ -224,6 +224,16 @@ const api: EzTerminalApi = {
   workflowCheckStatus: (projectId, subprojectId) => ipcRenderer.invoke('workflow-checks:status', sessionSurfaceClientId, projectId, subprojectId),
   workflowCheckAllow: (projectId, subprojectId, nodeId, checkId, digest) => ipcRenderer.invoke('workflow-checks:allow', sessionSurfaceClientId, projectId, subprojectId, nodeId, checkId, digest),
   agentCapabilitiesManage: (command) => ipcRenderer.invoke('agent-capabilities:manage', sessionSurfaceClientId, command),
+  agentHostExtensionsList: (request) => ipcRenderer.invoke('agent-host-extensions:list', sessionSurfaceClientId, request),
+  agentHostExtensionsBrowse: (request) => ipcRenderer.invoke('agent-host-extensions:browse', sessionSurfaceClientId, request),
+  agentHostExtensionsManage: (command) => ipcRenderer.invoke('agent-host-extensions:manage', sessionSurfaceClientId, command),
+  agentCliStatus: (providerId, request) => ipcRenderer.invoke('agent-cli:status', sessionSurfaceClientId, providerId, request),
+  agentCliUpdate: (providerId) => ipcRenderer.invoke('agent-cli:update', sessionSurfaceClientId, providerId),
+  onAgentHostExtensionsChanged: (listener): (() => void) => {
+    const handler = (_event: unknown, providerId: 'codex' | 'claude'): void => listener(providerId);
+    ipcRenderer.on('agent-host-extensions:changed', handler);
+    return () => ipcRenderer.removeListener('agent-host-extensions:changed', handler);
+  },
   getPlanningExecutionSnapshot: (projectId, subprojectId) => ipcRenderer.invoke('planning-run:read', sessionSurfaceClientId, projectId, subprojectId),
   executePlanningRun: (command) => ipcRenderer.invoke('planning-run:execute', sessionSurfaceClientId, command),
   readPlanningResult: (query) => ipcRenderer.invoke('planning-run:result', sessionSurfaceClientId, query),

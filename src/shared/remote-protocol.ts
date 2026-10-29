@@ -90,7 +90,7 @@ import type {
 import type { QuickCommand } from './quick-command';
 import type { PlanningCommand, PlanningReadResult, PlanningMutationResult } from './planning';
 import type { WorkflowCommand, WorkflowResult, WorkflowPreviewRequest, WorkflowPreviewResult, WorkflowNavigationResult } from './workflow';
-import type { AgentCapabilitiesRequest, AgentExtensionCommand, AgentCapabilitiesClient } from './agent-capabilities';
+import type { AgentCapabilitiesRequest, AgentExtensionCommand, AgentCapabilitiesClient, AgentHostCommand, AgentHostExtensionsClient, AgentHostRequest, AgentPluginBrowseRequest } from './agent-capabilities';
 import type { PlanningRunRequest, PlanningRunResult } from './planning-run';
 import type { PlanningAiRequest, PlanningAiResult } from './planning-ai';
 import type { PlanningAssetRequest, PlanningAssetResult } from './planning-asset';
@@ -120,11 +120,17 @@ export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
 export const REMOTE_CAPABILITY_PROVIDER_MODELS_READ = 'provider-models-read' as const;
 /** The host answers `side-question-ask` (/btw on a live conversation; older hosts would drop the request). */
 export const REMOTE_CAPABILITY_SIDE_QUESTIONS = 'side-questions-v1' as const;
+/**
+ * The host answers `agent-host-extensions-*`: the PC user scope plugins, marketplaces, MCP
+ * servers and skills (Settings › AI). The program update is never part of the remote protocol.
+ */
+export const REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS = 'agent-host-extensions-v1' as const;
 export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL
   | typeof REMOTE_CAPABILITY_PROVIDER_MODELS_READ
-  | typeof REMOTE_CAPABILITY_SIDE_QUESTIONS;
+  | typeof REMOTE_CAPABILITY_SIDE_QUESTIONS
+  | typeof REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS;
 
 /**
  * Version markers document when capabilities entered the protocol. v12 is the
@@ -556,6 +562,15 @@ export type AgentCapabilitiesWireRequest =
 export type AgentCapabilitiesWireReply =
   | { readonly kind: 'agent-capabilities-list-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['list']>> }
   | { readonly kind: 'agent-capabilities-manage-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['manage']>> };
+/** Settings › AI on the phone: gated by {@link REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS}. */
+export type AgentHostExtensionsWireRequest =
+  | { readonly kind: 'agent-host-extensions-list'; readonly requestId: string; readonly request: AgentHostRequest }
+  | { readonly kind: 'agent-host-extensions-browse'; readonly requestId: string; readonly request: AgentPluginBrowseRequest }
+  | { readonly kind: 'agent-host-extensions-manage'; readonly requestId: string; readonly command: AgentHostCommand };
+export type AgentHostExtensionsWireReply =
+  | { readonly kind: 'agent-host-extensions-list-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentHostExtensionsClient['list']>> }
+  | { readonly kind: 'agent-host-extensions-browse-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentHostExtensionsClient['browse']>> }
+  | { readonly kind: 'agent-host-extensions-manage-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentHostExtensionsClient['manage']>> };
 
 /** /btw: one tool-less answer from a live conversation's context; nothing is stored on either side. */
 export type SideQuestionAskMessage = import('./agent-side-question').AgentSideQuestionRequest & { readonly kind: 'side-question-ask' };
@@ -979,6 +994,7 @@ export type ClientToServerMessage =
   | ConversationHistoryRequest
   | WorkflowRequest
   | AgentCapabilitiesWireRequest
+  | AgentHostExtensionsWireRequest
   | ProviderModelsListRequest
   | SideQuestionAskMessage
   | SideQuestionCancelMessage
@@ -1673,6 +1689,7 @@ export type ServerToClientMessage =
   | ConversationHistoryReply
   | WorkflowReply
   | AgentCapabilitiesWireReply
+  | AgentHostExtensionsWireReply
   | ProviderModelsListReply
   | SideQuestionReplyMessage
   | AuthOkMessage

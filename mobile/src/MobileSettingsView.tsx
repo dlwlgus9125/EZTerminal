@@ -55,6 +55,9 @@ import { MOBILE_BUILD_INFO } from './build-info';
 import { isAppUpdateAvailable } from '../../src/shared/app-update';
 import { MobileAppUpdateCard } from './MobileAppUpdateCard';
 import type { MobileAppUpdateController } from './use-mobile-app-update';
+import type { AgentHostExtensionsClient } from '../../src/shared/agent-capabilities';
+import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
+import { AgentManagementSettings, agentManagementInputs } from '../../src/renderer/AgentManagementSettings';
 
 // MobileSettingsView — full-screen settings overlay (v0.2.0 M4). Modeled on
 // MobileStatsView.tsx's structure (standalone view, own header, `.btn`/
@@ -83,6 +86,7 @@ type MobileSettingsCategory =
   | 'general'
   | 'appearance'
   | 'terminal-input'
+  | 'ai'
   | 'integrations'
   | 'connection-about';
 
@@ -153,6 +157,23 @@ interface MobileSettingsViewProps {
   readonly currentTheme: ThemeName;
   readonly onOpenTheme: (trigger: HTMLElement) => void;
   readonly appUpdateController?: MobileAppUpdateController;
+  /** Settings › AI: the connected PC's plugins, marketplaces, MCP servers and skills. */
+  readonly agentManagement?: {
+    readonly extensions: AgentHostExtensionsClient;
+    readonly loadSnapshot: () => Promise<DaemonSnapshot | null>;
+  };
+}
+
+/** The PC's AI programs as the phone sees them: no program update here (that stays on the PC). */
+function MobileAgentManagement({ access }: { readonly access: NonNullable<MobileSettingsViewProps['agentManagement']> }): JSX.Element {
+  const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
+  useEffect(() => {
+    let active = true;
+    void access.loadSnapshot().then((next) => { if (active) setSnapshot(next); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [access]);
+  const inputs = agentManagementInputs(snapshot);
+  return <AgentManagementSettings variant="mobile" extensions={access.extensions} providers={inputs.providers} projects={inputs.projects} />;
 }
 
 /**
@@ -185,6 +206,7 @@ export function MobileSettingsView({
   currentTheme,
   onOpenTheme,
   appUpdateController,
+  agentManagement,
 }: MobileSettingsViewProps): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences, setPreferences } = useMobileUiPreferences();
@@ -353,6 +375,8 @@ export function MobileSettingsView({
       ? t('mobile.settingsView.categories.appearance')
       : category === 'terminal-input'
         ? t('mobile.settingsView.categories.terminalInput')
+        : category === 'ai'
+          ? t('mobile.settingsView.categories.ai')
         : category === 'integrations'
           ? t('mobile.settingsView.categories.integrations')
           : category === 'connection-about'
@@ -414,6 +438,15 @@ export function MobileSettingsView({
               testId="settings-category-terminal-input"
               onClick={() => openCategory('terminal-input', 'settings-category-terminal-input')}
             />
+            {agentManagement && (
+              <SettingsCategoryButton
+                icon="bot"
+                title={t('mobile.settingsView.categories.ai')}
+                preview={t('mobile.settingsView.aiPreview')}
+                testId="settings-category-ai"
+                onClick={() => openCategory('ai', 'settings-category-ai')}
+              />
+            )}
             <SettingsCategoryButton
               icon="link"
               title={t('mobile.settingsView.categories.integrations')}
@@ -690,6 +723,8 @@ export function MobileSettingsView({
             />
           ))}
         </section>}
+
+        {category === 'ai' && agentManagement && <MobileAgentManagement access={agentManagement} />}
 
         {category === 'integrations' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.openClaw')}</h2>

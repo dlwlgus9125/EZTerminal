@@ -246,6 +246,21 @@ snapshot의 상세는 [`terminal-clipboard.md`](../design/terminal-clipboard.md)
   기존 claude.ai login은 Anthropic third-party 사용 사전 승인 확인이 따로 필요하다. inline 설명과 공식 문서
   link를 함께 제공하고 checkbox 하나로 합치지 않는다. 비활성화는 비밀 없는 동의 기록과 daemon provider 상태를
   비활성화하되 기존 CLI 로그인을 삭제하지 않는다. 검토 도중 실행 identity가 바뀌면 새 identity를 다시 확인한다.
+- AI의 **AI 관리** subsection은 Claude Code와 Codex를 tab으로 나누고, tab마다 프로그램 → 플러그인 → 마켓 →
+  MCP 서버 → 스킬 순서의 group을 둔다. 열릴 때만 불러오고 선택한 tab만 조회하며 polling하지 않는다(새로고침과
+  다른 기기의 변경 알림만). 관리 대상은 PC 사용자 설정이며 project 설정은 대화의 `확장`이 계속 소유한다. 예외로
+  Claude 플러그인은 설치 확인에서 `이 PC 전체`·`프로젝트 — 팀과 공유`·`프로젝트 — 나만`과 앱 프로젝트를 고르고, 설치된
+  목록은 모든 범위를 범위 label과 함께 보이며 켜기·끄기·제거는 그 항목의 범위에 적용한다. 앱에 없는 프로젝트의 설치는
+  읽기 전용이다. 마켓과 MCP 서버는 PC 전체에만 적용하고 Codex 플러그인은 PC 전체에만 설치된다고 안내한다.
+  - 프로그램 group은 설치 버전·최신 버전·상태(확인 중, 설치 안 됨, 최신 확인 실패, 새 버전, 최신, 업데이트 중)를
+    구분한다. 업데이트는 확인 dialog(초기 focus 취소) 뒤 npm 전역 설치만 앱이 실행하며, 실행 중(앱 대화·터미널 탭·앱
+    밖 위치 목록), npm이 아닌 설치·다른 npm 폴더(수동 명령 표시), Claude `DISABLE_UPDATES`, 앱이 실행할 수 없는 최신
+    버전이면 이유를 보이고 막는다. 쉬는 대화는 잠시 놓았다가 다음 메시지 때 새 버전으로 다시 붙는다. 실패는 원인과
+    수동 명령을 그 자리에 남기고 자동 재시도하지 않는다.
+  - 앱에서 사용하지 않는 AI는 확장 group 대신 켜는 위치(`앱에서 대화`)를 안내하고, 프로그램 group은 그대로 보인다.
+  - 둘러보기는 검색·마켓 filter·page 이동이 있는 dialog(mobile은 sheet)다. 설치는 같은 줄에서 펼치는 확인(플러그인이
+    PC에서 코드를 실행한다는 경고 포함)을 거친다. 제거는 danger alertdialog이며 초기 focus는 취소다. 결과를 확인하지
+    못한 변경은 같은 요청 재확인과 `PC 설정 확인 완료`가 끝날 때까지 다른 변경을 막는다.
 - 터미널 상태 연동(activity hook)은 대화 provider를 켜는 기능으로 오해하지 않게 별도 subsection이다. provider
   setup은 keyboard로 row → 세부 검토 → 인증 경로 → 필수 확인 → primary action 순서로 이동하고, 펼친 상세는
   heading/fieldset/status semantics를 쓴다. 좁은 화면에서는 metadata label/value를 한 열로 쌓고 path와 argv는
@@ -418,8 +433,10 @@ ghost entry를 남기지 않는다. 셸의 Back 단계는 화면 자신의 layer
 
 일반 목적지는 Back, localized title, optional status와 목적지 동작으로 된 하나의 page-header composition을 쓴다.
 PC Control만 immersive chrome을 쓴다. 터미널 header는 Back, session sheet와 새 터미널만 둔다. 모바일 설정은
-일반, 모양, 터미널·입력, 연동, 연결·정보의 index/subpage 구조다. 기존 setting key와 theme format을 바꾸지
-않는다. 일반의 resource profile은 Android 기기에만 저장하고 desktop으로 동기화하지 않으며, desktop과 같은 세
+일반, 모양, 터미널·입력, AI, 연동, 연결·정보의 index/subpage 구조다. 기존 setting key와 theme format을 바꾸지
+않는다. AI subpage는 desktop의 AI 관리와 같은 group으로 연결된 PC의 플러그인·마켓·MCP 서버·스킬을 관리하되
+프로그램 업데이트 control은 두지 않고 설치 버전과 `프로그램 업데이트는 PC 앱의 설정에서` 안내만 보인다. 연결된 PC
+앱이 이 기능을 모르면 PC 앱 업데이트를 안내한다. 일반의 resource profile은 Android 기기에만 저장하고 desktop으로 동기화하지 않으며, desktop과 같은 세
 label, 설명과 Low resource 재시작 안내를 쓴다.
 
 ### 7.3 Pairing과 연결 상태

@@ -5,6 +5,8 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
+import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
+import type { AgentCliClient } from '../shared/agent-cli';
 import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import type { FileListResult, FileOpResult } from '../shared/files';
 import {
@@ -116,6 +118,14 @@ export interface StructuredProviderAccess {
   setClaudeEnablement: (
     enablement: ClaudeProviderEnablement,
   ) => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
+}
+
+/** Settings › Agents › AI management. */
+export interface AgentManagementAccess {
+  /** PC user scope plugins, marketplaces, MCP servers and skills; `null` when the host lacks them. */
+  extensions: () => AgentHostExtensionsClient | null;
+  /** Program version and update; desktop only. */
+  cli: () => AgentCliClient | undefined;
 }
 
 /** Host authority needed by Settings and structured Agent panes. */
@@ -280,6 +290,8 @@ export interface CapabilityAccess {
   readonly uiPreferences: UiPreferenceAccess;
   readonly appUpdates: AppUpdateAccess;
   readonly files: FileAccess;
+  /** Optional so test doubles need not supply it; absent means the screen is unavailable. */
+  readonly agentManagement?: AgentManagementAccess;
 }
 
 const NOOP_CLEANUP: CapabilityCleanup = () => undefined;
@@ -957,6 +969,24 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
   };
 
+  const agentManagement: AgentManagementAccess = {
+    extensions() {
+      const api = resolveCore();
+      if (!api?.agentHostExtensionsList || !api.agentHostExtensionsBrowse || !api.agentHostExtensionsManage) return null;
+      const subscribe = api.onAgentHostExtensionsChanged;
+      return {
+        list: api.agentHostExtensionsList,
+        browse: api.agentHostExtensionsBrowse,
+        manage: api.agentHostExtensionsManage,
+        ...(subscribe ? { onChanged: subscribe } : {}),
+      };
+    },
+    cli() {
+      const api = resolveCore();
+      return api?.agentCliStatus && api.agentCliUpdate ? { status: api.agentCliStatus, update: api.agentCliUpdate } : undefined;
+    },
+  };
+
   return {
     snapshot: () => ({
       core: resolveCore() ? 'available' : 'unavailable',
@@ -975,6 +1005,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     uiPreferences,
     appUpdates,
     files,
+    agentManagement,
   };
 }
 

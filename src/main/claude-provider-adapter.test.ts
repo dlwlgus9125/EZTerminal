@@ -12,6 +12,8 @@ import {
   MemoryClaudeProviderEnablementStore,
   classifyClaudeAuthentication,
   classifyClaudeProviderError,
+  parseClaudeAvailablePlugins,
+  parseClaudeMarketplaces,
   recordedClaudeChange,
   resolveClaudeExecutable,
   type ClaudeProviderEnablement,
@@ -176,6 +178,7 @@ function makeAdapter(options: {
   readonly historyReader?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['historyReader'];
   readonly now?: () => Date;
   readonly enableTaskTools?: boolean;
+  readonly extensionCommand?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['extensionCommand'];
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
   readonly query: FakeClaudeQuery;
@@ -202,7 +205,7 @@ function makeAdapter(options: {
       queries.push(fakeQuery);
       return fakeQuery;
     },
-    extensionCommand: async () => '[]',
+    extensionCommand: options.extensionCommand ?? (async () => '[]'),
     historyReader: options.historyReader,
     initializationTimeoutMs: 100,
     operationTimeoutMs: 100,
@@ -1645,6 +1648,55 @@ describe('Claude zero-turn capabilities', () => {
     // Nothing is kept once the launch ends: a later caller sees current settings.
     await fixture.adapter.listCapabilities(context.workspaceRoot);
     expect(fixture.queries).toHaveLength(3);
+    await fixture.adapter.dispose();
+  });
+
+  it('reads the PC user view: user settings only, every plugin install and the marketplaces', async () => {
+    const commands: string[][] = [];
+    const extensionCommand = vi.fn(async (_executable: string, argv: readonly string[]) => {
+      commands.push([...argv]);
+      if (argv.includes('marketplace')) return JSON.stringify([
+        { name: 'claude-plugins-official', source: 'github', repo: 'anthropics/claude-plugins-official', installLocation: 'C:/m/official' },
+        { name: 'local-dev', source: 'directory', path: 'C:/dev/market', installLocation: 'C:/m/local' },
+      ]);
+      return JSON.stringify([
+        { id: 'tool@claude-plugins-official', version: '1.0.0', scope: 'user', enabled: true, installPath: 'C:/cache/tool' },
+        { id: 'lsp@claude-plugins-official', version: '1.0.0', scope: 'project', enabled: false, projectPath: 'C:/Working/Other', installPath: 'C:/cache/lsp' },
+      ]);
+    });
+    const fixture = makeAdapter({ extensionCommand });
+    const catalog = await fixture.adapter.listCapabilities(context.workspaceRoot, undefined, { hostUser: true });
+    expect(fixture.query.inputOptions).toMatchObject({ settingSources: ['user'], cwd: context.workspaceRoot });
+    expect(commands).toEqual(expect.arrayContaining([['plugin', 'list', '--json'], ['plugin', 'marketplace', 'list', '--json']]));
+    expect(catalog.items.filter((item) => item.kind === 'plugin')).toEqual([
+      expect.objectContaining({ id: 'tool@claude-plugins-official', name: 'tool', source: 'claude-plugins-official', scope: 'user' }),
+      expect.objectContaining({ id: 'lsp@claude-plugins-official', name: 'lsp', scope: 'project', projectPath: 'C:/Working/Other' }),
+    ]);
+    expect(catalog.marketplaces).toEqual([
+      { name: 'claude-plugins-official', source: 'anthropics/claude-plugins-official', actions: ['marketplace-update', 'marketplace-remove'] },
+      { name: 'local-dev', source: 'C:/dev/market', actions: ['marketplace-update', 'marketplace-remove'] },
+    ]);
+    await fixture.adapter.dispose();
+  });
+
+  it('lists marketplace plugins from the large available catalog', async () => {
+    const extensionCommand = vi.fn(async () => JSON.stringify({
+      installed: [{ id: 'tool@official', scope: 'user' }, { id: 'lsp@official', scope: 'project', projectPath: 'C:/p' }],
+      available: [
+        { pluginId: 'tool@official', name: 'tool', description: 'A tool', marketplaceName: 'official', installCount: 12 },
+        { pluginId: 'lsp@official', name: 'lsp', marketplaceName: 'official' },
+        { pluginId: 'broken' },
+      ],
+    }));
+    const fixture = makeAdapter({ extensionCommand });
+    await expect(fixture.adapter.listAvailablePlugins(context.workspaceRoot)).resolves.toEqual([
+      { id: 'tool@official', name: 'tool', marketplace: 'official', installed: true, description: 'A tool', installCount: 12 },
+      { id: 'lsp@official', name: 'lsp', marketplace: 'official', installed: false },
+    ]);
+    expect(extensionCommand).toHaveBeenCalledWith(expect.any(String), ['plugin', 'list', '--json', '--available'], context.workspaceRoot,
+      expect.any(Object), undefined, { maxBuffer: 16 * 1024 * 1024 });
+    expect(parseClaudeAvailablePlugins(JSON.stringify([{ id: 'old@official' }]))).toEqual([]);
+    expect(() => parseClaudeMarketplaces('{}')).toThrow();
     await fixture.adapter.dispose();
   });
 });

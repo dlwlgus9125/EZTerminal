@@ -8,8 +8,8 @@ import path from 'node:path';
 
 import crossSpawn from 'cross-spawn';
 import { promptWithChatContext } from '../shared/chat-message';
-import type { AgentCapabilityItem, AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
-import { codexMcpArguments, runNativeExtensionCommand } from './agent-native-extensions';
+import type { AgentCapabilityItem, AgentExtensionCommand, AgentMarketplace, AgentPluginEntry, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import { codexMcpArguments, isLongExtensionAction, NATIVE_EXTENSION_LONG_TIMEOUT_MS, runNativeExtensionCommand } from './agent-native-extensions';
 
 import type {
   DaemonTranscriptItem,
@@ -510,7 +510,7 @@ function parseVersion(output: string): string | undefined {
   return undefined;
 }
 
-function compatibleVersion(version: string | undefined): boolean {
+export function compatibleVersion(version: string | undefined): boolean {
   if (!version) return false;
   const candidate = semanticVersion(version);
   const minimum = semanticVersion(CODEX_APP_SERVER_BASELINE_VERSION);
@@ -530,6 +530,58 @@ function versionCheckFailure(detail: unknown): Error {
   const reason = sanitizeProviderDiagnostic(detail, { maxLength: 1_024 }).text.trim()
     || 'the version command did not provide an error';
   return new Error(`Codex version check failed before launch (${reason}). Reinstall or update Codex, then try again.`);
+}
+
+/** `plugin/list` filter: the configured and bundled marketplaces, without the remote catalog. */
+const LOCAL_MARKETPLACES = ['local'];
+
+/** Plugins in a `plugin/list` or `plugin/installed` result, per marketplace. */
+function codexPluginSummaries(result: unknown): { readonly marketplace: JsonObject; readonly plugin: JsonObject }[] {
+  const entries: { marketplace: JsonObject; plugin: JsonObject }[] = [];
+  for (const rawMarketplace of asArray(asObject(result)?.marketplaces)) {
+    const marketplace = asObject(rawMarketplace);
+    if (!marketplace) continue;
+    for (const raw of asArray(marketplace.plugins)) {
+      const plugin = asObject(raw);
+      if (plugin) entries.push({ marketplace, plugin });
+    }
+  }
+  return entries;
+}
+
+/** Every plugin `plugin/list` offers, for browsing. */
+export function codexAvailablePlugins(result: unknown): AgentPluginEntry[] {
+  const entries: AgentPluginEntry[] = [];
+  for (const { marketplace, plugin } of codexPluginSummaries(result)) {
+    const id = asString(plugin.id);
+    const marketplaceName = asString(marketplace.name);
+    if (!id || !marketplaceName || plugin.installPolicy === 'NOT_AVAILABLE') continue;
+    const face = asObject(plugin.interface);
+    const description = asString(face?.shortDescription) ?? asString(face?.longDescription);
+    const version = asString(plugin.version) ?? asString(plugin.localVersion);
+    entries.push({ id, name: asString(face?.displayName) ?? asString(plugin.name) ?? id, marketplace: marketplaceName,
+      installed: plugin.installed === true, ...(description ? { description } : {}), ...(version ? { version } : {}) });
+  }
+  return entries;
+}
+
+/** Marketplaces in a `plugin/list` result; only ones in the user config can be refreshed or removed. */
+export function codexMarketplaces(result: unknown, configured: JsonObject | undefined): AgentMarketplace[] {
+  const marketplaces = new Map<string, AgentMarketplace>();
+  for (const raw of asArray(asObject(result)?.marketplaces)) {
+    const marketplace = asObject(raw);
+    const name = asString(marketplace?.name);
+    if (!name || marketplaces.has(name)) continue;
+    const config = asObject(configured?.[name]);
+    const source = asString(config?.source) ?? asString(marketplace?.path);
+    marketplaces.set(name, { name, ...(source ? { source } : {}), actions: config ? ['marketplace-update', 'marketplace-remove'] : [] });
+  }
+  for (const [name, raw] of Object.entries(configured ?? {})) {
+    if (marketplaces.has(name)) continue;
+    const source = asString(asObject(raw)?.source);
+    marketplaces.set(name, { name, ...(source ? { source } : {}), actions: ['marketplace-update', 'marketplace-remove'] });
+  }
+  return [...marketplaces.values()];
 }
 
 function orchestrationConfig(context: ProviderSessionContext): JsonObject | undefined {
@@ -977,14 +1029,31 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return models;
   }
 
-  async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
+  async listAvailablePlugins(workspaceRoot: string, signal?: AbortSignal): Promise<readonly AgentPluginEntry[]> {
     if (!path.isAbsolute(workspaceRoot)) throw new Error('An absolute workspace is required.');
     await this.ensureConnection(signal);
+    const connection = this.requireConnection();
+    // Local marketplaces only: with the remote catalog the reply is over 20 MB, and remote
+    // entries never say they are installed, so installs come from plugin/installed.
+    const [available, installed] = await Promise.all([
+      connection.request('plugin/list', { cwds: [workspaceRoot], marketplaceKinds: LOCAL_MARKETPLACES }, { signal }),
+      connection.request('plugin/installed', { cwds: [workspaceRoot] }, { signal }),
+    ]);
+    const installedIds = new Set(codexPluginSummaries(installed).filter(({ plugin }) => plugin.installed === true).map(({ plugin }) => asString(plugin.id)));
+    return codexAvailablePlugins(available).map((entry) => (installedIds.has(entry.id) ? { ...entry, installed: true } : entry));
+  }
+
+  async listCapabilities(workspaceRoot: string, signal?: AbortSignal, options: { readonly hostUser?: boolean } = {}): Promise<ProviderCapabilityCatalog> {
+    if (!path.isAbsolute(workspaceRoot)) throw new Error('An absolute workspace is required.');
+    await this.ensureConnection(signal);
+    const hostUser = options.hostUser === true;
     const rpc = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
-    const [models, skills, plugins, mcp, configuration] = await Promise.allSettled([
+    // The PC user view also lists the local marketplaces, which only plugin/list reports.
+    const [models, skills, plugins, mcp, configuration, localMarketplaces] = await Promise.allSettled([
       this.listModels(signal), rpc('skills/list', { cwds: [workspaceRoot], forceReload: true }),
       rpc('plugin/installed', { cwds: [workspaceRoot] }), rpc('mcpServerStatus/list', { limit: 100 }),
       rpc('config/read', { cwd: workspaceRoot, includeLayers: false }),
+      hostUser ? rpc('plugin/list', { cwds: [workspaceRoot], marketplaceKinds: LOCAL_MARKETPLACES }) : Promise.resolve(undefined),
     ]);
     const items: AgentCapabilityItem[] = [];
     const issues: { section: 'models' | 'skills' | 'plugins' | 'mcp'; message: string }[] = [];
@@ -1057,7 +1126,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
     items.push(...nativeMcpItems.values());
     const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : value;
+    const marketplaces = hostUser && localMarketplaces.status === 'fulfilled' && plugins.status === 'fulfilled'
+      ? codexMarketplaces({ marketplaces: [...asArray(asObject(localMarketplaces.value)?.marketplaces), ...asArray(asObject(plugins.value)?.marketplaces)] },
+        asObject(nativeConfig?.marketplaces) ?? undefined)
+      : undefined;
     return { models: models.status === 'fulfilled' ? models.value : [], items, issues,
+      ...(marketplaces ? { marketplaces } : {}),
       ...(nativeConfig ? { configurationRevision: createHash('sha256').update(JSON.stringify(canonical({ mcp: configuredMcp, plugins: nativeConfig.plugins, skills: nativeConfig.skills }))).digest('hex') } : {}),
       actions: [
         ...(plugins.status === 'fulfilled' ? ['plugin-install', 'plugin-remove', 'plugin-enable', 'plugin-disable', 'marketplace-add', 'marketplace-remove', 'marketplace-update'] as const : []),
@@ -1069,7 +1143,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   async manageExtension(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void> {
     if (command.scope !== 'user') throw new Error('Codex extension changes use the native user settings.');
     await this.ensureConnection(signal);
-    const request = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
+    // Installs and marketplace clones download; give them longer than an ordinary request.
+    const timeoutMs = isLongExtensionAction(command.action) ? NATIVE_EXTENSION_LONG_TIMEOUT_MS : undefined;
+    const request = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal, ...(timeoutMs ? { timeoutMs } : {}) });
     const target = command.target;
     switch (command.action) {
       case 'skill-enable': case 'skill-disable':
@@ -1078,7 +1154,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         const split = target.lastIndexOf('@');
         if (split < 1) throw new Error('Use plugin@marketplace.');
         const marketplaceName = target.slice(split + 1);
-        const catalog = asObject(await request('plugin/list', { cwds: [workspaceRoot] }));
+        // Local marketplaces only (the remote catalog reply exceeds the frame limit); a marketplace
+        // not found here is installed by its remote name.
+        const catalog = asObject(await request('plugin/list', { cwds: [workspaceRoot], marketplaceKinds: LOCAL_MARKETPLACES }));
         const marketplace = asArray(catalog?.marketplaces).map(asObject).find((entry) => entry?.name === marketplaceName);
         const marketplacePath = asString(marketplace?.path);
         await request('plugin/install', { pluginName: target.slice(0, split), ...(marketplacePath ? { marketplacePath } : { remoteMarketplaceName: marketplaceName }), installAttemptId: command.commandId }); break;

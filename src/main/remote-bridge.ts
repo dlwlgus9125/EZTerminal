@@ -3,7 +3,7 @@ export type { RemoteOpenClawSource, OpenClawChatTicketResult } from './remote-op
 import { isRecord, isRemoteClientIdentity, isDispatchableClientMessage } from './remote-message-validation';
 import type { WorkflowAuthority } from './workflow-authority';
 import { legacyPlanningRunResult, legacyProjectArchiveResult, legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
-import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import type { AgentCapabilitiesClient, AgentHostExtensionsClient } from '../shared/agent-capabilities';
 import type { ConversationHistoryClient, HistoryResumeRequest, HistoryResumeResult } from '../shared/conversation-history';
 import type { PlanningAuthority } from './planning-authority';
 import type { PlanningRunAuthority } from './planning-run-authority';
@@ -55,6 +55,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_CAPABILITY_SIDE_QUESTIONS,
+  REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
@@ -603,6 +604,8 @@ export interface RemoteBridgeOptions {
   readonly workflowNavigationSource?: import('../shared/workflow').WorkflowNavigationAccess;
   readonly workflowPreviewSource?: Pick<WorkflowAuthority, 'preview'>;
   readonly agentCapabilitiesSource?: AgentCapabilitiesClient;
+  /** PC-wide plugins, marketplaces, MCP servers and skills for phones (advertised as `agent-host-extensions-v1`). */
+  readonly agentHostExtensionsSource?: Pick<AgentHostExtensionsClient, 'list' | 'browse' | 'manage'>;
   /** /btw for phones (advertised as `side-questions-v1`); never a daemon command, nothing stored. */
   readonly sideQuestionSource?: import('./agent-side-question-service').AgentSideQuestionHost;
   /** Read-only provider model catalogs for phones (advertised as `provider-models-read`). */
@@ -1226,6 +1229,7 @@ export function attachConnection(
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
             ...(options.providerModelsSource ? [REMOTE_CAPABILITY_PROVIDER_MODELS_READ] : []),
             ...(options.sideQuestionSource && clientIdentity ? [REMOTE_CAPABILITY_SIDE_QUESTIONS] : []),
+            ...(options.agentHostExtensionsSource && clientIdentity ? [REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS] : []),
             ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
               && clientIdentity
               && options.desktopSource
@@ -1853,6 +1857,25 @@ export function attachConnection(
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES && options.agentCapabilitiesSource && clientIdentity
           ? options.agentCapabilitiesSource.manage(msg.command) : Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the authenticated host and client to manage provider extensions.' } as const);
         void result.then(value => { if (authed) send({ kind: 'agent-capabilities-manage-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      // Settings › AI on the phone: PC-wide extensions. The program update has no remote request.
+      case 'agent-host-extensions-list':
+      case 'agent-host-extensions-browse':
+      case 'agent-host-extensions-manage': {
+        const source = clientIdentity ? options.agentHostExtensionsSource : undefined;
+        const unsupported = { ok: false, code: 'unsupported', message: 'Update the PC app to manage its AI extensions from the phone.' } as const;
+        const failed = { ok: false, code: 'unavailable', message: 'The PC could not complete this.' } as const;
+        if (msg.kind === 'agent-host-extensions-list') {
+          void (source ? source.list(msg.request).catch(() => failed) : Promise.resolve(unsupported))
+            .then(value => { if (authed) send({ kind: 'agent-host-extensions-list-reply', requestId: msg.requestId, result: value }); });
+        } else if (msg.kind === 'agent-host-extensions-browse') {
+          void (source ? source.browse(msg.request).catch(() => failed) : Promise.resolve(unsupported))
+            .then(value => { if (authed) send({ kind: 'agent-host-extensions-browse-reply', requestId: msg.requestId, result: value }); });
+        } else {
+          void (source ? source.manage(msg.command).catch(() => failed) : Promise.resolve(unsupported))
+            .then(value => { if (authed) send({ kind: 'agent-host-extensions-manage-reply', requestId: msg.requestId, result: value }); });
+        }
         break;
       }
       case 'planning-read': {

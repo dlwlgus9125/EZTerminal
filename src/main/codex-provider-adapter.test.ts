@@ -25,6 +25,8 @@ import type {
 import {
   CODEX_APP_SERVER_BASELINE_VERSION,
   CodexProviderAdapter,
+  codexAvailablePlugins,
+  codexMarketplaces,
   type CodexProviderAdapterOptions,
 } from './codex-provider-adapter';
 
@@ -293,6 +295,67 @@ describe('CodexProviderAdapter', () => {
     expect(connection.requests.map((entry) => entry.method).sort()).toEqual(['config/read', 'mcpServerStatus/list', 'model/list', 'plugin/installed', 'skills/list']);
     expect(connection.requests.find((entry) => entry.method === 'config/read')?.params).toEqual({ cwd: process.cwd(), includeLayers: false });
     expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+  it('reads every marketplace for the PC user view and offers only configured ones for changes', async () => {
+    const connection = new FakeCodexConnection();
+    const pluginList = { marketplaces: [
+      { name: 'ezpowers-dev', path: 'C:/codex/marketplaces/ezpowers-dev', plugins: [{ id: 'ezpowers@ezpowers-dev', name: 'ezpowers', installed: true, enabled: true, localVersion: '5.8.2', interface: { shortDescription: 'Skills' } }] },
+      { name: 'openai-curated', plugins: [
+        { id: 'gmail@openai-curated', name: 'gmail', installed: false, enabled: false, version: '0.1.10', interface: { displayName: 'Gmail' } },
+        { id: 'hidden@openai-curated', name: 'hidden', installed: false, enabled: false, installPolicy: 'NOT_AVAILABLE' },
+      ] },
+    ] };
+    // Remote installs appear only in plugin/installed; the remote catalog is never requested (it is over 20 MB).
+    const installedList = { marketplaces: [
+      pluginList.marketplaces[0],
+      { name: 'openai-curated-remote', plugins: [{ id: 'templates@openai-curated-remote', name: 'templates', installed: true, enabled: true }] },
+    ] };
+    connection.requestImpl = async (method) => {
+      if (method === 'model/list') return { data: [] };
+      if (method === 'skills/list') return { data: [] };
+      if (method === 'plugin/list') return pluginList;
+      if (method === 'plugin/installed') return installedList;
+      if (method === 'mcpServerStatus/list') return { data: [] };
+      if (method === 'config/read') return { config: { marketplaces: { 'ezpowers-dev': { source: 'https://github.com/dlwlgus9125/EZPowers.git' } } }, origins: {} };
+      throw new Error(`Forbidden method: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    const result = await adapter.listCapabilities(process.cwd(), undefined, { hostUser: true });
+    expect(connection.requests.filter((entry) => entry.method === 'plugin/list').map((entry) => entry.params)).toEqual([{ cwds: [process.cwd()], marketplaceKinds: ['local'] }]);
+    expect(result.items.filter((item) => item.kind === 'plugin').map((item) => item.id)).toEqual(['ezpowers@ezpowers-dev', 'templates@openai-curated-remote']);
+    expect(result.marketplaces).toEqual([
+      { name: 'ezpowers-dev', source: 'https://github.com/dlwlgus9125/EZPowers.git', actions: ['marketplace-update', 'marketplace-remove'] },
+      { name: 'openai-curated', actions: [] },
+      { name: 'openai-curated-remote', actions: [] },
+    ]);
+    expect(await adapter.listAvailablePlugins(process.cwd())).toEqual([
+      { id: 'ezpowers@ezpowers-dev', name: 'ezpowers', marketplace: 'ezpowers-dev', installed: true, description: 'Skills', version: '5.8.2' },
+      { id: 'gmail@openai-curated', name: 'Gmail', marketplace: 'openai-curated', installed: false, version: '0.1.10' },
+    ]);
+    expect(codexAvailablePlugins({})).toEqual([]);
+    expect(codexMarketplaces({}, { local: { source: 'C:/market' } })).toEqual([{ name: 'local', source: 'C:/market', actions: ['marketplace-update', 'marketplace-remove'] }]);
+    await adapter.dispose();
+  });
+  it('gives downloads longer than an ordinary request', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'plugin/list') return { marketplaces: [{ name: 'ezpowers-dev', path: 'C:/codex/marketplaces/ezpowers-dev', plugins: [] }] };
+      if (method === 'marketplace/upgrade') return { errors: [] };
+      return {};
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    const base = { providerId: 'codex' as const, workspaceId: '@pc-user', expectedRevision: 'a'.repeat(64), scope: 'user' as const };
+    await adapter.manageExtension(process.cwd(), { ...base, commandId: 'install-1', action: 'plugin-install', target: 'ezpowers@ezpowers-dev' });
+    await adapter.manageExtension(process.cwd(), { ...base, commandId: 'upgrade-1', action: 'marketplace-update', target: 'ezpowers-dev' });
+    await adapter.manageExtension(process.cwd(), { ...base, commandId: 'toggle-1', action: 'plugin-disable', target: 'ezpowers@ezpowers-dev' });
+    expect(connection.requests.find((entry) => entry.method === 'plugin/list')?.params).toEqual({ cwds: [process.cwd()], marketplaceKinds: ['local'] });
+    expect(connection.requests.find((entry) => entry.method === 'plugin/install')).toMatchObject({
+      params: { pluginName: 'ezpowers', marketplacePath: 'C:/codex/marketplaces/ezpowers-dev', installAttemptId: 'install-1' },
+      options: { timeoutMs: 180_000 },
+    });
+    expect(connection.requests.find((entry) => entry.method === 'marketplace/upgrade')?.options).toMatchObject({ timeoutMs: 180_000 });
+    expect(connection.requests.find((entry) => entry.method === 'config/value/write')?.options?.timeoutMs).toBeUndefined();
     await adapter.dispose();
   });
   it('rejects unsupported tool-free planning before connecting while preserving managed execution settings', async () => {

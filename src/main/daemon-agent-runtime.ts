@@ -207,6 +207,18 @@ const TERMINAL_TURN_STATES = new Set<DaemonTurn['state']>([
   'failed',
 ]);
 
+/**
+ * Conversations using a provider right now: a turn running or queued, or one waiting on an
+ * approval. Idle conversations are not in use; they reattach on their next message.
+ */
+export function providerActiveAgents(snapshot: Pick<DaemonSnapshot, 'agents' | 'turns'>, providerId: string): readonly DaemonAgent[] {
+  return snapshot.agents.filter((agent) => agent.providerId === providerId && (
+    agent.queuedTurnCount > 0
+    || ['starting', 'queued', 'working', 'blocked', 'delivery-uncertain'].includes(agent.state)
+    || snapshot.turns.some((turn) => turn.sessionId === agent.sessionId && !TERMINAL_TURN_STATES.has(turn.state))
+  ));
+}
+
 const TERMINAL_AGENT_STATES = new Set<DaemonAgent['state']>([
   'done',
   'interrupted',
@@ -1872,15 +1884,9 @@ export class DaemonAgentRuntime {
     const snapshot = context.snapshot;
     const current = snapshot.providers.find((entry) => entry.id === command.payload.providerId);
     if (!current) return commandError('not-found', 'Provider was not found.');
-    if (snapshot.agents.some((agent) => (
-      agent.providerId === current.id && (
-        agent.queuedTurnCount > 0
-        || ['starting', 'queued', 'working', 'blocked', 'delivery-uncertain'].includes(agent.state)
-        || snapshot.turns.some((turn) => (
-          turn.sessionId === agent.sessionId && !TERMINAL_TURN_STATES.has(turn.state)
-        ))
-      )
-    ))) return commandError('invalid-state', 'Stop active Agent Sessions before disabling their provider.');
+    if (providerActiveAgents(snapshot, current.id).length > 0) {
+      return commandError('invalid-state', 'Stop active Agent Sessions before disabling their provider.');
+    }
     const providerSessions = snapshot.agents.flatMap((agent) => (
       agent.providerId === current.id && agent.providerSessionId
         ? [{ sessionId: agent.sessionId, providerSessionId: agent.providerSessionId }]

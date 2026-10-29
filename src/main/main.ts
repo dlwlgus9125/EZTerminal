@@ -24,7 +24,7 @@ import {
   utilityProcess,
 } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
@@ -53,10 +53,10 @@ import { installRunRetentionIpc } from './run-retention-ipc';
 import { automationEnabled } from './automation-time';
 import { WorkflowAuthority } from './workflow-authority';
 import { WorkflowDraftStore } from './workflow-draft-store';
-import { AgentCapabilityService } from './agent-capability-service';
+import { AgentCapabilityService, type AgentHostScope } from './agent-capability-service';
 import { createAgentSideQuestionHost } from './agent-side-question-service';
 import { installAgentSideQuestionIpc } from './agent-side-question-ipc';
-import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient, type AgentHostExtensionsClient } from '../shared/agent-capabilities';
 import { PlanningExecutionStore } from './planning-execution-store';
 import { PlanningRunService, autoApprovalRefused } from './planning-run-service';
 import { HostAttentionService } from './host-attention-service';
@@ -159,11 +159,12 @@ import { ElectronUpdateHttpClient } from './app-update-network';
 import { AppUpdateService } from './app-update-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { ClaudeHistoryAdapter } from './claude-history-adapter';
-import { ClaudeProviderAdapter } from './claude-provider-adapter';
+import { ClaudeProviderAdapter, compatibleClaudeExecutableVersion } from './claude-provider-adapter';
 import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
-import { CodexProviderAdapter } from './codex-provider-adapter';
+import { CodexProviderAdapter, compatibleVersion } from './codex-provider-adapter';
+import { AgentCliUpdateService, executableInUse, fileExists, readClaudeSettingsEnvironment, systemNpmRunner } from './agent-cli-update-service';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { conversationFolderTarget, createConversationFolderResolver, type ConversationFolderResolver } from './conversation-roots';
 import { JsonFile } from './json-file';
@@ -929,18 +930,18 @@ app.on('ready', async () => {
   const claudeProviderAdapter = new ClaudeProviderAdapter({
     enablementStore: claudeEnablementStore,
   });
-  const providerRegistry = new AgentProviderRegistry([
-    new CodexProviderAdapter({
-      clientOptions: {
-        ...(processGuardian ? { processGuardian } : {}),
-        reportError: (message) => {
-          console.error(message);
-          mainLog?.line(message);
-        },
+  const codexProviderAdapter = new CodexProviderAdapter({
+    clientOptions: {
+      ...(processGuardian ? { processGuardian } : {}),
+      reportError: (message) => {
+        console.error(message);
+        mainLog?.line(message);
       },
-    }),
-    claudeProviderAdapter,
-  ]);
+    },
+  });
+  const providerRegistry = new AgentProviderRegistry([codexProviderAdapter, claudeProviderAdapter]);
+  // Settings › AI management › Program: set once the daemon and the capability service exist (below).
+  const agentCliUpdateRef: { current?: AgentCliUpdateService } = {};
   const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
   // Created once the planning ledger and the agent services exist (below); the snapshot carries it from then on.
   const hostAttentionRef: { current?: HostAttentionService } = {};
@@ -991,6 +992,7 @@ app.on('ready', async () => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);
     },
+    isUpdating: providerId => agentCliUpdateRef.current?.isUpdating(providerId) === true,
   });
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
@@ -2332,7 +2334,40 @@ app.on('ready', async () => {
     ingress: localAgentOperationIngress, available: () => daemonAvailability?.state === 'ready' });
   workflowRef.authority = workflowAuthority;
   const capabilityService = new AgentCapabilityService({ registry: providerRegistry, getSnapshot: () => daemonCommandRouter.getSnapshot(),
-    hostId: workflowHostId, receiptDirectory: path.join(app.getPath('userData'), 'capability-receipts') });
+    hostId: workflowHostId, receiptDirectory: path.join(app.getPath('userData'), 'capability-receipts'),
+    isUpdating: providerId => agentCliUpdateRef.current?.isUpdating(providerId) === true });
+  const agentCliUpdate = new AgentCliUpdateService({
+    inspect: providerId => providerRegistry.inspect(providerId),
+    getSnapshot: () => daemonCommandRouter.getSnapshot(),
+    sendCommand: command => daemonCommandRouter.execute(command),
+    deactivate: providerId => (providerId === 'codex' ? codexProviderAdapter : claudeProviderAdapter).deactivate(),
+    terminalRuns: () => agentActivityService?.getSnapshot().items ?? [],
+    exclusive: operation => capabilityService.runExclusive(operation),
+    npm: systemNpmRunner(),
+    fileInUse: executableInUse,
+    exists: fileExists,
+    claudeSettingsEnvironment: () => readClaudeSettingsEnvironment(),
+    environment: process.env,
+    compatible: (providerId, version) => providerId === 'claude' ? compatibleClaudeExecutableVersion(version) : compatibleVersion(version),
+    onChanged: providerId => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('agent-host-extensions:changed', providerId);
+      }
+    },
+  });
+  agentCliUpdateRef.current = agentCliUpdate;
+  const cliProvider = (value: unknown): 'codex' | 'claude' | undefined => value === 'codex' || value === 'claude' ? value : undefined;
+  // The program update stays desktop-only: these channels are never bridged to a phone.
+  ipcMain.handle('agent-cli:status', async (event, clientId, providerId, request) => {
+    const provider = cliProvider(providerId);
+    if (!resolveDesktopSessionPrincipal(event, clientId) || !provider) return null;
+    return agentCliUpdate.status(provider, { refreshLatest: (request as { refreshLatest?: unknown } | undefined)?.refreshLatest === true });
+  });
+  ipcMain.handle('agent-cli:update', async (event, clientId, providerId) => {
+    const provider = cliProvider(providerId);
+    if (!resolveDesktopSessionPrincipal(event, clientId) || !provider) return null;
+    return agentCliUpdate.update(provider);
+  });
   const capabilityScope = async (value: unknown) => {
     await projectWorkspaceAuthorityReady; await daemonAvailabilityReady;
     if (daemonAvailability?.state !== 'ready') return undefined;
@@ -2366,6 +2401,45 @@ app.on('ready', async () => {
   ipcMain.handle('workflow:preview', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? workflowAuthority.preview(request) : { ok: false, message: 'An authenticated application surface is required.' });
   ipcMain.handle('agent-capabilities:list', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.list(request) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
   ipcMain.handle('agent-capabilities:manage', (event, clientId, command) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.manage(command) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
+  // Settings › Agents › AI management: PC user settings, read from an empty app-owned folder so no
+  // project settings load. A Claude plugin may go into an active app project's folder instead.
+  const agentHostScopeRoot = path.join(app.getPath('userData'), 'agent-host-scope');
+  const folderKey = (folder: string): string => process.platform === 'win32' ? path.resolve(folder).toLowerCase() : path.resolve(folder);
+  const activeWorkspaces = () => {
+    const snapshot = daemonCommandRouter.getSnapshot();
+    return snapshot.workspaces.filter(workspace => !workspace.archivedAt && workspace.rootPath
+      && snapshot.projects.some(project => project.id === workspace.projectId && !project.archivedAt));
+  };
+  const hostScope = async (): Promise<AgentHostScope | undefined> => {
+    await projectWorkspaceAuthorityReady; await daemonAvailabilityReady;
+    if (daemonAvailability?.state !== 'ready') return undefined;
+    await mkdir(agentHostScopeRoot, { recursive: true });
+    return {
+      hostRoot: agentHostScopeRoot, canManage: true,
+      workspaceRoot: workspaceId => activeWorkspaces().find(workspace => workspace.id === workspaceId)?.rootPath,
+      workspaceForPath: folder => activeWorkspaces().find(workspace => folderKey(workspace.rootPath) === folderKey(folder))?.id,
+    };
+  };
+  const hostUnavailable = { ok: false, code: 'unavailable', message: 'The Agent runtime on this PC is not ready.' } as const;
+  const agentHostExtensions: AgentHostExtensionsClient = {
+    list: async request => { const scope = await hostScope(); return scope ? capabilityService.listHost(request, scope) : hostUnavailable; },
+    browse: async request => { const scope = await hostScope(); return scope ? capabilityService.browse(request, scope) : hostUnavailable; },
+    manage: async command => localAgentOperationIngress.run(async signal => {
+      const scope = await hostScope();
+      signal.throwIfAborted();
+      return scope ? capabilityService.manageHost(command, scope, signal) : hostUnavailable;
+    }),
+    onChanged: listener => capabilityService.onChanged(listener),
+  };
+  featureIpcDisposers.push(capabilityService.onChanged(providerId => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('agent-host-extensions:changed', providerId);
+    }
+  }));
+  const hostForbidden = { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' } as const;
+  ipcMain.handle('agent-host-extensions:list', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? agentHostExtensions.list(request) : hostForbidden);
+  ipcMain.handle('agent-host-extensions:browse', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? agentHostExtensions.browse(request) : hostForbidden);
+  ipcMain.handle('agent-host-extensions:manage', (event, clientId, command) => resolveDesktopSessionPrincipal(event, clientId) ? agentHostExtensions.manage(command) : hostForbidden);
   // /btw: answered from a live conversation's context; never a daemon command, never stored.
   const sideQuestionHost = createAgentSideQuestionHost({
     ready: () => Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]),
@@ -4761,6 +4835,7 @@ app.on('ready', async () => {
       workflowNavigationSource: { getWorkflowNavigation: projectId => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return workflowService.navigation(projectId); }) },
       workflowPreviewSource: workflowAuthority,
       agentCapabilitiesSource: agentCapabilities,
+      agentHostExtensionsSource: agentHostExtensions,
       providerModelsSource: remoteProviderModels,
       sideQuestionSource: sideQuestionHost,
       planningRunSource: planningRunAuthority,

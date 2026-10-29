@@ -259,6 +259,15 @@ export function MobileWorkspace({
       capabilityClient: { list: transport.agentCapabilitiesList.bind(transport), manage: transport.agentCapabilitiesManage.bind(transport) },
     },
   } : undefined), [transport]);
+  // Settings › AI: the connected PC's extensions. A PC app without them answers `unsupported`.
+  const settingsAgentManagement = useMemo(() => (typeof transport.agentHostExtensionsList === 'function' ? {
+    extensions: {
+      list: transport.agentHostExtensionsList.bind(transport),
+      browse: transport.agentHostExtensionsBrowse.bind(transport),
+      manage: transport.agentHostExtensionsManage.bind(transport),
+    },
+    loadSnapshot: () => transport.getDaemonSnapshot(),
+  } : undefined), [transport]);
   const [newConversationRequest, setNewConversationRequest] = useState(0);
   const [conversationHistoryRequest, setConversationHistoryRequest] = useState<{ readonly conversationId?: string; readonly projectId?: string; readonly key: string }>();
   const conversationHistoryReturnTab = useRef<'home' | 'feed'>('feed');
@@ -1254,6 +1263,7 @@ export function MobileWorkspace({
             setThemeMenuOpen(true);
           },
           appUpdateController,
+          agentManagement: settingsAgentManagement,
         }}
         loading={auxiliaryPageFallback}
         errorMessage={t('common.featureLoadFailed')}

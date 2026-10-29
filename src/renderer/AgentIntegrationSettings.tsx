@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   AGENT_SETTINGS_SCHEMA_VERSION,
@@ -7,7 +7,9 @@ import {
   type AgentSettings,
   type GenericAgentProfile,
 } from '../shared/agent';
-import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { rendererCapabilities, type AgentManagementAccess, type CapabilityAccess } from './capability-access';
+import { AgentManagementSettings, agentManagementInputs } from './AgentManagementSettings';
+import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
 import { ScheduleSettings } from './ScheduleSettings';
@@ -51,11 +53,40 @@ interface AgentIntegrationSettingsProps {
   readonly capabilities?: CapabilityAccess;
 }
 
+/** AI management on this PC: reads which AIs are usable and the app projects from the daemon. */
+function AgentManagementPanel({ capabilities, access }: {
+  readonly capabilities: CapabilityAccess;
+  readonly access: AgentManagementAccess;
+}): JSX.Element {
+  const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
+  const extensions = useMemo(() => access.extensions(), [access]);
+  const cli = useMemo(() => access.cli(), [access]);
+  useEffect(() => {
+    let active = true;
+    const load = (): void => {
+      void capabilities.daemon.getSnapshot().then((next) => { if (active) setSnapshot(next); }).catch(() => undefined);
+    };
+    load();
+    // Turning a provider on or off, or adding a project, changes what this screen can manage.
+    let stop: () => void = () => undefined;
+    try {
+      stop = capabilities.daemon.observeEvents((event) => {
+        if ((event.kind === 'entity.upserted' && ['provider', 'project', 'workspace'].includes(event.payload.entityType))
+          || (event.kind === 'entity.archived' && event.payload.entityType !== 'session')) load();
+      });
+    } catch { /* The snapshot read above still works. */ }
+    return () => { active = false; stop(); };
+  }, [capabilities]);
+  const inputs = agentManagementInputs(snapshot);
+  return <AgentManagementSettings variant="desktop" extensions={extensions} {...(cli ? { cli } : {})} providers={inputs.providers} projects={inputs.projects} />;
+}
+
 export function AgentIntegrationSettings({
   capabilities = rendererCapabilities,
 }: AgentIntegrationSettingsProps): JSX.Element {
   const { t } = useAppTranslation();
   const [conversationOpen, setConversationOpen] = useState(false);
+  const [managementOpen, setManagementOpen] = useState(false);
   const [automationOpen, setAutomationOpen] = useState(false);
   const [integrations, setIntegrations] = useState<readonly AgentIntegrationStatus[]>([]);
   const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
@@ -277,6 +308,12 @@ export function AgentIntegrationSettings({
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}
       </details>
+      {capabilities.agentManagement && (
+        <details className="status-section" data-testid="agent-management-settings" onToggle={(event) => setManagementOpen(event.currentTarget.open)}>
+          <summary>{t('agentSettings.management.title')}</summary>
+          {managementOpen && <AgentManagementPanel capabilities={capabilities} access={capabilities.agentManagement} />}
+        </details>
+      )}
       <details className="status-section" data-testid="agent-automation-settings" onToggle={(event) => setAutomationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.automationTitle')}</summary>
         {automationOpen && <ScheduleSettings capabilities={capabilities} />}

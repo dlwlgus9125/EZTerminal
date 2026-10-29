@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5e6903cec581f43fea8804e106a12f29f68a94d032fa482cf2d8cf952bc0cdb5",
+        "inputDigest": "sha256:c68ff76c8e5fe47d670c8e4bc14514c374c3e16baa1cbc200569cfcf3ede8e60",
         "decision": "map-updated",
-        "reason": "I5-10: the PC no longer builds the planning AI, scene assets, planning drafts or the renderer's planning read/execute IPC; the preload claim now lists flow-run calls, and stale planning-ai sessions never dispatch."
+        "reason": "AI management: the preload claim now lists PC-wide capability calls and the desktop-only program update; provider disable shares one active-conversation check with the update; the Codex version check is exported for it."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:55bf2119db421e68a4a2227a021c7705317866286831ee7d2ef42855863f37a0",
+        "inputDigest": "sha256:fef63a25f16131b86f2e2378c7253643eb70a958d420c363dab9baf6eae839bf",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-10): main.ts lost the planning AI, asset and draft services and their shutdown step; the anchored window and authority lifecycle blocks only moved."
+        "reason": "Reviewed (AI management): main.ts adds the PC-wide extension and program update services and their desktop IPC; the anchored window and authority lifecycle blocks only moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:972b3551bad4d7b84e42299f41090eb9df08748cf58cf1d25ad9dc1c405f8387",
+        "inputDigest": "sha256:6dbfbb10ddb17bb07b22dff91f86e98ed7323646648399c6069f450ecc1ef1c4",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-10): the phone transport drops the old planning editor's requests (planning read/execute, AI, assets, device drafts) and the PC stops offering them; the anchored session and command paths only moved."
+        "reason": "Reviewed (AI management): the phone transport and the bridge add capability-gated agent-host-extensions requests; the anchored session and command paths only moved."
       }
     },
     {
@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:ac0aa172b20de9b32f411bc3542d7c626fec056f7a4d4bb2e09f19fff56aed0b",
+        "inputDigest": "sha256:5e0bed2d9c180a95437c66a4992358ed75ea8b0a586946bb305d78c072a09203",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5 Codex recheck): planning edits are now refused as forbidden instead of unavailable, so an older phone does not offer to resend them; the anchored refusal still never changes the planning file. Anchors moved."
+        "reason": "Reviewed (AI management): the bridge adds agent-host-extensions handlers beside the workflow and capability ones; the anchored version gates are unchanged."
       }
     },
     {
@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:14058df3eeef7ae65dd17e70ecf3c6c83c77d9c43382248d1a4ddff8e7168dcf",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5 follow-ups): the phone project navigator dropped its unused 'tasks' mode and the completion hook merged a duplicate import; the anchored flow and completion blocks are unchanged. Anchors moved."
+        "inputDigest": "sha256:47e7e101045bdec5fd4a0e1d5546d520653f660d50fc2df68814f78ecc3fb55a",
+        "decision": "map-updated",
+        "reason": "AI management: discovery gains a PC-wide view (neutral folder, marketplaces, project installs changed only through app workspaces) and plugin browsing; Codex reads only local marketplaces (the remote catalog exceeds the frame limit)."
       }
     }
   ]

@@ -155,9 +155,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1803,
-          "endLine": 1921,
-          "lineDigest": "sha256:c7753f218b777fe8e39187e3452b846a1ce7fcc7e64643a82e739c22a09ba281",
+          "startLine": 1807,
+          "endLine": 1944,
+          "lineDigest": "sha256:0ff1475583eeac5b43b35aa9faf088b870116576de94ff172fec30965368cdd4",
           "claim": "Authenticated v14+ clients use workflow/capability handlers; v16-and-older readers get the reduced flow view and are marked for write protection; v13 keeps planning; subproject writes stay bound to the Android principal."
         }
       ]

@@ -3,7 +3,7 @@ import { LegacyConversationHistory } from './legacy-conversation-history';
 import { ConversationResolveResultSchema, type ConversationRef, type ConversationResolveResult, ConversationPageSchema, ConversationReadResultSchema, HistoryResumePreparationSchema, HistoryResumeResultSchema,
   type ConversationQuery, type ConversationPage, type ConversationReadResult, type HistoryResumePreparationRequest,
   type HistoryResumePreparation, type HistoryResumeRequest, type HistoryResumeResult, type ConversationHistoryFailure } from '../../../src/shared/conversation-history';
-import { AgentCapabilityListResultSchema, AgentExtensionResultSchema, type AgentCapabilitiesClient, type AgentCapabilitiesRequest, type AgentExtensionCommand } from '../../../src/shared/agent-capabilities';
+import { AGENT_HOST_SCOPE_ID, AgentCapabilityListResultSchema, AgentExtensionResultSchema, AgentPluginBrowseResultSchema, type AgentCapabilitiesClient, type AgentCapabilitiesRequest, type AgentExtensionCommand, type AgentHostCommand, type AgentHostExtensionsClient, type AgentHostRequest, type AgentPluginBrowseRequest } from '../../../src/shared/agent-capabilities';
 import {
   AgentSideQuestionResultSchema,
   SIDE_QUESTION_HOST_TIMEOUT_MS,
@@ -158,6 +158,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_CAPABILITY_SIDE_QUESTIONS,
+  REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
@@ -170,6 +171,7 @@ import {
   REMOTE_PROTOCOL_VERSION_FLOW_AGENTS,
   REMOTE_PROTOCOL_VERSION_PLANNING,
   type AgentCapabilitiesWireRequest,
+  type AgentHostExtensionsWireRequest,
   type ProviderModelsListRequest,
   type ConversationHistoryRequest,
   type PlanningExtensionRequest,
@@ -1134,7 +1136,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.requestPlanningRun(projectId, undefined, subprojectId);
   }
 
-  private requestPlanningExtension<T>(message: PlanningExtensionRequest | WorkflowRequest | AgentCapabilitiesWireRequest | ConversationHistoryRequest | ProviderModelsListRequest, replyKind: string, validate: (value: unknown) => T): Promise<T> {
+  private requestPlanningExtension<T>(message: PlanningExtensionRequest | WorkflowRequest | AgentCapabilitiesWireRequest | AgentHostExtensionsWireRequest | ConversationHistoryRequest | ProviderModelsListRequest, replyKind: string, validate: (value: unknown) => T): Promise<T> {
     const unavailable = { ok: false, error: 'unavailable', message: 'No confirmed receipt. Reconnect and reconcile the saved request before sending again.' };
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) return Promise.resolve(validate(unavailable));
     return new Promise(resolve => {
@@ -1240,6 +1242,38 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   agentCapabilitiesManage(command: AgentExtensionCommand): ReturnType<AgentCapabilitiesClient['manage']> {
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the connected PC to manage Agent extensions.' });
     return this.requestPlanningExtension({ kind: 'agent-capabilities-manage', requestId: this.newId(), command }, 'agent-capabilities-manage-reply', (value) => {
+      const parsed = AgentExtensionResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.value.commandId === command.commandId && parsed.data.value.action === command.action)
+        ? parsed.data : { ok: false as const, code: 'uncertain' as const, message: 'No verified extension receipt. Check the same request after reconnecting.' };
+    });
+  }
+
+  /** The connected PC manages its AI extensions from the phone (`agent-host-extensions-v1`). */
+  get supportsAgentHostExtensions(): boolean {
+    return this.remoteCapabilities.has(REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS);
+  }
+
+  agentHostExtensionsList(request: AgentHostRequest): ReturnType<AgentHostExtensionsClient['list']> {
+    if (!this.supportsAgentHostExtensions) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the PC app to manage its AI extensions from the phone.' });
+    return this.requestPlanningExtension({ kind: 'agent-host-extensions-list', requestId: this.newId(), request }, 'agent-host-extensions-list-reply', (value) => {
+      const parsed = AgentCapabilityListResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.value.providerId === request.providerId && parsed.data.value.workspaceId === AGENT_HOST_SCOPE_ID)
+        ? parsed.data : { ok: false as const, code: 'unavailable' as const, message: 'The connected PC extension catalog could not be verified.' };
+    });
+  }
+
+  agentHostExtensionsBrowse(request: AgentPluginBrowseRequest): ReturnType<AgentHostExtensionsClient['browse']> {
+    if (!this.supportsAgentHostExtensions) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the PC app to manage its AI extensions from the phone.' });
+    return this.requestPlanningExtension({ kind: 'agent-host-extensions-browse', requestId: this.newId(), request }, 'agent-host-extensions-browse-reply', (value) => {
+      const parsed = AgentPluginBrowseResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.value.providerId === request.providerId)
+        ? parsed.data : { ok: false as const, code: 'unavailable' as const, message: 'The connected PC plugin list could not be verified.' };
+    });
+  }
+
+  agentHostExtensionsManage(command: AgentHostCommand): ReturnType<AgentHostExtensionsClient['manage']> {
+    if (!this.supportsAgentHostExtensions) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the PC app to manage its AI extensions from the phone.' });
+    return this.requestPlanningExtension({ kind: 'agent-host-extensions-manage', requestId: this.newId(), command }, 'agent-host-extensions-manage-reply', (value) => {
       const parsed = AgentExtensionResultSchema.safeParse(value);
       return parsed.success && (!parsed.data.ok || parsed.data.value.commandId === command.commandId && parsed.data.value.action === command.action)
         ? parsed.data : { ok: false as const, code: 'uncertain' as const, message: 'No verified extension receipt. Check the same request after reconnecting.' };
@@ -3147,6 +3181,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
                   || capability === REMOTE_CAPABILITY_DESKTOP_CONTROL
                   || capability === REMOTE_CAPABILITY_PROVIDER_MODELS_READ
                   || capability === REMOTE_CAPABILITY_SIDE_QUESTIONS
+                  || capability === REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS
                 ),
               )
             : [],
@@ -3428,6 +3463,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
       case 'agent-capabilities-list-reply':
       case 'agent-capabilities-manage-reply':
+      case 'agent-host-extensions-list-reply':
+      case 'agent-host-extensions-browse-reply':
+      case 'agent-host-extensions-manage-reply':
       case 'provider-models-list-reply':
       case 'workflow-read-reply':
       case 'workflow-navigation-reply':

@@ -359,6 +359,40 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect(await mutation).toMatchObject({ ok: false, code: 'uncertain' });
     transport.disconnect();
   });
+  it('manages the PC’s AI extensions only when the PC says it can, and verifies every reply', async () => {
+    const older = makeCreateSocket();
+    const before = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket: older.createSocket });
+    older.sockets[0].triggerOpen(); older.sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 18 });
+    const sentBefore = older.sockets[0].sent.length;
+    expect(await before.agentHostExtensionsList({ providerId: 'codex' })).toMatchObject({ ok: false, code: 'unsupported' });
+    expect(older.sockets[0].sent).toHaveLength(sentBefore);
+    before.disconnect();
+
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 18, capabilities: ['agent-host-extensions-v1'] });
+    expect(transport.supportsAgentHostExtensions).toBe(true);
+    const catalog = { providerId: 'codex', workspaceId: '@pc-user', workspaceRoot: 'C:/host', hostId: 'PC', observedAt: 'now', revision: 'a'.repeat(64), canManage: true, application: 'new-session', models: [], items: [], actions: [], issues: [], marketplaces: [{ name: 'm', actions: [] }] };
+    const listed = transport.agentHostExtensionsList({ providerId: 'codex' });
+    const listRequest = sockets[0].lastSent() as { requestId: string; kind: string };
+    expect(listRequest.kind).toBe('agent-host-extensions-list');
+    sockets[0].triggerMessage({ kind: 'agent-host-extensions-list-reply', requestId: listRequest.requestId, result: { ok: true, value: catalog } });
+    expect(await listed).toMatchObject({ ok: true, value: { marketplaces: [{ name: 'm' }] } });
+    // A workspace catalog answering a PC-wide request is not trusted.
+    const wrong = transport.agentHostExtensionsList({ providerId: 'codex' });
+    const wrongRequest = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'agent-host-extensions-list-reply', requestId: wrongRequest.requestId, result: { ok: true, value: { ...catalog, workspaceId: 'ws' } } });
+    expect(await wrong).toMatchObject({ ok: false, code: 'unavailable' });
+    const page = transport.agentHostExtensionsBrowse({ providerId: 'claude', query: 'lint' });
+    const browseRequest = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'agent-host-extensions-browse-reply', requestId: browseRequest.requestId, result: { ok: true, value: { providerId: 'codex', entries: [], total: 0, offset: 0, marketplaces: [], observedAt: 'now' } } });
+    expect(await page).toMatchObject({ ok: false, code: 'unavailable' });
+    const change = transport.agentHostExtensionsManage({ providerId: 'claude', commandId: 'exact', expectedRevision: 'a'.repeat(64), action: 'plugin-install', target: 'x@m', scope: 'project', workspaceId: 'w' });
+    const manageRequest = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'agent-host-extensions-manage-reply', requestId: manageRequest.requestId, result: { ok: true, value: { commandId: 'exact', action: 'plugin-install', state: 'applied', application: 'new-session' } } });
+    expect(await change).toMatchObject({ ok: true, value: { state: 'applied' } });
+    transport.disconnect();
+  });
 });
 
 describe('WsEzTerminalTransport — auth handshake', () => {

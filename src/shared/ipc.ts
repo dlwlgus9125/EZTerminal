@@ -18,7 +18,7 @@ import type {
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { WorkflowAccess, WorkflowNavigationAccess } from './workflow';
 import type { WorkflowDraftAccess } from './workflow-draft';
-import type { AgentCapabilitiesClient } from './agent-capabilities';
+import type { AgentCapabilitiesClient, AgentHostExtensionsClient } from './agent-capabilities';
 import type { ChatStateResult, ChatStateScope, ChatStateWrite } from './chat-state';
 import type { PlanningRunRequest, PlanningRunResult } from './planning-run';
 import type { PlanningResultQuery, PlanningResultQueryResult } from './planning-result';
@@ -1230,6 +1230,14 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   workflowCheckStatus?: (projectId: string, subprojectId: string) => Promise<import('./workflow-checks').WorkflowCheckConsentResult>;
   workflowCheckAllow?: (projectId: string, subprojectId: string, nodeId: string, checkId: string, digest: string) => Promise<import('./workflow-checks').WorkflowCheckConsentResult>;
   agentCapabilitiesManage: AgentCapabilitiesClient['manage'];
+  /** Settings › Agents › AI management: the PC user scope. */
+  agentHostExtensionsList?: AgentHostExtensionsClient['list'];
+  agentHostExtensionsBrowse?: AgentHostExtensionsClient['browse'];
+  agentHostExtensionsManage?: AgentHostExtensionsClient['manage'];
+  onAgentHostExtensionsChanged?: (listener: (providerId: 'codex' | 'claude') => void) => () => void;
+  /** The provider program (Claude Code, Codex): version and in-place update. */
+  agentCliStatus?: import('./agent-cli').AgentCliClient['status'];
+  agentCliUpdate?: import('./agent-cli').AgentCliClient['update'];
   readonly versions: RuntimeVersions;
   /**
    * Start executing `commandText` in `sessionId`. `runId` is a caller-supplied unique

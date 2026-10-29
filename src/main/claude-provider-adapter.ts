@@ -7,8 +7,10 @@ import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { AgentCapabilityItem, AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
-import { claudeExtensionArguments, runNativeExtensionCommand } from './agent-native-extensions';
+import type { AgentCapabilityItem, AgentExtensionCommand, AgentMarketplace, AgentPluginEntry, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import {
+  claudeExtensionArguments, isLongExtensionAction, NATIVE_EXTENSION_LARGE_OUTPUT, NATIVE_EXTENSION_LONG_TIMEOUT_MS, runNativeExtensionCommand,
+} from './agent-native-extensions';
 
 import {
   getSessionMessages,
@@ -536,7 +538,50 @@ function safeText(value: unknown, maxLength = MAX_SAFE_TEXT_LENGTH): string {
     : '';
 }
 
-function compatibleClaudeExecutableVersion(version: string): boolean {
+/** Plugins the configured marketplaces offer, from `claude plugin list --json --available`. */
+export function parseClaudeAvailablePlugins(output: string): AgentPluginEntry[] {
+  const parsed: unknown = JSON.parse(output);
+  const root = asObject(parsed);
+  // Older CLIs print only the installed array; then nothing is offered.
+  const installedRaw = Array.isArray(parsed) ? parsed : Array.isArray(root?.installed) ? root.installed : [];
+  const availableRaw = Array.isArray(root?.available) ? root.available : [];
+  const userInstalled = new Set<string>();
+  for (const raw of installedRaw) {
+    const plugin = asObject(raw);
+    if (typeof plugin?.id === 'string' && (plugin.scope === 'user' || plugin.scope === undefined)) userInstalled.add(plugin.id);
+  }
+  const entries: AgentPluginEntry[] = [];
+  for (const raw of availableRaw) {
+    const plugin = asObject(raw);
+    const id = asString(plugin?.pluginId);
+    const marketplace = asString(plugin?.marketplaceName);
+    if (!id || !marketplace) continue;
+    const name = asString(plugin?.name) ?? id.split('@')[0] ?? id;
+    const description = asString(plugin?.description);
+    const version = asString(plugin?.version);
+    const installCount = typeof plugin?.installCount === 'number' && Number.isFinite(plugin.installCount) ? plugin.installCount : undefined;
+    entries.push({ id, name, marketplace, installed: userInstalled.has(id),
+      ...(description ? { description } : {}), ...(version ? { version } : {}), ...(installCount !== undefined ? { installCount } : {}) });
+  }
+  return entries;
+}
+
+/** `claude plugin marketplace list --json`: one row per configured marketplace. */
+export function parseClaudeMarketplaces(output: string): AgentMarketplace[] {
+  const parsed: unknown = JSON.parse(output);
+  if (!Array.isArray(parsed)) throw new Error('Unexpected marketplace list.');
+  const marketplaces: AgentMarketplace[] = [];
+  for (const raw of parsed) {
+    const entry = asObject(raw);
+    const name = asString(entry?.name);
+    if (!name) continue;
+    const source = asString(entry?.repo) ?? asString(entry?.url) ?? asString(entry?.path) ?? asString(entry?.installLocation);
+    marketplaces.push({ name, ...(source ? { source } : {}), actions: ['marketplace-update', 'marketplace-remove'] });
+  }
+  return marketplaces;
+}
+
+export function compatibleClaudeExecutableVersion(version: string): boolean {
   const candidate = semanticVersion(version);
   const minimum = semanticVersion(CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION);
   if (!candidate || !minimum) return false;
@@ -1260,20 +1305,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
   }
 
-  async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
+  async listCapabilities(workspaceRoot: string, signal?: AbortSignal, options: { readonly hostUser?: boolean } = {}): Promise<ProviderCapabilityCatalog> {
     this.throwIfAborted(signal);
     // Each discovery launches a whole CLI, hooks and MCP servers included, so callers asking about
     // one folder at once share a launch. A caller giving up leaves it running for the others.
-    const key = path.resolve(workspaceRoot);
+    const hostUser = options.hostUser === true;
+    const key = `${hostUser ? 'host' : 'workspace'}:${path.resolve(workspaceRoot)}`;
     let discovery = this.discoveries.get(key);
     if (!discovery) {
-      discovery = this.discoverCapabilities(workspaceRoot).finally(() => this.discoveries.delete(key));
+      discovery = this.discoverCapabilities(workspaceRoot, hostUser).finally(() => this.discoveries.delete(key));
       this.discoveries.set(key, discovery);
     }
     return abortable(discovery, signal);
   }
 
-  private async discoverCapabilities(workspaceRoot: string): Promise<ProviderCapabilityCatalog> {
+  async listAvailablePlugins(workspaceRoot: string, signal?: AbortSignal): Promise<readonly AgentPluginEntry[]> {
+    const readiness = await abortable(this.assertReady(signal), signal);
+    if (!path.isAbsolute(workspaceRoot)) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    const output = await this.extensionCommand(readiness.executablePath, ['plugin', 'list', '--json', '--available'], workspaceRoot,
+      readiness.environment, signal, { maxBuffer: NATIVE_EXTENSION_LARGE_OUTPUT });
+    return parseClaudeAvailablePlugins(output);
+  }
+
+  private async discoverCapabilities(workspaceRoot: string, hostUser = false): Promise<ProviderCapabilityCatalog> {
     const generation = await this.enterLifecycle();
     const readiness = await this.assertReady();
     if (!path.isAbsolute(workspaceRoot)) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
@@ -1287,7 +1341,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       metadata = this.queryFactory({ prompt: input, options: {
         cwd: workspaceRoot, pathToClaudeCodeExecutable: readiness.executablePath,
         abortController: controller, persistSession: false, env: readiness.environment,
-        settingSources: ['user', 'project', 'local'], permissionMode: 'plan',
+        // The PC user view reads only user settings; its neutral folder has no project settings anyway.
+        settingSources: hostUser ? ['user'] : ['user', 'project', 'local'], permissionMode: 'plan',
         canUseTool: async () => ({ behavior: 'deny', message: 'Capability discovery does not execute tools.' }),
       } });
       const querySession = metadata;
@@ -1295,11 +1350,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       // a prompt; draining the output is required for their responses, not a turn.
       stream = (async () => { try { for await (const message of querySession) { void message; if (controller.signal.aborted) break; } } catch { /* Control calls report errors below. */ } })();
       const initialization = await bounded(abortable(querySession.initializationResult(), controller.signal), this.initializationTimeoutMs);
-      const [models, commands, servers, installed] = await Promise.allSettled([
+      const [models, commands, servers, installed, marketplaceList] = await Promise.allSettled([
         bounded(abortable(querySession.supportedModels(), controller.signal), this.operationTimeoutMs),
         querySession.supportedCommands ? bounded(abortable(querySession.supportedCommands(), controller.signal), this.operationTimeoutMs) : Promise.resolve(asObject(initialization)?.commands ?? []),
         querySession.mcpServerStatus ? bounded(abortable(querySession.mcpServerStatus(), controller.signal), this.operationTimeoutMs) : Promise.reject(new Error('Unsupported MCP status')),
         this.extensionCommand(readiness.executablePath, ['plugin', 'list', '--json'], workspaceRoot, readiness.environment, controller.signal),
+        hostUser
+          ? this.extensionCommand(readiness.executablePath, ['plugin', 'marketplace', 'list', '--json'], workspaceRoot, readiness.environment, controller.signal)
+          : Promise.resolve(undefined),
       ]);
       const items: AgentCapabilityItem[] = [];
       const issues: { section: 'models' | 'skills' | 'plugins' | 'mcp'; message: string }[] = [];
@@ -1309,9 +1367,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         if (name) items.push({ id: name, kind: 'skill', name, description: typeof command?.description === 'string' ? command.description : undefined,
           invocation: `/${name}`, enabled: true, source: 'Claude native settings', actions: [] });
       }
+      // The PC user view changes only PC-wide MCP servers; project ones belong to the conversation panel.
+      const removableMcpScopes = hostUser ? ['user'] : ['user', 'project', 'local'];
       if (servers.status === 'fulfilled') for (const server of servers.value) items.push({
         id: server.name, kind: 'mcp', name: server.name, status: server.status, scope: server.scope,
-        enabled: server.status !== 'disabled', actions: ['user', 'project', 'local'].includes(server.scope ?? '') ? ['mcp-remove'] : [],
+        enabled: server.status !== 'disabled', actions: removableMcpScopes.includes(server.scope ?? '') ? ['mcp-remove'] : [],
       });
       if (installed.status === 'fulfilled') {
         try {
@@ -1319,19 +1379,36 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
           for (const raw of Array.isArray(plugins) ? plugins : []) {
             const plugin = asObject(raw);
             if (typeof plugin?.id !== 'string') continue;
-            if (typeof plugin.projectPath === 'string' && path.resolve(plugin.projectPath).toLowerCase() !== path.resolve(workspaceRoot).toLowerCase()) continue;
-            items.push({ id: plugin.id, kind: 'plugin', name: plugin.id,
-              version: typeof plugin.version === 'string' ? plugin.version : undefined,
-              scope: typeof plugin.scope === 'string' ? plugin.scope : undefined,
+            const projectPath = typeof plugin.projectPath === 'string' ? plugin.projectPath : undefined;
+            const scope = typeof plugin.scope === 'string' ? plugin.scope : undefined;
+            const version = typeof plugin.version === 'string' ? plugin.version : undefined;
+            const actions: AgentCapabilityItem['actions'] = ['plugin-enable', 'plugin-disable', 'plugin-update', 'plugin-remove'];
+            if (hostUser) {
+              // Every install is listed with its project; the service decides which ones this app can change.
+              const [name, marketplace] = plugin.id.split('@');
+              items.push({ id: plugin.id, kind: 'plugin', name: name || plugin.id, version, scope, enabled: plugin.enabled === true, actions,
+                ...(marketplace ? { source: marketplace } : {}), ...(projectPath ? { projectPath } : {}) });
+              continue;
+            }
+            if (projectPath && path.resolve(projectPath).toLowerCase() !== path.resolve(workspaceRoot).toLowerCase()) continue;
+            items.push({ id: plugin.id, kind: 'plugin', name: plugin.id, version, scope,
               source: typeof plugin.installPath === 'string' ? plugin.installPath : undefined,
-              enabled: plugin.enabled === true, actions: ['plugin-enable', 'plugin-disable', 'plugin-update', 'plugin-remove'] });
+              enabled: plugin.enabled === true, actions });
           }
         } catch { issues.push({ section: 'plugins', message: 'The installed Claude CLI returned an incompatible plugin catalog.' }); }
       }
       for (const [section, result] of [['models', models], ['skills', commands], ['mcp', servers], ['plugins', installed]] as const) {
         if (result.status === 'rejected') issues.push({ section, message: `Claude could not read ${section}. Refresh or update the installed provider.` });
       }
+      let marketplaces: AgentMarketplace[] | undefined;
+      if (hostUser) {
+        if (marketplaceList.status === 'fulfilled' && marketplaceList.value !== undefined) {
+          try { marketplaces = parseClaudeMarketplaces(marketplaceList.value); }
+          catch { issues.push({ section: 'plugins', message: 'The installed Claude CLI returned an incompatible marketplace list.' }); }
+        } else issues.push({ section: 'plugins', message: 'Claude could not read marketplaces. Refresh or update the installed provider.' });
+      }
       return { models: models.status === 'fulfilled' ? models.value.map((model, index) => providerModel(model, index === 0)) : [], items, issues,
+        ...(marketplaces ? { marketplaces } : {}),
         actions: ['plugin-install', 'plugin-remove', 'plugin-enable', 'plugin-disable', 'plugin-update', 'marketplace-add', 'marketplace-remove', 'marketplace-update', 'mcp-add', 'mcp-remove'] };
     } catch (error) { throw classifyClaudeProviderError(error); }
     finally {
@@ -1343,7 +1420,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   async manageExtension(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void> {
     const readiness = await abortable(this.assertReady(signal), signal);
-    await this.extensionCommand(readiness.executablePath, claudeExtensionArguments(command), workspaceRoot, readiness.environment, signal);
+    await this.extensionCommand(readiness.executablePath, claudeExtensionArguments(command), workspaceRoot, readiness.environment, signal,
+      isLongExtensionAction(command.action) ? { timeoutMs: NATIVE_EXTENSION_LONG_TIMEOUT_MS } : {});
   }
 
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {

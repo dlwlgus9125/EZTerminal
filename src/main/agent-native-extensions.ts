@@ -3,8 +3,20 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { AgentExtensionCommand } from '../shared/agent-capabilities';
 
+export interface NativeExtensionCommandOptions {
+  /** Defaults to 60 s; installs and marketplace clones get longer. */
+  readonly timeoutMs?: number;
+  /** Defaults to 2 MiB; a marketplace's full plugin list is larger. */
+  readonly maxBuffer?: number;
+}
+
+/** Native installs and marketplace clones download over the network. */
+export const NATIVE_EXTENSION_LONG_TIMEOUT_MS = 180_000;
+/** `claude plugin list --available` reports every marketplace plugin (2.3 MB on a real PC). */
+export const NATIVE_EXTENSION_LARGE_OUTPUT = 16 * 1024 * 1024;
+
 /** Execute only a reviewed native executable with an argv array, never a shell. */
-export async function runNativeExtensionCommand(executable: string, argv: readonly string[], workspaceRoot: string, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
+export async function runNativeExtensionCommand(executable: string, argv: readonly string[], workspaceRoot: string, environment: NodeJS.ProcessEnv, signal?: AbortSignal, options: NativeExtensionCommandOptions = {}): Promise<string> {
   let nativeExecutable = executable;
   if (process.platform === 'win32' && /\.cmd$/iu.test(executable)) {
     // npm's reviewed Codex launcher points at a package-owned native binary.
@@ -17,12 +29,17 @@ export async function runNativeExtensionCommand(executable: string, argv: readon
     nativeExecutable = await fs.realpath(path.join(path.dirname(executable), 'node_modules', '@openai', 'codex', 'node_modules', '@openai', `codex-win32-${process.arch}`, 'vendor', `${arch}-pc-windows-msvc`, 'bin', 'codex.exe'));
   }
   return new Promise((resolve, reject) => {
-    execFile(nativeExecutable, [...argv], { cwd: workspaceRoot, env: environment, windowsHide: true, shell: false, timeout: 60_000, maxBuffer: 2 * 1024 * 1024, signal }, (error, stdout) => {
+    execFile(nativeExecutable, [...argv], { cwd: workspaceRoot, env: environment, windowsHide: true, shell: false, timeout: options.timeoutMs ?? 60_000, maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024, signal }, (error, stdout) => {
       // CLI diagnostics can include credentials; retain neither raw stdout nor stderr on failure.
       if (error) reject(new Error('The native extension command did not complete. Check the provider settings before retrying.'));
       else resolve(stdout);
     });
   });
+}
+
+/** Actions that download or clone, given {@link NATIVE_EXTENSION_LONG_TIMEOUT_MS}. */
+export function isLongExtensionAction(action: AgentExtensionCommand['action']): boolean {
+  return action === 'plugin-install' || action === 'plugin-update' || action === 'marketplace-add' || action === 'marketplace-update';
 }
 
 export function claudeExtensionArguments(command: AgentExtensionCommand): readonly string[] {

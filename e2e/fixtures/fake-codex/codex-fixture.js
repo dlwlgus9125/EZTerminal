@@ -35,6 +35,50 @@ function readReplyConfig() {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+// Plugins, marketplaces and skill switches for Settings › AI management. Kept in a file beside the
+// version file so the state survives the app-server restarting (a program update restarts it).
+const extensionFile = process.env.TMPDIR
+  ? path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-extensions.json')
+  : undefined;
+const FIXTURE_MARKET = 'fixture-market';
+const FIXTURE_PLUGINS = [
+  { name: 'fixture-lint', description: 'Lint fixture changes', version: '1.2.0' },
+  { name: 'fixture-docs', description: 'Look up fixture documentation', version: '0.4.1' },
+];
+let memoryExtensions;
+function readExtensions() {
+  const fallback = { installed: {}, skills: {}, marketplaces: { [FIXTURE_MARKET]: 'https://example.com/fixture-market.git' } };
+  if (!extensionFile) return memoryExtensions ?? fallback;
+  try {
+    return JSON.parse(fs.readFileSync(extensionFile, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+function writeExtensions(state) {
+  if (extensionFile) fs.writeFileSync(extensionFile, JSON.stringify(state));
+  else memoryExtensions = state;
+}
+function pluginCatalog() {
+  const state = readExtensions();
+  return {
+    marketplaces: Object.keys(state.marketplaces).map((name) => ({
+      name,
+      path: `C:\\fixture\\marketplaces\\${name}`,
+      plugins: name === FIXTURE_MARKET ? FIXTURE_PLUGINS.map((plugin) => {
+        const id = `${plugin.name}@${FIXTURE_MARKET}`;
+        const installed = Object.prototype.hasOwnProperty.call(state.installed, id);
+        return {
+          id, name: plugin.name, installed, enabled: installed && state.installed[id] === true, version: plugin.version,
+          installPolicy: 'AVAILABLE', authPolicy: 'ON_USE', source: { type: 'local' },
+          interface: { shortDescription: plugin.description },
+        };
+      }) : [],
+    })),
+    marketplaceLoadErrors: [],
+  };
+}
+
 if (args.includes('--version')) {
   process.stdout.write(`codex-cli ${fixtureVersion}\n`, () => process.exit(0));
 } else if (args[0] === 'app-server') {
@@ -90,20 +134,73 @@ if (args.includes('--version')) {
             nextCursor: null,
           });
           break;
-        case 'skills/list':
+        case 'skills/list': {
+          const reviewPath = 'C:\\fixture\\skills\\review\\SKILL.md';
           respond(frame, { data: [{ cwd: frame.params?.cwds?.[0], errors: [], skills: [
-            { name: 'fixture-review', path: 'C:\\fixture\\skills\\review\\SKILL.md', description: 'Review fixture changes', enabled: true, scope: 'user' },
+            { name: 'fixture-review', path: reviewPath, description: 'Review fixture changes', enabled: readExtensions().skills[reviewPath] !== false, scope: 'user' },
           ] }] });
           break;
+        }
         case 'plugin/installed':
-          respond(frame, { marketplaces: [], marketplaceLoadErrors: [] });
+        case 'plugin/list':
+          respond(frame, pluginCatalog());
+          break;
+        case 'plugin/install': {
+          const state = readExtensions();
+          state.installed[`${frame.params?.pluginName}@${FIXTURE_MARKET}`] = true;
+          writeExtensions(state);
+          respond(frame, { appsNeedingAuth: [], authPolicy: 'ON_USE' });
+          break;
+        }
+        case 'plugin/uninstall': {
+          const state = readExtensions();
+          delete state.installed[frame.params?.pluginId];
+          writeExtensions(state);
+          respond(frame, {});
+          break;
+        }
+        case 'config/value/write': {
+          const match = /^plugins\.("[^"]+")\.enabled$/u.exec(frame.params?.keyPath ?? '');
+          const state = readExtensions();
+          if (match) state.installed[JSON.parse(match[1])] = frame.params?.value === true;
+          writeExtensions(state);
+          respond(frame, { status: 'ok' });
+          break;
+        }
+        case 'skills/config/write': {
+          const state = readExtensions();
+          state.skills[frame.params?.path] = frame.params?.enabled === true;
+          writeExtensions(state);
+          respond(frame, {});
+          break;
+        }
+        case 'marketplace/add': {
+          const state = readExtensions();
+          const source = String(frame.params?.source ?? '');
+          const marketplaceName = source.split(/[\\/]/u).filter(Boolean).pop()?.replace(/\.git$/u, '') || 'added-market';
+          state.marketplaces[marketplaceName] = source;
+          writeExtensions(state);
+          respond(frame, { alreadyAdded: false, installedRoot: `C:\\fixture\\marketplaces\\${marketplaceName}`, marketplaceName });
+          break;
+        }
+        case 'marketplace/remove': {
+          const state = readExtensions();
+          delete state.marketplaces[frame.params?.marketplaceName];
+          writeExtensions(state);
+          respond(frame, {});
+          break;
+        }
+        case 'marketplace/upgrade':
+          respond(frame, { errors: [], selectedMarketplaces: [frame.params?.marketplaceName], upgradedRoots: [] });
           break;
         case 'mcpServerStatus/list':
           respond(frame, { data: [], nextCursor: null });
           break;
-        case 'config/read':
-          respond(frame, { config: { mcp_servers: {} }, origins: {} });
+        case 'config/read': {
+          const marketplaces = Object.fromEntries(Object.entries(readExtensions().marketplaces).map(([name, source]) => [name, { source }]));
+          respond(frame, { config: { mcp_servers: {}, marketplaces }, origins: {} });
           break;
+        }
         case 'thread/start': {
           const threadId = `fixture-thread-${++nextThread}`;
           threadConfigs.set(threadId, frame.params?.config);

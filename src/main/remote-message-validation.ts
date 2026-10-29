@@ -15,7 +15,7 @@ import {
 import { parseDaemonCommand } from '../shared/daemon-protocol';
 import { PlanningCommandSchema } from '../shared/planning';
 import { WorkflowCommandSchema, WorkflowPreviewRequestSchema } from '../shared/workflow';
-import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema } from '../shared/agent-capabilities';
+import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, AgentHostCommandSchema, AgentHostRequestSchema, AgentPluginBrowseRequestSchema } from '../shared/agent-capabilities';
 import { AgentSideQuestionRequestSchema } from '../shared/agent-side-question';
 import { isDaemonProviderId } from '../shared/daemon-provider';
 import { PlanningRunRequestSchema } from '../shared/planning-run';
@@ -406,6 +406,13 @@ export function isDispatchableClientMessage(value: unknown): value is Dispatchab
     case 'agent-capabilities-manage':
       return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
         && (value.kind === 'agent-capabilities-list' ? AgentCapabilitiesRequestSchema.safeParse(value.request) : AgentExtensionCommandSchema.safeParse(value.command)).success;
+    case 'agent-host-extensions-list':
+    case 'agent-host-extensions-browse':
+    case 'agent-host-extensions-manage':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.kind === 'agent-host-extensions-list' ? AgentHostRequestSchema.safeParse(value.request)
+          : value.kind === 'agent-host-extensions-browse' ? AgentPluginBrowseRequestSchema.safeParse(value.request)
+            : AgentHostCommandSchema.safeParse(value.command)).success;
     case 'workflow-read':
     case 'workflow-navigation':
     case 'planning-run-read':

@@ -116,16 +116,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1099,
-          "endLine": 1130,
+          "startLine": 1101,
+          "endLine": 1132,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2733,
-          "endLine": 2739,
+          "startLine": 2767,
+          "endLine": 2773,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "Connection loss settles each pending daemon command as delivery-uncertain and clears it rather than replaying the mutation."
         }
@@ -142,24 +142,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/shared/remote-protocol.ts",
-          "startLine": 164,
-          "endLine": 191,
+          "startLine": 170,
+          "endLine": 197,
           "lineDigest": "sha256:b48666480e8525c4679d47be3e2fbe4a154fcdf6310e3dde5fc656c8d6b5b5a8",
           "claim": "One baseline-v12 auth may offer a bounded supported-version list. New hosts choose the highest shared version; absent offers keep the requested supported version and existing feature floors."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1131,
-          "endLine": 1248,
-          "lineDigest": "sha256:9b735645bd50d10686139a2e58b3f070597ae3fd011ea8d5593d309bff991d75",
+          "startLine": 1134,
+          "endLine": 1252,
+          "lineDigest": "sha256:70ec6668eae65bfd6d360d87fb6665088419ace9854489bd03848737eefb8808",
           "claim": "A single auth offer negotiates a supported version after validating credentials and client identity. Failed negotiation consumes no pairing code and returns failure instead of retrying a lower version."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2485,
-          "endLine": 2496,
+          "startLine": 2519,
+          "endLine": 2530,
           "lineDigest": "sha256:fcbf44c42ac302695e9994f7ff8488cb5bcd725149732b44da631c5c7fc25a49",
           "claim": "The phone sends one auth frame when the socket opens, using baseline v12 plus the explicit v15-v12 offer and the same token/client identity."
         }
@@ -176,8 +176,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1925,
-          "endLine": 1962,
+          "startLine": 1948,
+          "endLine": 1985,
           "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
           "claim": "The command handler requires v12 or later and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
         }
@@ -238,8 +238,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1045,
-          "endLine": 1050,
+          "startLine": 1048,
+          "endLine": 1053,
           "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
           "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12-compatible connections."
         }
@@ -256,8 +256,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1704,
-          "endLine": 1735,
+          "startLine": 1708,
+          "endLine": 1739,
           "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
           "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
         }
@@ -274,8 +274,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 500,
-          "endLine": 507,
+          "startLine": 501,
+          "endLine": 508,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source separates target-aware successful launch recording from history-aware successful resume recording."
         },
@@ -290,8 +290,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1907,
-          "endLine": 1939,
+          "startLine": 1909,
+          "endLine": 1941,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -326,8 +326,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 421,
-          "endLine": 448,
+          "startLine": 422,
+          "endLine": 449,
           "lineDigest": "sha256:dc53275637a10c00aa6a0cd59061566213a552752462d69286499b8ad5ba6d0d",
           "claim": "RemoteDaemonSource is narrowed to snapshot, transcript, command, and event methods, and its availability is redacted before serialization."
         }
@@ -344,8 +344,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/shared/remote-protocol.ts",
-          "startLine": 1318,
-          "endLine": 1349,
+          "startLine": 1334,
+          "endLine": 1365,
           "lineDigest": "sha256:2254e94e91faaa3bda7b442095d1dd4613ecc2142cb6b3ffc8ea937a8d4e9103",
           "claim": "The v12 return contract has explicit snapshot, transcript, redacted availability, correlated command receipt, and revisioned event envelopes."
         }
@@ -362,16 +362,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2384,
-          "endLine": 2444,
+          "startLine": 2418,
+          "endLine": 2478,
           "lineDigest": "sha256:25106c9a3a1fd8bac8bd8d5ec443a564d65ac0ce6a3107da9b4d594c4d46c376",
           "claim": "Mobile accepts only a non-regressing authoritative snapshot and responds to event gaps or revision regression by refetching and resubscribing from the new cursor."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3472,
-          "endLine": 3508,
+          "startLine": 3510,
+          "endLine": 3546,
           "lineDigest": "sha256:83c17a2a2e37318b6e54ea36408ac01d540a60d21fe46deaa8f6b932740e3810",
           "claim": "Mobile correlates receipts, validates bounded transcript items against the requested Session, and feeds valid daemon events into continuity handling."
         }
@@ -388,8 +388,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1769,
-          "endLine": 1797,
+          "startLine": 1773,
+          "endLine": 1801,
           "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
           "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
         }
@@ -406,16 +406,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1165,
-          "endLine": 1212,
+          "startLine": 1167,
+          "endLine": 1214,
           "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
           "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3098,
-          "endLine": 3123,
+          "startLine": 3132,
+          "endLine": 3157,
           "lineDigest": "sha256:cae794fbef5daaaa7f4cc84ec542d44eae5341b1a10bd4b1d0d0b6c89f87e9ec",
           "claim": "Mobile accepts one supported auth-ok version, validates host identity and pairing token handoff, and preserves that negotiated version for later feature gates."
         }
@@ -433,24 +433,24 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1099,
-          "endLine": 1130,
+          "startLine": 1101,
+          "endLine": 1132,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2733,
-          "endLine": 2739,
+          "startLine": 2767,
+          "endLine": 2773,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "A connection drop resolves the original pending command as delivery-uncertain and removes it without transport replay."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3033,
-          "endLine": 3062,
+          "startLine": 3067,
+          "endLine": 3096,
           "lineDigest": "sha256:e06de7d97f167589fdb7af32ac72bbb3aa4405fcc25075e74a6f72238217f62d",
           "claim": "Protocol or credential rejection stops the transport, clears retry timing, settles pending work as unavailable and closes the socket; no lower-version retry is scheduled."
         }
@@ -466,8 +466,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1925,
-          "endLine": 1940,
+          "startLine": 1948,
+          "endLine": 1963,
           "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
           "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
         }
@@ -500,24 +500,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2277,
-          "endLine": 2281,
+          "startLine": 2300,
+          "endLine": 2304,
           "lineDigest": "sha256:6ae1b97f47409e427806b6e930f0f493671f45ee81ae827240c7024f79291e00",
           "claim": "A successful Project launch records the exact Project launch target rather than reconstructing it from a reported working directory."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2371,
-          "endLine": 2375,
+          "startLine": 2394,
+          "endLine": 2398,
           "lineDigest": "sha256:2e02a59d7ea06680b0d60888320c21e35b577143de42312112f9085818a6a125",
           "claim": "A general successful launch passes its exact AgentLaunchTarget into activity recording."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2504,
-          "endLine": 2504,
+          "startLine": 2527,
+          "endLine": 2527,
           "lineDigest": "sha256:de84c56e97e3e35cb078746525f9bdac031ea5c9003d064f767a8b22c0c7447e",
           "claim": "A successful resume records the original indexed history id."
         }
@@ -550,8 +550,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1907,
-          "endLine": 1939,
+          "startLine": 1909,
+          "endLine": 1941,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },
@@ -592,8 +592,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1045,
-          "endLine": 1050,
+          "startLine": 1048,
+          "endLine": 1053,
           "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
           "claim": "Only an authenticated v12-or-later socket with an active daemon subscription receives the event envelope."
         }
@@ -609,8 +609,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2417,
-          "endLine": 2444,
+          "startLine": 2451,
+          "endLine": 2478,
           "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
           "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
         }
@@ -643,8 +643,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1704,
-          "endLine": 1735,
+          "startLine": 1708,
+          "endLine": 1739,
           "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
           "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
         }
@@ -677,8 +677,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1270,
-          "endLine": 1280,
+          "startLine": 1274,
+          "endLine": 1284,
           "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
           "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
         }
@@ -694,8 +694,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1769,
-          "endLine": 1797,
+          "startLine": 1773,
+          "endLine": 1801,
           "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
           "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
         }
@@ -711,8 +711,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1769,
-          "endLine": 1797,
+          "startLine": 1773,
+          "endLine": 1801,
           "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
           "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
         }
@@ -728,8 +728,8 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1165,
-          "endLine": 1212,
+          "startLine": 1167,
+          "endLine": 1214,
           "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
           "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
         }

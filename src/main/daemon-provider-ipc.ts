@@ -47,6 +47,8 @@ export interface DaemonProviderIpcOptions {
   ) => string | null;
   readonly claudeStoreReady?: Promise<unknown>;
   readonly reportError?: (context: string, error: unknown) => void;
+  /** While the program is being replaced an inspection would launch it and hold it open. */
+  readonly isUpdating?: (providerId: string) => boolean;
 }
 
 const CHANNELS: readonly DaemonProviderIpcChannel[] = [
@@ -160,6 +162,9 @@ export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () 
     }
     if (args.length !== 2 || !isDaemonProviderId(args[1])) {
       return invalidInput<ProviderInspection>();
+    }
+    if (options.isUpdating?.(args[1])) {
+      return failure<ProviderInspection>('provider-operation-failed', 'The provider program is being updated. Check again when it finishes.');
     }
     try {
       return rendererSafeRegistryResult(await options.registry.inspect(args[1], lifecycle.signal));

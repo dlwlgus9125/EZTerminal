@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatMessageContext } from '../shared/chat-message';
-import type { AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import type { AgentExtensionCommand, AgentPluginEntry, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type { AgentUsageLimitsReading } from '../shared/agent-usage';
 import type { SideQuestionExchange } from '../shared/agent-side-question';
 import type {
@@ -208,8 +208,14 @@ export interface AgentProviderAdapter {
 
   probe(signal?: AbortSignal): Promise<ProviderProbeResult>;
   listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]>;
-  /** Metadata-only discovery: never create a user message, turn, or durable conversation. */
-  listCapabilities?(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog>;
+  /**
+   * Metadata-only discovery: never create a user message, turn, or durable conversation.
+   * `hostUser` reads the PC user settings from a neutral folder: no project settings, every
+   * plugin install with its project folder, and the configured marketplaces.
+   */
+  listCapabilities?(workspaceRoot: string, signal?: AbortSignal, options?: { readonly hostUser?: boolean }): Promise<ProviderCapabilityCatalog>;
+  /** Every plugin the configured marketplaces offer, read from a neutral folder. */
+  listAvailablePlugins?(workspaceRoot: string, signal?: AbortSignal): Promise<readonly AgentPluginEntry[]>;
   /** Explicit native settings mutation; does not restart or change live sessions. */
   manageExtension?(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void>;
 

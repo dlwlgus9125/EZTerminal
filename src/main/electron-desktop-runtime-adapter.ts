@@ -55,6 +55,7 @@ export type ElectronDesktopRuntimeBridgeSources = Pick<
   | 'conversationHistorySource'
   | 'workflowPreviewSource'
   | 'agentCapabilitiesSource'
+  | 'agentHostExtensionsSource'
   | 'providerModelsSource'
   | 'sideQuestionSource'
   | 'planningRunSource'

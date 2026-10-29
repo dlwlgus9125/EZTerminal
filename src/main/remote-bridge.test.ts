@@ -5015,6 +5015,32 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     expect(ws.sent).toContainEqual({ kind: 'provider-models-list-reply', requestId: 'pm-1', result: { ok: true, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: false, isDefault: true }] } });
   });
 
+  it('serves the PC-wide AI extensions to phones and validates every request', async () => {
+    const receipt = { commandId: 'host-1', action: 'plugin-disable' as const, state: 'applied' as const, application: 'new-session' as const };
+    const agentHostExtensionsSource = {
+      list: vi.fn(async () => ({ ok: false as const, code: 'unavailable' as const, message: 'not ready' })),
+      browse: vi.fn(async () => ({ ok: true as const, value: { providerId: 'codex' as const, entries: [], total: 0, offset: 0, marketplaces: [], observedAt: 'now' } })),
+      manage: vi.fn(async () => ({ ok: true as const, value: receipt })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentHostExtensionsSource });
+    await authed(ws, options);
+    expect(ws.sent.find((message) => message.kind === 'auth-ok')).toMatchObject({ capabilities: ['agent-host-extensions-v1'] });
+    ws.clientSend({ kind: 'agent-host-extensions-list', requestId: 'h-1', request: { providerId: 'codex' } });
+    ws.clientSend({ kind: 'agent-host-extensions-browse', requestId: 'h-2', request: { providerId: 'codex', query: 'lint', offset: 0, limit: 30 } });
+    ws.clientSend({ kind: 'agent-host-extensions-manage', requestId: 'h-3', command: { providerId: 'codex', commandId: 'host-1', expectedRevision: 'a'.repeat(64), action: 'plugin-disable', target: 'lint@market', scope: 'user' } });
+    // A project install from a phone still names a workspace, and only for a Claude plugin.
+    ws.clientSend({ kind: 'agent-host-extensions-manage', requestId: 'h-4', command: { providerId: 'codex', commandId: 'host-2', expectedRevision: 'a'.repeat(64), action: 'plugin-install', target: 'lint@market', scope: 'project', workspaceId: 'w' } });
+    ws.clientSend({ kind: 'agent-host-extensions-browse', requestId: 'h-5', request: { providerId: 'codex', limit: 500 } });
+    await flush();
+    expect(ws.sent).toContainEqual({ kind: 'agent-host-extensions-list-reply', requestId: 'h-1', result: { ok: false, code: 'unavailable', message: 'not ready' } });
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'agent-host-extensions-browse-reply', requestId: 'h-2' }));
+    expect(ws.sent).toContainEqual({ kind: 'agent-host-extensions-manage-reply', requestId: 'h-3', result: { ok: true, value: receipt } });
+    expect(agentHostExtensionsSource.manage).toHaveBeenCalledTimes(1);
+    expect(agentHostExtensionsSource.browse).toHaveBeenCalledTimes(1);
+    expect(ws.sent.some((message) => 'requestId' in message && (message.requestId === 'h-4' || message.requestId === 'h-5'))).toBe(false);
+  });
+
   describe('side questions (/btw)', () => {
     const ask = { kind: 'side-question-ask', requestId: 'btw-1', sessionId: 'session-1', question: 'Which file?', history: [] } as const;
     const hanging = () => {
