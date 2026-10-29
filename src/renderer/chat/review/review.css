@@ -755,6 +755,11 @@ span.chat-cli-review-finding__where {
   color: var(--ui-text-primary);
 }
 
+/* The model and effort it reviews with (D8): one quiet line under the choice. */
+.review-start__hint.review-start__settings {
+  font-family: var(--ui-font-mono);
+}
+
 .review-start__group:disabled .review-start__label,
 .review-start__option > input:disabled + .review-start__text > .review-start__label {
   color: var(--ui-text-secondary);

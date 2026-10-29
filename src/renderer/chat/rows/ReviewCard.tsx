@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 
-import { composeFixPrompt, REVIEW_LIMITS } from '../../../shared/review-findings';
+import { composeFixPrompt, REVIEW_LIMITS, reviewerLabel } from '../../../shared/review-findings';
 import { Glyph } from '../../ui/Glyph';
 import { formatClock, useChatCopy, type ChatCopy } from '../copy';
 import { useChatContext, useNow, type ChatReviewAction } from '../ChatContext';
@@ -70,7 +70,8 @@ function notes(review: ChatReview, copy: ChatCopy): ActionCardNote[] {
 function fixAllBatch(review: ChatReview): { readonly ids: readonly string[]; readonly label: (copy: ChatCopy) => string } | undefined {
   const eligible = review.findings.filter(fixAllEligible);
   if (!eligible.length) return undefined;
-  const prompt = composeFixPrompt({ reviewerLabel: providerName(review.reviewer.providerId), findings: eligible });
+  // The host quotes the reviewer with this label: a batch sized with another would be refused as too long.
+  const prompt = composeFixPrompt({ reviewerLabel: reviewerLabel(review.reviewer.providerId), findings: eligible });
   if (prompt.ok) return { ids: eligible.map((finding) => finding.id), label: (copy) => copy.aiReview.fixAll(eligible.length) };
   if (prompt.fits <= 0) return undefined;
   return { ids: eligible.slice(0, prompt.fits).map((finding) => finding.id), label: (copy) => copy.aiReview.fixFirst(prompt.fits, eligible.length - prompt.fits) };

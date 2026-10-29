@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
 import { readResultsSource, resetResultsSourcesForTests } from './agent-results/results-source-store';
-import { mixedSelfReview, MIXED_REVIEW_ID, REVIEW_ROOT } from './chat/review/review-fixtures';
+import { mixedSelfReview, MIXED_REVIEW_ID, REVIEW_ROOT, unsupportedReview } from './chat/review/review-fixtures';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from './StructuredAgentSession';
@@ -67,16 +67,32 @@ describe('reviews in the conversation panel', () => {
     expect(document.querySelector('[data-testid="review-start-dialog"]')).not.toBeNull();
   });
 
-  it('/review opens the form and /review <focus> starts this AI on the uncommitted changes', () => {
-    const onStart = vi.fn();
+  it('/review <text> opens the form with the text as its focus; nothing starts until it is sent (D3)', async () => {
+    const onStart = vi.fn(async () => ({ ok: true as const }));
     const onSend = vi.fn(async () => ({ ok: true as const }));
     render(panel({ reviewStart: { ...reviewStart, onStart }, onSend }));
     type(composer(), '/review 금액 계산');
     act(() => composer().closest('form')!.requestSubmit());
-    expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산' });
+    expect(onStart).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
-    type(composer(), '/review');
-    act(() => composer().closest('form')!.requestSubmit());
+    expect(document.querySelector<HTMLTextAreaElement>('[data-testid="review-start-focus"]')?.value).toBe('금액 계산');
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="review-start-submit"]')!.click());
+    expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산' });
+  });
+
+  it('shows what the host refused above the chat', async () => {
+    const onReviewAction = vi.fn(async () => ({ ok: false as const, message: '이 문제는 고치는 중입니다.' }));
+    render(panel({ onReviewAction }));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="src/cart.ts:5 고치기"]')!.click());
+    expect(container.querySelector('[data-testid="structured-agent-review-error"]')?.textContent).toContain('이 문제는 고치는 중입니다.');
+  });
+
+  it('asks another AI from an unsupported card through the form', () => {
+    const unsupported = unsupportedReview();
+    const onReviewAction = vi.fn();
+    render(panel({ onReviewAction, reviewStart, items: unsupported.items, turns: unsupported.turns }));
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="chat-review-with-other"]')!.click());
+    expect(onReviewAction).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="review-start-dialog"]')).not.toBeNull();
   });
 

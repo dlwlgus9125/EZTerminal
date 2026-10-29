@@ -4,9 +4,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ReviewTarget } from '../../../shared/review-findings';
 import { AppI18nProvider } from '../../i18n';
-import { ReviewStartForm, type ReviewStartOptions } from './ReviewStartMenu';
+import { ReviewStartForm, type ReviewStartOptions, type ReviewStartTarget } from './ReviewStartMenu';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,9 +23,10 @@ afterEach(() => {
 
 const BASE: ReviewStartOptions = { self: { providerId: 'claude' }, others: [{ providerId: 'codex' }] };
 
-function render(options: ReviewStartOptions, onStart = vi.fn(), initialTarget?: ReviewTarget): typeof onStart {
+function render(options: ReviewStartOptions, onStart = vi.fn(), initialTarget?: ReviewStartTarget, initialFocus?: string): typeof onStart {
   act(() => root.render(<AppI18nProvider locale="ko" languages={['ko']}>
-    <ReviewStartForm key={JSON.stringify([options, initialTarget])} options={options} onStart={onStart} onCancel={vi.fn()} {...(initialTarget ? { initialTarget } : {})} />
+    <ReviewStartForm key={JSON.stringify([options, initialTarget, initialFocus])} options={options} onStart={onStart} onCancel={vi.fn()}
+      {...(initialTarget ? { initialTarget } : {})} {...(initialFocus ? { initialFocus } : {})} />
   </AppI18nProvider>));
   return onStart;
 }
@@ -80,11 +80,29 @@ describe('the review start form', () => {
     expect(target()).toBe('검토 대상커밋 안 한 변경 + 새 파일');
   });
 
-  it('shows the cost of a long Claude conversation only for this AI', () => {
-    render({ ...BASE, contextTokens: 182_000 });
-    expect(container.querySelector('[data-testid="review-start-cost"]')?.textContent).toBe('대화 맥락 약 18만 토큰 — 길수록 검토 비용이 큽니다.');
-    act(() => get('review-start-other').click());
-    expect(container.querySelector('[data-testid="review-start-cost"]')).toBeNull();
+  it('opens with the text of `/review <text>` as its focus (D3), and starts only when sent', () => {
+    const onStart = render(BASE, vi.fn(), undefined, '금액 계산과 권한 검사');
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="review-start-focus"]')!.value).toBe('금액 계산과 권한 검사');
+    expect(onStart).not.toHaveBeenCalled();
+    act(() => get('review-start-submit').click());
+    expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산과 권한 검사' });
+  });
+
+  it('offers the branch of a worktree whose base the host finds, without naming it', () => {
+    const onStart = render({ ...BASE, worktree: true });
+    expect(get('review-start-branch').disabled).toBe(false);
+    expect(container.textContent).toContain('기준 브랜치에서 갈라진 지점 이후의 커밋까지');
+    act(() => get('review-start-branch').click());
+    expect(container.querySelector('[data-testid="review-start-target"]')!.textContent).toBe('검토 대상기준 브랜치에서 갈라진 지점 이후 + 커밋 안 한 변경 + 새 파일');
+    act(() => get('review-start-submit').click());
+    expect(onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'base-branch' } });
+  });
+
+  it('says which model and effort each reviewer uses (D8), and nothing about cost', () => {
+    render({ self: { providerId: 'claude', settingsText: 'Opus 5.5 · 높음' }, others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음' }] });
+    expect(container.querySelector('[data-testid="review-start-self-settings"]')?.textContent).toBe('사용: Opus 5.5 · 높음');
+    expect(container.querySelector('[data-testid="review-start-other-settings"]')?.textContent).toBe('사용: 검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음');
+    expect(container.textContent).not.toContain('토큰');
   });
 
   it('cannot start, and says why, where no review can run or the reviewer is not available', () => {

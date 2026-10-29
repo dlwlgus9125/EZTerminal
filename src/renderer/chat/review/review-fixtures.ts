@@ -1,7 +1,7 @@
 import { encodeFileChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import {
-  composeFixPrompt, findingId, reviewSummaryText, type ReviewFinding, type ReviewTarget, type ReviewerRef,
+  composeFixPrompt, findingId, reviewerLabel, reviewSummaryText, type ReviewFinding, type ReviewTarget, type ReviewerRef,
 } from '../../../shared/review-findings';
 import type { ReviewPayload } from '../../../shared/transcript-payload';
 
@@ -625,7 +625,7 @@ export function applyReviewAction(
   }
   if ((action.kind === 'fix' || action.kind === 'fix-all') && review && action.findingIds?.length) {
     const findings = (review.findings ?? []).filter((finding) => action.findingIds!.includes(finding.id));
-    const prompt = composeFixPrompt({ reviewerLabel: review.reviewer.providerId === 'codex' ? 'Codex' : 'Claude', findings });
+    const prompt = composeFixPrompt({ reviewerLabel: reviewerLabel(review.reviewer.providerId), findings });
     // A message that does not fit is never sent; the card only offers batches that fit.
     if (!prompt.ok) return state;
     const turnId = `fix-${String(sequence)}`;

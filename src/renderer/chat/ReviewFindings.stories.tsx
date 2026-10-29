@@ -78,7 +78,12 @@ function Desk({ children, width = 1100, height = 780 }: { readonly children: Rea
   );
 }
 
-const START_OPTIONS: ReviewStartOptions = { self: { providerId: 'claude' }, others: [{ providerId: 'codex' }], baseRef: 'main' };
+/** D8: this AI with the conversation's model and effort, the other with its 단계 연결 review agent. */
+const START_OPTIONS: ReviewStartOptions = {
+  self: { providerId: 'claude', settingsText: 'Opus 5.5 · 높음' },
+  others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음' }],
+  baseRef: 'main',
+};
 /** One empty list for every render: a fresh `[]` would rebuild the model each time the Results source re-renders the panel. */
 const NO_APPROVALS: readonly DaemonApproval[] = [];
 
@@ -308,13 +313,13 @@ function StartScreen({ args, options, fixture = emptyReview, initialTarget }: {
     </Desk>
   );
 }
-/** `/review`, ⋯ › 검토… or Results › 검토: this AI by default, the scope, an optional focus — and the cost of a long Claude conversation. */
+/** `/review`, ⋯ › 검토… or Results › 검토: this AI by default, the scope, an optional focus, and what each reviewer uses (D8). */
 export const StartMenu: Story = {
-  render: (args) => <StartScreen args={args} options={{ ...START_OPTIONS, contextTokens: 182_000 }} />,
+  render: (args) => <StartScreen args={args} options={START_OPTIONS} />,
   play: async ({ args }) => {
     const dialog = within(await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="review-start-dialog"]'); expect(element).not.toBeNull(); return element!; }));
     await expect(dialog.getByRole('radio', { name: /이 AI · Claude/u })).toBeChecked();
-    await expect(dialog.getByTestId('review-start-cost')).toHaveTextContent('대화 맥락 약 18만 토큰');
+    await expect(dialog.getByTestId('review-start-self-settings')).toHaveTextContent('사용: Opus 5.5 · 높음');
     await userEvent.type(dialog.getByRole('textbox'), '금액 계산과 권한 검사');
     await userEvent.click(dialog.getByRole('button', { name: '검토 시작' }));
     await expect(args.onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산과 권한 검사' });
@@ -336,7 +341,7 @@ export const StartMenuOtherAi: Story = {
     const dialog = within(await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="review-start-dialog"]'); expect(element).not.toBeNull(); return element!; }));
     await userEvent.click(dialog.getByRole('radio', { name: /다른 AI · Codex/u }));
     await userEvent.click(dialog.getByRole('radio', { name: /기준 브랜치와 비교 \(main\)/u }));
-    await expect(dialog.queryByTestId('review-start-cost')).toBeNull();
+    await expect(dialog.getByTestId('review-start-other-settings')).toHaveTextContent('검토 에이전트 코드 리뷰어');
   },
 };
 /** Not a worktree: comparing with a base branch is shown, disabled, with the reason. */
