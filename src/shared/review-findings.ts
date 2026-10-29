@@ -341,25 +341,40 @@ export function composeFixPrompt(input: { readonly reviewerLabel: string; readon
 export type FixReply = { readonly outcome: 'fixed' } | { readonly outcome: 'not-changed'; readonly reason?: string };
 
 /** One reply line: optional list mark, the id (backticks or emphasis allowed), the outcome, then any reason. */
-const FIX_REPLY_LINE = /^\s*(?:>\s*)*(?:[-*+•]\s+|\d+[.)]\s+)?[`*_]*(f-[0-9a-f]{8}(?:-\d+)?)[`*_]*\s*[:：]\s*[`*_]*(fixed|not[\s_-]+changed)\b[`*_]*\s*(.*)$/iu;
+/** A list mark in front of a reply line: `- `, `* `, `+ `, `• `, `1. ` or `1) `. */
+const FIX_REPLY_ITEM = /^(?:[-*+•]\s+|\d+[.)]\s+)/u;
+/** `<id>: fixed` or `<id>: not changed (<why>)`, the id optionally in backticks, a final period allowed. */
+const FIX_REPLY_LINE = /^(`?)(f-[0-9a-f]{8}(?:-\d+)?)\1\s*[:：]\s*(?:(fixed)|not +changed\s*\((.*\S.*)\))\.?$/iu;
+const FENCE = /^(`{3,}|~{3,})/u;
 
 /**
- * What a fix turn's reply says about each finding, read from the lines `composeFixPrompt` asks for:
- * `<id>: fixed` or `<id>: not changed (<why>)`. Other prose, list marks, backticks and emphasis around the
- * id and the keyword's case are tolerated; lines that name no finding id are ignored; the last line for an
- * id wins. An id without a line is absent: the reply did not say.
+ * What a fix turn's reply says about each finding, read only from lines that are exactly what
+ * `composeFixPrompt` asks for: `<id>: fixed` or `<id>: not changed (<why>)` — optionally in backticks or as a
+ * list item, keywords in any case, a final period allowed. Quoted lines (`> …`), lines in code fences and
+ * lines with anything else after the keyword do not count, so an example or a hedge ("fixed? Not yet.") is
+ * never read as an answer. The last valid line for an id wins; an id without one is absent: the reply did
+ * not say.
  */
 export function parseFixReply(text: string): Map<string, FixReply> {
   const replies = new Map<string, FixReply>();
-  for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
+  let fence: string | undefined;
+  for (const raw of text.replace(/\r\n?/gu, '\n').split('\n')) {
+    const trimmed = raw.trim();
+    const mark = FENCE.exec(trimmed)?.[1];
+    if (mark) {
+      if (!fence) fence = mark.charAt(0);
+      else if (mark.charAt(0) === fence) fence = undefined;
+      continue;
+    }
+    if (fence || trimmed.startsWith('>')) continue;
+    let line = trimmed.replace(FIX_REPLY_ITEM, '');
+    if (line.startsWith('>')) continue;
+    // The whole line in backticks: `f-…: fixed`
+    if (line.length > 2 && line.startsWith('`') && line.endsWith('`') && !line.slice(1, -1).includes('`')) line = line.slice(1, -1).trim();
     const match = FIX_REPLY_LINE.exec(line);
     if (!match) continue;
-    const id = match[1]!.toLowerCase();
-    if (/^fixed$/iu.test(match[2]!)) { replies.set(id, { outcome: 'fixed' }); continue; }
-    const tail = match[3]!.trim();
-    const reason = (tail.startsWith('(') ? tail.slice(1, tail.lastIndexOf(')') > 0 ? tail.lastIndexOf(')') : undefined) : tail.replace(/^[-–—:：]\s*/u, ''))
-      .replace(/[`*_]+$/u, '').trim();
-    replies.set(id, { outcome: 'not-changed', ...(reason ? { reason: clip(reason, REVIEW_LIMITS.body) } : {}) });
+    const id = match[2]!.toLowerCase();
+    replies.set(id, match[3] ? { outcome: 'fixed' } : { outcome: 'not-changed', reason: clip(match[4]!.trim(), REVIEW_LIMITS.body)! });
   }
   return replies;
 }

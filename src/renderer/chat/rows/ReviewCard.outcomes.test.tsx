@@ -13,8 +13,8 @@ import { ChatRowView } from '../ChatRowView';
 import { buildChatModel } from '../model/build-chat-model';
 import type { ChatRow } from '../model/types';
 import {
-  applyReviewAction, CLAUDE_CART, CLAUDE_DISCOUNT, CLAUDE_FORMAT, CODEX_AUTH, CODEX_ITEM, CODEX_DISCOUNT, mixedSelfReview, queuedOtherReview,
-  reviewPayload, truncatedReview, withId,
+  applyReviewAction, CLAUDE_CART, CLAUDE_DISCOUNT, CLAUDE_FORMAT, CODEX_AUTH, CODEX_ITEM, CODEX_DISCOUNT, fixOutcomesReview, mixedSelfReview, queuedOtherReview,
+  reviewPayload, truncatedReview, withId, type ReviewFixture,
 } from '../review/review-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -94,6 +94,35 @@ describe('what a fix turn left behind', () => {
   });
 });
 
+/** A host that applies the card's actions to the transcript, as the real one will. */
+function Host({ make, skin }: { readonly make: () => ReviewFixture; readonly skin: ChatSkin }): JSX.Element {
+  const [state, setState] = useState(() => { const fixture = make(); return { items: fixture.items, turns: fixture.turns }; });
+  const onReviewAction = useCallback((action: ChatReviewAction) => setState((current) => applyReviewAction(current, action, Date.parse(AT))), []);
+  const list = useMemo(() => buildChatModel(state).rows, [state]);
+  return (
+    <ChatProvider skin={skin} locale="ko" onReviewAction={onReviewAction}>
+      {list.map((row) => <ChatRowView key={row.id} row={row} providerLabel="Claude" />)}
+    </ChatProvider>
+  );
+}
+async function nextFrame(): Promise<void> {
+  await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+}
+
+describe('a fixed problem', () => {
+  for (const skin of ['bubble', 'cli'] as const) {
+    it(`can be reopened and fixed again (${skin})`, async () => {
+      act(() => root.render(<AppI18nProvider locale="ko" languages={['ko']}><Host make={() => fixOutcomesReview(Date.parse(AT))} skin={skin} /></AppI18nProvider>));
+      act(() => byName('src/auth.ts:6 다시 열기').click());
+      await nextFrame();
+      const finding = [...container.querySelectorAll<HTMLElement>('[data-testid="chat-review-finding"]')].find((element) => element.textContent?.includes('The access check is always true'))!;
+      expect(finding.dataset.status).toBe('open');
+      expect(byName('src/auth.ts:6 다시 고치기')).toBeTruthy();
+      expect(document.activeElement).toBe(finding.querySelector('[data-finding-title]'));
+    });
+  }
+});
+
 describe('모두 고치기 over the fix message limit', () => {
   it('offers the first batch that fits, names how many are left, and sends only those', () => {
     const onReviewAction = vi.fn();
@@ -123,6 +152,44 @@ describe('모두 고치기 over the fix message limit', () => {
     show(buildChatModel(sent).rows, onReviewAction);
     act(() => byName(next.ok ? `모두 고치기 (${String(rest.length)})` : `처음 ${String(next.fits)}개 고치기 · 나머지 ${String(rest.length - next.fits)}개`).click());
     expect(onReviewAction).toHaveBeenCalledWith({ kind: 'fix-all', reviewId: fixture.reviewId, findingIds: batch.map((finding) => finding.id) });
+  });
+});
+
+describe('focus and announcements after 모두 고치기', () => {
+  for (const skin of ['bubble', 'cli'] as const) {
+    it(`moves focus to the first problem sent and says how many once (${skin})`, async () => {
+      act(() => root.render(<AppI18nProvider locale="ko" languages={['ko']}><Host make={truncatedReview} skin={skin} /></AppI18nProvider>));
+      const review = buildChatModel(truncatedReview()).rows.find((row): row is Extract<ChatRow, { kind: 'review' }> => row.kind === 'review')!.review;
+      const prompt = composeFixPrompt({ reviewerLabel: 'Codex', findings: review.findings });
+      const fits = prompt.ok ? review.findings.length : prompt.fits;
+      act(() => byName(`처음 ${String(fits)}개 고치기 · 나머지 ${String(review.findings.length - fits)}개`).click());
+      await nextFrame();
+      const first = container.querySelector<HTMLElement>(`[data-finding-id="${review.findings[0]!.id}"] [data-finding-title]`);
+      expect(first).not.toBeNull();
+      expect(document.activeElement).toBe(first);
+      expect(container.querySelector('[data-testid="chat-review-announce"]')!.textContent).toBe(`${String(fits)}개 고치기를 요청했습니다`);
+    });
+  }
+
+  it('says once when a queued review starts, not on every update', () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = queuedOtherReview(Date.parse(AT));
+      // Each update re-sends the review row (here, a later time on it); the state is what matters.
+      const running = (seconds: number) => fixture.items.map((entry) => (entry.payload?.type === 'review'
+        ? { ...entry, createdAt: new Date(Date.parse(AT) + seconds * 1_000).toISOString(), payload: { ...entry.payload, state: 'running' as const } } : entry));
+      show(buildChatModel(fixture).rows, vi.fn());
+      const live = (): string => container.querySelector('[data-testid="chat-review-announce"]')!.textContent ?? '';
+      expect(live()).toBe('');
+      show(buildChatModel({ items: running(1), turns: fixture.turns }).rows, vi.fn());
+      expect(live()).toBe('Codex 검토를 시작했습니다');
+      act(() => { vi.advanceTimersByTime(7_000); });
+      expect(live()).toBe('');
+      show(buildChatModel({ items: running(9), turns: fixture.turns }).rows, vi.fn());
+      expect(live()).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

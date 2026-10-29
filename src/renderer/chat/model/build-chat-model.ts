@@ -326,8 +326,11 @@ function settleFindings(
   if (!review.findings.length) return review;
   const findings = review.findings.map((finding): ChatReviewFinding => {
     let latest: ReviewEvent | undefined;
+    let lastFix: ReviewEvent | undefined;
     for (const event of events) {
-      if (event.findingIds.includes(finding.id) && (!latest || event.sequence > latest.sequence)) latest = event;
+      if (!event.findingIds.includes(finding.id)) continue;
+      if (!latest || event.sequence > latest.sequence) latest = event;
+      if (event.kind === 'fix' && (!lastFix || event.sequence > lastFix.sequence)) lastFix = event;
     }
     const reply = latest?.kind === 'fix' && latest.turnId ? replyOf(latest.turnId).get(finding.id) : undefined;
     const status: ChatReviewFindingStatus = !latest ? 'open'
@@ -338,7 +341,8 @@ function settleFindings(
       ...finding,
       status,
       ...(stale ? { stale: true } : {}),
-      ...(latest?.kind === 'fix' && latest.turnId ? { fixTurnId: latest.turnId } : {}),
+      // Kept after a later reopen or dismissal: the problem's history.
+      ...(lastFix?.kind === 'fix' && lastFix.turnId ? { fixTurnId: lastFix.turnId } : {}),
       ...(status === 'not-changed' && reply?.outcome === 'not-changed' && reply.reason ? { fixReason: reply.reason } : {}),
     };
   });

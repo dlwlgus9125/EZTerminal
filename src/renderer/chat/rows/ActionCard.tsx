@@ -121,7 +121,7 @@ export function ActionCard({
       <section className="chat-cli-line chat-cli-action-card" data-state={state} data-kind={kind} aria-label={label} data-testid={testId}>
         <span className="chat-cli-glyph" data-tone={CLI_TONE[state]} aria-hidden="true">⏺</span>
         <div className="chat-cli-line__body">
-          <p className="chat-cli-action-card__head">
+          <p className="chat-cli-action-card__head" tabIndex={-1} data-card-heading="">
             <span className="chat-cli-tool__name">{cliName}</span>
             {cliTarget && <span className="chat-cli-tool__target">({cliTarget})</span>}
             {' '}<span className="chat-cli-action-card__state" data-state={state}>{cliStateText ?? stateText}</span>
@@ -166,7 +166,7 @@ export function ActionCard({
     <section className="chat-action-card" data-state={state} data-kind={kind} aria-label={label} data-testid={testId}>
       <header className="chat-action-card__head">
         <span className="chat-action-card__lamp"><Led tone={LAMP[state]} /></span>
-        <span className="chat-action-card__title">{title}</span>
+        <span className="chat-action-card__title" tabIndex={-1} data-card-heading="">{title}</span>
         <span className="chat-action-card__state" data-state={state}>{stateText}</span>
         {meta && <span className="chat-action-card__meta">{meta}</span>}
       </header>

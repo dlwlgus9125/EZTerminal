@@ -149,6 +149,19 @@ describe('review cards in the chat model', () => {
     expect(reviewRows(model.rows)[0]!.review.findings[0]).toMatchObject({ status: 'fixing', stale: true });
   });
 
+  it('reopens a fixed finding: open again, keeping the turn that fixed it', () => {
+    const model = buildChatModel({
+      items: [
+        review(1, 'complete'),
+        item(2, 'user-message', 'fix', { turnId: 'fix', payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [FORMAT.id] } }),
+        item(3, 'assistant-message', `${FORMAT.id}: fixed`, { turnId: 'fix' }),
+        item(4, 'notice', 'reopened', { payload: { v: 1, type: 'review-status', reviewId: 'r1', findingIds: [FORMAT.id], state: 'open' } }),
+      ],
+      turns: [turn('fix', 'completed')],
+    });
+    expect(reviewRows(model.rows)[0]!.review.findings[0]).toMatchObject({ status: 'open', fixTurnId: 'fix' });
+  });
+
   it('lets the latest event win between a fix and a dismissal', () => {
     const model = buildChatModel({
       items: [

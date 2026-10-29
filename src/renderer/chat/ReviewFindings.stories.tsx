@@ -22,8 +22,8 @@ import type { ChatReviewAction } from './ChatContext';
 import type { ChatSkin } from '../chat-view-state';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import {
-  applyReviewAction, BRANCH_DIFF, emptyReview, failedReview, fixOutcomesReview, inSession, interruptedReview, mixedSelfReview, otherAiReview, queuedOtherReview,
-  slotQueuedReview,
+  applyReviewAction, BRANCH_DIFF, deletedFileReview, emptyReview, failedReview, fixOutcomesReview, inSession, interruptedReview, mixedSelfReview, otherAiReview,
+  queuedOtherReview, slotQueuedReview,
   REVIEW_FILES, REVIEW_ROOT, reviewerConversation, REVIEWER_SESSION, runningSelfReview, truncatedReview, UNCOMMITTED_DIFF, unsupportedReview,
   type FixtureLanguage, type ReviewFixture,
 } from './review/review-fixtures';
@@ -212,6 +212,8 @@ export const FixOutcomes: Story = {
     await expect(within(review).getByTestId('chat-review-counts')).toHaveTextContent('문제 5 · 고침 1 · 고치는 중 1 · 안 고침 1 · 확인 필요 1 · 무시 1');
     await expect(review).toHaveTextContent('이유: 호출하는 쪽이 이미 0.15 같은 비율을 넘깁니다.');
     await expect(within(review).getByRole('button', { name: 'src/discount.ts:4 다시 고치기' })).toBeVisible();
+    // 고침 can be reopened (and then fixed again).
+    await expect(within(review).getByRole('button', { name: 'src/auth.ts:6 다시 열기' })).toBeVisible();
     await showCard(canvasElement);
   },
 };
@@ -540,6 +542,16 @@ export const PhoneFindingsSheet: Story = {
     await waitFor(() => expect(args.onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'fix' })));
     await waitFor(() => expect(document.activeElement).toBe(sheet.querySelector('[data-finding-title]')));
     await expect(within(sheet).getByTestId('conversation-review-status')).toHaveTextContent('src/cart.ts:5 · 고침 요청됨');
+  },
+};
+/** Phone: the discount helper was deleted after the review — 파일이 지워짐, the lines the review read, no way to a file. */
+export const PhoneFindingsSheetDeleted: Story = {
+  render: (args) => <PhoneScreen id="phone-sheet-deleted" make={deletedFileReview} args={args} width={412} height={915} />,
+  play: async ({ canvasElement }) => {
+    const sheet = await openFindingSheet(canvasElement, 'src/discount.ts:4');
+    await expect(within(sheet).getByTestId('conversation-review-deleted')).toHaveTextContent('파일이 지워짐');
+    await expect(sheet.querySelector('.conversation-review__line[data-focus]')).toBeNull();
+    await expect(within(sheet).queryByRole('button', { name: '파일에서 보기' })).toBeNull();
   },
 };
 /** Phone: a problem whose line the recorded change still holds — the lines around it, its line marked (being fixed: no buttons). */

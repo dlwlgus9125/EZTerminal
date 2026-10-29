@@ -62,8 +62,10 @@ export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insert
       setSendState({ phase: 'error', message: result.message });
     }
   };
+  // On its way: the same comments must not also land in the message (or vanish from the tray); a failure frees them.
+  const sending = sendState.phase === 'sending';
   const insert = (): void => {
-    if (!insertIntoDraft || tooLong || !draftText) return;
+    if (!insertIntoDraft || tooLong || !draftText || sending) return;
     insertIntoDraft(draftText);
     onTaken(ids);
     setInserted(true);
@@ -80,18 +82,18 @@ export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insert
               <li key={comment.id} className="results-tray__item">
                 <span className="results-tray__where">{comment.lines ? `${comment.path}:${comment.lines}` : comment.path}</span>
                 {comment.text && <span className="results-tray__text">{comment.text}</span>}
-                <IconButton size="sm" icon={glyphIcon('x')} aria-label={copy.removeComment} onClick={() => onRemove(comment.id)} />
+                <IconButton size="sm" icon={glyphIcon('x')} aria-label={copy.removeComment} disabled={sending} onClick={() => onRemove(comment.id)} />
               </li>
             ))}
           </ul>
           <div className="results-tray__footer">
             {sendNow && (
-              <Button variant="primary" size="sm" disabled={tooLong || sendState.phase === 'sending'} loading={sendState.phase === 'sending'} loadingLabel={copy.sending}
+              <Button variant="primary" size="sm" disabled={tooLong || sending} loading={sending} loadingLabel={copy.sending}
                 onClick={() => void send()} title={copy.sendHint} data-testid="results-send-comments">
                 {turnActive ? copy.sendQueued : copy.send}
               </Button>
             )}
-            <Button variant={sendNow ? 'secondary' : 'primary'} size="sm" disabled={!insertIntoDraft || tooLong} onClick={insert} title={copy.insertDraftHint}
+            <Button variant={sendNow ? 'secondary' : 'primary'} size="sm" disabled={!insertIntoDraft || tooLong || sending} onClick={insert} title={copy.insertDraftHint}
               data-testid="results-insert-comments">
               {copy.insertDraft} · {copy.comments(comments.length)}
             </Button>

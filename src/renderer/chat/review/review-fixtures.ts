@@ -127,6 +127,16 @@ const PATCH_CART = [
   ' }',
 ].join('\n');
 
+/** A later turn removes the discount helper: the record takes every line away. */
+const PATCH_DISCOUNT_DELETE = [
+  '@@ -1,5 +0,0 @@',
+  '-/** Applies a percentage discount, e.g. 15 for 15%. */',
+  '-export function applyDiscount(total: number, percent: number): number {',
+  '-  // percent is a whole number: 15 means 15%',
+  '-  return total - total * percent;',
+  '-}',
+].join('\n');
+
 /** The fix turn's edits in the outcomes fixture. */
 const PATCH_AUTH_FIX = [
   '@@ -5,2 +5,2 @@',
@@ -216,6 +226,22 @@ function edit(sequence: number, turnId: string, path: string, patch: string, nam
     item(sequence + 1, 'tool-result', encodeFileChanges([change])!, {
       turnId,
       payload: { v: 1, type: 'tool', callId, name, category: name === 'Write' ? 'write' : 'edit', phase: 'result', status: 'completed', files: [{ path: absolute, kind: name === 'Write' ? 'add' : 'update', added, removed }] },
+    }),
+  ];
+}
+
+/** A file the AI removed: its record's patch takes every line away. */
+function removal(sequence: number, turnId: string, path: string, patch: string): DaemonTranscriptItem[] {
+  const absolute = `${REVIEW_ROOT}\\${path.replace(/\//gu, '\\')}`;
+  const callId = `call-${String(sequence)}`;
+  const removed = patch.split('\n').filter((line) => line.startsWith('-')).length;
+  return [
+    item(sequence, 'tool-call', `Delete\n${JSON.stringify({ file_path: absolute })}`, {
+      turnId, payload: { v: 1, type: 'tool', callId, name: 'Delete', category: 'edit', phase: 'call', status: 'running', target: absolute },
+    }),
+    item(sequence + 1, 'tool-result', encodeFileChanges([{ path: absolute, patch, coverage: 'patch' }])!, {
+      turnId,
+      payload: { v: 1, type: 'tool', callId, name: 'Delete', category: 'edit', phase: 'result', status: 'completed', files: [{ path: absolute, kind: 'delete', added: 0, removed }] },
     }),
   ];
 }
@@ -458,6 +484,26 @@ export function cancelledReview(): ReviewFixture {
       ...firstTurn(),
       reviewRow(20, { reviewId, reviewer: SELF_CLAUDE, target: UNCOMMITTED, state: 'running' }, iso(60)),
       reviewRow(21, { reviewId, reviewer: SELF_CLAUDE, target: UNCOMMITTED, state: 'cancelled' }, iso(70)),
+    ],
+  };
+}
+
+/**
+ * The mixed review after another turn removed src/discount.ts: the discount problem's file is gone, so there is no
+ * line to point at — never the line in the older patch that created it.
+ */
+export function deletedFileReview(now: number): ReviewFixture {
+  const fixture = mixedSelfReview(now);
+  const removedAt = fixture.items.findIndex((entry) => entry.sequence >= 40);
+  return {
+    ...fixture,
+    turns: [...fixture.turns.slice(0, 2), turn('turn-del', 'completed', iso(176), iso(186)), ...fixture.turns.slice(2)],
+    items: [
+      ...fixture.items.slice(0, removedAt),
+      item(35, 'user-message', '할인 함수는 이번 변경에서 빼 줘.', { turnId: 'turn-del', createdAt: iso(176) }),
+      ...removal(36, 'turn-del', 'src/discount.ts', PATCH_DISCOUNT_DELETE),
+      item(38, 'assistant-message', '`src/discount.ts`를 지웠습니다.', { turnId: 'turn-del', createdAt: iso(186) }),
+      ...fixture.items.slice(removedAt),
     ],
   };
 }

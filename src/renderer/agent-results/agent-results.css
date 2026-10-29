@@ -770,7 +770,8 @@
 }
 
 /* The lines the review read, when the change no longer holds them: no highlight, it is not the file now. */
-.results-walk-excerpt__heading {
+/* Two classes: the note's `> span` rule would keep it beside the text. */
+.results-walk-outside > .results-walk-excerpt__heading {
   flex: 1 1 100%;
   color: var(--ui-text-secondary);
   font: 600 var(--ui-font-size-2xs) / 1.4 var(--ui-font-label);

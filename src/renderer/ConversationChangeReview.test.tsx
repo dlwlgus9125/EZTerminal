@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REVIEW_DRAFT_LIMIT } from './agent-results/results-format';
 import type { ChatReviewAction } from './chat/ChatContext';
-import { applyReviewAction, mixedSelfReview, MIXED_REVIEW_ID, REVIEW_ROOT, REVIEW_SESSION, walkFindingId } from './chat/review/review-fixtures';
+import {
+  applyReviewAction, deletedFileReview, fixOutcomesReview, mixedSelfReview, MIXED_REVIEW_ID, OUTCOMES_REVIEW_ID, REVIEW_ROOT, REVIEW_SESSION, walkFindingId,
+} from './chat/review/review-fixtures';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
@@ -74,6 +76,26 @@ describe('the review sheet with an AI review (findings mode)', () => {
     expect(document.querySelector('.conversation-review__line[data-focus]')).toBeNull();
     act(() => byTestId('conversation-review-view-file')!.click());
     expect(onOpenProjectFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the file was deleted instead of pointing into an older patch, keeping the review’s lines and no way to a file', () => {
+    const deleted = deletedFileReview(NOW);
+    show({ items: deleted.items, turns: deleted.turns, findingsRequest: { sequence: 1, reviewId: MIXED_REVIEW_ID, findingId: walkFindingId(deleted, 1)! }, onOpenProjectFiles: vi.fn() });
+    expect(document.querySelector('.conversation-review__position')?.textContent).toBe('문제 2/3src/discount.ts:4');
+    expect(byTestId('conversation-review-deleted')?.textContent).toContain('파일이 지워짐');
+    const region = document.querySelector<HTMLElement>('[role="region"]')!;
+    expect(region.textContent).toContain('return total - total * percent;');
+    expect(document.querySelector('.conversation-review__line[data-focus]')).toBeNull();
+    expect(byTestId('conversation-review-view-file')).toBeNull();
+  });
+
+  it('offers 다시 열기 on a fixed problem', () => {
+    const outcomes = fixOutcomesReview(NOW);
+    const onReviewAction = vi.fn();
+    show({ items: outcomes.items, turns: outcomes.turns, findingsRequest: { sequence: 1, reviewId: OUTCOMES_REVIEW_ID, findingId: walkFindingId(outcomes, 0)! }, onReviewAction });
+    expect(document.querySelector('.conversation-review__position')?.textContent).toBe('문제 1/5src/auth.ts:6');
+    act(() => button('src/auth.ts:6 다시 열기').click());
+    expect(onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reopen' }));
   });
 
   it('moves focus to the problem and says its new state once after 고치기', async () => {

@@ -97,6 +97,12 @@ describe('where a review problem is in a recorded patch', () => {
     expect(locateFinding(change, finding)).toEqual({ state: 'outside' });
   });
 
+  it('says the file was deleted when the record takes every line away, whatever an older patch showed', () => {
+    const deletion = patch('@@ -1,6 +0,0 @@\n-export function cartTotal(items) {\n-  let total = 0;\n-  for (let index = 0; index <= items.length; index += 1) {\n-    total += items[index].price;\n-  }\n-  return total;');
+    expect(locateFinding(deletion, finding)).toEqual({ state: 'deleted' });
+    expect(locateFinding({ ...patch('@@ -5 +5 @@\n-old\n+new'), kind: 'delete' }, { line: 5 })).toEqual({ state: 'deleted' });
+  });
+
   it('anchors on the line number alone when the review kept no lines to check', () => {
     const change = patch('@@ -4,2 +4,2 @@\n   let total = 0;\n-  for (const item of items) {\n+  for (let index = 0; index <= items.length; index += 1) {');
     expect(locateFinding(change, { line: 5, endLine: 5 })).toEqual({ state: 'found', index: 3 });

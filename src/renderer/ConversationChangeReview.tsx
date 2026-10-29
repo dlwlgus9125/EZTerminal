@@ -13,7 +13,7 @@ import { buildChatModel } from './chat/model/build-chat-model';
 import { workspacePath } from './chat/model/summary';
 import type { ChatReview, ChatReviewFinding } from './chat/model/types';
 import {
-  canFix, findingWhere, FindingStatusChip, focusAfterAction, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
+  canFix, canReopen, findingWhere, FindingStatusChip, fixAgain, focusAfterAction, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
 } from './chat/review/review-presentation';
 import { useResultsCopy } from './agent-results/copy';
 import { isFindingFile, lineRangeLabel, locateFinding, type ReviewComment } from './agent-results/results-format';
@@ -42,6 +42,8 @@ type FindingLines =
   | { readonly kind: 'hunk'; readonly lines: readonly ReviewLine[]; readonly focus: number }
   /** The latest record that shows the problem's line has other code there: the review's lines, never anchored. */
   | { readonly kind: 'missing'; readonly excerpt?: ReviewExcerpt }
+  /** The latest record for the file removes it: the review's lines, and no older patch. */
+  | { readonly kind: 'deleted'; readonly excerpt?: ReviewExcerpt }
   /** No record shows the line: the lines the review read. */
   | { readonly kind: 'excerpt'; readonly excerpt: ReviewExcerpt };
 
@@ -51,7 +53,9 @@ function findingLines(changes: readonly ConversationFileChange[], finding: ChatR
     if (!isFindingFile(change.path, finding.file, workspaceRoot)) continue;
     const place = locateFinding(change, finding);
     if (place.state === 'outside') continue;
-    if (place.state === 'missing') return { kind: 'missing', ...(finding.excerpt && finding.excerpt.lines.length ? { excerpt: finding.excerpt } : {}) };
+    if (place.state === 'missing' || place.state === 'deleted') {
+      return { kind: place.state, ...(finding.excerpt && finding.excerpt.lines.length ? { excerpt: finding.excerpt } : {}) };
+    }
     const lines = reviewLines(change);
     const from = Math.max(0, place.index - CONTEXT_LINES);
     return { kind: 'hunk', lines: lines.slice(from, place.index + CONTEXT_LINES + 1), focus: place.index - from };
@@ -245,8 +249,8 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
     focusAfterAction(titleRef);
   };
   const severity = finding.severity ? chat.aiReview.severity[finding.severity] : '';
-  const again = finding.status !== 'open';
-  const excerpt = shown?.kind === 'excerpt' || shown?.kind === 'missing' ? shown.excerpt : undefined;
+  const again = fixAgain(finding);
+  const excerpt = shown?.kind === 'excerpt' || shown?.kind === 'missing' || shown?.kind === 'deleted' ? shown.excerpt : undefined;
   // The review's own lines: its line is marked only where the change does not hold other code there now.
   const excerptFocus = shown?.kind === 'excerpt' && finding.line !== undefined ? finding.line - shown.excerpt.startLine : undefined;
   return <div className="conversation-review" data-mode="findings" data-testid="conversation-change-review">
@@ -268,6 +272,11 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
       <div className="conversation-review__missing" role="note" data-testid="conversation-review-missing">
         <p><strong>{results.walk.missing}</strong> {results.walk.missingDetail(where)}</p>
         {onViewFile && <Button variant="secondary" size="sm" onClick={onViewFile} data-testid="conversation-review-view-file">{results.walk.viewInFile}</Button>}
+      </div>
+    )}
+    {shown?.kind === 'deleted' && (
+      <div className="conversation-review__missing" role="note" data-testid="conversation-review-deleted">
+        <p><strong>{results.walk.deleted}</strong> {results.walk.deletedDetail(finding.file)}</p>
       </div>
     )}
     {shown?.kind === 'excerpt' && (
@@ -302,7 +311,7 @@ function FindingsView({ review, finding, index, total, changes, workspaceRoot, o
         </Button>
         <Button variant="secondary" aria-label={chat.aiReview.dismissFinding(where)} onClick={act('dismiss')} data-testid="conversation-review-dismiss">{chat.aiReview.dismiss}</Button>
       </>}
-      {onAction && finding.status === 'dismissed' && <Button variant="secondary" aria-label={chat.aiReview.reopenFinding(where)} onClick={act('reopen')} data-testid="conversation-review-reopen">{chat.aiReview.reopen}</Button>}
+      {onAction && canReopen(finding) && <Button variant="secondary" aria-label={chat.aiReview.reopenFinding(where)} onClick={act('reopen')} data-testid="conversation-review-reopen">{chat.aiReview.reopen}</Button>}
       <Button variant="ghost" onClick={onShowChanges}>{ko ? '변경 모두 보기' : 'All changes'}</Button>
     </div>
     <p className="ez-ui-visually-hidden" aria-live="polite" aria-atomic="true">{[position, where, severity, finding.title].filter(Boolean).join(' · ')}</p>

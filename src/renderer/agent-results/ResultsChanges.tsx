@@ -16,7 +16,7 @@ import { orderedRange, PatchLineList, selectedLines, type LineRange } from './Pa
 import { PathLabel } from './PathLabel';
 import { FindingAnnotation, ReviewWalkthrough } from './ReviewWalkthrough';
 import { useResultsCopy } from './copy';
-import { isFindingFile, lineRangeLabel, locateFinding, resolveWorkspacePath, samePath, type ReviewComment } from './results-format';
+import { deletesFile, isFindingFile, lineRangeLabel, locateFinding, resolveWorkspacePath, samePath, type ReviewComment } from './results-format';
 import { ReviewCommentTray } from './ReviewCommentTray';
 import type { ResultsReviewStart, ResultsSendResult } from './results-source-store';
 import { useResultsViewState, type ResultsServices, type WorktreeBaseDiffResult } from './results-services';
@@ -244,14 +244,14 @@ export function ResultsChanges({
   const walkPlacement = useMemo(() => {
     const byRecord = new Map<string, Map<number, { finding: ChatReviewFinding; moved?: number }[]>>();
     let current: { recordId: string; index: number; moved?: number } | undefined;
-    let missing = false;
-    if (!walkFinding || !walkFile) return { byRecord, current, missing };
+    let lost: 'missing' | 'deleted' | undefined;
+    if (!walkFinding || !walkFile) return { byRecord, current, lost };
     for (const finding of walkFindings.filter((entry) => entry.file === walkFinding.file)) {
       for (const record of [...walkFile.records].reverse()) {
         const place = locateFinding(record.change, finding);
         if (place.state === 'outside') continue;
-        if (place.state === 'missing') {
-          if (finding.id === walkFinding.id) missing = true;
+        if (place.state === 'missing' || place.state === 'deleted') {
+          if (finding.id === walkFinding.id) lost = place.state;
           break;
         }
         const lines = byRecord.get(record.id) ?? new Map<number, { finding: ChatReviewFinding; moved?: number }[]>();
@@ -261,10 +261,10 @@ export function ResultsChanges({
         break;
       }
     }
-    return { byRecord, current, missing };
+    return { byRecord, current, lost };
   }, [walkFile, walkFinding, walkFindings]);
-  const walkMissing = Boolean(walkFinding && walkPlacement.missing);
-  const walkOutside = Boolean(walkFinding && !walkPlacement.current && !walkMissing);
+  /** The problem on screen is not on a line of the change shown: outside it, its code changed, or its file is gone. */
+  const walkPlace: 'outside' | 'missing' | 'deleted' | undefined = !walkFinding || walkPlacement.current ? undefined : walkPlacement.lost ?? 'outside';
   const step = (findingId: string): void => {
     const finding = walkFindings.find((entry) => entry.id === findingId);
     if (!finding || !view.walk) return;
@@ -311,28 +311,34 @@ export function ResultsChanges({
   const pendingEarlier = scope === 'all' && transcriptFloor > 0 && backfill.phase !== 'done';
   const baseDiff = base.diff?.ok && 'ahead' in base.diff ? base.diff : undefined;
   const findingPath = walkFinding ? resolveWorkspacePath(walkFinding.file, workspaceRoot) ?? walkFinding.file : undefined;
-  // Never the line number's current code: the place is named, with the lines the review read and the way to the file.
-  const missingNote = walkFinding && walkMissing ? (
-    <div className="results-walk-outside results-walk-missing" role="note" data-testid="results-walkthrough-missing">
+  // The lines the review read, unmarked: shown when the change no longer holds them.
+  const excerptLines = walkFinding?.excerpt && walkFinding.excerpt.lines.length > 0 ? (
+    <>
+      <span className="results-walk-excerpt__heading">{copy.walk.excerptHeading}</span>
+      <div className="results-walk-excerpt" role="region" tabIndex={0} aria-label={copy.walk.excerptLabel(findingWhere(walkFinding))}>
+        {walkFinding.excerpt.lines.map((line, offset) => (
+          <div key={offset} className="results-walk-excerpt__line">
+            <span className="results-walk-excerpt__number">{walkFinding.excerpt!.startLine + offset}</span>
+            <code>{line || ' '}</code>
+          </div>
+        ))}
+      </div>
+    </>
+  ) : null;
+  // Never the line number's current code (or an older patch's): the place is named, with the lines the review read.
+  const lostNote = walkFinding && (walkPlace === 'missing' || walkPlace === 'deleted') ? (
+    <div className="results-walk-outside results-walk-missing" role="note" data-testid={walkPlace === 'deleted' ? 'results-walkthrough-deleted' : 'results-walkthrough-missing'}>
       <Glyph name="info" />
-      <span><strong>{copy.walk.missing}</strong>{' '}{copy.walk.missingDetail(findingWhere(walkFinding))}</span>
-      {onViewFile && findingPath && (
+      {walkPlace === 'deleted'
+        ? <span><strong>{copy.walk.deleted}</strong>{' '}{copy.walk.deletedDetail(walkFinding.file)}</span>
+        : <span><strong>{copy.walk.missing}</strong>{' '}{copy.walk.missingDetail(findingWhere(walkFinding))}</span>}
+      {walkPlace === 'missing' && onViewFile && findingPath && (
         <Button variant="ghost" size="sm" onClick={() => onViewFile(findingPath)}>{copy.walk.viewInFile}</Button>
       )}
-      {walkFinding.excerpt && walkFinding.excerpt.lines.length > 0 && <span className="results-walk-excerpt__heading">{copy.walk.excerptHeading}</span>}
-      {walkFinding.excerpt && walkFinding.excerpt.lines.length > 0 && (
-        <div className="results-walk-excerpt" role="region" tabIndex={0} aria-label={copy.walk.excerptLabel(findingWhere(walkFinding))}>
-          {walkFinding.excerpt.lines.map((line, offset) => (
-            <div key={offset} className="results-walk-excerpt__line">
-              <span className="results-walk-excerpt__number">{walkFinding.excerpt!.startLine + offset}</span>
-              <code>{line || ' '}</code>
-            </div>
-          ))}
-        </div>
-      )}
+      {excerptLines}
     </div>
   ) : null;
-  const outsideNote = walkFinding && walkOutside ? (
+  const outsideNote = walkFinding && walkPlace === 'outside' ? (
     <div className="results-walk-outside" role="note" data-testid="results-walkthrough-outside">
       <Glyph name="info" />
       <span>
@@ -402,7 +408,7 @@ export function ResultsChanges({
         <p className="results-note">{copy.scopeSelectedTurn(formatClock(selectedTurn.createdAt, locale))}</p>
       )}
       {walkReview && walkFinding && (
-        <ReviewWalkthrough review={walkReview} findingId={walkFinding.id} outside={walkOutside} missing={walkMissing} onStep={step} onClose={closeWalk}
+        <ReviewWalkthrough review={walkReview} findingId={walkFinding.id} {...(walkPlace ? { place: walkPlace } : {})} onStep={step} onClose={closeWalk}
           {...(reviewAction ? { onAction: reviewAction } : {})} />
       )}
       {pendingEarlier && (
@@ -463,7 +469,8 @@ export function ResultsChanges({
               <header className="results-diff__header">
                 <PathLabel path={display(selected.path)} className="results-diff__path" />
                 <span className="results-diff__actions">
-                  {onViewFile && selected.kind !== 'delete' && (
+                  {/* A file whose latest record removed it has nothing to open (even if an earlier one created it). */}
+                  {onViewFile && selected.kind !== 'delete' && !deletesFile(selected.records.at(-1)!.change) && (
                     <Button variant="ghost" size="sm" onClick={() => onViewFile(folderScope ? resolveWorkspacePath(selected.path, workspaceRoot) ?? selected.path : selected.path)}>{copy.viewFile}</Button>
                   )}
                   {!folderScope && (
@@ -473,7 +480,7 @@ export function ResultsChanges({
                   )}
                 </span>
               </header>
-              {walkFile === selected && (missingNote ?? outsideNote)}
+              {walkFile === selected && (lostNote ?? outsideNote)}
               <p className="results-note">{selected.records.some((record) => record.change.coverage === 'fragment') ? copy.fragmentNote : copy.patchNote}</p>
               {selected.records.map((record, index) => {
                 const commented = new Set<number>();

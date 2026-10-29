@@ -1,4 +1,4 @@
-import { Fragment, useRef, type RefObject } from 'react';
+import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 
 import { composeFixPrompt, REVIEW_LIMITS } from '../../../shared/review-findings';
 import { Glyph } from '../../ui/Glyph';
@@ -7,8 +7,8 @@ import { useChatContext, useNow, type ChatReviewAction } from '../ChatContext';
 import { formatDuration } from '../model/summary';
 import type { ChatReview, ChatReviewFinding, ChatRow } from '../model/types';
 import {
-  canFix, countsText, findingWhere, FindingStatusChip, fixAllEligible, focusAfterAction, groupFindings, providerName, reasonText, reviewCounts, reviewerText,
-  scopeText, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
+  canFix, canReopen, countsText, findingWhere, FindingStatusChip, fixAgain, fixAllEligible, focusAfterAction, groupFindings, providerName, reasonText, reviewCounts,
+  reviewerText, scopeText, SeverityChip, StaleMark, useClearing, useFindingAnnouncement, walkOrder,
 } from '../review/review-presentation';
 import { ActionCard, type ActionCardAction, type ActionCardNote, type ActionCardState } from './ActionCard';
 
@@ -119,15 +119,14 @@ function FindingActions({ review, finding, onAction, cli, titleRef }: {
     onAction({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
     focusAfterAction(titleRef);
   };
-  const again = finding.status !== 'open';
   const actions = canFix(finding)
     ? [
-      again
+      fixAgain(finding)
         ? { kind: 'fix' as const, label: copy.aiReview.fixAgain, name: copy.aiReview.fixAgainFinding(where) }
         : { kind: 'fix' as const, label: copy.aiReview.fix, name: copy.aiReview.fixFinding(where) },
       { kind: 'dismiss' as const, label: copy.aiReview.dismiss, name: copy.aiReview.dismissFinding(where) },
     ]
-    : finding.status === 'dismissed' ? [{ kind: 'reopen' as const, label: copy.aiReview.reopen, name: copy.aiReview.reopenFinding(where) }] : [];
+    : canReopen(finding) ? [{ kind: 'reopen' as const, label: copy.aiReview.reopen, name: copy.aiReview.reopenFinding(where) }] : [];
   if (!actions.length) return null;
   return (
     <span className={cli ? 'chat-cli-review-finding__actions' : 'chat-review-finding__actions'}>
@@ -190,7 +189,7 @@ function BubbleFinding({ review, finding, onAction }: {
   const expandable = finding.body !== finding.title || Boolean(finding.scenario);
   const lineText = finding.line === undefined ? undefined : where.slice(finding.file.length);
   return (
-    <li className="chat-review-finding" data-status={finding.status} data-severity={finding.severity} data-stale={finding.stale || undefined}
+    <li className="chat-review-finding" data-finding-id={finding.id} data-status={finding.status} data-severity={finding.severity} data-stale={finding.stale || undefined}
       data-has-line={lineText ? true : undefined} data-testid="chat-review-finding">
       <div className="chat-review-finding__line">
         {finding.severity && <SeverityChip severity={finding.severity} copy={copy} />}
@@ -236,7 +235,8 @@ function CliFinding({ review, finding, onAction }: {
   const where = findingWhere(finding);
   const expandable = finding.body !== finding.title || Boolean(finding.scenario);
   return (
-    <li className="chat-cli-result chat-cli-review-finding" data-status={finding.status} data-stale={finding.stale || undefined} data-testid="chat-review-finding">
+    <li className="chat-cli-result chat-cli-review-finding" data-finding-id={finding.id} data-status={finding.status} data-stale={finding.stale || undefined}
+      data-testid="chat-review-finding">
       <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
       <div className="chat-cli-result__body">
         <span className="chat-cli-result__line">
@@ -304,6 +304,32 @@ function RawAnswer({ review, cli }: { readonly review: ChatReview; readonly cli:
   );
 }
 
+/** Says once when a queued review starts running; the card's later updates say nothing. */
+function useStartAnnouncement(state: ChatReview['state'], reviewer: string, copy: ChatCopy): string {
+  const previous = useRef(state);
+  const [text, setText] = useState('');
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = state;
+    if (before === 'queued' && state === 'running') setText(copy.aiReview.announceStarted(reviewer));
+    // Only a change of state can start a review.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
+  return useClearing(text, setText);
+}
+
+/**
+ * After 모두 고치기 the button may go: focus moves to the first problem sent (its title), else to the card's
+ * heading — never to the page.
+ */
+function focusFirstSent(anchor: RefObject<HTMLElement>, ids: readonly string[]): void {
+  requestAnimationFrame(() => {
+    const card = anchor.current?.closest('[data-testid="chat-review-card"]');
+    const title = ids[0] ? card?.querySelector<HTMLElement>(`[data-finding-id="${ids[0]}"] [data-finding-title]`) : undefined;
+    (title ?? card?.querySelector<HTMLElement>('[data-card-heading]'))?.focus();
+  });
+}
+
 /** One AI review in the transcript (both skins): a result, never something waiting on the person. */
 export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Element {
   const copy = useChatCopy();
@@ -321,8 +347,14 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
   const clock = formatClock(review.updatedAt, context.locale);
   const took = review.state === 'complete' && review.durationMs !== undefined ? copy.aiReview.took(formatDuration(review.durationMs, context.locale)) : undefined;
   const countText = review.findings.length ? countsText(counts, copy) : undefined;
-  const announcement = useFindingAnnouncement(review.findings, copy);
+  const changed = useFindingAnnouncement(review.findings, copy);
+  const startedText = useStartAnnouncement(review.state, providerName(review.reviewer.providerId), copy);
+  const announceRef = useRef<HTMLSpanElement>(null);
   const onAction = context.onReviewAction;
+  const onCardAction = onAction ? (action: ChatReviewAction): void => {
+    onAction(action);
+    if (action.kind === 'fix-all') focusFirstSent(announceRef, action.findingIds ?? []);
+  } : undefined;
   const cli = context.skin === 'cli';
   const meta = (
     <>
@@ -352,7 +384,7 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
       message={message(review, copy)}
       notes={notes(review, copy)}
       {...(counts.stale > 0 ? { stale: copy.aiReview.note.stale } : {})}
-      actions={cardActions(review, copy, onAction)}
+      actions={cardActions(review, copy, onCardAction)}
     >
       {cli && review.focus && (
         <div className="chat-cli-result" data-tone="muted">
@@ -380,7 +412,9 @@ export function ReviewCard({ row }: { readonly row: RowOf<'review'> }): JSX.Elem
         </div>
       ))}
       <RawAnswer review={review} cli={cli} />
-      <span className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-review-announce">{announcement}</span>
+      <span ref={announceRef} className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-review-announce">
+        {[startedText, changed].filter(Boolean).join(' · ')}
+      </span>
     </ActionCard>
   );
 }

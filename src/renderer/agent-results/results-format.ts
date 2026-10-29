@@ -1,4 +1,4 @@
-import { reviewLines, type RecordedFileChange, type ReviewLine } from '../../shared/conversation-changes';
+import { patchKind, reviewLines, type FileChangeKind, type RecordedFileChange, type ReviewLine } from '../../shared/conversation-changes';
 import { relocateExcerpt, type ReviewFinding } from '../../shared/review-findings';
 import type { ChatLocale } from '../chat/model/summary';
 
@@ -131,6 +131,11 @@ export function isFindingFile(path: string, findingFile: string, workspaceRoot?:
   return samePath(path, findingFile) || samePath(path, resolveWorkspacePath(findingFile, workspaceRoot) ?? findingFile);
 }
 
+/** The record removes the file (as its tool result says, or as its patch shows). */
+export function deletesFile(change: RecordedFileChange & { readonly kind?: FileChangeKind }): boolean {
+  return change.kind === 'delete' || patchKind(change) === 'delete';
+}
+
 /** Where a review problem is in one recorded patch. */
 export type FindingPlace =
   /** `index`: the first new-side patch line it covers; `moved`: its line now, when the review's lines moved. */
@@ -138,14 +143,20 @@ export type FindingPlace =
   /** The patch shows the problem's line, but not the code the review read there: it is never anchored on it. */
   | { readonly state: 'missing' }
   /** The patch does not show the problem's line (or the review gave none). */
-  | { readonly state: 'outside' };
+  | { readonly state: 'outside' }
+  /** The record removes the file: no line to point at, and older patches are not the file any more. */
+  | { readonly state: 'deleted' };
 
 /**
  * Where a finding's line is in a patch. With the lines the review read (its excerpt), the finding
  * follows them when they moved, and is `missing` when the patch shows that place holding other code:
  * a line number alone never anchors it there. Without an excerpt, the line number is all there is.
  */
-export function locateFinding(change: RecordedFileChange, finding: Pick<ReviewFinding, 'line' | 'endLine' | 'excerpt'>): FindingPlace {
+export function locateFinding(
+  change: RecordedFileChange & { readonly kind?: FileChangeKind },
+  finding: Pick<ReviewFinding, 'line' | 'endLine' | 'excerpt'>,
+): FindingPlace {
+  if (deletesFile(change)) return { state: 'deleted' };
   if (finding.line === undefined) return { state: 'outside' };
   const lines = reviewLines(change);
   let first = finding.line;

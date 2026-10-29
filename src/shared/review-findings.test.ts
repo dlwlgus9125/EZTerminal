@@ -188,12 +188,33 @@ describe('parseFixReply', () => {
     ]));
   });
 
-  it('accepts markdown bullets, backticks or bold around ids and any keyword case', () => {
-    const reply = [`- \`${A}\`: Fixed`, `* **${B}**: NOT CHANGED — the bound is right`, `1. ${C}: Not changed`].join('\n');
+  it('accepts exactly `<id>: fixed` or `<id>: not changed (<why>)`: in backticks or as a list item, any keyword case, a final period', () => {
+    const reply = [
+      `- \`${A}\`: Fixed.`,
+      `* ${B}: NOT CHANGED (the bound is right (see cartTotal)).`,
+      `1. \`${C}: not changed (callers pass a fraction)\``,
+    ].join('\n');
     const parsed = parseFixReply(reply);
     expect(parsed.get(A)).toEqual({ outcome: 'fixed' });
-    expect(parsed.get(B)).toEqual({ outcome: 'not-changed', reason: 'the bound is right' });
-    expect(parsed.get(C)).toEqual({ outcome: 'not-changed' });
+    expect(parsed.get(B)).toEqual({ outcome: 'not-changed', reason: 'the bound is right (see cartTotal)' });
+    expect(parsed.get(C)).toEqual({ outcome: 'not-changed', reason: 'callers pass a fraction' });
+  });
+
+  it('does not count quoted examples, fenced lines, words after the keyword or other shapes', () => {
+    for (const line of [
+      `> ${A}: fixed`,
+      `- > ${A}: fixed`,
+      `${A}: fixed? Not yet.`,
+      `${A}: fixed later`,
+      `${A}: fixed (mostly)`,
+      `**${A}**: fixed`,
+      `${A}: not changed`,
+      `${A}: not changed — the bound is right`,
+      `${A}: not-changed (the bound is right)`,
+      `${A}: not changed (the bound is right) for now`,
+    ]) expect(parseFixReply(line).size, line).toBe(0);
+    expect(parseFixReply(['```', `${A}: fixed`, '```'].join('\n')).size).toBe(0);
+    expect(parseFixReply(['~~~text', `${A}: fixed`, '~~~', `${B}: fixed`].join('\n'))).toEqual(new Map([[B, { outcome: 'fixed' }]]));
   });
 
   it('ignores lines that are not finding ids or name no outcome', () => {
@@ -201,8 +222,9 @@ describe('parseFixReply', () => {
     expect(parseFixReply(reply).size).toBe(0);
   });
 
-  it('lets the last line for an id win', () => {
+  it('lets the last valid line for an id win', () => {
     expect(parseFixReply(`${A}: not changed (first pass)\n${A}: fixed`).get(A)).toEqual({ outcome: 'fixed' });
+    expect(parseFixReply(`${A}: fixed\n${A}: fixed later`).get(A)).toEqual({ outcome: 'fixed' });
   });
 });
 

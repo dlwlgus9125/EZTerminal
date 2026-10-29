@@ -4,7 +4,7 @@ import type { ChatReviewAction } from '../chat/ChatContext';
 import { useChatCopy } from '../chat/copy';
 import type { ChatReview, ChatReviewFinding } from '../chat/model/types';
 import {
-  canFix, findingWhere, FindingStatusChip, focusAfterAction, reviewerText, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
+  canFix, canReopen, findingWhere, FindingStatusChip, fixAgain, focusAfterAction, reviewerText, SeverityChip, StaleMark, useFindingAnnouncement, walkOrder,
 } from '../chat/review/review-presentation';
 import { Button } from '../ui';
 import { Glyph } from '../ui/Glyph';
@@ -15,13 +15,14 @@ import { useResultsCopy } from './copy';
  * dismiss the one on screen. Each step is announced; focus stays on the strip so the next press
  * moves on, while the diff scrolls the problem's line into view below.
  */
-export function ReviewWalkthrough({ review, findingId, outside = false, missing = false, onStep, onAction, onClose }: {
+export function ReviewWalkthrough({ review, findingId, place, onStep, onAction, onClose }: {
   readonly review: ChatReview;
   readonly findingId: string;
-  /** The problem's line is not in the change shown. */
-  readonly outside?: boolean;
-  /** The change shows the problem's line holding other code than the review read. */
-  readonly missing?: boolean;
+  /**
+   * The problem is not on a line of the change shown: `outside` it, `missing` (the line holds other code than the
+   * review read) or `deleted` (its file is gone).
+   */
+  readonly place?: 'outside' | 'missing' | 'deleted';
   readonly onStep: (findingId: string) => void;
   readonly onAction?: (action: ChatReviewAction) => void;
   readonly onClose: () => void;
@@ -37,13 +38,13 @@ export function ReviewWalkthrough({ review, findingId, outside = false, missing 
   const where = findingWhere(finding);
   const position = copy.walk.position(index + 1, order.length);
   const severity = finding.severity ? chat.aiReview.severity[finding.severity] : '';
-  const place = missing ? copy.walk.missing : outside ? copy.walk.outside : '';
-  const announce = `${copy.walk.announce(position, where, severity, finding.title)}${place ? ` · ${place}` : ''}`;
+  const placeText = place ? copy.walk[place] : '';
+  const announce = `${copy.walk.announce(position, where, severity, finding.title)}${placeText ? ` · ${placeText}` : ''}`;
   const act = (kind: ChatReviewAction['kind']) => () => {
     onAction?.({ kind, reviewId: review.reviewId, findingIds: [finding.id] });
     focusAfterAction(titleRef);
   };
-  const again = finding.status !== 'open';
+  const again = fixAgain(finding);
   return (
     <section className="results-walk" aria-label={copy.walk.label(reviewerText(review.reviewer, chat))} data-testid="results-walkthrough">
       <div className="results-walk__bar">
@@ -65,7 +66,7 @@ export function ReviewWalkthrough({ review, findingId, outside = false, missing 
             <Button size="sm" variant="ghost" aria-label={chat.aiReview.dismissFinding(where)} onClick={act('dismiss')} data-testid="results-walkthrough-dismiss">{copy.walk.dismiss}</Button>
           </>
         )}
-        {onAction && finding.status === 'dismissed' && (
+        {onAction && canReopen(finding) && (
           <Button size="sm" variant="ghost" aria-label={chat.aiReview.reopenFinding(where)} onClick={act('reopen')} data-testid="results-walkthrough-reopen">{copy.walk.reopen}</Button>
         )}
         <Button size="sm" variant="ghost" className="results-walk__close" aria-label={copy.walk.closeLabel} onClick={onClose} data-testid="results-walkthrough-close">
@@ -78,7 +79,7 @@ export function ReviewWalkthrough({ review, findingId, outside = false, missing 
         <span ref={titleRef} className="results-walk__title" title={finding.title} tabIndex={-1} data-finding-title="">{finding.title}</span>
         <FindingStatusChip status={finding.status} copy={chat} />
         {finding.stale && <StaleMark copy={chat} />}
-        {place && <span className="results-walk__outside">{place}</span>}
+        {placeText && <span className="results-walk__outside">{placeText}</span>}
       </p>
       {finding.status === 'not-changed' && finding.fixReason && <p className="results-walk__reason">{chat.aiReview.fixReason(finding.fixReason)}</p>}
       <p className="results-visually-hidden" aria-live="polite" aria-atomic="true" data-testid="results-walkthrough-announce">{announce}</p>

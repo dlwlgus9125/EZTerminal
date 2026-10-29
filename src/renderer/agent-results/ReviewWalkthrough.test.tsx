@@ -7,7 +7,7 @@ import type { GitDirectoryStatus } from '../../shared/git-status';
 import { buildChatModel } from '../chat/model/build-chat-model';
 import { AppI18nProvider } from '../i18n';
 import {
-  BRANCH_DIFF, mixedSelfReview, otherAiReview, OTHER_REVIEW_ID, REVIEW_ROOT, REVIEW_SESSION, UNCOMMITTED_DIFF, walkFindingId, type ReviewFixture,
+  BRANCH_DIFF, deletedFileReview, mixedSelfReview, otherAiReview, OTHER_REVIEW_ID, REVIEW_ROOT, REVIEW_SESSION, UNCOMMITTED_DIFF, walkFindingId, type ReviewFixture,
 } from '../chat/review/review-fixtures';
 import { clearSessionViewStates } from '../session-view-state';
 import { ConversationResults } from './ConversationResults';
@@ -98,6 +98,21 @@ describe('stepping through an AI review in Changes', () => {
     expect(container.querySelector('[data-testid="results-files"]')).not.toBeNull();
   });
 
+  it('never falls back to an older patch once the file was deleted: 파일이 지워짐, the review’s lines, no way to a file', async () => {
+    const fixture = deletedFileReview(Date.parse('2026-10-29T00:50:00.000Z'));
+    await show(fixture, { sequence: 1, section: 'changes', review: { reviewId: fixture.reviewId, findingId: walkFindingId(fixture, 1)! } }, { baseRef: undefined, sessionId: REVIEW_SESSION },
+      { readFilePreview: vi.fn() } as ResultsServices);
+    expect(text('results-walkthrough-position')).toBe('문제 2/3');
+    const deleted = text('results-walkthrough-deleted');
+    expect(deleted).toContain('파일이 지워짐');
+    expect(deleted).toContain('return total - total * percent;');
+    expect(container.querySelector('[data-testid="results-walkthrough-deleted"] button')).toBeNull();
+    expect([...container.querySelectorAll('.results-diff__actions button')].map((button) => button.textContent)).not.toContain('파일 보기');
+    expect(text('results-walkthrough-announce')).toContain('파일이 지워짐');
+    expect(container.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
+    expect(container.querySelector('[data-testid="results-finding-current"]')).toBeNull();
+  });
+
   it('opens an uncommitted-changes review in the working folder scope', async () => {
     const fixture = mixedSelfReview(Date.parse('2026-10-29T00:50:00.000Z'));
     await show(fixture, { sequence: 1, section: 'changes', review: { reviewId: fixture.reviewId } }, { baseRef: undefined });
@@ -146,6 +161,26 @@ describe('stepping through an AI review in Changes', () => {
     expect(left).toHaveLength(1);
     expect(left[0]!.textContent).not.toContain('src/auth.ts:6');
     expect(text('results-send-status')).toBe('대기열에 추가됨');
+  });
+
+  it('keeps comments from going both ways: while sending, they cannot be put in the message or removed', async () => {
+    let finish: (result: ResultsSendResult) => void = () => undefined;
+    const sendNow = vi.fn(() => new Promise<ResultsSendResult>((resolve) => { finish = resolve; }));
+    const insertIntoDraft = vi.fn();
+    await show(otherAiReview(), { sequence: 1, section: 'changes', review: { reviewId: OTHER_REVIEW_ID } }, { sendNow, turnActive: true, insertIntoDraft });
+    await act(async () => container.querySelector<HTMLButtonElement>('.results-patch__line[data-focus="true"]')!.click());
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '줄만 인용')!.click());
+    const insert = (): HTMLButtonElement => container.querySelector<HTMLButtonElement>('[data-testid="results-insert-comments"]')!;
+    const removers = (): HTMLButtonElement[] => [...container.querySelectorAll<HTMLButtonElement>('.results-tray__item button')];
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="results-send-comments"]')!.click());
+    expect(insert().disabled).toBe(true);
+    expect(removers().every((button) => button.disabled)).toBe(true);
+    await act(async () => insert().click());
+    expect(insertIntoDraft).not.toHaveBeenCalled();
+    // Not sent: they can go into the message again.
+    await act(async () => { finish({ ok: false, message: '대화가 끝났습니다' }); await Promise.resolve(); });
+    expect(insert().disabled).toBe(false);
+    expect(removers().every((button) => !button.disabled)).toBe(true);
   });
 
   it('starts a review from the toolbar on the changes being viewed', async () => {

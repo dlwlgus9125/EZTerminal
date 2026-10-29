@@ -8,7 +8,8 @@ import type { ChatReviewAction } from '../chat/ChatContext';
 import { HighlighterProvider } from '../chat/markdown/HighlighterProvider';
 import { buildChatModel } from '../chat/model/build-chat-model';
 import {
-  applyReviewAction, BRANCH_DIFF, inSession, mixedSelfReview, otherAiReview, REVIEW_FILES, REVIEW_ROOT, UNCOMMITTED_DIFF, walkFindingId, type ReviewFixture,
+  applyReviewAction, BRANCH_DIFF, deletedFileReview, inSession, mixedSelfReview, otherAiReview, REVIEW_FILES, REVIEW_ROOT, UNCOMMITTED_DIFF, walkFindingId,
+  type ReviewFixture,
 } from '../chat/review/review-fixtures';
 import { AppI18nProvider } from '../i18n';
 import { ConversationResults } from './ConversationResults';
@@ -141,6 +142,21 @@ export const WalkthroughMissing: Story = {
     await waitFor(() => expect(canvas.getByTestId('results-walkthrough-missing')).toHaveTextContent('이 줄을 찾을 수 없음'));
     await expect(canvasElement.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
     await expect(canvas.getByTestId('results-walkthrough-announce')).toHaveTextContent('이 줄을 찾을 수 없음');
+  },
+};
+/**
+ * A later turn deleted src/discount.ts (이 대화 전체): 파일이 지워짐 and the lines the review read — never the line in the
+ * older patch that created the file, and no way to a file that is gone.
+ */
+export const WalkthroughDeleted: Story = {
+  render: (args) => <Results id="walk-deleted" make={(now) => deletedFileReview(now)} args={args} review findingIndex={1} worktree={false} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await position(canvasElement)).toHaveTextContent('문제 2/3');
+    await userEvent.selectOptions(canvas.getByRole('combobox', { name: '변경 범위' }), 'all');
+    await waitFor(() => expect(canvas.getByTestId('results-walkthrough-deleted')).toHaveTextContent('파일이 지워짐'));
+    await expect(canvasElement.querySelector('.results-patch__line[data-focus="true"]')).toBeNull();
+    await expect(within(canvas.getByTestId('results-walkthrough-deleted')).queryByRole('button')).toBeNull();
   },
 };
 /** Claude's uncommitted-changes review in the working folder scope, on the problem being fixed. */

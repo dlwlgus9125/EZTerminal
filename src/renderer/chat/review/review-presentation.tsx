@@ -76,6 +76,16 @@ export function canFix(finding: ChatReviewFinding): boolean {
   return finding.status === 'open' || finding.status === 'fix-stopped' || finding.status === 'not-changed' || finding.status === 'unconfirmed';
 }
 
+/** 다시 열기: a dismissed problem, or one the fix turn said was fixed (its history stays). */
+export function canReopen(finding: ChatReviewFinding): boolean {
+  return finding.status === 'dismissed' || finding.status === 'fixed';
+}
+
+/** 고치기 reads 다시 고치기 once the problem was sent before (stopped, answered, or reopened after a fix). */
+export function fixAgain(finding: ChatReviewFinding): boolean {
+  return finding.status !== 'open' || finding.fixTurnId !== undefined;
+}
+
 /** What 모두 고치기 sends: what was never handled, or stopped. A reply's "not changed" is the AI's answer, not a gap. */
 export function fixAllEligible(finding: ChatReviewFinding): boolean {
   return finding.status === 'open' || finding.status === 'fix-stopped';
@@ -171,16 +181,28 @@ export function useFindingAnnouncement(findings: readonly ChatReviewFinding[], c
   useEffect(() => {
     const before = previous.current;
     previous.current = new Map(findings.map((finding) => [finding.id, finding.status]));
-    if (!before) return undefined;
+    if (!before) return;
     const changed = findings.filter((finding) => before.has(finding.id) && before.get(finding.id) !== finding.status);
-    if (!changed.length) return undefined;
-    setAnnouncement(changed.map((finding) => `${findingWhere(finding)} · ${copy.aiReview.announce[finding.status]}`).join(', '));
-    const timer = window.setTimeout(() => setAnnouncement(''), 6_000);
-    return () => window.clearTimeout(timer);
+    if (!changed.length) return;
+    // 모두 고치기: one line for the batch, not one per problem.
+    const batch = changed.length > 1 && changed.every((finding) => finding.status === 'requested' || finding.status === 'fixing');
+    setAnnouncement(batch
+      ? copy.aiReview.announceFixAll(changed.length)
+      : changed.map((finding) => `${findingWhere(finding)} · ${copy.aiReview.announce[finding.status]}`).join(', '));
     // The signature is the problems' states; the array itself is new on every update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
-  return announcement;
+  return useClearing(announcement, setAnnouncement);
+}
+
+/** A polite announcement says its piece once, then clears itself (6 s), whatever else updates meanwhile. */
+export function useClearing(text: string, set: (text: string) => void): string {
+  useEffect(() => {
+    if (!text) return undefined;
+    const timer = window.setTimeout(() => set(''), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [set, text]);
+  return text;
 }
 
 /** After 고치기, 무시 or 다시 열기 the pressed button may go away: focus moves to the problem's title, which stays. */
