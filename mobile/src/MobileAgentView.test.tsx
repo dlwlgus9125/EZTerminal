@@ -18,6 +18,7 @@ import type {
   DaemonTranscriptItem,
 } from '../../src/shared/daemon-protocol';
 import { createDaemonCommand } from '../../src/shared/daemon-protocol';
+import { inSession, otherAiReview, OTHER_REVIEW_ID } from '../../src/renderer/chat/review/review-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -1984,5 +1985,85 @@ describe('MobileAgentView', () => {
       overrideReason: 'Reviewed failing tests and accepted the risk.',
     });
     expect(testIds('mobile-managed-merge-override')).toHaveLength(0);
+  });
+});
+
+describe('MobileAgentView reviews (review-loop-v1)', () => {
+  const noop = {
+    onBack: () => undefined,
+    onFocusSession: () => undefined,
+    onSendFollowup: async () => ({ ok: true }) as const,
+    agentCreateRecovery: readyRecoveryController(),
+  };
+  const SESSION = 'structured-session-1';
+  /** Codex's review card in this conversation, as the PC pages it: one sequence after another. */
+  const reviewItems = (): DaemonTranscriptItem[] => inSession(otherAiReview(), SESSION).items
+    .map((entry, index) => ({ ...entry, sequence: index + 1, id: `review-item-${String(index + 1)}` }));
+  const named = (label: string): HTMLButtonElement => {
+    const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find((element) => (element.getAttribute('aria-label') ?? element.textContent?.trim()) === label);
+    if (!found) throw new Error(`no button "${label}"`);
+    return found;
+  };
+  function phone(capabilities: readonly string[]) {
+    const items = reviewItems();
+    const authority = daemonSnapshotOf({
+      capabilities: [...capabilities],
+      reviewSupport: { codex: { self: true, reviewer: true }, claude: { self: true, reviewer: true } },
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: items.length, itemCount: items.length }],
+    });
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const, status: 'applied' as const, commandId: command.commandId, revision: 9, eventSequence: 13,
+    }));
+    const transport = {
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => authority,
+      getDaemonTranscript: vi.fn(async (_sessionId: string, afterSequence = 0) => items.filter((entry) => entry.sequence > afterSequence)),
+      sendDaemonCommand,
+    } as unknown as WsEzTerminalTransport;
+    return { authority, transport, sendDaemonCommand };
+  }
+
+  it('sends a card’s buttons and the start form to the PC as the phone', async () => {
+    const { authority, transport, sendDaemonCommand } = phone(['review-loop-v1']);
+    const records = new Map<string, MobileChatRecord>();
+    const chatStateStore = {
+      load: async (scope: MobileChatRecord['scope']) => records.get(`${scope.projectId}/${scope.sessionId}`) ?? null,
+      save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
+    };
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
+      chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} />);
+    await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    await until(() => { expect(container.querySelector('[data-testid="chat-review-card"]')).not.toBeNull(); });
+    await act(async () => { named('Fix src/auth.ts:6').click(); await Promise.resolve(); });
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'review.fix', principal: { kind: 'android', id: 'mobile-agent-ui' }, expectedRevision: 8,
+        payload: { sessionId: SESSION, reviewId: OTHER_REVIEW_ID, findingIds: [expect.stringMatching(/^f-/u)] },
+      }));
+    });
+    // /review on the phone: the start sheet with the text as its focus; it starts on the PC when sent.
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '/review 금액 계산');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { input.closest('form')!.requestSubmit(); await Promise.resolve(); });
+    await until(() => { expect(document.querySelector<HTMLTextAreaElement>('[data-testid="review-start-focus"]')?.value).toBe('금액 계산'); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="review-start-submit"]')!.click(); await Promise.resolve(); });
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'review.start', principal: { kind: 'android', id: 'mobile-agent-ui' },
+        payload: { sessionId: SESSION, reviewId: expect.stringMatching(/^rv-/u), reviewer: { kind: 'self' }, target: { kind: 'uncommitted' }, focus: '금액 계산' },
+      }));
+    });
+  });
+
+  it('keeps today’s screen on a PC without review-loop-v1', async () => {
+    const { authority, transport, sendDaemonCommand } = phone([]);
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
+      initialSessionId={SESSION} {...noop} />);
+    await until(() => { expect(container.querySelector('[data-testid="chat-review-card"]')).not.toBeNull(); });
+    expect(container.querySelector('.chat-review-finding__action')).toBeNull();
+    expect(sendDaemonCommand).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import type {
 import { conversationQueue } from '../../src/renderer/conversation-queue';
 import { createCapabilityAccess } from '../../src/renderer/capability-access';
 import { structuredAgentModelOptions } from '../../src/renderer/structured-agent-create';
+import { reviewHost } from '../../src/renderer/review-commands';
 import { useProviderModelCatalogs } from '../../src/renderer/use-provider-models';
 import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
@@ -1525,6 +1526,19 @@ export function MobileAgentView({
       && DAEMON_ARCHIVABLE_STATES.has(selectedDaemonAgent.state);
     const canDetach = selectedDaemonRelation?.owner === 'managed'
       && !archivedHistory;
+    // review-loop-v1: the ⋯ menu's 검토…, /review, the card's buttons and the findings sheet go to the PC over the same
+    // command route as the message box (the phone's principal and revision). An older PC keeps today's screen.
+    const reviews = !providerOwned && !archivedHistory && !disconnected && chatCommands ? reviewHost({
+      snapshot: daemonRuntimeState.snapshot ?? null,
+      sessionId: selectedDaemonSession.id,
+      items: selectedTranscript,
+      access: chatCommands,
+      locale: language,
+      modelLabel: (forProvider, model) => structuredAgentModelOptions(
+        daemonRuntimeState.snapshot?.providers.find((provider) => provider.id === forProvider)?.capabilities ?? [], model, providerModelCatalogs[forProvider],
+      ).find((option) => option.id === model)?.label ?? model,
+      openSession: selectSession,
+    }) : undefined;
     return (<>
       <MobileStructuredAgentSession
         capabilityClient={capabilityClient}
@@ -1652,6 +1666,7 @@ export function MobileAgentView({
           })),
         } : {})}
         onOpenRelatedSession={selectSession}
+        {...(reviews ? { reviewStart: reviews.reviewStart, onReviewAction: reviews.onReviewAction } : {})}
         {...(canCancel ? {
           onCancel: () => dispatchDaemonCommand(createDaemonCommand({
             ...buildCommandBase(),
