@@ -87,7 +87,14 @@ describe('what a conversation offers for reviews', () => {
       others: [{ providerId: 'codex', settingsText: '검토 에이전트 코드 리뷰어 · gpt-6.1-sol · 높음' }],
       baseRef: 'main',
       worktree: true,
+      busy: false,
     });
+  });
+
+  it('says the review waits only while a turn runs, as the host does (not for one still queued)', () => {
+    const agent = snapshot().agents[0]!;
+    expect(host({ agents: [{ ...agent, state: 'queued', queuedTurnCount: 1 }] })!.reviewStart.options.busy).toBe(false);
+    expect(host({ agents: [{ ...agent, state: 'working', currentTurnId: 'turn-1' }] })!.reviewStart.options.busy).toBe(true);
   });
 
   it('says why an AI cannot review, and that this one needs a first message to fork', () => {

@@ -157,6 +157,8 @@ export function reviewHost(input: ReviewHostInput): ReviewHostProps | undefined 
     others,
     ...(input.baseRef ? { baseRef: input.baseRef } : {}),
     ...(workspace?.kind === 'worktree' ? { worktree: true } : {}),
+    // The host waits for a running turn only (not one still queued): the form says it waits only then.
+    busy: agent.currentTurnId !== undefined,
   };
   const answer = (result: ReviewCommandResult): StructuredAgentUiResult => (result.ok ? { ok: true }
     : { ok: false, message: result.fits !== undefined ? copy.fixTooLong(result.fits) : result.message });

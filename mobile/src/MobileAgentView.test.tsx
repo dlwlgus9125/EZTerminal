@@ -2034,6 +2034,10 @@ describe('MobileAgentView reviews (review-loop-v1)', () => {
       chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} />);
     await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
     await until(() => { expect(container.querySelector('[data-testid="chat-review-card"]')).not.toBeNull(); });
+    // The ⋯ menu offers 검토… (the PC reviews) instead of handing a review to a new agent.
+    await act(async () => { testIds('structured-agent-menu')[0]!.click(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="structured-agent-review"]')).not.toBeNull();
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await Promise.resolve(); });
     await act(async () => { named('Fix src/auth.ts:6').click(); await Promise.resolve(); });
     await until(() => {
       expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
