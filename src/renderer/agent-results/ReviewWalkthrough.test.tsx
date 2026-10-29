@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GitDirectoryStatus } from '../../shared/git-status';
+import type { CleanedFolderState } from '../../shared/run-retention';
 import { buildChatModel } from '../chat/model/build-chat-model';
 import { AppI18nProvider } from '../i18n';
 import {
@@ -127,6 +128,21 @@ describe('stepping through an AI review in Changes', () => {
     expect((container.querySelector('select') as HTMLSelectElement).value).toBe('git');
     expect([...container.querySelectorAll('select option')].map((option) => option.getAttribute('value'))).not.toContain('base');
     expect(text('results-walkthrough-position')).toBe('문제 1/3');
+  });
+
+  it('opens the review’s scope also from a Results tab that is still asking whether its folder may be read', async () => {
+    // The walkthrough opened the tab: the host has not said yet that the working folder is live.
+    const fixture = mixedSelfReview(Date.parse('2026-10-29T00:50:00.000Z'));
+    let answer: (state: CleanedFolderState) => void = () => undefined;
+    const asking = { ...services(), cleanedFolder: vi.fn(() => new Promise<CleanedFolderState>((resolve) => { answer = resolve; })) };
+    await show(fixture, { sequence: 1, section: 'changes', review: { reviewId: fixture.reviewId } }, { baseRef: undefined }, asking);
+    expect(asking.getGitDiff).not.toHaveBeenCalled();
+    await act(async () => { answer({ state: 'live' }); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect((container.querySelector('select') as HTMLSelectElement).value).toBe('git');
+    expect(text('results-walkthrough-position')).toBe('문제 1/3');
+    expect(container.querySelector('.results-patch__line[data-focus="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="results-walkthrough-outside"]')).toBeNull();
   });
 
   it('sends the collected comments as their own message and clears them only once taken', async () => {

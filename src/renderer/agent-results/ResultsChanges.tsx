@@ -195,10 +195,17 @@ export function ResultsChanges({
   const folder = scope === 'base' ? base : git;
   const folderScope = scope === 'git' || scope === 'base';
 
-  /** Where a review's diff lives: its own scope when this tab can read it, else what the AI reported. */
-  const scopeFor = (reviewTarget: ReviewTarget): ChangeScope => (reviewTarget.kind === 'base-branch'
-    ? (baseAvailable && baseRef === reviewTarget.baseRef ? 'base' : gitAvailable ? 'git' : 'all')
-    : gitAvailable ? 'git' : 'all');
+  /**
+   * Where a review's diff lives: its own scope when this tab can read it, else what the AI reported. Whether the
+   * folder may be read yet does not count: a tab the walkthrough just opened is still asking the host, and the
+   * scope chosen here falls back above until it may (for good, once the folder was cleaned up).
+   */
+  const scopeFor = (reviewTarget: ReviewTarget): ChangeScope => {
+    const readsGit = Boolean(workspaceRoot && services.getGitDiff && services.getGitStatus);
+    const readsBase = Boolean(workspaceRoot && workspaceId && services.getWorktreeBaseDiff && services.getGitStatus)
+      && reviewTarget.kind === 'base-branch' && baseRef === reviewTarget.baseRef;
+    return readsBase ? 'base' : readsGit ? 'git' : 'all';
+  };
 
   // A turn, file or review from the conversation picks the scope and file it points at.
   const handled = useRef(0);
