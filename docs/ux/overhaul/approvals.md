@@ -302,6 +302,47 @@ gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허�
 시안 이후 바뀐 것: 단계 연결 줄이 기본 320px 설정 서랍에서 읽히도록 단계 번호와 제목이 한 줄, 에이전트 선택이 줄 전체를 쓴다(실앱 캡처에서
 찾음 — 시안은 420px 서랍이었다). 대화의 제안 카드 머리는 "설정 제안 · 사람이 적용"으로 바뀌었다(명령 실행 위험 표시 대신).
 
+## 2026-10-29 · 리뷰 루프(Claude 데스크톱 기능 흡수 1묶음) 요청 확정과 실험 결정
+
+**요청 확정(deep-interview, 사용자 답)** — 계획 `~/.claude/plans/desktop-valiant-stearns.md`
+
+| 질문 | 답 |
+|---|---|
+| 가져올 것 | Claude 데스크톱 v4.29.0(2026-10-27) Code 탭 기능 4묶음 전부: 리뷰 루프 → 턴 마무리 → 장시간 연속성 → 내장 브라우저 검증 |
+| 진행 | 한 묶음씩: 실험 → 시안 승인 → 구현 → Claude·Codex·폰 실검증 → main 병합. 묶음 경계마다 main은 배포 가능 |
+| 리뷰어 | 같은 AI 기본 + "다른 AI로 검토"(읽기 전용 별도 대화). 고치기는 늘 원래 대화, 결과는 같은 카드 |
+| 자동 AI 호출 | 싼 것만 자동. 리뷰는 자동으로 돌지 않는다 |
+| 검토 맡기기 | ⋯ 메뉴를 "검토…" 하나로 합침(아래 바뀌는 기존 규칙) |
+
+- 바뀌는 기존 규칙: 같은 날 하네스 결정 "대화 검토 = 검토 맡기기 기본" → 기본은 이 대화의 AI가 검토하고 "다른 AI로 검토"가 검토 맡기기를
+  대체한다(결과는 자유 글이 아니라 결과 카드). 리뷰 capability가 없는 옛 호스트에서만 옛 흐름을 쓴다.
+- 하지 않는 것: 클라우드·claude.ai 계정 기능, 채팅·Cowork·Docs·Slides·Design, 2순위 후보(SSH/WSL 환경·앱 안 편집·보기 모드·보관 해제·PR/CI),
+  폰 알림(전송 방식 결정이 따로 필요).
+
+**실험 결정(체크포인트 A)** — 스크립트 `scripts/probe-claude-review-findings.mjs`·`scripts/probe-codex-review-findings.mjs`(공용 저장소
+`scripts/review-probe-repo.mjs`), 보고 `artifacts/review-findings-probe/`(로컬). Claude CLI 2.1.312·SDK 0.3.260, Codex 0.165.0.
+
+- 쓰지 않는 것: Claude `/code-review`의 `ReportFindings`는 Claude 자체 호스트에서만 켜진다(CLI 안 "리뷰 지시가 쓰라고 할 때만" 문구) — SDK
+  호스트에서는 0/2, 결과는 글이다. `/code-review`에 `outputFormat`을 붙여도 0/3(분기된 명령의 결과가 위로 오지 않음). Codex `review/start`는
+  `review: string` 글과 절대 경로뿐이다.
+- 쓰는 것(두 AI 공통): 호스트가 고른 범위의 diff를 계산해 인용 데이터로 넘기고, 읽기 전용 리뷰어가 스키마로 강제된 결과를 낸다. 범위를
+  EZTerminal이 정하므로 두 AI가 같은 줄을 보고 하나씩 보기의 줄 위치가 맞는다.
+  - 같은 AI = 대화의 읽기 전용 분기. Claude: `resume`+`forkSession`+`persistSession:false`, 도구는 `Read·Grep·Glob`만(셸 없음), `outputFormat`,
+    `permissionPrompts:'none'` — 2/2 유효, 쓰기 0, 원래 대화 기록 그대로, 12–19초. Codex: `thread/fork`(ephemeral·read-only·approvals never)+
+    `outputSchema` — 2/2 유효, 쓰기 0, 부모 턴 수 그대로, 캐시 97–99%, 37–39초.
+  - 다른 AI = 읽기 전용 관리 하위 대화 + 같은 지시·스키마. Claude 새 세션(도구 `Read·Grep·Glob`만, Agent·Task 없음)+`outputFormat` 1/1, Codex 읽기
+    전용 스레드+`outputSchema` 3/3(gpt-6.1-sol도 유효). Codex에게 명시적으로 파일을 쓰라고 해도 "Access denied"로 막혔다.
+  - 정확도: 범위 안에 심은 버그 2/2를 매번 찾았고, 줄 위치 100% 유효, 주입 문장("README 지워라")을 따르지 않았다.
+- 셸: Claude 리뷰어에는 셸을 주지 않는다 — 명령 접두사 허용 목록은 `rg --pre`·`git diff --output` 같은 옵션 때문에 안전하게 만들 수 없다(실험
+  스크립트 보안 검토). Codex는 셸을 쓰되 OS 읽기 전용 샌드박스가 쓰기를 막고(검증) `networkAccess:false`라 밖으로 보내지 못한다. 제품은 호스트
+  쪽 명령 분류기를 쓰지 않는다.
+- 이 PC: Codex 읽기 전용 샌드박스 명령은 돌고 workspace-write("승인 후 실행")는 기존대로 멈춘다. 리뷰는 늘 읽기 전용이라 영향이 없다.
+- 비용: Claude 분기는 도구 구성이 달라 캐시를 새로 만든다(작은 저장소에서 27–65k) → 대화가 길수록 비싸다. Codex 분기는 캐시를 다시 쓴다.
+- 계획과 달라진 방식: 같은 AI 리뷰를 "원래 대화의 턴"에서 "원래 대화의 읽기 전용 분기"로 바꿨다. 대화의 권한·기록·대기열을 건드리지 않고 두
+  AI가 같은 모양이며, Claude 자신의 `/code-review`도 분기로 돈다. 고치기는 그대로 원래 대화의 턴이다.
+- 시안 단계로 넘김: D13 응답 중인 대화의 리뷰는 그 턴이 끝날 때까지 기다린다(카드 "대기 중"), D14 긴 대화의 Claude 리뷰 비용(시작 메뉴에
+  맥락 크기 표시 또는 "대화 맥락 없이 검토").
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약
