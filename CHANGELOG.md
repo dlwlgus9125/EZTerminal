@@ -65,8 +65,14 @@
   Android is unchanged.
 - The composer's settings take only the width they need, so they stay on one
   row whenever they fit.
+- The board's new-conversation input opens its settings menus over the board;
+  they were cut to the one-line bar, hiding the AI choices (Codex looked missing).
 
 ### Security
+
+- Update systeminformation to 5.33.18 (GHSA-3f7j-7jwc-fxfj, GHSA-7648-jmwf-vw7j,
+  GHSA-4vjg-vx72-qq4g) and pin @hono/node-server 2.1.3 under the MCP SDK
+  (GHSA-rmxm-3fg6-px4f).
 
 - Update rustls to 0.23.46 and rustls-webpki to 0.103.16 in the native remote
   host (RUSTSEC-2026-0346 to 0349 and RUSTSEC-2026-0382).
