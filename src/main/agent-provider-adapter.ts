@@ -26,6 +26,12 @@ export interface ProviderSessionContext {
   readonly managedExecution?: true;
   /** Require a provider-enforced empty tool catalog; unsupported adapters must reject. */
   readonly toolsDisabled?: true;
+  /**
+   * A review loop reviewer (`review-` conversations): read-only tools, no permission prompts, and
+   * every turn answers in REVIEW_FINDINGS_JSON_SCHEMA through the provider's schema channel; the
+   * answer ends the turn as its last assistant message (the JSON text).
+   */
+  readonly readOnlyReviewer?: true;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
@@ -242,6 +248,17 @@ export interface AgentProviderAdapter {
   approvePlanEndingTurn?(input: Omit<ProviderApprovalDecision, 'decision'>): Promise<void>;
   /** /btw: one tool-less answer from this live session's context; never a turn, never recorded or persisted. */
   askSideQuestion?(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer>;
+  /**
+   * `review-loop-v1`: the oldest CLI version known to run read-only reviews (reviewer sessions and,
+   * with `reviewFork`, forks). Absent: this provider does not review.
+   */
+  readonly reviewMinimumVersion?: string;
+  /**
+   * `review-loop-v1`, same AI: one review answered by a read-only fork of the conversation. Nothing
+   * reaches the conversation (no row, turn, usage or approval) and nothing of the fork is kept.
+   * No timeout here: the host bounds it through `signal`.
+   */
+  reviewFork?(input: ProviderReviewForkInput, signal: AbortSignal): Promise<ProviderReviewForkResult>;
 
   subscribe(listener: AgentProviderEventListener): () => void;
   reconcile(input: ProviderReconciliationInput, signal?: AbortSignal): Promise<ProviderReconciliationResult>;
@@ -272,6 +289,47 @@ export class ProviderSideQuestionError extends Error {
   constructor(readonly code: ProviderSideQuestionFailure) {
     super(`Side question ${code}.`);
     this.name = 'ProviderSideQuestionError';
+  }
+}
+
+export interface ProviderReviewForkInput {
+  /** The reviewed conversation and its provider session (Claude session id, Codex thread id). */
+  readonly sessionId: string;
+  readonly providerSessionId: string;
+  readonly workspaceRoot: string;
+  /**
+   * The conversation's other folders, model and effort, as its record has them (the same AI reviews as
+   * it is). An adapter whose session of the conversation is live uses that session's own instead, so the
+   * fork's request matches the conversation's last one.
+   */
+  readonly additionalRoots?: readonly string[];
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  /** The host's review instruction with the change quoted (composeReviewPrompt, in this answer format). */
+  readonly prompt: string;
+  /**
+   * `json-text`: the fork keeps the conversation's request shape, so it reuses its prompt cache, and the
+   * prompt asks for the JSON. `enforced`: the provider's schema channel shapes the answer, which costs the
+   * cache (structured output changes the request); the host retries this way once when JSON text fails.
+   */
+  readonly answerFormat: 'json-text' | 'enforced';
+}
+
+export interface ProviderReviewForkResult {
+  /** The answer the provider's schema channel returned, already parsed. */
+  readonly output?: unknown;
+  /** The fork's final text: the answer when it came as text, else what it said instead. */
+  readonly text?: string;
+}
+
+/** `unavailable`: the AI cannot start; `unsupported`: this version cannot fork read-only; `failed`: it ran and erred. */
+export type ProviderReviewFailure = 'cancelled' | 'unavailable' | 'unsupported' | 'failed';
+
+/** Carries only a code: provider errors could echo the reviewed code. */
+export class ProviderReviewError extends Error {
+  constructor(readonly code: ProviderReviewFailure) {
+    super(`Review ${code}.`);
+    this.name = 'ProviderReviewError';
   }
 }
 

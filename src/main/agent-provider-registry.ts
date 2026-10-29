@@ -247,6 +247,13 @@ export class AgentProviderRegistry {
     return typeof this.adapters.get(providerId)?.askSideQuestion === 'function';
   }
 
+  /** How this provider's adapter reviews (`review-loop-v1`); undefined when it does not (no launch side effects). */
+  reviewCapability(providerId: string): { readonly minimumVersion: string; readonly fork: boolean } | undefined {
+    const adapter = this.adapters.get(providerId);
+    if (!adapter?.reviewMinimumVersion) return undefined;
+    return { minimumVersion: adapter.reviewMinimumVersion, fork: typeof adapter.reviewFork === 'function' };
+  }
+
   async listModels(
     snapshot: Pick<DaemonSnapshot, 'providers'>,
     providerId: string,

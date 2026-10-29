@@ -33,10 +33,14 @@ import type {
   ProviderSideQuestionAnswer,
   ProviderSideQuestionFailure,
   ProviderSideQuestionInput,
+  ProviderReviewFailure,
+  ProviderReviewForkInput,
+  ProviderReviewForkResult,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
-import { ProviderSideQuestionError } from './agent-provider-adapter';
+import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
+import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import {
   CodexAppServerClient,
   CodexJsonRpcError,
@@ -55,6 +59,8 @@ import { providerTranscriptText } from './provider-transcript';
 import { codexContextPercent, codexLimitsFromRateLimits } from './agent-usage-readings';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
+/** The oldest Codex known to run the review loop's read-only shapes (the version the probes and captures used). */
+export const CODEX_REVIEW_MINIMUM_VERSION = '0.165.0';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 /** Opening tabs and starting conversations ask Codex for the plan limits at most this often. */
@@ -175,6 +181,8 @@ interface SessionState {
   readonly subagentTitle?: string;
   /** The sub-agent's latest answer, sent back to its parent when it finishes. */
   lastAgentMessage?: string;
+  /** A review loop reviewer thread (read-only by its preset): each turn answers in the findings schema. */
+  readonly reviewer?: true;
 }
 
 type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input' | 'proposed-plan';
@@ -189,9 +197,14 @@ interface PendingApproval {
   readonly resolve: (response: unknown) => void;
 }
 
-/** A /btw in flight on an ephemeral fork of a session's thread; the fork's frames reach only this ask. */
+/**
+ * A /btw or a review in flight on an ephemeral fork of a session's thread; the fork's frames reach
+ * only this ask, and whatever the fork asks to approve is declined.
+ */
 interface SideQuestion {
   readonly sessionId: string;
+  /** A review fork does not depend on the conversation staying attached (a /btw does). */
+  readonly survivesSession?: true;
   /** Set once thread/fork answers, before the fork's turn starts. */
   threadId?: string;
   turnId?: string;
@@ -336,6 +349,26 @@ function sideQuestionPrompt(question: string, history: readonly SideQuestionExch
     ? [`Earlier side questions in this thread:\n${history.map((entry) => `Q: ${entry.question}\nA: ${entry.answer}`).join('\n')}`]
     : [];
   return [SIDE_QUESTION_INSTRUCTION, ...earlier, `Question: ${question}`].join('\n\n');
+}
+
+/**
+ * A same-AI review fork (`review-loop-v1`): an ephemeral, read-only, approval-free fork of the thread,
+ * which keeps the thread's model, effort and prompt cache (fork-cache probe G0, 2026-10-29). `json-text`
+ * asks for the JSON in the prompt; `enforced` adds the findings schema as the turn's `outputSchema`
+ * (probe c7, fixture codex-review-fork), which costs the cache: the host's one retry when JSON text
+ * does not read as findings. Either way the final message is the JSON.
+ */
+function codexReviewForkRequest(input: ProviderReviewForkInput): { readonly fork: JsonObject; readonly turn: JsonObject } {
+  return {
+    fork: {
+      threadId: input.providerSessionId, ephemeral: true, excludeTurns: true, threadSource: 'ezterminal',
+      sandbox: 'read-only', approvalPolicy: 'never',
+    },
+    turn: {
+      input: [{ type: 'text', text: input.prompt, text_elements: [] }],
+      ...(input.answerFormat === 'enforced' ? { outputSchema: REVIEW_FINDINGS_JSON_SCHEMA } : {}),
+    },
+  };
 }
 
 /** An app-server without `thread/fork`, however its version words an unknown method. */
@@ -854,6 +887,7 @@ function todoStatus(value: unknown): TodoItem['status'] {
 /** Structured Codex adapter requiring at least the observed 0.152.1 app-server schema. */
 export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
+  readonly reviewMinimumVersion = CODEX_REVIEW_MINIMUM_VERSION;
 
   private readonly executable: string;
   private connection: CodexAppServerConnection | undefined;
@@ -1326,6 +1360,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(effort ? { effort } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
         ...(nextRoots ? { runtimeWorkspaceRoots: [state.workspaceRoot, ...nextRoots] } : {}),
+        // A reviewer's answer is the findings JSON as its final message (probe case c4, fixture codex-review-child).
+        ...(state.reviewer ? { outputSchema: REVIEW_FINDINGS_JSON_SCHEMA } : {}),
         input: [
           { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
           ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
@@ -1646,6 +1682,121 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     });
   }
 
+  /**
+   * `review-loop-v1`, same AI: one review on an ephemeral read-only fork of the conversation's thread
+   * (approvals never; whatever it asks is declined). The fork's frames reach only this review: no row,
+   * usage, approval or provider error. It is unsubscribed however the review ends, also when the
+   * conversation is released meanwhile. The answer is the fork's final message. No timeout here: the
+   * host bounds it through `signal`.
+   */
+  async reviewFork(input: ProviderReviewForkInput, signal: AbortSignal): Promise<ProviderReviewForkResult> {
+    if (this.disposed) throw new ProviderReviewError('unavailable');
+    if (signal.aborted) throw new ProviderReviewError('cancelled');
+    try {
+      await this.ensureConnection(signal);
+    } catch {
+      throw new ProviderReviewError(signal.aborted ? 'cancelled' : 'unavailable');
+    }
+    const connection = this.connection;
+    if (!connection) throw new ProviderReviewError('unavailable');
+    const exitsAtStart = this.appServerExits;
+    const request = codexReviewForkRequest(input);
+    return new Promise<ProviderReviewForkResult>((resolve, reject) => {
+      let settled = false;
+      let turnDone = false;
+      let finalAnswer: string | undefined;
+      let lastMessage: string | undefined;
+      const release = (): void => {
+        const threadId = fork.threadId;
+        // The fork died with its app-server; a request now would only relaunch Codex.
+        if (!threadId || this.connection !== connection || this.appServerExits !== exitsAtStart) return;
+        if (fork.turnId && !turnDone) void connection.request('turn/interrupt', { threadId, turnId: fork.turnId }).catch(() => undefined);
+        void connection.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+      };
+      const finish = (result: ProviderReviewForkResult | ProviderReviewFailure, connectionGone = false): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        this.sideQuestions.delete(fork);
+        if (fork.threadId) this.retireSideQuestionThread(fork.threadId);
+        if (!connectionGone) release();
+        if (typeof result === 'string') reject(new ProviderReviewError(result));
+        else resolve(result);
+      };
+      const fork: SideQuestion = {
+        sessionId: input.sessionId,
+        survivesSession: true,
+        end: (code, connectionGone) => finish(code === 'cancelled' ? 'cancelled' : code === 'unsupported' ? 'unsupported' : 'failed', connectionGone),
+        frame: (method, params) => {
+          fork.turnId ??= asString(params.turnId) ?? asString(asObject(params.turn)?.id);
+          const item = asObject(params.item);
+          switch (method) {
+            case 'item/completed':
+              // Codex may say what it will do (commentary) before its answer (final_answer).
+              if (item?.type === 'agentMessage' && typeof item.text === 'string') {
+                lastMessage = item.text;
+                if (item.phase === 'final_answer') finalAnswer = item.text;
+              }
+              return;
+            case 'error':
+              if (params.willRetry !== true) finish('failed');
+              return;
+            case 'turn/completed': {
+              turnDone = true;
+              const turn = asObject(params.turn);
+              if (turnStatus(turn?.status) !== 'completed') {
+                finish(signal.aborted ? 'cancelled' : 'failed');
+                return;
+              }
+              const answer = [...asArray(turn?.items)].reverse().map(asObject)
+                .find((entry) => entry?.type === 'agentMessage' && typeof entry.text === 'string' && entry.phase !== 'commentary');
+              const text = finalAnswer ?? (typeof answer?.text === 'string' ? answer.text : undefined) ?? lastMessage;
+              finish(text !== undefined ? { text } : {});
+              return;
+            }
+            default:
+              return;
+          }
+        },
+      };
+      const onAbort = (): void => finish('cancelled');
+      this.sideQuestions.add(fork);
+      signal.addEventListener('abort', onAbort, { once: true });
+      void (async () => {
+        let forked: JsonObject | undefined;
+        try {
+          forked = asObject(await connection.request('thread/fork', request.fork, { timeoutMs: SIDE_QUESTION_FORK_TIMEOUT_MS }));
+        } catch (error) {
+          finish(forkUnsupported(error) ? 'unsupported' : 'failed');
+          return;
+        }
+        const threadId = asString(asObject(forked?.thread)?.id);
+        if (!threadId) {
+          finish('failed');
+          return;
+        }
+        // Routed to this review from here on, before its turn can stream; a fork that answers after the review ended is let go.
+        fork.threadId = threadId;
+        if (settled) {
+          this.retireSideQuestionThread(threadId);
+          release();
+          return;
+        }
+        try {
+          const started = asObject(await connection.request('turn/start', {
+            threadId,
+            clientUserMessageId: `review:${this.idFactory()}`,
+            ...request.turn,
+          }));
+          fork.turnId ??= asString(asObject(started?.turn)?.id);
+          if (!fork.turnId) finish('failed');
+        } catch {
+          finish('failed');
+        }
+      })();
+    });
+  }
+
   /** The ask a fork thread streams to; `null` once that ask ended, so the fork's late frames are dropped too. */
   private sideQuestionOn(threadId: string): SideQuestion | null | undefined {
     for (const question of this.sideQuestions) if (question.threadId === threadId) return question;
@@ -1746,7 +1897,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const state = this.requireSession(sessionId, providerSessionId);
     for (const question of [...this.sideQuestions]) {
-      if (question.sessionId === sessionId) question.end('not-live');
+      if (question.sessionId === sessionId && !question.survivesSession) question.end('not-live');
     }
     state.deltas.dispose();
     this.clearPreResponseLifecycle(state);
@@ -3088,6 +3239,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ...(model ? { model } : {}),
       ...(context.reasoningEffort ?? appliedEffort ? { reasoningEffort: context.reasoningEffort ?? appliedEffort! } : {}),
       permissionPreset: context.permissionPreset,
+      ...(context.readOnlyReviewer ? { reviewer: true as const } : {}),
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
       preResponseLifecycleOverflowed: false,
@@ -3151,6 +3303,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   private assertSessionContext(context: ProviderSessionContext): void {
     if (context.toolsDisabled) throw new Error('This Codex app-server does not expose a verified tool-free mode. Choose a provider that supports tool-free planning proposals.');
+    // A reviewer's read-only guarantee is the OS sandbox of the plan preset (probe case c4).
+    if (context.readOnlyReviewer && context.permissionPreset !== 'plan') throw new Error('A Codex reviewer runs only in the read-only sandbox.');
     if (!context.sessionId.trim() || !context.workspaceId.trim()) throw new Error('Codex session identity is incomplete.');
     if (!path.isAbsolute(context.workspaceRoot)) throw new Error('Codex workspace root must be absolute.');
     if (context.additionalRoots?.some((root) => !path.isAbsolute(root))) throw new Error('Codex workspace roots must be absolute.');

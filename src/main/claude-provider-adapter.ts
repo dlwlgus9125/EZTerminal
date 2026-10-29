@@ -48,10 +48,13 @@ import type {
   ProviderSessionHandle,
   ProviderSideQuestionAnswer,
   ProviderSideQuestionInput,
+  ProviderReviewForkInput,
+  ProviderReviewForkResult,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
-import { ProviderSideQuestionError } from './agent-provider-adapter';
+import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
+import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import {
   buildProviderProcessEnvironment,
   sameEnvironmentVariableSet,
@@ -77,6 +80,14 @@ const MAX_PENDING_SUBAGENT_MESSAGES = 200;
 const MAX_SUBAGENT_INSTRUCTION = 8_000;
 /** Oldest Claude Code CLI this adapter will review, enable and launch. */
 export const CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION = '2.1.260';
+/**
+ * The oldest Claude Code known to run the review loop's read-only shapes (`permissionPrompts: 'none'`,
+ * `outputFormat`, a non-persisted fork): the version the real-provider probes and captures used.
+ */
+export const CLAUDE_REVIEW_MINIMUM_VERSION = '2.1.312';
+/** A reviewer reads the folder and the host-supplied diff: no shell (no command allow-list is safe), no writes. */
+const CLAUDE_REVIEW_TOOLS = ['Read', 'Grep', 'Glob'] as const;
+const CLAUDE_REVIEW_DISALLOWED_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task'] as const;
 const CLAUDE_AGENT_SDK_ARGV = [
   '--output-format',
   'stream-json',
@@ -1079,6 +1090,43 @@ function providerModel(model: ModelInfo, isDefault: boolean): ProviderModel {
   };
 }
 
+/**
+ * The read-only reviewer shape (probe case a10, fixture claude-review-child): only Read/Grep/Glob, no
+ * prompts (anything that would ask is denied at once), no MCP servers, and the turn ends in the
+ * findings schema. `strictMcpConfig` keeps the account's and the project's MCP tools out as well.
+ */
+function claudeReviewerOptions(): Partial<Options> {
+  return {
+    tools: [...CLAUDE_REVIEW_TOOLS],
+    disallowedTools: [...CLAUDE_REVIEW_DISALLOWED_TOOLS],
+    permissionPrompts: 'none',
+    outputFormat: { type: 'json_schema', schema: REVIEW_FINDINGS_JSON_SCHEMA as unknown as Record<string, unknown> },
+    strictMcpConfig: true,
+    mcpServers: {},
+  };
+}
+
+/**
+ * What a same-AI review fork changes from the conversation's own request (`review-loop-v1`). `json-text`:
+ * only the tool catalog narrows to Read/Grep/Glob (no shell, no writes) and nothing may ask, which keeps
+ * the conversation's prompt cache (fork-cache probe F2, 2026-10-29); the prompt asks for the JSON.
+ * `enforced`: the findings schema as `outputFormat` as well (probe a9, fixture claude-review-fork), which
+ * costs the cache; the host's one retry when JSON text does not read as findings.
+ */
+function claudeReviewForkOptions(answerFormat: 'json-text' | 'enforced'): Partial<Options> {
+  switch (answerFormat) {
+    case 'json-text':
+      return { tools: [...CLAUDE_REVIEW_TOOLS], permissionPrompts: 'none' };
+    case 'enforced':
+      return {
+        tools: [...CLAUDE_REVIEW_TOOLS],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+        permissionPrompts: 'none',
+        outputFormat: { type: 'json_schema', schema: REVIEW_FINDINGS_JSON_SCHEMA as unknown as Record<string, unknown> },
+      };
+  }
+}
+
 function orchestrationMcpServers(
   context: ProviderSessionContext,
 ): NonNullable<Options['mcpServers']> | undefined {
@@ -1115,6 +1163,7 @@ function orchestrationMcpServers(
 }
 
 export class ClaudeProviderAdapter implements AgentProviderAdapter {
+  readonly reviewMinimumVersion = CLAUDE_REVIEW_MINIMUM_VERSION;
   readonly providerId = 'claude';
 
   private readonly enablementStore: ClaudeProviderEnablementStore;
@@ -1164,6 +1213,82 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.deltaCoalescerOptions = options.deltaCoalescer;
     this.enableTaskTools = options.enableTaskTools ?? true;
+  }
+
+  /**
+   * `review-loop-v1`, same AI: one review in a separate query that resumes the conversation as a
+   * non-persisted fork (`resume` + `forkSession`, `persistSession: false`), so the conversation's
+   * transcript, settings and queue stay as they were. Nothing of it is recorded or emitted. The
+   * conversation need not be live: the fork reads its saved transcript. No timeout here: the host
+   * bounds it through `signal`.
+   */
+  async reviewFork(input: ProviderReviewForkInput, signal: AbortSignal): Promise<ProviderReviewForkResult> {
+    if (signal.aborted) throw new ProviderReviewError('cancelled');
+    let readiness: Awaited<ReturnType<ClaudeProviderAdapter['assertReady']>>;
+    try {
+      readiness = await abortable(this.assertReady(signal), signal);
+    } catch {
+      throw new ProviderReviewError(signal.aborted ? 'cancelled' : 'unavailable');
+    }
+    // A live session of the conversation launched with exactly what its requests use: the fork matches
+    // it (folders, model, effort) so its first request reads the conversation's prompt cache.
+    const live = this.sessions.get(input.sessionId);
+    const launched = live && !live.disposed && live.handle.providerSessionId === input.providerSessionId ? live : undefined;
+    const additionalRoots = launched ? launched.context.additionalRoots : input.additionalRoots;
+    const model = launched ? launched.handle.model : input.model;
+    const effort = launched ? launched.appliedEffort : input.reasoningEffort;
+    const abortController = new AbortController();
+    const onAbort = (): void => abortController.abort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    const prompt = new AsyncInputQueue<SDKUserMessage>();
+    const query = this.queryFactory({
+      prompt,
+      options: {
+        abortController,
+        cwd: input.workspaceRoot,
+        pathToClaudeCodeExecutable: readiness.executablePath,
+        permissionMode: 'default',
+        allowDangerouslySkipPermissions: false,
+        includePartialMessages: false,
+        resume: input.providerSessionId,
+        forkSession: true,
+        persistSession: false,
+        settingSources: ['user', 'project', 'local'],
+        env: { ...readiness.environment },
+        ...(additionalRoots?.length ? { additionalDirectories: [...additionalRoots] } : {}),
+        ...(model ? { model } : {}),
+        ...(effort ? { effort: effort as Options['effort'] } : {}),
+        ...claudeReviewForkOptions(input.answerFormat),
+      },
+    });
+    try {
+      prompt.push({
+        type: 'user',
+        message: { role: 'user', content: input.prompt },
+        parent_tool_use_id: null,
+        uuid: randomUUID() as SDKUserMessage['uuid'],
+        session_id: input.providerSessionId,
+      });
+      for await (const message of query) {
+        const raw = message as unknown as JsonObject;
+        if (raw.type !== 'result') continue;
+        if (signal.aborted) break;
+        const text = typeof raw.result === 'string' ? raw.result : undefined;
+        // Out of retries for the schema: what it said is shown as an answer outside the format.
+        if (raw.subtype === 'error_max_structured_output_retries') return text !== undefined ? { text } : {};
+        if (raw.is_error === true || raw.subtype !== 'success') throw new ProviderReviewError('failed');
+        return { ...(raw.structured_output !== undefined ? { output: raw.structured_output } : {}), ...(text !== undefined ? { text } : {}) };
+      }
+      throw new ProviderReviewError(signal.aborted ? 'cancelled' : 'failed');
+    } catch (error) {
+      if (error instanceof ProviderReviewError) throw error;
+      throw new ProviderReviewError(signal.aborted ? 'cancelled' : 'failed');
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      prompt.close();
+      query.close();
+      await bounded((query.return?.(undefined) ?? Promise.resolve()).then(() => undefined), this.shutdownTimeoutMs).catch(() => undefined);
+    }
   }
 
   setLaunchDescriptor(descriptor: ProviderLaunchDescriptor): void {
@@ -1988,7 +2113,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       abortController,
       cwd: context.workspaceRoot,
       pathToClaudeCodeExecutable: executablePath,
-      permissionMode: permissionMode(context.permissionPreset),
+      // A reviewer is read-only by its tools and answers in the findings schema; plan mode would make it plan instead.
+      permissionMode: context.readOnlyReviewer ? 'default' : permissionMode(context.permissionPreset),
       allowDangerouslySkipPermissions: session.bypassArmed,
       canUseTool,
       // Planning proposals are read once complete; only conversations stream.
@@ -2010,6 +2136,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       // An empty allow-list is only an approval preference. Remove the actual
       // catalog, including configured MCP tools, and ignore ambient settings.
       ...(context.toolsDisabled ? { tools: [], disallowedTools: ['*'], settingSources: [], mcpServers: {}, plugins: [], agents: {} } : {}),
+      ...(context.readOnlyReviewer ? claudeReviewerOptions() : {}),
       ...(context.model ? { model: context.model } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : { sessionId: providerSessionId }),
       ...(context.reasoningEffort ? { effort: context.reasoningEffort as Options['effort'] } : {}),
@@ -2446,6 +2573,13 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ?? (isError ? asString(message.result) : null);
     const classified = isError ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
     this.emitReplyUsage(session, message);
+    // A reviewer's answer is the turn's structured output: its last message, read like any answer.
+    if (session.context.readOnlyReviewer && !classified && !interrupted && message.structured_output !== undefined && turns[0]) {
+      this.appendTranscript(session, 'assistant-message', JSON.stringify(message.structured_output, null, 2), {
+        turnId: turns[0].turnId,
+        source: `${asString(message.uuid) ?? this.createId()}:structured-output`,
+      });
+    }
     for (const turn of turns) {
       turn.providerTurnId = asString(message.uuid) ?? turn.providerTurnId;
       if (interrupted) this.finishTurn(session, turn, 'interrupted');

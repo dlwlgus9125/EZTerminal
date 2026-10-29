@@ -7,6 +7,7 @@ import { parseApprovalRequest } from '../shared/approval-request';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
 import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
+import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type {
   AgentProviderEvent,
@@ -2690,4 +2691,66 @@ describe('Codex side questions (/btw)', () => {
     expect(events).toEqual([]);
     await adapter.dispose();
   }, 30_000);
+});
+
+describe('Codex review fork (review loop)', () => {
+  async function reviewFixture() {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    connection.requestImpl = async (method, params) => {
+      const threadId = (params as { threadId?: string }).threadId ?? '';
+      if (method === 'thread/fork') return { thread: { id: 'review-fork-1' } };
+      if (method === 'turn/start') return { turn: { id: `${threadId}-turn`, status: 'inProgress', items: [] } };
+      if (method === 'turn/interrupt') return {};
+      if (method === 'thread/unsubscribe') return { status: 'notLoaded' };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const sent = (method: string): unknown[] => connection.requests.filter((request) => request.method === method).map((request) => request.params);
+    const frame = (method: string, params: Record<string, unknown> = {}): Promise<void> => connection.emitNotification(method, {
+      threadId: 'review-fork-1', turnId: 'review-fork-1-turn', ...params,
+    });
+    const review = (answerFormat: 'json-text' | 'enforced', signal = new AbortController().signal) => adapter.reviewFork({
+      sessionId: 'session-1', providerSessionId: 'thread-1', workspaceRoot: context().workspaceRoot, prompt: 'Review the change.', answerFormat,
+    }, signal);
+    const started = async (): Promise<void> => {
+      await vi.waitFor(() => expect(sent('turn/start').some((params) => (params as { threadId?: string }).threadId === 'review-fork-1')).toBe(true));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    return { adapter, connection, events, sent, frame, review, started };
+  }
+
+  it('asks a read-only ephemeral fork without a schema first, answers with the final message, and survives the conversation’s release', async () => {
+    const { adapter, events, sent, frame, review, started } = await reviewFixture();
+    const before = events.length;
+    const answered = review('json-text');
+    await started();
+    expect(sent('thread/fork')).toEqual([{ threadId: 'thread-1', ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', sandbox: 'read-only', approvalPolicy: 'never' }]);
+    const turn = sent('turn/start').find((params) => (params as { threadId?: string }).threadId === 'review-fork-1') as Record<string, unknown>;
+    expect(turn).toEqual({ threadId: 'review-fork-1', clientUserMessageId: expect.stringMatching(/^review:/u), input: [{ type: 'text', text: 'Review the change.', text_elements: [] }] });
+    // The conversation is released meanwhile: a /btw would end, a review goes on.
+    await adapter.disposeSession('session-1', 'thread-1');
+    await frame('item/completed', { item: { id: 'm1', type: 'agentMessage', text: 'I will review the diff.', phase: 'commentary' } });
+    await frame('item/completed', { item: { id: 'm2', type: 'agentMessage', text: '{"findings":[],"overall":"Fine."}', phase: 'final_answer' } });
+    await frame('turn/completed', { turn: { id: 'review-fork-1-turn', status: 'completed', items: [] } });
+    await expect(answered).resolves.toEqual({ text: '{"findings":[],"overall":"Fine."}' });
+    expect(sent('thread/unsubscribe')).toContainEqual({ threadId: 'review-fork-1' });
+    expect(events.slice(before).filter((event) => event.kind !== 'session-state')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('carries the findings schema when enforced, and stops the fork on a cancel', async () => {
+    const { adapter, sent, review, started } = await reviewFixture();
+    const controller = new AbortController();
+    const cancelled = review('enforced', controller.signal);
+    await started();
+    const turn = sent('turn/start').find((params) => (params as { threadId?: string }).threadId === 'review-fork-1') as Record<string, unknown>;
+    expect(turn.outputSchema).toEqual(REVIEW_FINDINGS_JSON_SCHEMA);
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ name: 'ProviderReviewError', code: 'cancelled' });
+    expect(sent('turn/interrupt')).toContainEqual({ threadId: 'review-fork-1', turnId: 'review-fork-1-turn' });
+    expect(sent('thread/unsubscribe')).toContainEqual({ threadId: 'review-fork-1' });
+    await adapter.dispose();
+  });
 });

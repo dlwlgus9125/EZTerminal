@@ -1917,3 +1917,67 @@ describe('Claude side questions (/btw)', () => {
     await fixture.adapter.dispose();
   });
 });
+
+describe('Claude review fork (review loop)', () => {
+  const fork = { sessionId: context.sessionId, providerSessionId, workspaceRoot: context.workspaceRoot, prompt: 'Review the change.' } as const;
+  const flush = async (fixture: ReturnType<typeof makeAdapter>, count: number): Promise<FakeClaudeQuery> => {
+    for (let attempt = 0; attempt < 50 && fixture.queries.length < count; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    return fixture.queries[count - 1]!;
+  };
+
+  it('forks a live conversation with that session’s folders, model and effort, keeps it out of the app, and answers with its text', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, additionalRoots: [path.resolve('shared-folder')], model: 'claude-fable-5', reasoningEffort: 'high' });
+    const before = fixture.events.length;
+    const pending = fixture.adapter.reviewFork({
+      ...fork, model: 'stale-model', reasoningEffort: 'low', additionalRoots: [path.resolve('elsewhere')], answerFormat: 'json-text',
+    }, new AbortController().signal);
+    const query = await flush(fixture, 2);
+    expect(query.inputOptions).toMatchObject({
+      resume: providerSessionId, forkSession: true, persistSession: false, permissionMode: 'default',
+      additionalDirectories: [path.resolve('shared-folder')], model: 'claude-fable-5', effort: 'high',
+      tools: ['Read', 'Grep', 'Glob'], permissionPrompts: 'none', settingSources: ['user', 'project', 'local'],
+    });
+    // The cache-preserving shape changes nothing else of the conversation's request.
+    for (const key of ['outputFormat', 'disallowedTools', 'strictMcpConfig', 'mcpServers', 'sessionId', 'canUseTool'] as const) expect(query.inputOptions[key], key).toBeUndefined();
+    query.emit({ type: 'result', subtype: 'success', is_error: false, result: '{"findings":[],"overall":"Fine."}', uuid: 'fork-result' });
+    await expect(pending).resolves.toEqual({ text: '{"findings":[],"overall":"Fine."}' });
+    expect(fixture.events.slice(before)).toEqual([]);
+    expect(query.closeCount).toBeGreaterThan(0);
+    await fixture.adapter.dispose();
+  });
+
+  it('forks a conversation that is not live from its record, enforced: the structured output is the answer', async () => {
+    const fixture = makeAdapter();
+    const pending = fixture.adapter.reviewFork({
+      ...fork, model: 'sonnet', reasoningEffort: 'low', additionalRoots: [path.resolve('elsewhere')], answerFormat: 'enforced',
+    }, new AbortController().signal);
+    const query = await flush(fixture, 1);
+    expect(query.inputOptions).toMatchObject({
+      resume: providerSessionId, forkSession: true, persistSession: false, additionalDirectories: [path.resolve('elsewhere')], model: 'sonnet', effort: 'low',
+      tools: ['Read', 'Grep', 'Glob'], disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'], permissionPrompts: 'none',
+      outputFormat: { type: 'json_schema' },
+    });
+    query.emit({ type: 'result', subtype: 'success', is_error: false, result: 'done', structured_output: { findings: [], overall: 'Fine.' }, uuid: 'fork-result' });
+    await expect(pending).resolves.toEqual({ output: { findings: [], overall: 'Fine.' }, text: 'done' });
+    await fixture.adapter.dispose();
+  });
+
+  it('says what went wrong without the provider’s words: out of schema retries, an error, a cancel', async () => {
+    const fixture = makeAdapter();
+    const retries = fixture.adapter.reviewFork({ ...fork, answerFormat: 'enforced' }, new AbortController().signal);
+    (await flush(fixture, 1)).emit({ type: 'result', subtype: 'error_max_structured_output_retries', is_error: true, result: 'Not JSON at all.', uuid: 'r1' });
+    await expect(retries).resolves.toEqual({ text: 'Not JSON at all.' });
+    const failing = fixture.adapter.reviewFork({ ...fork, answerFormat: 'json-text' }, new AbortController().signal);
+    (await flush(fixture, 2)).emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'secret path C:/x', uuid: 'r2' });
+    await expect(failing).rejects.toMatchObject({ name: 'ProviderReviewError', code: 'failed' });
+    const controller = new AbortController();
+    const cancelled = fixture.adapter.reviewFork({ ...fork, answerFormat: 'json-text' }, controller.signal);
+    const third = await flush(fixture, 3);
+    controller.abort();
+    third.end();
+    await expect(cancelled).rejects.toMatchObject({ code: 'cancelled' });
+    expect((third.inputOptions.abortController as AbortController).signal.aborted).toBe(true);
+    await fixture.adapter.dispose();
+  });
+});

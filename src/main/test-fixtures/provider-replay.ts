@@ -18,7 +18,14 @@ import type { Options, PermissionResult, SDKMessage, SDKUserMessage } from '@ant
 import type { ApprovalResponse } from '../../shared/approval-request';
 import type { DaemonApproval, DaemonTranscriptItem, PermissionPreset } from '../../shared/daemon-protocol';
 import type { DeltaCoalescerOptions } from '../delta-coalescer';
-import type { AgentProviderAdapter, AgentProviderEvent, ProviderSessionHandle } from '../agent-provider-adapter';
+import type {
+  AgentProviderAdapter,
+  AgentProviderEvent,
+  ProviderReviewForkInput,
+  ProviderReviewForkResult,
+  ProviderSessionContext,
+  ProviderSessionHandle,
+} from '../agent-provider-adapter';
 import {
   ClaudeProviderAdapter,
   MemoryClaudeProviderEnablementStore,
@@ -154,6 +161,12 @@ export function readProviderCaptureFixture(
 export interface ProviderReplayOptions {
   /** Sees every adapter event, including ones the golden does not record (usage). */
   readonly onEvent?: (event: AgentProviderEvent) => void;
+  /** Session context the runtime would add (a review loop reviewer: `readOnlyReviewer`, the plan preset). */
+  readonly session?: Partial<Pick<ProviderSessionContext, 'readOnlyReviewer' | 'managedExecution' | 'permissionPreset'>>;
+  /** Sees the options of each Claude query the adapter opens. */
+  readonly onClaudeQuery?: (options: Options) => void;
+  /** Sees each request the Codex adapter makes, with its params. */
+  readonly onCodexRequest?: (method: string, params: unknown) => void;
 }
 
 export async function replayProviderFixture(
@@ -172,6 +185,73 @@ export async function replayProviderFixture(
         );
       }),
     ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * A recorded review fork (scenario `review-fork`) replayed through the adapter's `reviewFork`: the
+ * fork's answer and every event the adapter emitted meanwhile (none may belong to the conversation).
+ */
+export async function replayReviewFork(
+  fixture: ProviderCaptureFixture,
+  answerFormat: ProviderReviewForkInput['answerFormat'],
+  options: ProviderReplayOptions = {},
+): Promise<{ readonly result: ProviderReviewForkResult; readonly events: readonly AgentProviderEvent[] }> {
+  const parent = (fixture.meta as ProviderCaptureMeta & { readonly parent?: { readonly providerSessionId?: string } }).parent?.providerSessionId;
+  if (!parent) throw new Error(`${fixture.name}: a review-fork recording names the conversation it forked.`);
+  const input: ProviderReviewForkInput = {
+    sessionId: REPLAY_SESSION_ID, providerSessionId: parent, workspaceRoot: REPLAY_WORKSPACE_ROOT, prompt: fixture.meta.prompt, answerFormat,
+  };
+  const events: AgentProviderEvent[] = [];
+  const harness = createHarness(fixture, options);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${fixture.name}: review fork replay did not finish.`)), REPLAY_TIMEOUT_MS);
+  });
+  try {
+    if (fixture.meta.provider === 'claude') {
+      const adapter = new ClaudeProviderAdapter({
+        enablementStore: new MemoryClaudeProviderEnablementStore({
+          enabled: true, termsAccepted: true, commercialUseApproved: true,
+          authenticationPath: claudeAuthenticationPath(fixture), anthropicThirdPartyApproval: true,
+        }),
+        queryFactory: (query) => {
+          options.onClaudeQuery?.(query.options);
+          return new ClaudeReplaySession(fixture, query, harness, { submit: () => undefined, interrupt: () => undefined, finished: () => undefined });
+        },
+        resolveExecutable: async () => REPLAY_CLAUDE_EXECUTABLE,
+        readExecutableVersion: async () => fixture.meta.capturedWith.cli ?? 'unknown',
+        historyReader: async () => [],
+        createId: sequentialIds('replay-claude'),
+        now: () => new Date(REPLAY_NOW),
+        shutdownTimeoutMs: 1_000,
+        deltaCoalescer: REPLAY_DELTA_COALESCER,
+      });
+      const unsubscribe = adapter.subscribe((event) => events.push(event));
+      try {
+        const result = await Promise.race([adapter.reviewFork(input, new AbortController().signal), deadline]);
+        return { result, events };
+      } finally {
+        unsubscribe();
+        await adapter.dispose();
+      }
+    }
+    const connection = new CodexReplayConnection(fixture, options.onCodexRequest);
+    const adapter = new CodexProviderAdapter({
+      connection, now: () => new Date(REPLAY_NOW), idFactory: sequentialIds('replay-codex'), deltaCoalescer: REPLAY_DELTA_COALESCER,
+    });
+    const unsubscribe = adapter.subscribe((event) => events.push(event));
+    try {
+      const running = connection.run(harness, () => undefined);
+      const [result] = await Promise.race([Promise.all([adapter.reviewFork(input, new AbortController().signal), running]), deadline]);
+      if (harness.failures.length) throw new Error(`${fixture.name}: ${harness.failures.map(String).join('; ')}`);
+      return { result, events };
+    } finally {
+      unsubscribe();
+      await adapter.dispose();
+    }
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -409,7 +489,7 @@ async function replayClaude(fixture: ProviderCaptureFixture, options: ProviderRe
   const harness = createHarness(fixture, options);
   const finished = deferred();
   const sessionCreated = deferred();
-  const queryFactory: ClaudeQueryFactory = (input) => new ClaudeReplaySession(fixture, input, harness, {
+  const queryFactory: ClaudeQueryFactory = (input) => { options.onClaudeQuery?.(input.options); return new ClaudeReplaySession(fixture, input, harness, {
     submit: () => harness.run(async () => {
       await sessionCreated.promise;
       harness.projection.submit(REPLAY_TURN_ID, REPLAY_COMMAND_ID, fixture.meta.prompt);
@@ -426,7 +506,7 @@ async function replayClaude(fixture: ProviderCaptureFixture, options: ProviderRe
       await adapter.interrupt(REPLAY_SESSION_ID, harness.handle!.providerSessionId);
     }),
     finished: () => finished.resolve(),
-  });
+  }); };
   const adapter = new ClaudeProviderAdapter({
     enablementStore: new MemoryClaudeProviderEnablementStore({
       enabled: true,
@@ -451,6 +531,7 @@ async function replayClaude(fixture: ProviderCaptureFixture, options: ProviderRe
       workspaceId: REPLAY_WORKSPACE_ID,
       workspaceRoot: REPLAY_WORKSPACE_ROOT,
       permissionPreset: claudePermissionPreset(fixture),
+      ...options.session,
     });
     sessionCreated.resolve();
     await finished.promise;
@@ -485,9 +566,13 @@ class CodexReplayConnection implements CodexAppServerConnection {
   private readonly calls: PendingCall[] = [];
   private callArrived = deferred();
 
-  constructor(private readonly fixture: ProviderCaptureFixture) {}
+  constructor(
+    private readonly fixture: ProviderCaptureFixture,
+    private readonly onRequest?: (method: string, params: unknown) => void,
+  ) {}
 
   request(method: string, params?: unknown): Promise<unknown> {
+    this.onRequest?.(method, params);
     return new Promise((resolve, reject) => {
       this.calls.push({ method, params, resolve, reject });
       this.callArrived.resolve();
@@ -630,7 +715,7 @@ function recordedCodexDecision(fixture: ProviderCaptureFixture, id: string | num
 
 async function replayCodex(fixture: ProviderCaptureFixture, options: ProviderReplayOptions): Promise<ProviderReplayGolden> {
   const harness = createHarness(fixture, options);
-  const connection = new CodexReplayConnection(fixture);
+  const connection = new CodexReplayConnection(fixture, options.onCodexRequest);
   const adapter = new CodexProviderAdapter({
     connection,
     now: () => new Date(REPLAY_NOW),
@@ -648,6 +733,7 @@ async function replayCodex(fixture: ProviderCaptureFixture, options: ProviderRep
             workspaceId: REPLAY_WORKSPACE_ID,
             workspaceRoot: REPLAY_WORKSPACE_ROOT,
             permissionPreset: fixture.meta.preset ?? 'standard',
+            ...options.session,
           });
         });
         return;
