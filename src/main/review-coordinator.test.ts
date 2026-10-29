@@ -311,6 +311,29 @@ describe('review.start: same AI in a read-only fork', () => {
     }
   });
 
+  it('also waits while the conversation has turns queued, which would run during the review (D13)', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('codex');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'First.' });
+      await h.startTurn(h.codex, 'chat');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Then this, queued.' });
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-1', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } });
+      expect(h.card()).toMatchObject({ state: 'queued', waitingFor: 'turn' });
+      // The running turn ends; the queued one starts next, and the review keeps waiting.
+      await h.finishTurn(h.codex, 'chat');
+      await h.startTurn(h.codex, 'chat');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(h.codex.forks).toHaveLength(0);
+      expect(h.card()?.state).toBe('queued');
+      await h.finishTurn(h.codex, 'chat');
+      await until(() => h.codex.forks.length === 1, 'the fork once the queue drained');
+      expect(h.cards().map((entry) => entry.state)).toEqual(['queued', 'running']);
+    } finally {
+      await dispose(h);
+    }
+  });
+
   it('asks once more with the enforced format when the JSON text does not read as findings', async () => {
     const h = await harness();
     try {

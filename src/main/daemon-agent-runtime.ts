@@ -57,7 +57,7 @@ import type { ConversationFolderResolver } from './conversation-roots';
 import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
 import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
-import { readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
+import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -1773,10 +1773,12 @@ export class DaemonAgentRuntime {
       if (!agent.providerSessionId) {
         return commandError('invalid-state', 'This AI has not started in this conversation yet. Send it a message first, or review with another AI.');
       }
+      // D13, same AI: it also waits for the turns queued in the conversation.
+      const queued = conversationBusy(snapshot, session.id);
       return {
         ok: true,
-        commit: { mutations: this.transcriptMutations([card(ref, waitTurnId ? 'queued' : 'running')]) },
-        afterCommit: () => reviews.begin(job(ref)),
+        commit: { mutations: this.transcriptMutations([card(ref, queued ? 'queued' : 'running')]) },
+        afterCommit: () => reviews.begin({ ...job(ref), waitForQueue: true, ...(queued ? { queued: true as const } : {}) }),
       };
     }
 
@@ -1818,7 +1820,7 @@ export class DaemonAgentRuntime {
         } },
         ...this.transcriptMutations([card(childRef, waitTurnId ? 'queued' : 'running')]),
       ] },
-      afterCommit: () => reviews.begin({ ...job(childRef), child: { sessionId: childId, turnId } }),
+      afterCommit: () => reviews.begin({ ...job(childRef), child: { sessionId: childId, turnId }, ...(waitTurnId ? { queued: true as const } : {}) }),
     };
   }
 

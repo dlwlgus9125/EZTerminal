@@ -64,6 +64,21 @@ export interface ReviewJobRecord {
 export interface ReviewJobStart extends ReviewJobRecord {
   /** The conversation's turn running at the start; the review begins once it ends (D13). */
   readonly waitTurnId?: string;
+  /**
+   * Same AI (D13): the review also waits while the conversation has turns queued, which the queue would
+   * start during the review.
+   */
+  readonly waitForQueue?: true;
+  /** The command wrote the card as queued (waiting for the conversation's turn). */
+  readonly queued?: true;
+}
+
+/** The conversation runs a turn or has turns queued to run. */
+export function conversationBusy(snapshot: Pick<DaemonSnapshot, 'agents' | 'turns'>, sessionId: string): boolean {
+  const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+  const current = agent?.currentTurnId ? snapshot.turns.find((turn) => turn.id === agent.currentTurnId) : undefined;
+  return Boolean(current && ACTIVE_TURN_STATES.has(current.state))
+    || snapshot.turns.some((turn) => turn.sessionId === sessionId && turn.state === 'queued');
 }
 
 /** One card row: the review as of now. Its text reads on its own for clients without cards. */
@@ -229,6 +244,7 @@ interface Job {
   /** Waiting for the reviewed turn, reading the change, reviewer turn handed over (child), finished. */
   phase: 'waiting' | 'preparing' | 'prompted' | 'done';
   readonly waitTurnId?: string;
+  readonly waitForQueue: boolean;
   readonly abort: AbortController;
   timedOut: boolean;
   timer?: ReturnType<typeof setTimeout>;
@@ -358,14 +374,15 @@ export class ReviewCoordinator implements DaemonReviewHost {
 
   begin(start: ReviewJobStart): void {
     if (this.disposed || this.jobs.has(start.reviewId)) return;
-    const { waitTurnId, ...record } = start;
+    const { waitTurnId, waitForQueue, queued, ...record } = start;
     const job: Job = {
       record,
       phase: 'waiting',
       ...(waitTurnId ? { waitTurnId } : {}),
+      waitForQueue: waitForQueue === true,
       abort: new AbortController(),
       timedOut: false,
-      shown: waitTurnId ? 'queued:turn' : 'running',
+      shown: queued ? 'queued:turn' : 'running',
       step: 0,
     };
     this.jobs.set(record.reviewId, job);
@@ -400,6 +417,8 @@ export class ReviewCoordinator implements DaemonReviewHost {
     if (job.phase === 'waiting') {
       const turn = job.waitTurnId ? snapshot.turns.find((entry) => entry.id === job.waitTurnId) : undefined;
       if (turn && !TERMINAL_TURN_STATES.has(turn.state)) return;
+      // Same AI: the turns queued behind it would run (and change files) during the review.
+      if (job.waitForQueue && conversationBusy(snapshot, job.record.sessionId)) return;
       job.phase = 'preparing';
       void this.run(job).catch(async (error: unknown) => {
         this.report(`review ${job.record.reviewId}`, error);
