@@ -1107,24 +1107,19 @@ function claudeReviewerOptions(): Partial<Options> {
 }
 
 /**
- * What a same-AI review fork changes from the conversation's own request (`review-loop-v1`). `json-text`:
- * only the tool catalog narrows to Read/Grep/Glob (no shell, no writes) and nothing may ask, which keeps
- * the conversation's prompt cache (fork-cache probe F2, 2026-10-29); the prompt asks for the JSON.
- * `enforced`: the findings schema as `outputFormat` as well (probe a9, fixture claude-review-fork), which
- * costs the cache; the host's one retry when JSON text does not read as findings.
+ * What a same-AI review fork changes from the conversation's own request (`review-loop-v1`): the tool
+ * catalog narrows to Read/Grep/Glob (no shell, no writes, no subagents), nothing may ask, and no MCP
+ * server loads (`strictMcpConfig` + no servers: the account's, the project's and plugins' MCP tools stay
+ * out). That keeps the conversation's prompt cache (fork-cache probe F4, 2026-10-29: ~88k read, ~600
+ * written) and the prompt asks for the JSON (`json-text`). `enforced` adds the findings schema as
+ * `outputFormat` (probe a9, fixture claude-review-fork), which costs the cache: the host's one retry when
+ * JSON text does not read as findings.
  */
 function claudeReviewForkOptions(answerFormat: 'json-text' | 'enforced'): Partial<Options> {
-  switch (answerFormat) {
-    case 'json-text':
-      return { tools: [...CLAUDE_REVIEW_TOOLS], permissionPrompts: 'none' };
-    case 'enforced':
-      return {
-        tools: [...CLAUDE_REVIEW_TOOLS],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
-        permissionPrompts: 'none',
-        outputFormat: { type: 'json_schema', schema: REVIEW_FINDINGS_JSON_SCHEMA as unknown as Record<string, unknown> },
-      };
-  }
+  const readOnly: Partial<Options> = { tools: [...CLAUDE_REVIEW_TOOLS], permissionPrompts: 'none', strictMcpConfig: true, mcpServers: {} };
+  return answerFormat === 'enforced'
+    ? { ...readOnly, outputFormat: { type: 'json_schema', schema: REVIEW_FINDINGS_JSON_SCHEMA as unknown as Record<string, unknown> } }
+    : readOnly;
 }
 
 function orchestrationMcpServers(

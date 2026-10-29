@@ -1918,6 +1918,22 @@ describe('Claude side questions (/btw)', () => {
   });
 });
 
+describe('Claude reviewer conversation (review loop)', () => {
+  it('runs read-only with no MCP server at all, even when the host would give it orchestration tools', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({
+      ...context, permissionPreset: 'plan', managedExecution: true, readOnlyReviewer: true,
+      orchestration: { endpoint: 'http://127.0.0.1:4321/mcp', bearerToken: 'token-1' },
+    });
+    expect(fixture.query.inputOptions).toMatchObject({
+      permissionMode: 'default', allowDangerouslySkipPermissions: false, tools: ['Read', 'Grep', 'Glob'], permissionPrompts: 'none',
+      strictMcpConfig: true, mcpServers: {}, outputFormat: { type: 'json_schema' },
+    });
+    expect(fixture.query.inputOptions.disallowedTools).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task']));
+    await fixture.adapter.dispose();
+  });
+});
+
 describe('Claude review fork (review loop)', () => {
   const fork = { sessionId: context.sessionId, providerSessionId, workspaceRoot: context.workspaceRoot, prompt: 'Review the change.' } as const;
   const flush = async (fixture: ReturnType<typeof makeAdapter>, count: number): Promise<FakeClaudeQuery> => {
@@ -1937,9 +1953,11 @@ describe('Claude review fork (review loop)', () => {
       resume: providerSessionId, forkSession: true, persistSession: false, permissionMode: 'default',
       additionalDirectories: [path.resolve('shared-folder')], model: 'claude-fable-5', effort: 'high',
       tools: ['Read', 'Grep', 'Glob'], permissionPrompts: 'none', settingSources: ['user', 'project', 'local'],
+      // No MCP server loads: the cache stays (probe F4) and no MCP tool can run.
+      strictMcpConfig: true, mcpServers: {},
     });
     // The cache-preserving shape changes nothing else of the conversation's request.
-    for (const key of ['outputFormat', 'disallowedTools', 'strictMcpConfig', 'mcpServers', 'sessionId', 'canUseTool'] as const) expect(query.inputOptions[key], key).toBeUndefined();
+    for (const key of ['outputFormat', 'disallowedTools', 'sessionId', 'canUseTool'] as const) expect(query.inputOptions[key], key).toBeUndefined();
     query.emit({ type: 'result', subtype: 'success', is_error: false, result: '{"findings":[],"overall":"Fine."}', uuid: 'fork-result' });
     await expect(pending).resolves.toEqual({ text: '{"findings":[],"overall":"Fine."}' });
     expect(fixture.events.slice(before)).toEqual([]);
@@ -1955,7 +1973,7 @@ describe('Claude review fork (review loop)', () => {
     const query = await flush(fixture, 1);
     expect(query.inputOptions).toMatchObject({
       resume: providerSessionId, forkSession: true, persistSession: false, additionalDirectories: [path.resolve('elsewhere')], model: 'sonnet', effort: 'low',
-      tools: ['Read', 'Grep', 'Glob'], disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'], permissionPrompts: 'none',
+      tools: ['Read', 'Grep', 'Glob'], permissionPrompts: 'none', strictMcpConfig: true, mcpServers: {},
       outputFormat: { type: 'json_schema' },
     });
     query.emit({ type: 'result', subtype: 'success', is_error: false, result: 'done', structured_output: { findings: [], overall: 'Fine.' }, uuid: 'fork-result' });
