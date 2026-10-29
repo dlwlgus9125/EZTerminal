@@ -5,7 +5,8 @@
  * all of it? Each fork case changes one setting; every step records its FIRST model call.
  *
  *   node scripts/probe-review-fork-cache.mjs --scratch <dir> [--repeat 1] [--only claude,codex]
- *        [--claude-lane product|isolated] [--claude-executable <path>] [--codex-script <codex.js>]
+ *        [--forks F0,F1,F2,F3,F4,F5] [--claude-lane product|isolated]
+ *        [--claude-executable <path>] [--codex-script <codex.js>]
  *
  * Claude (installed CLI; options mirror startSession in src/main/claude-provider-adapter.ts):
  *   C   live conversation: seed turn (900-line reference list), then a short warm turn.
@@ -14,6 +15,11 @@
  *   F1  F0 + outputFormat.   F2  F0 with tools ['Read', 'Grep', 'Glob'].
  *   F3  the review design: tools ['Read', 'Grep', 'Glob'] + outputFormat + permissionPrompts 'none'
  *       (+ disallowedTools Edit/Write/MultiEdit/NotebookEdit, as in the review-fork fixture).
+ *   F4  tools ['Read', 'Grep', 'Glob'] + permissionPrompts 'none' + strictMcpConfig + mcpServers {} (no MCP).
+ *   F5  F4 with MCP kept but disallowedTools ['mcp__*'].
+ *   `--forks` picks a subset; odd passes run them in listed order, even passes in reverse, so every
+ *   pair runs in both orders over two passes. After each fork's turn, MCP server and in-context MCP
+ *   tool counts come from mcpServerStatus() and getContextUsage({ detail: 'summary' }).
  *   Forks run while C stays open. Numbers come from Claude Code's OpenTelemetry api_request
  *   events (one local OTLP/HTTP JSON endpoint path per process, so attribution needs no time
  *   windows across processes); the SDK's per-call assistant usage is kept as a cross-check.
@@ -81,6 +87,14 @@ const CLAUDE_FORKS = {
       outputFormat: { type: 'json_schema', schema: tinySchema(`answer_f3_p${pass}`) },
     }),
   },
+  F4: {
+    settings: "tools ['Read','Grep','Glob'] + permissionPrompts 'none' + strictMcpConfig + mcpServers {} (no MCP)",
+    options: () => ({ tools: [...REVIEW_TOOLS], permissionPrompts: 'none', strictMcpConfig: true, mcpServers: {} }),
+  },
+  F5: {
+    settings: "tools ['Read','Grep','Glob'] + permissionPrompts 'none' + disallowedTools ['mcp__*'] (MCP kept)",
+    options: () => ({ tools: [...REVIEW_TOOLS], permissionPrompts: 'none', disallowedTools: ['mcp__*'] }),
+  },
 };
 const CODEX_FORKS = {
   G0: { settings: "sandbox 'read-only' + approvalPolicy 'never' (btw shape)", fork: { sandbox: 'read-only', approvalPolicy: 'never' }, schema: null },
@@ -102,7 +116,7 @@ const DEFINITIONS = {
 };
 
 function parseArguments(argv) {
-  const options = { repeat: 1, only: ['claude', 'codex'], claudeLane: 'product' };
+  const options = { repeat: 1, only: ['claude', 'codex'], claudeLane: 'product', forks: Object.keys(CLAUDE_FORKS) };
   for (let index = 0; index < argv.length; index += 1) {
     const [flag, inline] = argv[index].split('=', 2);
     const value = inline ?? argv[++index];
@@ -110,6 +124,7 @@ function parseArguments(argv) {
     else if (flag === '--repeat') options.repeat = Number(value);
     else if (flag === '--only') options.only = value.split(',').map((entry) => entry.trim()).filter(Boolean);
     else if (flag === '--claude-lane') options.claudeLane = value;
+    else if (flag === '--forks') options.forks = value.split(',').map((entry) => entry.trim()).filter(Boolean);
     else if (flag === '--claude-executable') options.claudeExecutable = path.resolve(value);
     else if (flag === '--codex-script') options.codexScript = path.resolve(value);
     else throw new Error(`Unknown argument: ${argv[index]}`);
@@ -117,6 +132,8 @@ function parseArguments(argv) {
   if (!options.scratch) throw new Error('--scratch <dir> is required; the providers only ever run below it.');
   if (!Number.isInteger(options.repeat) || options.repeat < 1) throw new Error('--repeat must be a positive integer.');
   if (!['product', 'isolated'].includes(options.claudeLane)) throw new Error('--claude-lane is product or isolated.');
+  const unknownForks = options.forks.filter((name) => !CLAUDE_FORKS[name]);
+  if (!options.forks.length || unknownForks.length) throw new Error(`--forks takes ${Object.keys(CLAUDE_FORKS).join(',')}.`);
   return options;
 }
 
@@ -332,6 +349,27 @@ function toolDiff(tools, reference) {
   return { removed: reference.filter((name) => !mine.has(name)), added: tools.filter((name) => !theirs.has(name)) };
 }
 
+/** Counts only: connected MCP servers, the tools they offer, and the MCP tools in the session's context. */
+async function mcpFacts(session) {
+  const facts = {};
+  try {
+    const servers = await withTimeout(session.mcpServerStatus(), 15_000, 'mcpServerStatus');
+    const connected = servers.filter((server) => server.status === 'connected');
+    facts.serversConnected = connected.length;
+    facts.serversConfigured = servers.length;
+    facts.serverTools = connected.reduce((sum, server) => sum + (server.tools?.length ?? 0), 0);
+  } catch (error) {
+    facts.statusError = errorText(error);
+  }
+  try {
+    const usage = await withTimeout(session.getContextUsage({ detail: 'summary' }), 15_000, 'getContextUsage');
+    facts.toolsInContext = usage?.mcpTools?.length ?? null;
+  } catch (error) {
+    facts.contextError = errorText(error);
+  }
+  return facts;
+}
+
 const turnFacts = (turn) => Object.fromEntries(Object.entries(turn).filter(([key]) => key !== 'startedAt' && key !== 'endedAt'));
 
 async function claudePass(context, pass, order) {
@@ -397,6 +435,7 @@ async function claudePass(context, pass, order) {
         const turn = await fork.turn(FORK_QUESTION, conversationId, FORK_DEADLINE_MS);
         Object.assign(step, turnFacts(turn));
         if (!turn.finished) step.error = turn.streamError ?? 'fork turn did not finish';
+        step.mcp = await mcpFacts(fork.session);
         await delay(3_500); // The fork's telemetry exports every second; closing may not flush.
       } catch (error) {
         step.error = errorText(error);
@@ -412,6 +451,7 @@ async function claudePass(context, pass, order) {
       report.steps[name] = step;
       await delay(1_500);
     }
+    report.steps.seed.mcp = await mcpFacts(conversation.session);
   } catch (error) {
     report.error = errorText(error);
     log(`claude p${pass} error: ${report.error}`);
@@ -473,6 +513,7 @@ function attributeClaude(entry, events) {
       ratio: ratio(step.first?.cacheRead, report.conversationCache), firstPickedBy: step.firstPickedBy, requests: step.requests.length,
       sdkFirstCall: sdk, sdkRatio: ratio(sdk?.cacheRead, report.conversationCache),
       toolCount: step.toolCount ?? null, sameToolsAsC: step.sameToolsAsC ?? null, hasStructuredOutput: step.hasStructuredOutput ?? null,
+      mcpServersConnected: step.mcp?.serversConnected ?? null, mcpToolsInContext: step.mcp?.toolsInContext ?? null,
     };
   });
 }
@@ -489,7 +530,8 @@ async function runClaude(options, facts) {
   const entries = [];
   try {
     for (let pass = 1; pass <= options.repeat; pass += 1) {
-      entries.push(await claudePass({ query, executable, workspace, telemetry, options, facts }, pass, rotate(Object.keys(CLAUDE_FORKS), pass - 1)));
+      const order = pass % 2 === 1 ? [...options.forks] : [...options.forks].reverse();
+      entries.push(await claudePass({ query, executable, workspace, telemetry, options, facts }, pass, order));
     }
   } finally {
     await delay(3_000);
