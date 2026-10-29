@@ -1738,6 +1738,10 @@ export class DaemonAgentRuntime {
       target = { kind: 'base-branch', baseRef };
     }
     const { reviewer } = payload;
+    // The conversation's own AI reviews in a fork of it; a conversation of its own is for another AI.
+    if (reviewer.kind === 'other' && reviewer.providerId === agent.providerId) {
+      return commandError('invalid-command', 'This conversation’s own AI reviews in a read-only fork of it (reviewer kind self).');
+    }
     const providerId = reviewer.kind === 'other' ? reviewer.providerId : agent.providerId;
     const support = reviews.support(snapshot)[providerId];
     const focus = payload.focus?.trim();

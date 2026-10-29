@@ -320,6 +320,10 @@ export class ReviewCoordinator implements DaemonReviewHost {
    */
   async start(): Promise<void> {
     if (this.disposed || this.unsubscribe) return;
+    // Only reviewer conversations that exist now are leftovers; one a review starts meanwhile is live.
+    const leftovers = this.options.getSnapshot().sessions
+      .filter((session) => session.id.startsWith(REVIEWER_SESSION_PREFIX) && !session.archivedAt)
+      .map((session) => session.id);
     this.unsubscribe = this.options.onEvent((event) => {
       if (event.kind === 'entity.upserted' || event.kind === 'entity.archived' || event.kind === 'transcript.appended') this.scheduleAdvance();
     });
@@ -338,9 +342,7 @@ export class ReviewCoordinator implements DaemonReviewHost {
     }
     await this.saveJobs();
     const live = new Set([...this.jobs.values()].map((job) => job.record.child?.sessionId));
-    const orphans = this.options.getSnapshot().sessions
-      .filter((session) => session.id.startsWith(REVIEWER_SESSION_PREFIX) && !session.archivedAt && !live.has(session.id));
-    for (const orphan of orphans) await this.endReviewer(orphan.id);
+    for (const sessionId of leftovers) if (!live.has(sessionId)) await this.endReviewer(sessionId);
   }
 
   /** Stops what runs now; the store keeps the live reviews, so the next start marks them interrupted. */

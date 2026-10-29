@@ -593,6 +593,10 @@ describe('review.start: a reviewer conversation of its own', () => {
       expect((await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-3', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } })).ok).toBe(true);
       expect(await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-3', reviewer: { kind: 'self' }, target: { kind: 'uncommitted' } }))
         .toMatchObject({ ok: false, error: { message: 'This review already exists.' } });
+      // The conversation's own AI reviews in a fork; a conversation of its own is for another AI (D14 was dropped).
+      expect(await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-4', reviewer: { kind: 'other', providerId: 'codex', reviewerSessionId: 'review-codex-4' }, target: { kind: 'uncommitted' } }))
+        .toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      expect(h.router.getSnapshot().sessions.some((session) => session.id === 'review-codex-4')).toBe(false);
     } finally {
       await dispose(h);
     }
