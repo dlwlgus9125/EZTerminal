@@ -20,7 +20,8 @@
  *   BAL  B with alwaysLoad: true (the tool in the prompt from turn 1).
  *   D    approvals: fresh sessions (no seed) told to call suggest_task once: default mode, plan mode,
  *        default + the server's per-tool permission_policy 'always_allow' (bare and full tool name),
- *        default + allowedTools.
+ *        default + allowedTools, and (meta) default + allowedTools with the tool's own
+ *        _meta['anthropic/alwaysLoad'] instead of the server-level alwaysLoad. --variants picks D variants.
  * canUseTool plays the person: edits inside the repo and suggest_task are allowed (and recorded), the
  * shell and ExitPlanMode are denied. Token facts come from Claude Code's OpenTelemetry api_request
  * events (one OTLP/HTTP JSON endpoint path per session, attributed by time window and query_source).
@@ -55,6 +56,10 @@ const D_VARIANTS = {
   policy: { settings: "default + server tools [{ name: 'suggest_task', permission_policy: 'always_allow' }]", permissionMode: 'default', policy: SUGGEST_TOOL },
   policyFull: { settings: `default + server tools [{ name: '${SUGGEST_FULL_NAME}', permission_policy: 'always_allow' }]`, permissionMode: 'default', policy: SUGGEST_FULL_NAME },
   allowedTools: { settings: `default + allowedTools ['${SUGGEST_FULL_NAME}']`, permissionMode: 'default', allowedTools: true },
+  meta: {
+    settings: `default + allowedTools ['${SUGGEST_FULL_NAME}'] + the tool's own _meta['anthropic/alwaysLoad'] (server alwaysLoad off)`,
+    permissionMode: 'default', allowedTools: true, alwaysLoadMeta: true,
+  },
 };
 
 const DEFINITIONS = {
@@ -77,11 +82,13 @@ function parseArguments(argv) {
     else if (flag === '--post-wait-ms') options.postWaitMs = Number(value);
     else if (flag === '--claude-executable') options.claudeExecutable = path.resolve(value);
     else if (flag === '--out') options.out = path.resolve(value);
+    else if (flag === '--variants') options.variants = value.split(',').map((entry) => entry.trim()).filter(Boolean);
     else throw new Error(`Unknown argument: ${argv[index]}`);
   }
   if (!options.scratch) throw new Error('--scratch <dir> is required; the provider only ever runs below it.');
   if (!Number.isInteger(options.repeat) || options.repeat < 1) throw new Error('--repeat must be a positive integer.');
   if (options.only.some((step) => !STEPS.includes(step))) throw new Error(`--only takes ${STEPS.join(',')}.`);
+  if (options.variants?.some((name) => !(name in D_VARIANTS))) throw new Error(`--variants takes ${Object.keys(D_VARIANTS).join(',')}.`);
   return options;
 }
 
@@ -505,7 +512,7 @@ async function runDirectCall(context, pass, variantName) {
   await createReviewRepo(repo);
   const sessionId = randomUUID();
   const approvals = [];
-  const endpoint = suggestions.endpoint(tag);
+  const endpoint = suggestions.endpoint(tag, { alwaysLoadMeta: Boolean(variant.alwaysLoadMeta) });
   const sessionOptions = {
     cwd: repo,
     pathToClaudeCodeExecutable: executable,
@@ -536,6 +543,7 @@ async function runDirectCall(context, pass, variantName) {
   try {
     const initialization = await withTimeout(claude.session.initializationResult(), 120_000, 'initialization');
     step.init = { ...claude.state.init, version: claude.state.init?.version ?? initialization?.claude_code_version ?? null };
+    step.toolFactsAtStart = await suggestToolFacts(claude.session);
     const turn = await claude.turn(`${tag}`, PROMPTS.directCall, { postWaitMs: 1_000 });
     turn.name = 'direct';
     step.turns.push(turn);
@@ -606,6 +614,7 @@ function passSummary(pass) {
       variant: step.variant, error: step.error ?? null, approvalRequested: step.suggestApprovalRequests, toolRan: step.suggestCallsReceived,
       result: step.turns[0]?.result?.subtype ?? null, permissionDenials: step.turns[0]?.result?.permissionDenials ?? null,
       toolSequence: (step.turns[0]?.toolUses ?? []).map((use) => use.name),
+      suggestToolAtStart: step.toolFactsAtStart?.suggestTool ?? null,
       suggestTool: step.toolFacts?.suggestTool ?? null,
     }));
   }
@@ -657,7 +666,7 @@ async function main() {
         await settle();
       }
       if (options.only.includes('D')) {
-        const names = Object.keys(D_VARIANTS);
+        const names = options.variants ?? Object.keys(D_VARIANTS);
         for (const variant of pass % 2 === 1 ? names : [...names].reverse()) {
           entry.direct.push(await runDirectCall(context, pass, variant));
           await settle();

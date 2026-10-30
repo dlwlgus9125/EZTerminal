@@ -179,11 +179,13 @@ const SUGGEST_INPUT_SCHEMA = {
 };
 const SUGGEST_ANNOTATIONS = { title: 'Suggest a task', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
-const toolDefinition = (annotated) => ({
+/** `alwaysLoadMeta`: Claude Code's per-tool `_meta['anthropic/alwaysLoad']` (keeps this one tool out of tool search). */
+const toolDefinition = (annotated, alwaysLoadMeta = false) => ({
   name: SUGGEST_TOOL,
   description: SUGGEST_DESCRIPTION,
   inputSchema: SUGGEST_INPUT_SCHEMA,
   ...(annotated ? { annotations: SUGGEST_ANNOTATIONS } : {}),
+  ...(alwaysLoadMeta ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
 });
 
 function validSuggestion(args) {
@@ -202,7 +204,7 @@ function validSuggestion(args) {
  * bearer token; every request is kept in `requests` (tool arguments included: they are about the scratch repo).
  */
 export async function startSuggestionServer() {
-  const routes = new Map(); // label -> { token, annotated }
+  const routes = new Map(); // label -> { token, annotated, alwaysLoadMeta }
   const requests = [];
   const server = http.createServer((request, response) => {
     const send = (status, value, headers = {}) => {
@@ -256,7 +258,7 @@ export async function startSuggestionServer() {
       } else if (message.method === 'ping') {
         reply({});
       } else if (message.method === 'tools/list') {
-        reply({ tools: [toolDefinition(route.annotated)] });
+        reply({ tools: [toolDefinition(route.annotated, route.alwaysLoadMeta)] });
       } else if (message.method === 'tools/call') {
         const name = message.params?.name;
         const args = message.params?.arguments ?? {};
@@ -284,9 +286,9 @@ export async function startSuggestionServer() {
   const port = server.address().port;
   return {
     requests,
-    endpoint(label, { annotated = true } = {}) {
+    endpoint(label, { annotated = true, alwaysLoadMeta = false } = {}) {
       const token = randomBytes(24).toString('hex');
-      routes.set(label, { token, annotated });
+      routes.set(label, { token, annotated, alwaysLoadMeta });
       return { url: `http://127.0.0.1:${port}/mcp/${encodeURIComponent(label)}`, token };
     },
     /** What one endpoint saw: method counts and the suggest_task calls. */
