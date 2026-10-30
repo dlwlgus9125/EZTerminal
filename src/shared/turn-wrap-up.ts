@@ -188,6 +188,17 @@ export function suggestedTaskBranches(titles: readonly string[]): string[] {
   });
 }
 
+const SUGGESTED_TASK_SESSION_PREFIX = 'suggested-';
+
+/**
+ * The sub-conversation a task starts, from its id alone: a second press or another device reaches the same
+ * conversation and is refused as one that already exists, so a task cannot start twice.
+ */
+export const suggestedTaskChildSessionId = (taskId: string): string => `${SUGGESTED_TASK_SESSION_PREFIX}${taskId}`;
+
+/** A person started this child from a card, and may then chat in it: no AI names a child this way. */
+export const isSuggestedTaskChildSession = (sessionId: string): boolean => sessionId.startsWith(SUGGESTED_TASK_SESSION_PREFIX);
+
 /** Settings › 에이전트 › 턴 마무리. */
 export interface TurnWrapUpSettings {
   /** 다음 입력 제안, per AI. */

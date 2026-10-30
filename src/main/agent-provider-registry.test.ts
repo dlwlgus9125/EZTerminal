@@ -150,11 +150,24 @@ describe('AgentProviderRegistry', () => {
   });
 
   it('reads how a provider wraps up a turn, without launching it', () => {
-    const wrapUp = { suggestions: 'native', recapWhileBlocked: true } as const;
+    const wrapUp = { suggestions: 'native', recapWhileBlocked: true, minimumVersion: '0.152.1' } as const;
     const registry = new AgentProviderRegistry([adapter({ wrapUp }), adapter({ providerId: 'plain' })]);
-    expect(registry.wrapUpCapability('codex')).toBe(wrapUp);
-    expect(registry.wrapUpCapability('plain')).toBeUndefined();
-    expect(registry.wrapUpCapability('unknown')).toBeUndefined();
+    const snapshot = { providers: [{ id: 'codex', executableVersion: '0.152.1' }, { id: 'plain', executableVersion: '0.152.1' }] } as unknown as DaemonSnapshot;
+    expect(registry.wrapUpCapability(snapshot, 'codex')).toBe(wrapUp);
+    expect(registry.wrapUpCapability(snapshot, 'plain')).toBeUndefined();
+    expect(registry.wrapUpCapability(snapshot, 'unknown')).toBeUndefined();
+  });
+
+  it('turns wrap-up off for an executable older than the version it was measured on', () => {
+    const wrapUp = { suggestions: 'fork', recapWhileBlocked: true, minimumVersion: '0.165.0' } as const;
+    const registry = new AgentProviderRegistry([adapter({ wrapUp })]);
+    const at = (executableVersion: string) => registry.wrapUpCapability({ providers: [{ id: 'codex', executableVersion }] } as unknown as DaemonSnapshot, 'codex');
+    expect(at('0.164.9')).toBeUndefined();
+    expect(at('0.165.0')).toBe(wrapUp);
+    expect(at('0.166.0')).toBe(wrapUp);
+    // Prereleases and versions that do not parse cannot be ordered, so they stay off.
+    expect(at('0.166.0-alpha.1')).toBeUndefined();
+    expect(at('unknown')).toBeUndefined();
   });
 
   it('disposes every adapter and reports aggregate failures', async () => {

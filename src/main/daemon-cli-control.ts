@@ -388,6 +388,7 @@ export class DaemonCliControl {
     // Live /btw availability names other projects' sessions: host UI state, not for a project-scoped agent.
     delete (rest as { sideQuestionSessionIds?: unknown }).sideQuestionSessionIds;
     delete (rest as { pendingAgentSettings?: unknown }).pendingAgentSettings;
+    delete (rest as { nextPromptSuggestions?: unknown }).nextPromptSuggestions;
     const scopedUsage = agentUsage
       ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
       : {};

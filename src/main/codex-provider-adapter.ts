@@ -63,6 +63,8 @@ import { codexContextPercent, codexLimitsFromRateLimits } from './agent-usage-re
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 /** The oldest Codex known to run the review loop's read-only shapes (the version the probes and captures used). */
 export const CODEX_REVIEW_MINIMUM_VERSION = '0.165.0';
+/** Below this `additionalContext`, `developerInstructions` and the forks were never measured: wrap-up stays off. */
+export const CODEX_WRAP_UP_MINIMUM_VERSION = '0.165.0';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 /** Opening tabs and starting conversations ask Codex for the plan limits at most this often. */
@@ -938,7 +940,7 @@ function todoStatus(value: unknown): TodoItem['status'] {
 export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
   readonly reviewMinimumVersion = CODEX_REVIEW_MINIMUM_VERSION;
-  readonly wrapUp = { suggestions: 'fork', recapWhileBlocked: true } as const;
+  readonly wrapUp = { suggestions: 'fork', recapWhileBlocked: true, minimumVersion: CODEX_WRAP_UP_MINIMUM_VERSION } as const;
 
   private readonly toldThreads: CodexToldThreads;
   private readonly executable: string;

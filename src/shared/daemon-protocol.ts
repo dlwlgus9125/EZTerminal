@@ -269,6 +269,8 @@ export interface DaemonSnapshot {
   readonly pendingAgentSettings?: Readonly<Record<string, DaemonPendingAgentSettings>>;
   /** `review-loop-v1`: which AIs can review on this host now, by provider id; host memory, never stored. */
   readonly reviewSupport?: Readonly<Record<string, DaemonReviewSupport>>;
+  /** Turn wrap-up: the AI's guess of the person's next message, by session; host memory, never stored. */
+  readonly nextPromptSuggestions?: Readonly<Record<string, import('./turn-wrap-up').NextPromptSuggestion>>;
 }
 
 /** Whether one AI can review now (`review-loop-v1`). */

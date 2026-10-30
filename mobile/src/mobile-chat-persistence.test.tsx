@@ -89,6 +89,12 @@ describe('encrypted offline transcript cache', () => {
     expect((await store.load(AUTHORITY))?.transcripts).toEqual({});
   });
 
+  it('keeps no next-message guess on the phone: it lives in the host\'s memory', async () => {
+    const secure = new SecureMemory(); const store = new MobileOfflineChatCacheStore(secure);
+    await store.saveSnapshot(AUTHORITY, { ...snapshot, nextPromptSuggestions: { chat: { turnId: 'turn-1', text: 'Run the tests.' } } });
+    expect([...secure.values.values()].some((raw) => raw.includes('Run the tests.'))).toBe(false);
+  });
+
   it('keeps no usage on the phone, even from a cache an older build wrote', async () => {
     const secure = new SecureMemory(); const store = new MobileOfflineChatCacheStore(secure);
     const agentUsage = { chat: { contextPercent: 3, contextObservedAt: 1 } };

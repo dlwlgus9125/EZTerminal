@@ -17,6 +17,7 @@ import {
   type AgentProviderEvent,
   type AgentProviderAdapter,
 } from './agent-provider-adapter';
+import { compareSemanticVersions, semanticVersion } from './provider-version';
 
 export type {
   ProviderInspection,
@@ -254,9 +255,18 @@ export class AgentProviderRegistry {
     return { minimumVersion: adapter.reviewMinimumVersion, fork: typeof adapter.reviewFork === 'function' };
   }
 
-  /** How this provider wraps up a turn (`turn-wrap-up-v1`); undefined when it does not (no launch side effects). */
-  wrapUpCapability(providerId: string): AgentProviderAdapter['wrapUp'] {
-    return this.adapters.get(providerId)?.wrapUp;
+  /**
+   * How this provider wraps up a turn (`turn-wrap-up-v1`), with no launch side effects. Undefined when it does
+   * not, or when the reviewed executable is older than the version wrap-up was measured on.
+   */
+  wrapUpCapability(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): AgentProviderAdapter['wrapUp'] {
+    const capability = this.adapters.get(providerId)?.wrapUp;
+    const provider = snapshot.providers.find((candidate) => candidate.id === providerId);
+    if (!capability || !provider) return undefined;
+    const version = semanticVersion(provider.executableVersion);
+    const minimum = semanticVersion(capability.minimumVersion);
+    if (!version || !minimum || version.prerelease !== undefined || compareSemanticVersions(version, minimum) < 0) return undefined;
+    return capability;
   }
 
   async listModels(

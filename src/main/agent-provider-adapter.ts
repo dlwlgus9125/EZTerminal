@@ -296,9 +296,11 @@ export interface AgentProviderAdapter {
   /**
    * `turn-wrap-up-v1`. `suggestions`: `native` emits `prompt-suggestion`, `fork` answers `predictNextPrompt`.
    * `recapWhileBlocked`: a side question works while a turn is stopped on the person (probe P5).
+   * `minimumVersion`: the version this was measured on; wrap-up stays off below it, because a request an older
+   * provider refuses could fail the person's message. Read it through `AgentProviderRegistry.wrapUpCapability`.
    * Absent: this provider does not wrap up turns.
    */
-  readonly wrapUp?: { readonly suggestions: 'native' | 'fork'; readonly recapWhileBlocked: boolean };
+  readonly wrapUp?: { readonly suggestions: 'native' | 'fork'; readonly recapWhileBlocked: boolean; readonly minimumVersion: string };
   /** Live switch for `native` suggestions; a session not launched eligible ignores it. Never rejects. */
   setPromptSuggestions?(sessionId: string, mode: PromptSuggestionMode): Promise<void>;
   /**

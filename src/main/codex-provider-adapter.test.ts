@@ -2779,7 +2779,7 @@ describe('Codex side questions (/btw)', () => {
 
   it('declares how it wraps up: a fork for suggestions, and recaps while a turn is stopped', async () => {
     const { adapter } = await sideQuestionFixture();
-    expect(adapter.wrapUp).toEqual({ suggestions: 'fork', recapWhileBlocked: true });
+    expect(adapter.wrapUp).toEqual({ suggestions: 'fork', recapWhileBlocked: true, minimumVersion: '0.165.0' });
     await adapter.dispose();
   });
 });

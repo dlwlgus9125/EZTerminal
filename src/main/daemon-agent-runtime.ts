@@ -58,6 +58,7 @@ import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
 import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
+import type { DaemonWrapUpHost } from './turn-wrap-up-coordinator';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -89,6 +90,8 @@ export interface DaemonAgentRuntimeOptions {
   readonly preparedSessionSettings?: (sessionId: string) => (Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled' | 'readOnlyReviewer'> & { readonly permissionPreset?: DaemonAgent['permissionPreset'] }) | undefined;
   /** `review-loop-v1`: runs the reviews `review.*` commands start; without it they are refused. */
   readonly reviews?: DaemonReviewHost;
+  /** Turn wrap-up (`turn-wrap-up-v1`): what the host does beyond the turn itself; without it a turn ends as it always did. */
+  readonly wrapUp?: DaemonWrapUpHost;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -2751,6 +2754,11 @@ export class DaemonAgentRuntime {
           ? { entityType: 'agent', entityId: event.sessionId }
           : { entityType: 'provider', entityId: providerId },
       }] }));
+      return;
+    }
+    if (event.kind === 'prompt-suggestion') {
+      // In the provider's event order, so the turn it follows has finished here too.
+      this.options.wrapUp?.promptSuggestion(providerId, event);
       return;
     }
     if (event.kind === 'transcript') {

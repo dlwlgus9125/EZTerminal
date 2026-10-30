@@ -136,6 +136,7 @@ import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { ReviewCoordinator } from './review-coordinator';
+import { TurnWrapUpCoordinator, wrapUpAllowed } from './turn-wrap-up-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
 import { ConversationViewers, desktopViewingClient, installConversationViewingIpc } from './conversation-viewers';
 import { TurnWrapUpToldThreads } from './turn-wrap-up-told-threads';
@@ -1078,8 +1079,24 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
+  const turnWrapUpCoordinator = new TurnWrapUpCoordinator({
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    providers: providerRegistry,
+    settings: () => settingsRef.authority?.turnWrapUp(),
+    allowed: (sessionId, turn) => wrapUpAllowed(daemonRouterRef.current!.getSnapshot(), sessionId, {
+      prepared: preparedHostSession(sessionId),
+      ...(turn ? { turnCommand: daemonStore.findCommand(turn.commandId)?.command ?? null } : {}),
+    }),
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonAgentRuntime = new DaemonAgentRuntime({
     reviews: reviewCoordinator,
+    wrapUp: turnWrapUpCoordinator,
     providers: providerRegistry,
     agentUsageStore: {
       load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
@@ -1152,6 +1169,7 @@ app.on('ready', async () => {
     sideQuestionSessions: (snapshot) => daemonAgentRuntime.sideQuestionSessionIds(snapshot),
     pendingAgentSettings: (snapshot) => daemonAgentRuntime.pendingAgentSettings(snapshot),
     reviewSupport: (snapshot) => reviewCoordinator.support(snapshot),
+    nextPromptSuggestions: (snapshot) => turnWrapUpCoordinator.nextPromptSuggestions(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -1217,6 +1235,7 @@ app.on('ready', async () => {
     beginAgentShutdown: () => {
       daemonAgentRuntime.beginShutdown();
       reviewCoordinator.dispose();
+      turnWrapUpCoordinator.dispose();
     },
     stopAutomation: async () => {
       // The repeat schedule stops first: a launch it is sending still reaches a running execution side.
@@ -1439,6 +1458,7 @@ app.on('ready', async () => {
       return resolveUiLocale((await layoutStore.getUiPreferences()).locale, app.getPreferredSystemLanguages()) === 'ko';
     },
     onChanged: (event) => {
+      if (event.domains.includes('turn-wrap-up')) turnWrapUpCoordinator.settingsChanged();
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
         win.webContents.send('settings:changed', event);
@@ -2343,6 +2363,8 @@ app.on('ready', async () => {
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await reviewCoordinator.start();
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
+      await turnWrapUpCoordinator.start();
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await daemonAutomationRuntime.start();
       if (daemonAuthorityShutdown.isStopping()) {
         await daemonAutomationRuntime.dispose();
@@ -2355,6 +2377,7 @@ app.on('ready', async () => {
       // listener, provider attachment, or automation dispatcher.
       daemonAgentRuntime.beginShutdown();
       reviewCoordinator.dispose();
+      turnWrapUpCoordinator.dispose();
       await Promise.allSettled([
         daemonAutomationRuntime.dispose(),
         daemonAgentRuntime.dispose('process-loss'),

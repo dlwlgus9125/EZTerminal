@@ -138,6 +138,13 @@ describe('DaemonCliControl', () => {
     expect(scoped).not.toHaveProperty('sideQuestionSessionIds');
   });
 
+  it('keeps the next-message guesses out of a project-scoped snapshot', async () => {
+    const { control, setSnapshot } = fixture();
+    setSnapshot({ ...snapshot(), nextPromptSuggestions: { 'session-elsewhere': { turnId: 'turn-1', text: 'Run the tests.' } } });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped).not.toHaveProperty('nextPromptSuggestions');
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

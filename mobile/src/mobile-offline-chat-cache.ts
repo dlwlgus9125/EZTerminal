@@ -13,9 +13,9 @@ export interface MobileOfflineChatCache {
 }
 const MAX_BYTES=8*1024*1024;
 const queues=new Map<string,Promise<void>>();
-/** Usage and live /btw availability are shown only while connected: the phone keeps no copy. */
-const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds']);
-const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined && snapshot.providerUsage === undefined && snapshot.sideQuestionSessionIds === undefined
+/** Usage, live /btw availability and next-message guesses are shown only while connected: the phone keeps no copy. */
+const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds','nextPromptSuggestions']);
+const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined && snapshot.providerUsage === undefined && snapshot.sideQuestionSessionIds === undefined && snapshot.nextPromptSuggestions === undefined
   ? snapshot
   : Object.fromEntries(Object.entries(snapshot).filter(([key]) => !USAGE_KEYS.has(key))) as unknown as DaemonSnapshot;
 const keyFor=(authority:string):string => {

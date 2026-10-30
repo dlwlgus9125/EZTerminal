@@ -62,6 +62,8 @@ export interface DaemonCommandRouterOptions {
   readonly pendingAgentSettings?: (snapshot: DaemonSnapshot) => DaemonSnapshot['pendingAgentSettings'];
   /** Which AIs can review now (ReviewCoordinator.support); `review-loop-v1`. */
   readonly reviewSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['reviewSupport'];
+  /** The AI's guess of the person's next message, per session (TurnWrapUpCoordinator.nextPromptSuggestions). */
+  readonly nextPromptSuggestions?: (snapshot: DaemonSnapshot) => DaemonSnapshot['nextPromptSuggestions'];
 }
 
 function commandError(
@@ -182,6 +184,7 @@ export class DaemonCommandRouter {
   private readonly attention: DaemonCommandRouterOptions['attention'];
   private readonly sideQuestionSessions: DaemonCommandRouterOptions['sideQuestionSessions'];
   private readonly reviewSupport: DaemonCommandRouterOptions['reviewSupport'];
+  private readonly nextPromptSuggestions: DaemonCommandRouterOptions['nextPromptSuggestions'];
   private acceptingCommands = true;
 
   constructor(
@@ -195,6 +198,7 @@ export class DaemonCommandRouter {
     this.sideQuestionSessions = options.sideQuestionSessions;
     this.pendingAgentSettings = options.pendingAgentSettings;
     this.reviewSupport = options.reviewSupport;
+    this.nextPromptSuggestions = options.nextPromptSuggestions;
   }
 
   getSnapshot(): DaemonSnapshot {
@@ -204,6 +208,7 @@ export class DaemonCommandRouter {
     const sideQuestionSessionIds = this.sideQuestionSessions?.(snapshot);
     const pendingAgentSettings = this.pendingAgentSettings?.(snapshot);
     const reviewSupport = this.reviewSupport?.(snapshot);
+    const nextPromptSuggestions = this.nextPromptSuggestions?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
@@ -211,6 +216,7 @@ export class DaemonCommandRouter {
       ...(sideQuestionSessionIds?.length ? { sideQuestionSessionIds } : {}),
       ...(pendingAgentSettings ? { pendingAgentSettings } : {}),
       ...(reviewSupport && Object.keys(reviewSupport).length ? { reviewSupport } : {}),
+      ...(nextPromptSuggestions ? { nextPromptSuggestions } : {}),
     };
   }
 
