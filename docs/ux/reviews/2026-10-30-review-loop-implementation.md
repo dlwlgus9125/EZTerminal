@@ -72,6 +72,7 @@
 - `pnpm test:visual` 87개 중 1개(하네스 설정 기준 화면)가 승인 결정에 따른 문구 변경("검토 맡기기" → "검토… › 다른 AI로 검토")으로 달라져,
   승인 캡처와 나란히 본 뒤 그 스냅샷만 갱신(`ad81450`). 승인 캡처 원본은 그대로.
 - `pnpm e2e` 177개 중 176 통과, 1개는 리뷰 e2e가 실검증 뒤 바뀐 대기열 표시(영어 지시문 대신 "Fix review findings · 1")를 반영하지 않은 것 →
-  테스트를 고쳐 그 spec 3/3 통과(`ad81450`). 성능 측정은 돌리지 않았다.
+  테스트 기대값을 고쳐(`ad81450`, 제품 코드 변경 없음) 그 spec만 따로 3/3 통과. 전체 e2e는 `ad81450` 뒤에 다시 돌리지 않았다. 성능 측정은
+  돌리지 않았다.
 - 2.0 기준 화면 6개를 실앱·API 35 캡처로 고정(`596d6ff`): `review-card`, `review-card-cli`, `review-start`, `review-walkthrough`,
   `review-phone-card`, `review-phone-sheet`.
