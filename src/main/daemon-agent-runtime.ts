@@ -76,6 +76,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'review.fix'
   | 'review.resolve'
   | 'review.cancel'
+  | 'wrap-up.recap-retry'
   | 'permission.resolve'
   | 'provider.enable'
   | 'provider.disable'
@@ -473,6 +474,7 @@ export class DaemonAgentRuntime {
       'review.fix': (command, context) => this.runCommand(() => this.fixReview(command, context)),
       'review.resolve': (command, context) => this.runCommand(() => this.resolveReview(command, context)),
       'review.cancel': (command, context) => this.runCommand(() => this.cancelReview(command, context)),
+      'wrap-up.recap-retry': (command, context) => this.runCommand(() => this.retryRecap(command, context)),
       'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
       'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
@@ -1875,6 +1877,15 @@ export class DaemonAgentRuntime {
   }
 
   /** `review.resolve`: dismisses or reopens findings on the card; nothing reaches the AI. */
+  /** `wrap-up.recap-retry`: the new attempt's row commits with the command, and the attempt runs once it has. */
+  private async retryRecap(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'wrap-up.recap-retry') return commandError('invalid-command', 'Unexpected recap retry command.');
+    if (!this.options.wrapUp) return commandError('invalid-state', 'This host does not write recaps.');
+    const retry = this.options.wrapUp.retryRecap(context.snapshot, { ...command.payload, attempt: command.commandId });
+    if ('refused' in retry) return commandError('invalid-state', retry.refused);
+    return { ok: true, commit: { mutations: this.transcriptMutations([{ ...retry.row, createdAt: this.isoNow() }]) }, afterCommit: retry.begin };
+  }
+
   private resolveReview(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {
     if (command.type !== 'review.resolve') return commandError('invalid-command', 'Unexpected review resolve command.');
     const payload = command.payload;

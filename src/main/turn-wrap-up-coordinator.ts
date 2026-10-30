@@ -1,25 +1,52 @@
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+
 import { agentUsageLevel, type AgentUsage } from '../shared/agent-usage';
+import { clipApprovalBody } from '../shared/approval-request';
 import { AUTOMATIC_CALL_PAUSE_LEVEL } from '../shared/automatic-calls';
-import { REVIEWER_SESSION_PREFIX, type DaemonAgent, type DaemonCommand, type DaemonEvent, type DaemonSnapshot, type DaemonTurn } from '../shared/daemon-protocol';
+import type { SideQuestionExchange } from '../shared/agent-side-question';
+import type { ConversationViewingStatus } from '../shared/conversation-viewing';
+import {
+  REVIEWER_SESSION_PREFIX,
+  type DaemonAgent,
+  type DaemonApproval,
+  type DaemonCommand,
+  type DaemonEvent,
+  type DaemonSnapshot,
+  type DaemonTurn,
+} from '../shared/daemon-protocol';
 import { isStructuredDaemonAgentSession } from '../shared/daemon-session-visibility';
+import { isSettingsProposalRequest } from '../shared/settings-changes';
+import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
 import {
   isSuggestedTaskChildSession,
+  recapQuestion,
+  TURN_RECAP_LIMITS,
   type NextPromptSuggestion,
+  type TurnRecapFailure,
+  type TurnRecapTrigger,
+  type TurnRecapWaiting,
   type TurnWrapUpPause,
   type TurnWrapUpSettings,
 } from '../shared/turn-wrap-up';
-import type { AgentProviderAdapter, AgentProviderEvent, PromptSuggestionMode } from './agent-provider-adapter';
+import type { AgentProviderAdapter, AgentProviderEvent, PromptSuggestionMode, ProviderSideQuestionAnswer } from './agent-provider-adapter';
 import { ProviderSideQuestionError } from './agent-provider-adapter';
 import type { DaemonSystemTransitionPlanner } from './daemon-command-router';
-import type { DaemonStoreCommit } from './daemon-store';
-import { latestFinishedTurn } from './managed-child-transcript';
-import { conversationBusy } from './review-coordinator';
+import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
+import { latestFinishedTurn, type TranscriptReader } from './managed-child-transcript';
+import { conversationBusy, readPages } from './review-coordinator';
 import { settingsConversationAllowed } from './settings-authority';
 
 /** How long a finished turn settles before the host decides anything: a person's next message often lands first. */
 export const TURN_SETTLE_MS = 3_000;
 /** The slowest measured fork took 24 s at the conversation's own effort; a low-effort one has no reason to run long. */
 const PREDICTION_TIMEOUT_MS = 60_000;
+/** A recap took 25 s at most across both AIs; one that takes minutes has failed. */
+const RECAP_TIMEOUT_MS = 120_000;
+
+function stableId(prefix: string, ...parts: readonly string[]): string {
+  return `${prefix}-${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)}`;
+}
 
 /**
  * The one rule for who gets turn wrap-up. A conversation a person sees directly and a child a person started
@@ -79,19 +106,149 @@ function suggestionCurrent(snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents' 
   return newest?.id === turnId && newest.state === 'completed';
 }
 
+/** What survives a restart: enough to tell the card that its recap stopped. */
+export interface RecapJobRecord {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly providerId: string;
+  readonly trigger: TurnRecapTrigger;
+  /** `start`, or the 다시 만들기 command: each attempt's rows have their own ids. */
+  readonly attempt: string;
+  readonly waiting?: TurnRecapWaiting;
+  readonly decisionId?: string;
+}
+
+const RECAP_FAILURE_TEXT: Readonly<Record<TurnRecapFailure, string>> = {
+  'usage-limit': 'a usage limit is close',
+  disconnected: 'the conversation was not connected',
+  'no-response': 'the AI did not answer',
+};
+
+/** A `recap` notice row. Its text reads on its own for clients without cards, and it carries the AI's words: always sensitive. */
+function recapRowItem(input: RecapJobRecord & {
+  readonly id: string;
+  readonly state: RecapPayload['state'];
+  readonly text?: string;
+  readonly failure?: TurnRecapFailure;
+}): DaemonTranscriptItemInput {
+  const text = input.text === undefined ? undefined : clipApprovalBody(input.text, TURN_RECAP_LIMITS.text);
+  const payload: RecapPayload = {
+    v: 1,
+    type: 'recap',
+    turnId: input.turnId,
+    providerId: input.providerId,
+    trigger: input.trigger,
+    state: input.state,
+    ...(text ? { text } : {}),
+    ...(input.waiting ? { waiting: input.waiting } : {}),
+    ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+    ...(input.failure ? { failure: input.failure } : {}),
+  };
+  return {
+    id: input.id,
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    kind: 'notice',
+    text: text ?? (input.failure ? `No recap of this turn: ${RECAP_FAILURE_TEXT[input.failure]}.` : 'Writing a recap of this turn.'),
+    isDelta: false,
+    isSensitive: true,
+    payload,
+  };
+}
+
+const recapStartRowId = (record: Pick<RecapJobRecord, 'turnId' | 'attempt'>): string => stableId('recap-row', record.turnId, record.attempt);
+const recapEndRowId = (record: Pick<RecapJobRecord, 'turnId' | 'attempt'>): string => stableId('recap-row', record.turnId, record.attempt, 'end');
+
+/** The latest state of a turn's recap, read as clients read it. */
+export function readRecapHistory(read: TranscriptReader, sessionId: string, turnId: string): RecapPayload | undefined {
+  let recap: RecapPayload | undefined;
+  readPages(read, sessionId, (item) => {
+    const payload = item.payload?.type === 'recap' ? parseTranscriptPayload(item.payload) : undefined;
+    if (payload?.type === 'recap' && payload.turnId === turnId) recap = payload;
+  });
+  return recap;
+}
+
+/** A pending request that stops a conversation on the person. A settings proposal stops nothing; a subagent's stops only the subagent. */
+function stoppingApproval(approval: DaemonApproval): boolean {
+  return approval.state === 'pending' && !isSettingsProposalRequest(approval.providerRequestId) && approval.request?.subagent === undefined;
+}
+
+function waitingKind(approval: DaemonApproval): TurnRecapWaiting {
+  const kind = approval.request?.kind;
+  return kind === 'question' || kind === 'plan' ? kind : 'approval';
+}
+
+/** What is open, said the way that made both AIs report it truthfully (probe P5). */
+function waitingSentence(approval: DaemonApproval): string {
+  const request = approval.request;
+  switch (request?.kind) {
+    case 'question': return `the person has not answered your question: "${request.questions[0]?.question ?? 'your question'}".`;
+    case 'plan': return 'the person has not answered your plan.';
+    case 'file-change': return `the person has not answered your request to change ${request.files.map((file) => path.basename(file.path)).join(', ')}.`;
+    case 'command': return 'the person has not answered your request to run a command.';
+    case 'tool': return `the person has not answered your request to use ${request.toolName}.`;
+    default: return `the person has not answered your request: ${approval.title}.`;
+  }
+}
+
+function recapFailure(error: unknown, timedOut: boolean): TurnRecapFailure {
+  const disconnected = error instanceof ProviderSideQuestionError && (error.code === 'not-live' || error.code === 'session-restarted');
+  return disconnected && !timedOut ? 'disconnected' : 'no-response';
+}
+
+/** Accepts only the shape this build writes; anything else is dropped rather than trusted. */
+function parseJobs(value: unknown): RecapJobRecord[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const records: RecapJobRecord[] = [];
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    const record = entry && typeof entry === 'object' ? entry as Partial<RecapJobRecord> : undefined;
+    if (!record || typeof record.sessionId !== 'string' || !record.sessionId || typeof record.attempt !== 'string' || !record.attempt) continue;
+    const payload = parseTranscriptPayload({
+      v: 1, type: 'recap', turnId: record.turnId, providerId: record.providerId, trigger: record.trigger, state: 'failed',
+      ...(record.waiting ? { waiting: record.waiting } : {}), ...(record.decisionId ? { decisionId: record.decisionId } : {}),
+    });
+    if (payload?.type !== 'recap') continue;
+    records.push({
+      sessionId: record.sessionId, turnId: payload.turnId, providerId: payload.providerId, trigger: payload.trigger, attempt: record.attempt,
+      ...(payload.waiting ? { waiting: payload.waiting } : {}), ...(payload.decisionId ? { decisionId: payload.decisionId } : {}),
+    });
+  }
+  return records;
+}
+
 /** What the runtime needs from the coordinator (DaemonAgentRuntime option `wrapUp`). */
 export interface DaemonWrapUpHost {
   /** A provider's own guess of the person's next message. */
   promptSuggestion(providerId: string, event: Extract<AgentProviderEvent, { kind: 'prompt-suggestion' }>): void;
+  /**
+   * `wrap-up.recap-retry`: the row a new attempt starts with and what runs it once committed, or why it cannot.
+   * This is the person's call, not an automatic one: neither a screen showing the conversation nor the pause stops it.
+   */
+  retryRecap(snapshot: DaemonSnapshot, input: { readonly sessionId: string; readonly turnId: string; readonly attempt: string }):
+    { readonly refused: string } | { readonly row: DaemonTranscriptItemInput; begin(): void };
 }
 
 export interface TurnWrapUpCoordinatorOptions {
   readonly getSnapshot: () => DaemonSnapshot;
   /** Evaluated under the command FIFO (the router's applySystemCommit). */
   readonly applySystemCommit: (commit: DaemonStoreCommit | DaemonSystemTransitionPlanner) => Promise<unknown>;
+  readonly readTranscript: TranscriptReader;
   readonly onEvent: (listener: (event: DaemonEvent) => void) => () => void;
+  /** One question to the conversation's AI (`DaemonAgentRuntime.askSideQuestion`): it leaves the person's /btw budget alone. */
+  readonly ask: (
+    input: { readonly sessionId: string; readonly question: string; readonly history: readonly SideQuestionExchange[] },
+    signal: AbortSignal,
+  ) => Promise<ProviderSideQuestionAnswer>;
+  readonly viewers: { status(sessionId: string): ConversationViewingStatus };
+  /** Recaps in flight, so a restart can tell their cards they stopped. */
+  readonly store?: {
+    readonly load: () => Promise<unknown>;
+    readonly save: (jobs: Readonly<Record<string, RecapJobRecord>>) => Promise<void>;
+  };
   readonly providers: {
     wrapUpCapability(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): AgentProviderAdapter['wrapUp'];
+    supportsSideQuestions(providerId: string): boolean;
     enabledAdapter(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): { readonly ok: true; readonly value: AgentProviderAdapter } | { readonly ok: false; readonly message: string };
   };
   /** Read per event, so a switch acts at once. Undefined until the file has loaded: no automatic calls until then. */
@@ -101,6 +258,7 @@ export interface TurnWrapUpCoordinatorOptions {
   readonly now?: () => Date;
   readonly settleMs?: number;
   readonly predictionTimeoutMs?: number;
+  readonly recapTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
 }
 
@@ -109,18 +267,32 @@ interface Prediction {
   readonly abort: AbortController;
 }
 
+interface RecapJob {
+  readonly record: RecapJobRecord;
+  /** What is open, when the turn is stopped on the person. */
+  readonly waitingNote?: string;
+  readonly abort: AbortController;
+  timedOut: boolean;
+}
+
 /**
  * Turn wrap-up's host side (`turn-wrap-up-v1`). It watches turns end and decides, in one place, what the host
  * may spend on them. Next-prompt suggestions live only in memory and only while their turn is the newest;
  * Claude sends its own and the host can switch them off, Codex gets a read-only fork the next message aborts.
+ * A recap is written when no screen shows the conversation and a turn ended or stopped on the person, once per
+ * turn: the recap row is the slot, so a stopped recap also stands for that turn's end.
  */
 export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
   private readonly now: () => Date;
   private readonly suggestions = new Map<string, NextPromptSuggestion>();
   private readonly predictions = new Map<string, Prediction>();
+  /** Recaps in flight, by turn. */
+  private readonly recaps = new Map<string, RecapJob>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   /** Turns written since the last pass. */
   private readonly changedTurns = new Set<string>();
+  /** Approvals written since the last pass. */
+  private readonly changedApprovals = new Set<string>();
   /** Each session's last turn seen ending, so writing a turn again does not end it twice. */
   private readonly endedTurns = new Map<string, string>();
   /** The mode each provider's sessions were last switched to. */
@@ -137,12 +309,14 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     if (this.disposed || this.unsubscribe) return;
     this.unsubscribe = this.options.onEvent((event) => {
       if (event.kind === 'entity.upserted' && event.payload.entityType === 'turn') this.changedTurns.add(event.payload.entityId);
+      else if (event.kind === 'approval.changed') this.changedApprovals.add(event.payload.approvalId);
       else if (!(event.kind === 'entity.archived' || (event.kind === 'entity.upserted' && (event.payload.entityType === 'agent' || event.payload.entityType === 'provider')))) return;
       this.schedulePass();
     });
+    await this.recoverRecaps();
   }
 
-  /** Stops what runs now. */
+  /** Stops what runs now; the store keeps the recaps in flight, so the next start tells their cards. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -150,6 +324,7 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     for (const prediction of this.predictions.values()) prediction.abort.abort();
+    for (const job of this.recaps.values()) job.abort.abort();
   }
 
   /** The usage windows pausing the automatic calls now. */
@@ -186,6 +361,32 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     this.switchSuggestions(snapshot);
   }
 
+  retryRecap(snapshot: DaemonSnapshot, input: { readonly sessionId: string; readonly turnId: string; readonly attempt: string }):
+  { readonly refused: string } | { readonly row: DaemonTranscriptItemInput; begin(): void } {
+    const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
+    const recap = readRecapHistory(this.options.readTranscript, input.sessionId, input.turnId);
+    if (recap?.state !== 'failed' || !agent || !this.options.allowed(input.sessionId)
+      || !this.options.providers.wrapUpCapability(snapshot, agent.providerId) || !this.options.providers.supportsSideQuestions(agent.providerId)) {
+      return { refused: 'This turn has no failed recap to write again.' };
+    }
+    // Still the turn's wait only while that decision is open: the card says the AI waits by this row.
+    const decision = recap.decisionId ? snapshot.approvals.find((entry) => entry.id === recap.decisionId && stoppingApproval(entry)) : undefined;
+    const record: RecapJobRecord = {
+      sessionId: input.sessionId, turnId: input.turnId, providerId: recap.providerId, trigger: recap.trigger, attempt: input.attempt,
+      ...(decision ? { waiting: waitingKind(decision), decisionId: decision.id } : {}),
+    };
+    const job = this.recapJob(record, decision);
+    return {
+      row: recapRowItem({ ...record, id: recapStartRowId(record), state: 'generating' }),
+      begin: () => {
+        if (this.disposed) return;
+        this.recaps.set(record.turnId, job);
+        void this.saveJobs();
+        void this.runRecap(job);
+      },
+    };
+  }
+
   private schedulePass(): void {
     if (this.passScheduled || this.disposed) return;
     this.passScheduled = true;
@@ -211,6 +412,11 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
       }
     }
     this.changedTurns.clear();
+    for (const approvalId of this.changedApprovals) {
+      const approval = snapshot.approvals.find((entry) => entry.id === approvalId);
+      if (approval && stoppingApproval(approval)) this.afterSettling(() => this.turnStopped(approvalId));
+    }
+    this.changedApprovals.clear();
     this.switchSuggestions(snapshot);
   }
 
@@ -237,6 +443,122 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     const agent = turn ? snapshot.agents.find((entry) => entry.sessionId === turn.sessionId) : undefined;
     if (!turn || !agent || !suggestionCurrent(snapshot, turn.sessionId, turn.id) || !this.automatic(snapshot, agent, turn)) return;
     if (this.suggesting(snapshot, agent.providerId)) this.predict(snapshot, agent, turn);
+    // Codex proposes a plan just after its turn ends: that is this turn waiting, whichever of the two settled first.
+    this.offerRecap(snapshot, agent, turn, snapshot.approvals.find((entry) => entry.sessionId === turn.sessionId && !entry.turnId && stoppingApproval(entry)));
+  }
+
+  /** A request still open once it settled. A plan Codex proposes has no turn: it stops the one that just ended. */
+  private turnStopped(approvalId: string): void {
+    const snapshot = this.options.getSnapshot();
+    const approval = snapshot.approvals.find((entry) => entry.id === approvalId);
+    const agent = approval ? snapshot.agents.find((entry) => entry.sessionId === approval.sessionId) : undefined;
+    if (!approval || !agent || !stoppingApproval(approval)) return;
+    const turn = approval.turnId
+      ? snapshot.turns.find((entry) => entry.id === approval.turnId && entry.id === agent.currentTurnId)
+      : agent.currentTurnId ? undefined : latestFinishedTurn(snapshot.turns, approval.sessionId);
+    if (turn && this.automatic(snapshot, agent, turn)) this.offerRecap(snapshot, agent, turn, approval);
+  }
+
+  /** Only `unviewed` makes a recap. With the pause on, the card says why there is none rather than spending a call. */
+  private offerRecap(snapshot: DaemonSnapshot, agent: DaemonAgent, turn: DaemonTurn, decision: DaemonApproval | undefined): void {
+    const settings = this.options.settings();
+    const capability = this.options.providers.wrapUpCapability(snapshot, agent.providerId);
+    if (!settings?.recaps || !capability || !this.options.providers.supportsSideQuestions(agent.providerId)) return;
+    if ((decision && !capability.recapWhileBlocked) || this.options.viewers.status(agent.sessionId) !== 'unviewed') return;
+    const record: RecapJobRecord = {
+      sessionId: agent.sessionId, turnId: turn.id, providerId: agent.providerId, trigger: decision ? 'waiting' : 'unattended', attempt: 'start',
+      ...(decision ? { waiting: waitingKind(decision), decisionId: decision.id } : {}),
+    };
+    void this.beginRecap(record, decision, settings.pauseNearLimit && this.providerPaused(snapshot, agent.providerId));
+  }
+
+  /**
+   * Takes the turn's one slot, under the command FIFO. The job reaches the file before the row does: a crash
+   * between them then writes a needless failure, never a card stuck generating.
+   */
+  private async beginRecap(record: RecapJobRecord, decision: DaemonApproval | undefined, paused: boolean): Promise<void> {
+    if (this.recaps.has(record.turnId)) return;
+    const job = paused ? undefined : this.recapJob(record, decision);
+    if (job) {
+      this.recaps.set(record.turnId, job);
+      await this.saveJobs();
+    }
+    const row = recapRowItem({ ...record, id: recapStartRowId(record), ...(paused ? { state: 'failed', failure: 'usage-limit' } : { state: 'generating' }) });
+    let taken = false;
+    await this.commit((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === record.sessionId);
+      if (!session || session.archivedAt !== undefined || readRecapHistory(this.options.readTranscript, record.sessionId, record.turnId)) return undefined;
+      taken = true;
+      return this.rowCommit(row);
+    });
+    if (!job || this.disposed) return;
+    if (taken) {
+      await this.runRecap(job);
+    } else {
+      this.recaps.delete(record.turnId);
+      await this.saveJobs();
+    }
+  }
+
+  private recapJob(record: RecapJobRecord, decision: DaemonApproval | undefined): RecapJob {
+    return { record, ...(decision ? { waitingNote: waitingSentence(decision) } : {}), abort: new AbortController(), timedOut: false };
+  }
+
+  private async runRecap(job: RecapJob): Promise<void> {
+    const { record } = job;
+    const timeout = setTimeout(() => {
+      job.timedOut = true;
+      job.abort.abort();
+    }, this.options.recapTimeoutMs ?? RECAP_TIMEOUT_MS);
+    timeout.unref?.();
+    let outcome: { readonly state: 'complete'; readonly text: string } | { readonly state: 'failed'; readonly failure: TurnRecapFailure };
+    try {
+      const answer = await this.options.ask({ sessionId: record.sessionId, question: recapQuestion(job.waitingNote), history: [] }, job.abort.signal);
+      const text = answer.synthetic ? undefined : answer.text?.trim();
+      outcome = text ? { state: 'complete', text } : { state: 'failed', failure: 'no-response' };
+    } catch (error) {
+      if (this.disposed) return;
+      outcome = { state: 'failed', failure: recapFailure(error, job.timedOut) };
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (this.disposed) return;
+    await this.commit((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === record.sessionId);
+      return session && session.archivedAt === undefined ? this.rowCommit(recapRowItem({ ...record, id: recapEndRowId(record), ...outcome })) : undefined;
+    });
+    this.recaps.delete(record.turnId);
+    await this.saveJobs();
+  }
+
+  /** What the last run left generating: the AI's answer went with it, and only the person asks again. */
+  private async recoverRecaps(): Promise<void> {
+    let records: RecapJobRecord[] = [];
+    try {
+      records = parseJobs(await this.options.store?.load());
+    } catch (error) {
+      this.report('recap jobs load failed', error);
+    }
+    for (const record of records) {
+      await this.commit((snapshot) => {
+        const session = snapshot.sessions.find((entry) => entry.id === record.sessionId);
+        if (!session || session.archivedAt !== undefined) return undefined;
+        return this.rowCommit(recapRowItem({ ...record, id: recapEndRowId(record), state: 'failed', failure: 'disconnected' }));
+      });
+    }
+    await this.saveJobs();
+  }
+
+  private async saveJobs(): Promise<void> {
+    try {
+      await this.options.store?.save(Object.fromEntries([...this.recaps.values()].map((job) => [job.record.turnId, job.record])));
+    } catch (error) {
+      this.report('recap jobs save failed', error);
+    }
+  }
+
+  private rowCommit(item: DaemonTranscriptItemInput): DaemonStoreCommit {
+    return { mutations: [{ kind: 'transcript.append', items: [{ ...item, createdAt: this.now().toISOString() }] }] };
   }
 
   private suggesting(snapshot: DaemonSnapshot, providerId: string): boolean {

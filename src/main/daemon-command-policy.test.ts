@@ -26,6 +26,21 @@ function command(
   } as DaemonCommand;
 }
 
+describe('turn wrap-up commands', () => {
+  const noDescendants = { isManagedDescendant: () => false };
+
+  it('lets a person on either device ask for a recap again', () => {
+    const retry = (principal: DaemonPrincipal) => authorizeDaemonCommand(command('wrap-up.recap-retry', { sessionId: 'chat', turnId: 'turn-1' }, principal), noDescendants);
+    expect(retry({ kind: 'desktop', id: 'person' }).allowed).toBe(true);
+    expect(retry({ kind: 'android', id: 'phone' }).allowed).toBe(true);
+  });
+
+  it('keeps it from an AI: a recap is the person\'s to ask for', () => {
+    const decision = authorizeDaemonCommand(command('wrap-up.recap-retry', { sessionId: 'child', turnId: 'turn-1' }, { kind: 'mcp', id: 'session-parent', sessionId: 'parent' }), { isManagedDescendant: () => true });
+    expect(decision.allowed).toBe(false);
+  });
+});
+
 const descendants = new Set(['child', 'grandchild']);
 const context = {
   isManagedDescendant: (root: string, candidate: string) => root === 'parent' && descendants.has(candidate),

@@ -1079,10 +1079,18 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
-  const turnWrapUpCoordinator = new TurnWrapUpCoordinator({
+  const turnWrapUpJobsFile = new JsonFile(app.getPath('userData'), 'turn-wrap-up-jobs.json');
+  const turnWrapUpCoordinator: TurnWrapUpCoordinator = new TurnWrapUpCoordinator({
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit),
     onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    ask: (input, signal) => daemonAgentRuntime.askSideQuestion(input, signal),
+    viewers: conversationViewers,
+    store: {
+      load: async () => { await turnWrapUpJobsFile.init(); return turnWrapUpJobsFile.read(); },
+      save: (jobs) => turnWrapUpJobsFile.enqueue(() => turnWrapUpJobsFile.writeAtomic(JSON.stringify(jobs))),
+    },
     providers: providerRegistry,
     settings: () => settingsRef.authority?.turnWrapUp(),
     allowed: (sessionId, turn) => wrapUpAllowed(daemonRouterRef.current!.getSnapshot(), sessionId, {
@@ -2597,7 +2605,13 @@ app.on('ready', async () => {
   const desktopWindowSender = (event: IpcMainInvokeEvent, clientId: unknown): boolean => resolveDesktopSessionPrincipal(event, clientId) !== null;
   featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady, authorized: desktopWindowSender }));
   featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady, authorized: desktopWindowSender }));
-  featureIpcDisposers.push(installSettingsChangesIpc({ ipc: ipcMain, authority: settingsAuthority, ready: settingsAuthorityReady, principal: resolveDesktopSessionPrincipal }));
+  featureIpcDisposers.push(installSettingsChangesIpc({
+    ipc: ipcMain,
+    authority: settingsAuthority,
+    ready: settingsAuthorityReady,
+    principal: resolveDesktopSessionPrincipal,
+    turnWrapUpPauses: () => turnWrapUpCoordinator.paused(daemonCommandRouter.getSnapshot()),
+  }));
   featureIpcDisposers.push(installConversationViewingIpc({ ipc: ipcMain, viewers: conversationViewers, principal: resolveDesktopSessionPrincipal }));
   featureIpcDisposers.push(installWorkflowCheckIpc({
     ipc: ipcMain,

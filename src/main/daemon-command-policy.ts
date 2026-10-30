@@ -38,6 +38,7 @@ const ANDROID_COMMANDS = new Set<DaemonCommandType>([
   'review.fix',
   'review.resolve',
   'review.cancel',
+  'wrap-up.recap-retry',
   'permission.resolve',
 ]);
 
@@ -85,6 +86,7 @@ function getTargetSessionId(command: DaemonCommand): string | undefined {
     case 'review.fix':
     case 'review.resolve':
     case 'review.cancel':
+    case 'wrap-up.recap-retry':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
     case 'browser.open':

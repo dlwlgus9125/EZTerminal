@@ -138,6 +138,7 @@ function providerNativeMutationTarget(
     case 'review.fix':
     case 'review.resolve':
     case 'review.cancel':
+    case 'wrap-up.recap-retry':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
       return providerNativeRelation(snapshot, command.payload.sessionId)?.childSessionId;

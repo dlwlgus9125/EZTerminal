@@ -154,7 +154,7 @@ export interface ReviewHistory {
   readonly latest: ReadonlyMap<string, ReviewFindingEvent>;
 }
 
-function readPages(read: TranscriptReader, sessionId: string, visit: (item: ReturnType<TranscriptReader>[number]) => void): void {
+export function readPages(read: TranscriptReader, sessionId: string, visit: (item: ReturnType<TranscriptReader>[number]) => void): void {
   let afterSequence = 0;
   for (;;) {
     const page = read(sessionId, afterSequence, 2_000);

@@ -351,6 +351,7 @@ export const DAEMON_COMMAND_TYPES = [
   'review.fix',
   'review.resolve',
   'review.cancel',
+  'wrap-up.recap-retry',
   'permission.resolve',
   'provider.enable',
   'provider.disable',
@@ -494,6 +495,8 @@ export interface DaemonCommandPayloads {
   };
   /** Stops a review that waits or runs. */
   readonly 'review.cancel': { readonly sessionId: string; readonly reviewId: string };
+  /** Turn wrap-up: a person asks again for a turn's failed recap (다시 만들기). */
+  readonly 'wrap-up.recap-retry': { readonly sessionId: string; readonly turnId: string };
   readonly 'permission.resolve': {
     readonly approvalId: string;
     readonly decision: 'allow' | 'deny';
@@ -807,6 +810,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     state: z.enum(['dismissed', 'open']),
   }).strict(),
   'review.cancel': z.object({ sessionId: IdentifierSchema, reviewId: IdentifierSchema }).strict(),
+  'wrap-up.recap-retry': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema }).strict(),
   'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']), response: ApprovalResponseSchema.optional() }).strict(),
   'provider.enable': ProviderEnableSchema,
   'provider.disable': z.object({ providerId: IdentifierSchema }).strict(),

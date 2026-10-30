@@ -13,19 +13,26 @@ import {
   type DaemonSession,
   type DaemonSnapshot,
 } from '../shared/daemon-protocol';
-import { DEFAULT_TURN_WRAP_UP_SETTINGS, suggestedTaskChildSessionId, type TurnWrapUpSettings } from '../shared/turn-wrap-up';
+import type { ApprovalRequest } from '../shared/approval-request';
+import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
+import { type ConversationViewingStatus } from '../shared/conversation-viewing';
+import {
+  DEFAULT_TURN_WRAP_UP_SETTINGS, RECAP_INSTRUCTION, recapQuestion, suggestedTaskChildSessionId, TURN_RECAP_LIMITS, type TurnWrapUpSettings,
+} from '../shared/turn-wrap-up';
 import {
   ProviderSideQuestionError,
   type AgentProviderAdapter,
   type AgentProviderEvent,
   type ProviderPredictInput,
   type ProviderProbeResult,
+  type ProviderSideQuestionAnswer,
+  type ProviderSideQuestionInput,
 } from './agent-provider-adapter';
 import { AgentProviderRegistry, createProviderReviewDigest } from './agent-provider-registry';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
-import { suggestionMode, TurnWrapUpCoordinator, turnWrapUpPauses, wrapUpAllowed } from './turn-wrap-up-coordinator';
+import { suggestionMode, TurnWrapUpCoordinator, turnWrapUpPauses, wrapUpAllowed, type RecapJobRecord } from './turn-wrap-up-coordinator';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -186,15 +193,22 @@ function probe(providerId: string, protocol: ProviderProbeResult['protocol'], ex
 }
 
 interface Prediction { readonly input: ProviderPredictInput; readonly signal: AbortSignal; resolve(text: string | undefined): void }
+interface Ask { readonly input: ProviderSideQuestionInput; readonly signal: AbortSignal; resolve(answer: ProviderSideQuestionAnswer): void; reject(error: unknown): void }
 
-function fakeAdapter(providerId: 'claude' | 'codex', protocol: ProviderProbeResult['protocol'], minimumVersion: string) {
+function fakeAdapter(providerId: 'claude' | 'codex', protocol: ProviderProbeResult['protocol'], minimumVersion: string, sideQuestions: boolean) {
   const listeners = new Set<(event: AgentProviderEvent) => void>();
   const predictions: Prediction[] = [];
+  const asks: Ask[] = [];
   let sequence = 0;
-  const adapter: AgentProviderAdapter & { emit(event: AgentProviderEvent): void; readonly predictions: Prediction[]; setPromptSuggestions: ReturnType<typeof vi.fn> } = {
+  const adapter: AgentProviderAdapter & { emit(event: AgentProviderEvent): void; readonly predictions: Prediction[]; readonly asks: Ask[]; setPromptSuggestions: ReturnType<typeof vi.fn> } = {
     providerId,
     wrapUp: { suggestions: providerId === 'claude' ? 'native' : 'fork', recapWhileBlocked: true, minimumVersion },
     predictions,
+    asks,
+    ...(sideQuestions ? { askSideQuestion: vi.fn((input: ProviderSideQuestionInput, signal: AbortSignal) => new Promise<ProviderSideQuestionAnswer>((resolve, reject) => {
+      asks.push({ input, signal, resolve, reject });
+      signal.addEventListener('abort', () => reject(new ProviderSideQuestionError('cancelled')), { once: true });
+    })) } : {}),
     probe: vi.fn(async () => probe(providerId, protocol, '1.2.0')),
     listModels: vi.fn(async () => []),
     createSession: vi.fn(async (context) => ({
@@ -232,7 +246,15 @@ const settled = (ms = 60): Promise<void> => new Promise((resolve) => setTimeout(
 
 const NOW_MS = Date.parse('2026-10-30T10:00:00.000Z');
 
-async function harness(options: { readonly minimumVersion?: string; readonly prepared?: (sessionId: string) => boolean } = {}) {
+async function harness(options: {
+  readonly minimumVersion?: string;
+  readonly prepared?: (sessionId: string) => boolean;
+  readonly sideQuestions?: boolean;
+  readonly viewing?: ConversationViewingStatus;
+  readonly stored?: unknown;
+  readonly recapTimeoutMs?: number;
+  readonly startLater?: boolean;
+} = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-wrap-up-'));
   temporaryDirectories.push(directory);
   const root = path.join(directory, 'repo');
@@ -241,16 +263,24 @@ async function harness(options: { readonly minimumVersion?: string; readonly pre
   const now = () => new Date(NOW_MS + (tick += 1));
   const store = new DaemonStore(path.join(directory, 'daemon'), { now });
   await store.init();
-  const codex = fakeAdapter('codex', 'codex-app-server', options.minimumVersion ?? '1.0.0');
-  const claude = fakeAdapter('claude', 'claude-agent-sdk', options.minimumVersion ?? '1.0.0');
+  const codex = fakeAdapter('codex', 'codex-app-server', options.minimumVersion ?? '1.0.0', options.sideQuestions ?? true);
+  const claude = fakeAdapter('claude', 'claude-agent-sdk', options.minimumVersion ?? '1.0.0', options.sideQuestions ?? true);
   const providers = new AgentProviderRegistry([codex, claude]);
   const routerRef: { current?: DaemonCommandRouter } = {};
   const settings: { current: TurnWrapUpSettings | undefined } = { current: DEFAULT_TURN_WRAP_UP_SETTINGS };
   const errors: string[] = [];
+  const viewing: { status: ConversationViewingStatus } = { status: options.viewing ?? 'viewed' };
+  let saved: unknown = options.stored;
+  const runtimeRef: { current?: DaemonAgentRuntime } = {};
   const coordinator = new TurnWrapUpCoordinator({
     getSnapshot: () => routerRef.current!.getSnapshot(),
     applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+    readTranscript: (sessionId, afterSequence, limit) => routerRef.current!.readTranscript(sessionId, afterSequence, limit),
     onEvent: (listener) => routerRef.current!.onEvent(listener),
+    ask: (input, signal) => runtimeRef.current!.askSideQuestion(input, signal),
+    viewers: { status: () => viewing.status },
+    store: { load: async () => saved, save: async (jobs) => { saved = jobs; } },
+    ...(options.recapTimeoutMs ? { recapTimeoutMs: options.recapTimeoutMs } : {}),
     providers,
     settings: () => settings.current,
     allowed: (sessionId, turn) => wrapUpAllowed(routerRef.current!.getSnapshot(), sessionId, {
@@ -273,6 +303,7 @@ async function harness(options: { readonly minimumVersion?: string; readonly pre
     now,
     idFactory: (() => { let id = 0; return () => `runtime-id-${String(++id)}`; })(),
   });
+  runtimeRef.current = runtime;
   const router = new DaemonCommandRouter(store, {
     handlers: runtime.handlers(),
     agentUsage: (snapshot) => runtime.agentUsage(snapshot),
@@ -310,7 +341,7 @@ async function harness(options: { readonly minimumVersion?: string; readonly pre
   await enable(claude);
   await execute('project.create', { projectId: 'project-1', name: 'Cart', rootPath: root });
   await execute('workspace.create', { workspaceId: 'workspace-1', projectId: 'project-1', name: 'Local', kind: 'local', rootPath: root });
-  await coordinator.start();
+  if (!options.startLater) await coordinator.start();
 
   const finishTurn = async (adapter: typeof codex, sessionId: string, outcome: 'completed' | 'interrupted' | 'failed' = 'completed') => {
     const turnId = currentTurn(sessionId);
@@ -331,7 +362,21 @@ async function harness(options: { readonly minimumVersion?: string; readonly pre
     claude.emit({ kind: 'prompt-suggestion', sessionId, turnId, text });
     await runtime.whenIdle();
   };
-  return { store, router, runtime, coordinator, providers, codex, claude, errors, settings, execute, finishTurn, conversation, suggestion, suggest, currentTurn };
+  const recaps = (sessionId = 'chat'): RecapPayload[] => router.readTranscript(sessionId, 0, 2_000).flatMap((item) => {
+    const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+    return payload?.type === 'recap' ? [payload] : [];
+  });
+  const recapRows = (sessionId = 'chat') => router.readTranscript(sessionId, 0, 2_000).filter((item) => item.payload?.type === 'recap');
+  /** The approval a stopped turn raises, as a provider raises it. */
+  const raise = async (adapter: typeof codex, sessionId: string, request: Extract<AgentProviderEvent, { kind: 'approval-requested' }>['request'], providerRequestId = 'request-1') => {
+    adapter.emit({ kind: 'approval-requested', sessionId, ...(currentTurn(sessionId) ? { turnId: currentTurn(sessionId)! } : {}), providerRequestId, risk: 'write', title: 'Edit a file', ...(request ? { request } : {}) });
+    await runtime.whenIdle();
+    return router.getSnapshot().approvals.at(-1)!;
+  };
+  return {
+    store, router, runtime, coordinator, providers, codex, claude, errors, settings, viewing, execute, finishTurn, conversation, suggestion, suggest, currentTurn,
+    recaps, recapRows, raise, saved: () => saved, setSaved: (jobs: unknown) => { saved = jobs; },
+  };
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
@@ -756,6 +801,546 @@ describe('snapshots', () => {
     try {
       const snapshot: DaemonSnapshot = h.router.getSnapshot();
       expect(snapshot).not.toHaveProperty('nextPromptSuggestions');
+    } finally { await dispose(h); }
+  });
+});
+
+describe('a recap at the end of a turn', () => {
+  const answer = (text: string | null, synthetic = false): ProviderSideQuestionAnswer => ({ text, synthetic });
+
+  it('asks the conversation\'s AI once nobody watches, and stores what it said as sensitive', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      expect(h.claude.asks[0]!.input).toEqual({ sessionId: 'chat', providerSessionId: 'claude-session-1', question: RECAP_INSTRUCTION, history: [] });
+      expect(h.recaps().at(-1)).toMatchObject({ turnId, providerId: 'claude', trigger: 'unattended', state: 'generating' });
+      h.claude.asks[0]!.resolve(answer('Changed the price display.\
+Check the cart page.'));
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      expect(h.recaps().at(-1)).toMatchObject({ turnId, providerId: 'claude', trigger: 'unattended', state: 'complete', text: 'Changed the price display.\
+Check the cart page.' });
+      expect(h.recapRows().every((row) => row.isSensitive && row.kind === 'notice' && row.turnId === turnId)).toBe(true);
+    } finally { await dispose(h); }
+  });
+
+  it('never spends a call while the conversation is on screen', async () => {
+    const h = await harness({ viewing: 'viewed' });
+    try {
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+      expect(h.recaps()).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('never spends a call while a window has not said what it shows', async () => {
+    const h = await harness({ viewing: 'unknown' });
+    try {
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('decides after the turn settled: a person who came back in time gets none', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      const finished = h.finishTurn(h.claude, 'chat');
+      h.viewing.status = 'viewed';
+      await finished;
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('is one per turn, however often the turn is written', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      h.claude.asks[0]!.resolve(answer('Done.'));
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      await h.router.applySystemCommit((snapshot) => {
+        const turn = snapshot.turns.find((entry) => entry.id === turnId)!;
+        return { mutations: [{ kind: 'turn.upsert', value: { id: turn.id, sessionId: turn.sessionId, commandId: turn.commandId, state: turn.state, finishedAt: turn.finishedAt! } }] };
+      });
+      await settled();
+      expect(h.claude.asks).toHaveLength(1);
+      expect(h.recaps()).toHaveLength(2);
+    } finally { await dispose(h); }
+  });
+
+  it('skips a turn with a message queued behind it', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      await h.finishTurn(h.claude, 'chat');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('skips a turn that did not complete', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      await h.finishTurn(h.claude, 'chat', 'interrupted');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('stays valid when a new turn starts meanwhile', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      expect(h.claude.asks[0]!.signal.aborted).toBe(false);
+      h.claude.asks[0]!.resolve(answer('Done.'));
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+    } finally { await dispose(h); }
+  });
+
+  it('stops with the recaps switch', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, recaps: false };
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+      expect(h.recaps()).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('waits for the settings to load', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      h.settings.current = undefined;
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('is only for a turn a person sent', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude', 'chat', AUTOMATION);
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('is only for an eligible session', async () => {
+    const h = await harness({ viewing: 'unviewed', prepared: (sessionId) => sessionId === 'chat' });
+    try {
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+      expect(h.recaps()).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('never reaches an AI below the measured version', async () => {
+    const h = await harness({ viewing: 'unviewed', minimumVersion: '9.0.0' });
+    try {
+      await h.conversation('claude');
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+      expect(h.recaps()).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('writes nothing for an AI that cannot answer aside', async () => {
+    const h = await harness({ viewing: 'unviewed', sideQuestions: false });
+    try {
+      await h.conversation('claude');
+      await settled();
+      expect(h.recaps()).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('says so instead of calling while a usage window is at the danger level', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      h.claude.emit({ kind: 'usage', sessionId: 'chat', limits: { weekly: { usedPercent: 93 } } });
+      await h.runtime.whenIdle();
+      await h.finishTurn(h.claude, 'chat');
+      await until(() => h.recaps().length === 1, 'the line');
+      expect(h.recaps()[0]).toMatchObject({ state: 'failed', failure: 'usage-limit', trigger: 'unattended' });
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('calls past the danger level when the pause is off', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, pauseNearLimit: false };
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      h.claude.emit({ kind: 'usage', sessionId: 'chat', limits: { weekly: { usedPercent: 93 } } });
+      await h.runtime.whenIdle();
+      await h.finishTurn(h.claude, 'chat');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+    } finally { await dispose(h); }
+  });
+
+  it('cuts a long answer to what the row holds', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      h.claude.asks[0]!.resolve(answer('x'.repeat(20_000)));
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      expect(h.recaps().at(-1)!.text!.length).toBeLessThanOrEqual(TURN_RECAP_LIMITS.text);
+      expect(h.recapRows().at(-1)!.text.length).toBeLessThanOrEqual(TURN_RECAP_LIMITS.text);
+    } finally { await dispose(h); }
+  });
+
+  it.each<[string, (ask: Ask) => void, 'disconnected' | 'no-response']>([
+    ['a session that is gone', (ask) => { ask.reject(new ProviderSideQuestionError('not-live')); }, 'disconnected'],
+    ['a session restarted underneath it', (ask) => { ask.reject(new ProviderSideQuestionError('session-restarted')); }, 'disconnected'],
+    ['a provider failure', (ask) => { ask.reject(new ProviderSideQuestionError('failed')); }, 'no-response'],
+    ['a provider that stopped offering it', (ask) => { ask.reject(new ProviderSideQuestionError('unsupported')); }, 'no-response'],
+    ['an unexpected error', (ask) => { ask.reject(new Error('boom')); }, 'no-response'],
+    ['a blank answer', (ask) => { ask.resolve(answer('   ')); }, 'no-response'],
+    ['no answer', (ask) => { ask.resolve(answer(null)); }, 'no-response'],
+    ['a synthetic answer', (ask) => { ask.resolve(answer('Rate limited.', true)); }, 'no-response'],
+  ])('reports %s as a failure the card can word', async (_name, fail, failure) => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      fail(h.claude.asks[0]!);
+      await until(() => h.recaps().at(-1)?.state === 'failed', 'the failure');
+      expect(h.recaps().at(-1)).toMatchObject({ state: 'failed', failure });
+      expect(h.recaps().at(-1)).not.toHaveProperty('text');
+      await until(() => Object.keys(h.saved() as object).length === 0, 'the job to leave the file');
+    } finally { await dispose(h); }
+  });
+
+  it('gives up on an AI that does not answer', async () => {
+    const h = await harness({ viewing: 'unviewed', recapTimeoutMs: 20 });
+    try {
+      await h.conversation('claude');
+      await until(() => h.recaps().at(-1)?.state === 'failed', 'the timeout');
+      expect(h.recaps().at(-1)).toMatchObject({ state: 'failed', failure: 'no-response' });
+      expect(h.claude.asks[0]!.signal.aborted).toBe(true);
+    } finally { await dispose(h); }
+  });
+
+  it('runs for a child a person started from a card, on the turns the person sends', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the parent\'s recap call');
+      h.claude.asks[0]!.resolve(answer('Done.'));
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the parent\'s recap');
+      const child = suggestedTaskChildSessionId('task-1');
+      await h.execute('agent.create', { sessionId: child, workspaceId: 'workspace-1', title: 'Task', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Do it.', parentSessionId: 'chat' });
+      await h.finishTurn(h.claude, child);
+      await settled();
+      expect(h.claude.asks).toHaveLength(1);
+      await h.execute('agent.submit', { sessionId: child, prompt: 'And the docs.' });
+      const turnId = await h.finishTurn(h.claude, child);
+      await until(() => h.claude.asks.length === 2, 'the child\'s recap call');
+      h.claude.asks[1]!.resolve(answer('Docs updated.'));
+      await until(() => h.recaps(child).at(-1)?.state === 'complete', 'the child\'s recap');
+      expect(h.recaps(child).at(-1)).toMatchObject({ turnId, text: 'Docs updated.' });
+    } finally { await dispose(h); }
+  });
+});
+
+describe('a recap while the AI waits on the person', () => {
+  const FILE_CHANGE: ApprovalRequest = { v: 1, kind: 'file-change', files: [{ path: 'src/cart/format.ts' }] };
+  const start = async (h: Harness, providerId: 'claude' | 'codex' = 'claude') => {
+    await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId, permissionPreset: 'standard', initialPrompt: 'Fix.' });
+    return h.currentTurn('chat')!;
+  };
+
+  it('says the turn is stopped, names what is open and which decision it waits on', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await start(h);
+      const approval = await h.raise(h.claude, 'chat', FILE_CHANGE);
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion('the person has not answered your request to change format.ts.'));
+      h.claude.asks[0]!.resolve({ text: 'Waiting on your approval of format.ts.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      expect(h.recaps().at(-1)).toMatchObject({ turnId, trigger: 'waiting', waiting: 'approval', decisionId: approval.id, text: 'Waiting on your approval of format.ts.' });
+    } finally { await dispose(h); }
+  });
+
+  it.each<[string, ApprovalRequest, string]>([
+    ['question', { v: 1, kind: 'question', questions: [{ question: 'Which file?', multiSelect: false, options: [] }] }, 'the person has not answered your question: "Which file?".'],
+    ['plan', { v: 1, kind: 'plan', markdown: '# Plan' }, 'the person has not answered your plan.'],
+    ['approval', { v: 1, kind: 'command', command: 'pnpm test' }, 'the person has not answered your request to run a command.'],
+    ['approval', { v: 1, kind: 'tool', toolName: 'WebFetch' }, 'the person has not answered your request to use WebFetch.'],
+  ])('tells a stopped %s from the rest', async (waiting, request, note) => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await start(h);
+      await h.raise(h.claude, 'chat', request);
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion(note));
+      expect(h.recaps().at(-1)).toMatchObject({ trigger: 'waiting', waiting });
+    } finally { await dispose(h); }
+  });
+
+  it('reads the approval\'s own title when it has no structured request', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await start(h);
+      await h.raise(h.claude, 'chat', undefined);
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion('the person has not answered your request: Edit a file.'));
+    } finally { await dispose(h); }
+  });
+
+  it('never spends a call while the conversation is on screen', async () => {
+    const h = await harness({ viewing: 'viewed' });
+    try {
+      await start(h);
+      await h.raise(h.claude, 'chat', FILE_CHANGE);
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('skips a request answered while it settled', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await start(h);
+      const approval = await h.raise(h.claude, 'chat', FILE_CHANGE);
+      await h.execute('permission.resolve', { approvalId: approval.id, decision: 'allow' });
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('ignores a provider subagent\'s request', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await start(h);
+      await h.raise(h.claude, 'chat', { ...FILE_CHANGE, subagent: { sessionId: 'sub', title: 'Sub' } });
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('ignores a settings proposal, which belongs to no stop', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the end-of-turn recap');
+      h.claude.asks[0]!.resolve({ text: 'Done.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      await h.raise(h.claude, 'chat', undefined, 'settings-proposal:1');
+      await settled();
+      expect(h.claude.asks).toHaveLength(1);
+      expect(h.recaps().every((recap) => recap.turnId === turnId)).toBe(true);
+    } finally { await dispose(h); }
+  });
+
+  it('is only for a turn a person sent', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' }, AUTOMATION);
+      await h.raise(h.claude, 'chat', FILE_CHANGE);
+      await settled();
+      expect(h.claude.asks).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('takes the turn\'s one recap: the turn\'s end adds none', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await start(h);
+      const approval = await h.raise(h.claude, 'chat', FILE_CHANGE);
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      h.claude.asks[0]!.resolve({ text: 'Waiting on you.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      await h.execute('permission.resolve', { approvalId: approval.id, decision: 'allow' });
+      await h.finishTurn(h.claude, 'chat');
+      await settled();
+      expect(h.claude.asks).toHaveLength(1);
+      expect(h.recaps()).toHaveLength(2);
+    } finally { await dispose(h); }
+  });
+
+  it('binds a plan Codex proposes after its turn ended to that turn, as a wait', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await start(h, 'codex');
+      await h.finishTurn(h.codex, 'chat');
+      const approval = await h.raise(h.codex, 'chat', { v: 1, kind: 'plan', markdown: '# Plan' }, 'proposed-plan:turn-1');
+      await until(() => h.codex.asks.length === 1, 'the recap call');
+      await settled();
+      expect(h.codex.asks).toHaveLength(1);
+      expect(h.recaps()).toHaveLength(1);
+      expect(h.recaps()[0]).toMatchObject({ turnId, trigger: 'waiting', waiting: 'plan', decisionId: approval.id, state: 'generating' });
+    } finally { await dispose(h); }
+  });
+});
+
+describe('recaps across a restart', () => {
+  const job: RecapJobRecord = { sessionId: 'chat', turnId: 'turn-1', providerId: 'claude', trigger: 'unattended', attempt: 'start' };
+
+  it('keeps a running recap on file until it ends', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      expect(Object.values(h.saved() as object)).toEqual([expect.objectContaining({ sessionId: 'chat', turnId, providerId: 'claude', trigger: 'unattended', attempt: 'start' })]);
+      h.claude.asks[0]!.resolve({ text: 'Done.', synthetic: false });
+      await until(() => Object.keys(h.saved() as object).length === 0, 'the job to leave the file');
+    } finally { await dispose(h); }
+  });
+
+  it('marks what the last run left running as disconnected, and forgets it', async () => {
+    const h = await harness({ startLater: true });
+    try {
+      const turnId = await h.conversation('claude');
+      h.setSaved({ [turnId]: { ...job, turnId } });
+      await h.coordinator.start();
+      expect(h.recaps()).toEqual([expect.objectContaining({ turnId, state: 'failed', failure: 'disconnected', trigger: 'unattended' })]);
+      expect(h.recapRows()[0]).toMatchObject({ isSensitive: true, turnId });
+      expect(h.saved()).toEqual({});
+    } finally { await dispose(h); }
+  });
+
+  it('writes nothing for a conversation that is gone, and drops a malformed record', async () => {
+    const h = await harness({ stored: { 'turn-1': job, bad: { sessionId: 'chat' }, 'not-an-object': 3 } });
+    try {
+      expect(h.saved()).toEqual({});
+    } finally { await dispose(h); }
+  });
+
+  it('leaves the record for the next start when the app closes mid-recap', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      const ask = h.claude.asks[0]!;
+      h.coordinator.dispose();
+      expect(ask.signal.aborted).toBe(true);
+      await settled();
+      expect(h.recaps().at(-1)?.state).toBe('generating');
+      expect(Object.keys(h.saved() as object)).toHaveLength(1);
+    } finally { await dispose(h); }
+  });
+});
+
+describe('wrap-up.recap-retry', () => {
+  const failed = async (h: Harness) => {
+    const turnId = await h.conversation('claude');
+    await until(() => h.claude.asks.length === 1, 'the recap call');
+    h.claude.asks[0]!.reject(new ProviderSideQuestionError('not-live'));
+    await until(() => h.recaps().at(-1)?.state === 'failed', 'the failure');
+    return turnId;
+  };
+
+  it('asks again and writes a new card state', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await failed(h);
+      const receipt = await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
+      expect(receipt.ok).toBe(true);
+      expect(h.recaps().at(-1)).toMatchObject({ turnId, state: 'generating', trigger: 'unattended' });
+      await until(() => h.claude.asks.length === 2, 'the second call');
+      h.claude.asks[1]!.resolve({ text: 'Done.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      expect(h.recaps().map((recap) => recap.state)).toEqual(['generating', 'failed', 'generating', 'complete']);
+    } finally { await dispose(h); }
+  });
+
+  it('is the person\'s call: neither looking at the conversation nor the pause stops it', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await failed(h);
+      h.viewing.status = 'viewed';
+      h.claude.emit({ kind: 'usage', sessionId: 'chat', limits: { weekly: { usedPercent: 93 } } });
+      await h.runtime.whenIdle();
+      expect((await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId })).ok).toBe(true);
+      await until(() => h.claude.asks.length === 2, 'the second call');
+      h.claude.asks[1]!.resolve({ text: 'Done.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+    } finally { await dispose(h); }
+  });
+
+  it('refuses a recap that did not fail', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      const turnId = await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      const running = await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
+      expect(running).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      h.claude.asks[0]!.resolve({ text: 'Done.', synthetic: false });
+      await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
+      const done = await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
+      expect(done).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(h.claude.asks).toHaveLength(1);
+    } finally { await dispose(h); }
+  });
+
+  it('refuses a turn with no recap, and a host that does not wrap up', async () => {
+    const h = await harness();
+    try {
+      const turnId = await h.conversation('claude');
+      expect(await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(await h.execute('wrap-up.recap-retry', { sessionId: 'nowhere', turnId })).toMatchObject({ ok: false });
+    } finally { await dispose(h); }
+  });
+
+  it('keeps saying the AI waits while that decision is still open', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      const turnId = h.currentTurn('chat')!;
+      const approval = await h.raise(h.claude, 'chat', { v: 1, kind: 'command', command: 'pnpm test' });
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      h.claude.asks[0]!.reject(new ProviderSideQuestionError('failed'));
+      await until(() => h.recaps().at(-1)?.state === 'failed', 'the failure');
+      await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
+      await until(() => h.claude.asks.length === 2, 'the second call');
+      expect(h.claude.asks[1]!.input.question).toBe(recapQuestion('the person has not answered your request to run a command.'));
+      expect(h.recaps().at(-1)).toMatchObject({ trigger: 'waiting', waiting: 'approval', decisionId: approval.id, state: 'generating' });
+    } finally { await dispose(h); }
+  });
+
+  it('stops saying so once that decision is made', async () => {
+    const h = await harness({ viewing: 'unviewed' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      const turnId = h.currentTurn('chat')!;
+      const approval = await h.raise(h.claude, 'chat', { v: 1, kind: 'command', command: 'pnpm test' });
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      h.claude.asks[0]!.reject(new ProviderSideQuestionError('failed'));
+      await until(() => h.recaps().at(-1)?.state === 'failed', 'the failure');
+      await h.execute('permission.resolve', { approvalId: approval.id, decision: 'allow' });
+      await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
+      await until(() => h.claude.asks.length === 2, 'the second call');
+      expect(h.claude.asks[1]!.input.question).toBe(RECAP_INSTRUCTION);
+      expect(h.recaps().at(-1)).toMatchObject({ trigger: 'waiting', state: 'generating' });
+      expect(h.recaps().at(-1)).not.toHaveProperty('waiting');
+      expect(h.recaps().at(-1)).not.toHaveProperty('decisionId');
+    } finally { await dispose(h); }
+  });
+});
+
+describe('the pause, for the Settings screen', () => {
+  it('reads the windows pausing the automatic calls now', async () => {
+    const h = await harness();
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      h.claude.emit({ kind: 'usage', sessionId: 'chat', limits: { fiveHour: { usedPercent: 95, resetsAt: NOW_MS + 60_000 } } });
+      await h.runtime.whenIdle();
+      expect(h.coordinator.paused(h.router.getSnapshot())).toEqual([{ providerId: 'claude', window: 'five-hour', usedPercent: 95, resetsAt: NOW_MS + 60_000 }]);
     } finally { await dispose(h); }
   });
 });
