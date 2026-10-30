@@ -101,6 +101,9 @@ export const RECAP_INSTRUCTION = 'Recap for the person, who was not watching thi
 export const PREDICT_INSTRUCTION = "Predict the person's most likely next message to you in this conversation. Reply with "
   + 'that message only, exactly as they would type it, in their language, at most 20 words, with no quotes or explanation. '
   + 'If they are most likely done, reply with: (none)';
+/** A copy of SUGGEST_TASK_INSTRUCTIONS in src/shared/turn-wrap-up.ts, the source of truth. */
+export const SUGGEST_DEVELOPER_INSTRUCTIONS = 'When you notice work outside the current request (other bugs, missing tests, stale docs), '
+  + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
 /** The product's Codex /btw prefix (SIDE_QUESTION_INSTRUCTION, src/main/codex-provider-adapter.ts). */
 export const CODEX_SIDE_QUESTION_INSTRUCTION = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '
   + 'read files, edit anything or start sub-agents. Answer only from what is already in this conversation, in one short reply.';

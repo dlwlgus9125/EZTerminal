@@ -63,7 +63,7 @@ import { fileURLToPath } from 'node:url';
 import { createReviewRepo } from './review-probe-repo.mjs';
 import {
   CODEX_ENVIRONMENT_VARIABLES, CODEX_SIDE_QUESTION_INSTRUCTION, PREDICT_INSTRUCTION, PROMPTS, RECAP_INSTRUCTION,
-  SUGGEST_SERVER, SUGGEST_TOOL, changedFiles, delay, errorText, fileHashes, log, number, providerEnvironment, ratio,
+  SUGGEST_DEVELOPER_INSTRUCTIONS, SUGGEST_SERVER, SUGGEST_TOOL, changedFiles, delay, errorText, fileHashes, log, number, providerEnvironment, ratio,
   nonceWord, recapFlags, recapStoppedNote, seedText, startSuggestionServer, visibilityFlags, visibilityQuestion, withTimeout, writeReport,
 } from './wrap-up-probe-kit.mjs';
 
@@ -104,9 +104,6 @@ const SCHEDULES = {
 const forkPrompt = (kind) => (kind === 'predict' ? `Do not use any tools or run any commands. ${PREDICT_INSTRUCTION}`
   : kind === 'btw-predict' ? `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${PREDICT_INSTRUCTION}`
     : `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${RECAP_INSTRUCTION}`);
-/** A copy of SUGGEST_TASK_INSTRUCTIONS in src/shared/turn-wrap-up.ts, the source of truth. */
-const SUGGEST_DEVELOPER_INSTRUCTIONS = 'When you notice work outside the current request (other bugs, missing tests, stale docs), '
-  + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
 const EDIT_RULES = 'Shell commands are not available in this conversation: every command you start is declined. The '
   + "repository's files are quoted below; make your edit with apply_patch and do not run tests, builds or installs.";
 const CODEX_EDIT_PROMPTS = {
