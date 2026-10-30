@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest';
 
 import { parseTranscriptPayload } from '../../shared/transcript-payload';
 import {
-  nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
+  nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, recapQuestion, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
 } from '../../shared/turn-wrap-up';
 import type { AgentProviderEvent } from '../agent-provider-adapter';
 import {
-  PROVIDER_CAPTURE_DIRECTORY, readProviderCaptureFixture, replayProviderFixture, type JsonRpcFrame, type ProviderCaptureFixture,
+  PROVIDER_CAPTURE_DIRECTORY, readProviderCaptureFixture, replayCodexSideFork, replayProviderFixture, type JsonRpcFrame, type ProviderCaptureFixture,
 } from './provider-replay';
 
 /**
@@ -93,25 +93,54 @@ describe('turn wrap-up recordings', () => {
     expect(items.filter((item) => item.type === 'fileChange' || item.type === 'commandExecution')).toEqual([]);
     // A tool marked read-only asks nothing.
     expect(fixture.lines.some((line) => line.dir === 'in' && line.frame.method === 'mcpServer/elicitation/request')).toBe(false);
-    await expect(replayProviderFixture(fixture)).resolves.toBeDefined();
+    const requests: { readonly method: string; readonly params: unknown }[] = [];
+    await replayProviderFixture(fixture, {
+      session: { wrapUp: { developerInstructions: SUGGEST_TASK_INSTRUCTIONS } }, onCodexRequest: (method, params) => requests.push({ method, params }),
+    });
+    expect(requests.find((request) => request.method === 'thread/start')?.params).toMatchObject({ developerInstructions: SUGGEST_TASK_INSTRUCTIONS });
+    expect((requests.find((request) => request.method === 'turn/start')?.params as Record<string, unknown>).additionalContext).toBeUndefined();
   });
 
-  it('Codex: the next-message fork is asked what the host asks, at low effort, and answers one line', () => {
+  it('Codex: the next-message fork is asked what the host asks, at low effort, and answers one line', async () => {
     const fixture = readProviderCaptureFixture('codex-predict-fork');
     expect(fixture.meta.prompt.endsWith(`\n\nQuestion: ${PREDICT_INSTRUCTION}`)).toBe(true);
     expect(outgoing(fixture, 'thread/fork')?.params).toMatchObject({ ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never' });
     expect(outgoing(fixture, 'turn/start')?.params).toMatchObject({ effort: 'low' });
     const answer = codexItems(fixture).filter((item) => item.type === 'agentMessage').at(-1);
-    expect(nextPromptText(String(answer?.text))).toBeTruthy();
+
+    const requests: { readonly method: string; readonly params: unknown }[] = [];
+    const { result, events } = await replayCodexSideFork(fixture, (adapter, conversation, signal) => adapter.predictNextPrompt(conversation, signal), {
+      onCodexRequest: (method, params) => requests.push({ method, params }),
+    });
+    expect(result).toBe(nextPromptText(String(answer?.text)));
+    expect(result).toBeTruthy();
+    // The plan-limit read rides beside opening any conversation.
+    expect(requests.map((request) => request.method).filter((method) => method !== 'account/rateLimits/read'))
+      .toEqual(['thread/resume', 'thread/fork', 'turn/start', 'thread/unsubscribe']);
+    const turn = requests.find((request) => request.method === 'turn/start')?.params as { readonly effort: string; readonly clientUserMessageId: string; readonly input: readonly { readonly text: string }[] };
+    expect(turn.effort).toBe('low');
+    expect(turn.clientUserMessageId).toMatch(/^predict:/u);
+    expect(turn.input[0]!.text).toBe(fixture.meta.prompt);
+    // Only the account-wide limits pass through; no row, turn, usage or error of the conversation.
+    expect(events.every((event) => event.kind === 'usage' && event.sessionId === undefined)).toBe(true);
   });
 
-  it('Codex: the recap fork is asked the shared instruction, at the conversation’s effort, and says only what happened', () => {
+  it('Codex: the recap fork is asked the shared instruction, at the conversation’s effort, and says only what happened', async () => {
     const fixture = readProviderCaptureFixture('codex-recap-fork');
     expect(fixture.meta.prompt.endsWith(`\n\nQuestion: ${RECAP_INSTRUCTION}`)).toBe(true);
     expect((outgoing(fixture, 'turn/start')?.params as Record<string, unknown>).effort).toBeUndefined();
-    const answer = String(codexItems(fixture).filter((item) => item.type === 'agentMessage').at(-1)?.text);
-    expect(answer).toMatch(/src\/format\.ts/u);
+
+    const requests: { readonly method: string; readonly params: unknown }[] = [];
+    const { result, events } = await replayCodexSideFork(fixture, (adapter, conversation, signal) => (
+      adapter.askSideQuestion({ ...conversation, question: recapQuestion(), history: [] }, signal)
+    ), { onCodexRequest: (method, params) => requests.push({ method, params }) });
+    const turn = requests.find((request) => request.method === 'turn/start')?.params as { readonly effort?: string; readonly input: readonly { readonly text: string }[] };
+    expect(turn.effort).toBeUndefined();
+    expect(turn.input[0]!.text).toBe(fixture.meta.prompt);
+    expect(result.synthetic).toBe(false);
+    expect(result.text).toMatch(/src\/format\.ts/u);
     // The conversation changed nothing; the recap must not say it did.
-    expect(answer).toMatch(/no tools|no files|not (?:changed|edited|run)|without/iu);
+    expect(result.text).toMatch(/no tools|no files|not (?:changed|edited|run)|without/iu);
+    expect(events.every((event) => event.kind === 'usage' && event.sessionId === undefined)).toBe(true);
   });
 });

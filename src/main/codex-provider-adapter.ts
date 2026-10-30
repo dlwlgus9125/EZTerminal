@@ -29,6 +29,7 @@ import type {
   ProviderReconciliationInput,
   ProviderReconciliationResult,
   ProviderSessionContext,
+  ProviderPredictInput,
   ProviderSessionHandle,
   ProviderSideQuestionAnswer,
   ProviderSideQuestionFailure,
@@ -41,6 +42,7 @@ import type {
 import { ProviderReviewError, ProviderSideQuestionError, REVIEW_READ_ONLY_UNVERIFIED } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
+import { nextPromptText, PREDICT_INSTRUCTION } from '../shared/turn-wrap-up';
 import {
   CodexAppServerClient,
   CodexJsonRpcError,
@@ -84,6 +86,8 @@ const SIDE_QUESTION_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reason
  * until that app-server exits (ephemeral: nothing of it is written).
  */
 const SIDE_QUESTION_FORK_TIMEOUT_MS = 600_000;
+/** The lowest effort Codex allows: half the wait of the conversation's own, same cache (probe P2). */
+const PREDICT_EFFORT = 'low';
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
@@ -197,9 +201,28 @@ interface PendingApproval {
   readonly resolve: (response: unknown) => void;
 }
 
+/** One tool-less turn on an ephemeral fork of a live thread. */
+interface SideForkRequest extends ProviderPredictInput {
+  /** The fork's user text, after the cached conversation. */
+  readonly text: string;
+  /** For this fork's turn only; the conversation keeps its own. */
+  readonly effort?: string;
+  /** Starts the turn's `clientUserMessageId`. */
+  readonly purpose: 'side-question' | 'predict';
+}
+
 /**
- * A /btw or a review in flight on an ephemeral fork of a session's thread; the fork's frames reach
- * only this ask, and whatever the fork asks to approve is declined.
+ * Threads that already heard the wrap-up instructions (each telling adds a developer message), kept
+ * through restarts. Absent, the adapter remembers for this app run only.
+ */
+export interface CodexToldThreads {
+  has(threadId: string): boolean;
+  add(threadId: string): void;
+}
+
+/**
+ * A /btw, a next-message guess or a review in flight on an ephemeral fork of a session's thread; the
+ * fork's frames reach only this ask, and whatever the fork asks to approve is declined.
  */
 interface SideQuestion {
   readonly sessionId: string;
@@ -230,6 +253,7 @@ export interface CodexProviderAdapterOptions {
   readonly deltaCoalescer?: DeltaCoalescerOptions;
   /** Enable Codex's `update_plan` tool so plan progress arrives as turn/plan/updated (default true). */
   readonly enableUpdatePlan?: boolean;
+  readonly toldThreads?: CodexToldThreads;
 }
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -914,7 +938,9 @@ function todoStatus(value: unknown): TodoItem['status'] {
 export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
   readonly reviewMinimumVersion = CODEX_REVIEW_MINIMUM_VERSION;
+  readonly wrapUp = { suggestions: 'fork', recapWhileBlocked: true } as const;
 
+  private readonly toldThreads: CodexToldThreads;
   private readonly executable: string;
   private connection: CodexAppServerConnection | undefined;
   /** Whether this app-server offers the plan collaboration mode; asked once per connection. */
@@ -949,6 +975,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private disposed = false;
 
   constructor(options: CodexProviderAdapterOptions = {}) {
+    this.toldThreads = options.toldThreads ?? new Set<string>();
     this.executable = options.executable ?? 'codex';
     this.runCommand = options.runCommand ?? runExternalCommand;
     this.resolveExecutable = options.resolveExecutable
@@ -1263,6 +1290,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(context.model ? { model: context.model } : {}),
         ...permissionStartSettings(context.permissionPreset),
         ...(config ? { config } : {}),
+        // Only here: thread/resume ignores it (0/6, probe P6), and it stays through resumes (8/8).
+        ...(context.wrapUp?.developerInstructions ? { developerInstructions: context.wrapUp.developerInstructions } : {}),
         ephemeral: false,
         historyMode: 'paginated',
         threadSource: 'ezterminal',
@@ -1270,6 +1299,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const thread = asObject(result?.thread);
       const providerSessionId = asString(thread?.id);
       if (!providerSessionId) throw new Error('Codex thread/start returned no thread id.');
+      if (context.wrapUp?.developerInstructions) this.toldThreads.add(providerSessionId);
       this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
       // Answered just before the app-server exited (a close read in the same chunk runs first): born dead.
@@ -1382,6 +1412,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       // No effort asked for after another was sent: the thread's own effort again (Codex keeps the last one sent,
       // and null does not reset it), so a one-request effort does not stay.
       const effort = input.reasoningEffort ?? (state.sentEffort !== undefined && state.sentEffort !== state.reasoningEffort ? state.reasoningEffort : undefined);
+      // An existing thread hears it this way (6/6, probe P6): once, because each telling adds a developer message.
+      const instructions = input.wrapUpInstructions && !this.toldThreads.has(input.providerSessionId) ? input.wrapUpInstructions : undefined;
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
@@ -1390,6 +1422,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(nextRoots ? { runtimeWorkspaceRoots: [state.workspaceRoot, ...nextRoots] } : {}),
         // A reviewer's answer is the findings JSON as its final message (probe case c4, fixture codex-review-child).
         ...(state.reviewer ? { outputSchema: REVIEW_FINDINGS_JSON_SCHEMA } : {}),
+        ...(instructions ? { additionalContext: { ezterminal_turn_wrap_up: { kind: 'application', value: instructions } } } : {}),
         input: [
           { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
           ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
@@ -1402,6 +1435,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const providerTurnId = asString(turn?.id);
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
       if (effort) state.sentEffort = effort;
+      if (instructions) this.toldThreads.add(input.providerSessionId);
       // A turn started on this thread: its app-server is live again, so side questions may fork it — unless that
       // app-server exited after answering (a close read in the same chunk runs before this continuation).
       if (this.appServerExits === exitsBeforeTurn) state.appServerExited = false;
@@ -1600,14 +1634,28 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
    * the host bounds it through `signal`.
    */
   async askSideQuestion(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
+    return this.sideFork({
+      sessionId: input.sessionId, providerSessionId: input.providerSessionId, text: sideQuestionPrompt(input.question, input.history), purpose: 'side-question',
+    }, signal);
+  }
+
+  /** Turn wrap-up: the person's likely next message, from the same fork as /btw. A fork cut short is no guess. */
+  async predictNextPrompt(input: ProviderPredictInput, signal: AbortSignal): Promise<string | undefined> {
+    const answer = await this.sideFork({
+      sessionId: input.sessionId, providerSessionId: input.providerSessionId, text: sideQuestionPrompt(PREDICT_INSTRUCTION, []), effort: PREDICT_EFFORT, purpose: 'predict',
+    }, signal);
+    return answer.synthetic ? undefined : nextPromptText(answer.text);
+  }
+
+  private sideFork(input: SideForkRequest, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
     const connection = this.connection;
     const exitsAtAsk = this.appServerExits;
     const live = this.sessions.get(input.sessionId);
     // After the app-server died, a request would relaunch Codex just to ask: the thread is not live until a turn starts again.
     if (this.disposed || !connection || live?.providerSessionId !== input.providerSessionId || live.appServerExited) {
-      throw new ProviderSideQuestionError('not-live');
+      return Promise.reject(new ProviderSideQuestionError('not-live'));
     }
-    if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+    if (signal.aborted) return Promise.reject(new ProviderSideQuestionError('cancelled'));
     return new Promise<ProviderSideQuestionAnswer>((resolve, reject) => {
       let settled = false;
       let turnDone = false;
@@ -1698,8 +1746,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         try {
           const started = asObject(await connection.request('turn/start', {
             threadId,
-            clientUserMessageId: `side-question:${this.idFactory()}`,
-            input: [{ type: 'text', text: sideQuestionPrompt(input.question, input.history), text_elements: [] }],
+            clientUserMessageId: `${input.purpose}:${this.idFactory()}`,
+            ...(input.effort ? { effort: input.effort } : {}),
+            input: [{ type: 'text', text: input.text, text_elements: [] }],
           }));
           question.turnId ??= asString(asObject(started?.turn)?.id);
           if (!question.turnId) finish('failed');

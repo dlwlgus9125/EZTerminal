@@ -137,6 +137,7 @@ import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { ReviewCoordinator } from './review-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
+import { TurnWrapUpToldThreads } from './turn-wrap-up-told-threads';
 import { BUILTIN_THEME_IDS } from '../shared/layout-schema';
 import { createDaemonCommand, type DaemonPrincipal, type DaemonSnapshot } from '../shared/daemon-protocol';
 import { FONT_CATALOG } from '../renderer/fonts';
@@ -932,7 +933,13 @@ app.on('ready', async () => {
   const claudeProviderAdapter = new ClaudeProviderAdapter({
     enablementStore: claudeEnablementStore,
   });
+  const turnWrapUpToldThreads = new TurnWrapUpToldThreads(app.getPath('userData'));
+  void turnWrapUpToldThreads.init().catch((error) => {
+    console.error('[main] turn wrap-up thread record failed to load:', error);
+    mainLog?.line(`turn wrap-up thread record failed to load: ${String(error)}`);
+  });
   const codexProviderAdapter = new CodexProviderAdapter({
+    toldThreads: turnWrapUpToldThreads,
     clientOptions: {
       ...(processGuardian ? { processGuardian } : {}),
       reportError: (message) => {
@@ -3115,6 +3122,11 @@ app.on('ready', async () => {
         name: 'settings changes',
         after: ['local Agent operation ingress', 'main-owned runtime startup'],
         run: () => settingsAuthority.flush(),
+      },
+      {
+        name: 'turn wrap-up threads',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => turnWrapUpToldThreads.flush(),
       },
       {
         name: 'project workspace access',

@@ -99,6 +99,11 @@ export interface ProviderSubmitInput {
    * turn. Undefined leaves the session's folders as they are.
    */
   readonly additionalRoots?: readonly string[];
+  /**
+   * Turn wrap-up: what this thread should have heard. A provider that needs telling (Codex) says it with
+   * this turn if the thread has not heard it yet, and remembers; the setting off means leaving this out.
+   */
+  readonly wrapUpInstructions?: string;
 }
 
 export type AgentProviderTurnScope =
@@ -296,6 +301,12 @@ export interface AgentProviderAdapter {
   readonly wrapUp?: { readonly suggestions: 'native' | 'fork'; readonly recapWhileBlocked: boolean };
   /** Live switch for `native` suggestions; a session not launched eligible ignores it. Never rejects. */
   setPromptSuggestions?(sessionId: string, mode: PromptSuggestionMode): Promise<void>;
+  /**
+   * `fork` suggestions: the person's likely next message from a read-only fork of this live session, cheap
+   * (lowest effort, the session's prompt cache). Undefined: no suggestion. Rejects like a side question;
+   * nothing reaches the conversation. The host aborts it through `signal` when a new turn starts.
+   */
+  predictNextPrompt?(input: ProviderPredictInput, signal: AbortSignal): Promise<string | undefined>;
 
   subscribe(listener: AgentProviderEventListener): () => void;
   reconcile(input: ProviderReconciliationInput, signal?: AbortSignal): Promise<ProviderReconciliationResult>;
@@ -312,6 +323,8 @@ export interface ProviderSideQuestionInput {
   readonly question: string;
   readonly history: readonly SideQuestionExchange[];
 }
+
+export type ProviderPredictInput = Pick<ProviderSideQuestionInput, 'sessionId' | 'providerSessionId'>;
 
 export interface ProviderSideQuestionAnswer {
   readonly text: string | null;

@@ -262,6 +262,44 @@ export async function replayReviewFork(
   }
 }
 
+/**
+ * A recorded Codex fork (scenarios `predict-fork`, `recap-fork`) replayed through a live session of the
+ * conversation it forked: the answer and every event the adapter emitted meanwhile.
+ */
+export async function replayCodexSideFork<T>(
+  fixture: ProviderCaptureFixture,
+  ask: (adapter: CodexProviderAdapter, conversation: { readonly sessionId: string; readonly providerSessionId: string }, signal: AbortSignal) => Promise<T>,
+  options: ProviderReplayOptions = {},
+): Promise<{ readonly result: T; readonly events: readonly AgentProviderEvent[] }> {
+  const parent = (fixture.meta as ProviderCaptureMeta & { readonly parent?: { readonly providerSessionId?: string } }).parent?.providerSessionId;
+  if (!parent) throw new Error(`${fixture.name}: a fork recording names the conversation it forked.`);
+  const events: AgentProviderEvent[] = [];
+  const harness = createHarness(fixture, options);
+  const connection = new CodexReplayConnection(fixture, options.onCodexRequest, options.codexConfig);
+  const adapter = new CodexProviderAdapter({
+    connection, now: () => new Date(REPLAY_NOW), idFactory: sequentialIds('replay-codex'), deltaCoalescer: REPLAY_DELTA_COALESCER,
+  });
+  let unsubscribe = (): void => undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${fixture.name}: fork replay did not finish.`)), REPLAY_TIMEOUT_MS);
+  });
+  try {
+    await adapter.resumeSession({
+      sessionId: REPLAY_SESSION_ID, workspaceId: REPLAY_WORKSPACE_ID, workspaceRoot: REPLAY_WORKSPACE_ROOT, permissionPreset: 'standard', providerSessionId: parent,
+    });
+    unsubscribe = adapter.subscribe((event) => events.push(event));
+    const running = connection.run(harness, () => undefined);
+    const [result] = await Promise.race([Promise.all([ask(adapter, { sessionId: REPLAY_SESSION_ID, providerSessionId: parent }, new AbortController().signal), running]), deadline]);
+    if (harness.failures.length) throw new Error(`${fixture.name}: ${harness.failures.map(String).join('; ')}`);
+    return { result, events };
+  } finally {
+    if (timer) clearTimeout(timer);
+    unsubscribe();
+    await adapter.dispose();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shared replay plumbing
 
@@ -581,6 +619,8 @@ class CodexReplayConnection implements CodexAppServerConnection {
     this.onRequest?.(method, params);
     // Not in a recording (it is the user's config): answered here.
     if (method === 'config/read') return Promise.resolve({ config: this.config });
+    // A fork recording starts at its fork; the conversation it forked was never recorded.
+    if (method === 'thread/resume') return Promise.resolve({ thread: { id: (params as { readonly threadId: string }).threadId } });
     return new Promise((resolve, reject) => {
       this.calls.push({ method, params, resolve, reject });
       this.callArrived.resolve();

@@ -62,6 +62,9 @@ const bodies = [
     forbidden: [/appendTranscript\s*\(/u, /this\.emit\s*\(/u, /emitProviderError\s*\(/u, /this\.report\s*\(/u] },
   { file: 'src/main/codex-provider-adapter.ts', signature: 'async askSideQuestion(', required: false,
     forbidden: [/appendTranscript\s*\(/u, /this\.emit\s*\(/u, /emitProviderError\s*\(/u, /handleCodexError\s*\(/u] },
+  // Codex's /btw is a thin call into this fork, which also serves the next-message guess.
+  { file: 'src/main/codex-provider-adapter.ts', signature: 'private sideFork(', required: true,
+    forbidden: [/appendTranscript\s*\(/u, /this\.emit\s*\(/u, /emitProviderError\s*\(/u, /handleCodexError\s*\(/u] },
   { file: 'src/main/daemon-agent-runtime.ts', signature: 'async askSideQuestion(', required: true,
     forbidden: [/this\.transition\s*\(/u, /rehydrateSession\s*\(/u, /\.createSession\s*\(/u, /\.resumeSession\s*\(/u, /this\.report\s*\(/u, /setProviderAttached\s*\(/u] },
 ];
@@ -72,7 +75,7 @@ for (const { file, signature, required, forbidden } of bodies) {
     continue;
   }
   for (const pattern of forbidden) {
-    if (pattern.test(body)) failures.push(`${file} askSideQuestion calls ${pattern.source}. A side question must leave nothing behind.`);
+    if (pattern.test(body)) failures.push(`${file} \`${signature}\` calls ${pattern.source}. A side question must leave nothing behind.`);
   }
 }
 

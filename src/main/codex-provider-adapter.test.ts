@@ -9,6 +9,7 @@ import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
+import { PREDICT_INSTRUCTION } from '../shared/turn-wrap-up';
 import type {
   AgentProviderEvent,
   ProviderSessionContext,
@@ -2691,6 +2692,183 @@ describe('Codex side questions (/btw)', () => {
     expect(events).toEqual([]);
     await adapter.dispose();
   }, 30_000);
+
+  describe('next-message prediction (turn wrap-up)', () => {
+    const conversation = { sessionId: 'session-1', providerSessionId: 'thread-1' } as const;
+    const answer = async (fork: (method: string, params?: Record<string, unknown>) => Promise<void>, text: string): Promise<void> => {
+      await fork('item/completed', { item: { id: 'msg-1', type: 'agentMessage', text } });
+      await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', error: null, items: [] } });
+    };
+
+    it('asks the /btw fork at low effort, on the fork’s turn only, and answers the one line', async () => {
+      const { adapter, events, sent, forkTurnStarts, forkTurnStarted, fork } = await sideQuestionFixture();
+      const predicted = adapter.predictNextPrompt(conversation, new AbortController().signal);
+      await forkTurnStarted();
+      expect(sent('thread/fork')).toEqual([{
+        threadId: 'thread-1', ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+      }]);
+      expect(forkTurnStarts()).toEqual([{
+        threadId: 'fork-1', clientUserMessageId: expect.stringMatching(/^predict:/u), effort: 'low',
+        input: [{ type: 'text', text: `${instruction}\n\nQuestion: ${PREDICT_INSTRUCTION}`, text_elements: [] }],
+      }]);
+      await answer(fork, 'Add a unit test for formatPrice.\n');
+      await expect(predicted).resolves.toBe('Add a unit test for formatPrice.');
+      expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
+      expect(events).toEqual([]);
+      await adapter.dispose();
+    });
+
+    it('reads "(none)" and a fork that reached for a tool as no suggestion', async () => {
+      const { adapter, forkTurnStarted, fork } = await sideQuestionFixture();
+      const none = adapter.predictNextPrompt(conversation, new AbortController().signal);
+      await forkTurnStarted();
+      await answer(fork, '(none)');
+      await expect(none).resolves.toBeUndefined();
+
+      const tool = adapter.predictNextPrompt(conversation, new AbortController().signal);
+      await forkTurnStarted(2);
+      await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Let me look' }, 'fork-2');
+      await fork('item/started', { item: { id: 'cmd-1', type: 'commandExecution' } }, 'fork-2');
+      await expect(tool).resolves.toBeUndefined();
+      await adapter.dispose();
+    });
+
+    it('fails as a side question does: not live without a live thread, by code only', async () => {
+      const { adapter } = await sideQuestionFixture();
+      await expectFailure(adapter.predictNextPrompt({ sessionId: 'session-1', providerSessionId: 'thread-old' }, new AbortController().signal), 'not-live');
+      await adapter.dispose();
+    });
+
+    it('stops a running fork through turn/interrupt and lets it go; the new source turn runs, and nothing of the fork counts', async () => {
+      const { adapter, connection, events, sent, forkTurnStarted, fork } = await sideQuestionFixture();
+      const controller = new AbortController();
+      const predicted = adapter.predictNextPrompt(conversation, controller.signal);
+      await forkTurnStarted();
+      await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-new', commandId: 'command-new', prompt: 'Next' });
+      expect(sent('turn/start')).toContainEqual(expect.objectContaining({ threadId: 'thread-1', clientUserMessageId: 'command-new' }));
+      controller.abort();
+      await expectFailure(predicted, 'cancelled');
+      expect(sent('turn/interrupt')).toEqual([{ threadId: 'fork-1', turnId: 'fork-1-turn' }]);
+      expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
+      // The usage after an interrupt replays the parent's numbers.
+      const before = events.length;
+      await fork('thread/tokenUsage/updated', { tokenUsage: { last: { totalTokens: 900_000 }, modelContextWindow: 1_000_000 } });
+      await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'interrupted', error: null, items: [] } });
+      expect(events.slice(before)).toEqual([]);
+      expect(events.filter((event) => event.kind === 'usage')).toEqual([]);
+      await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'parent-turn-1', status: 'completed', error: null, items: [] } });
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-new', outcome: 'completed' }));
+      await adapter.dispose();
+    });
+
+    it('lets go of a fork that answers after the prediction was cancelled', async () => {
+      const { adapter, replies, sent, forkTurnStarts } = await sideQuestionFixture();
+      let answerFork!: (value: unknown) => void;
+      replies.fork = () => new Promise((resolve) => { answerFork = resolve; });
+      const controller = new AbortController();
+      const predicted = adapter.predictNextPrompt(conversation, controller.signal);
+      await vi.waitFor(() => expect(sent('thread/fork')).toHaveLength(1));
+      controller.abort();
+      await expectFailure(predicted, 'cancelled');
+      answerFork({ thread: { id: 'fork-late' } });
+      await vi.waitFor(() => expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-late' }]));
+      expect(forkTurnStarts()).toEqual([]);
+      await adapter.dispose();
+    });
+  });
+
+  it('declares how it wraps up: a fork for suggestions, and recaps while a turn is stopped', async () => {
+    const { adapter } = await sideQuestionFixture();
+    expect(adapter.wrapUp).toEqual({ suggestions: 'fork', recapWhileBlocked: true });
+    await adapter.dispose();
+  });
+});
+
+describe('Codex instructions for suggest_task (turn wrap-up)', () => {
+  const text = 'Propose work outside the request with suggest_task.';
+  const context_ = { ezterminal_turn_wrap_up: { kind: 'application', value: text } };
+  const threads = (told: Iterable<string> = []): { readonly has: (id: string) => boolean; readonly add: (id: string) => void; readonly told: Set<string> } => {
+    const set = new Set(told);
+    return { has: (id) => set.has(id), add: (id) => { set.add(id); }, told: set };
+  };
+
+  function fixture(toldThreads = threads()) {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'turn/start') return { turn: { id: `provider-turn-${String(connection.requests.length)}` } };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, toldThreads, now: () => new Date('2026-09-04T03:00:00.000Z') });
+    const sent = (method: string): Record<string, unknown>[] => connection.requests.filter((request) => request.method === method).map((request) => request.params as Record<string, unknown>);
+    const turn = (turnId: string, wrapUpInstructions: string | undefined = text) => adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId, commandId: `command-${turnId}`, prompt: 'Work',
+      ...(wrapUpInstructions ? { wrapUpInstructions } : {}),
+    });
+    const finish = (id: string) => connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id, status: 'completed', error: null, items: [] } });
+    const providerTurn = (): string => ((connection.requests.length && sent('turn/start').length) ? `provider-turn-${String(connection.requests.findLastIndex((request) => request.method === 'turn/start') + 1)}` : '');
+    return { adapter, connection, sent, turn, finish, providerTurn, toldThreads };
+  }
+
+  it('tells a new thread at thread/start and marks it, so no turn repeats it', async () => {
+    const { adapter, sent, turn, toldThreads } = fixture();
+    await adapter.createSession(context({ wrapUp: { developerInstructions: text } }));
+    expect(sent('thread/start')[0]).toMatchObject({ developerInstructions: text });
+    expect(toldThreads.told).toEqual(new Set(['thread-1']));
+    await turn('turn-1');
+    expect(sent('turn/start')[0]).not.toHaveProperty('additionalContext');
+    await adapter.dispose();
+  });
+
+  it('says nothing on thread/resume, which ignores it, and tells an existing thread with its next turn, once', async () => {
+    const { adapter, sent, turn, finish, providerTurn, toldThreads } = fixture();
+    await adapter.resumeSession({ ...context({ wrapUp: { developerInstructions: text } }), providerSessionId: 'thread-1' });
+    expect(sent('thread/resume')[0]).not.toHaveProperty('developerInstructions');
+    expect(toldThreads.told.size).toBe(0);
+    await turn('turn-1');
+    expect(sent('turn/start')[0]).toMatchObject({ additionalContext: context_ });
+    expect(toldThreads.told).toEqual(new Set(['thread-1']));
+    await finish(providerTurn());
+    await turn('turn-2');
+    expect(sent('turn/start')[1]).not.toHaveProperty('additionalContext');
+    await adapter.dispose();
+  });
+
+  it('remembers across restarts through its store', async () => {
+    const { adapter, sent, turn } = fixture(threads(['thread-1']));
+    await adapter.resumeSession({ ...context(), providerSessionId: 'thread-1' });
+    await turn('turn-1');
+    expect(sent('turn/start')[0]).not.toHaveProperty('additionalContext');
+    await adapter.dispose();
+  });
+
+  it('injects and marks nothing with the setting off, so turning it on later still tells the thread', async () => {
+    const { adapter, sent, turn, finish, providerTurn, toldThreads } = fixture();
+    await adapter.createSession(context());
+    await turn('turn-1', '');
+    expect(sent('turn/start')[0]).not.toHaveProperty('additionalContext');
+    expect(toldThreads.told.size).toBe(0);
+    await finish(providerTurn());
+    await turn('turn-2');
+    expect(sent('turn/start')[1]).toMatchObject({ additionalContext: context_ });
+    await adapter.dispose();
+  });
+
+  it('marks a thread only once the turn started: a refused turn tells it again', async () => {
+    const { adapter, connection, sent, turn, toldThreads } = fixture();
+    await adapter.createSession(context());
+    const answer = connection.requestImpl;
+    connection.requestImpl = async (method, params) => {
+      if (method === 'turn/start') throw new Error('refused');
+      return answer(method, params);
+    };
+    await expect(turn('turn-1')).rejects.toThrow('refused');
+    expect(toldThreads.told.size).toBe(0);
+    connection.requestImpl = answer;
+    await turn('turn-2');
+    expect(sent('turn/start')[1]).toMatchObject({ additionalContext: context_ });
+    await adapter.dispose();
+  });
 });
 
 describe('Codex review fork (review loop)', () => {
