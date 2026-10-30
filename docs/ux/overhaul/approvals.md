@@ -409,6 +409,61 @@ gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허�
 - 하나씩 보기 story는 결과물의 "갱신" 시각을 09:42로 고정하고 키보드 시작점을 하나씩 보기 띠에 둔다 — 실시간 시계와 문제 줄 스크롤이
   기준 검사(그림 고정·Tab 이동)를 흔들어서다. 그림은 시안과 같다.
 
+## 2026-10-30 · 턴 마무리(Claude 데스크톱 기능 흡수 2묶음) 실험 결정
+
+**요청(2026-10-29 확정, 계획 `~/.claude/plans/desktop-valiant-stearns.md` 묶음 2)**: 요약 카드, 다음 입력 제안(Tab 수락), 제안 작업
+카드(새 하위 대화로 시작·워크트리 선택 / 여기서 하기 / 모두 시작). AI는 제안만 하고 실행은 사람이 누를 때만. 자동 AI 호출은 싼 것만:
+다음 입력 제안은 자동(Codex는 실측해 쌀 때만), 요약 카드는 AI가 사람을 기다리거나 사람이 그 대화를 안 보고 있었을 때만, 사용량 한도
+근처면 자동 호출을 멈춤, 모두 설정에서 바꿀 수 있음.
+
+**실험 결정(체크포인트 A)** — 스크립트 `scripts/probe-claude-turn-wrap-up.mjs`·`scripts/probe-codex-turn-wrap-up.mjs`(공용
+`scripts/wrap-up-probe-kit.mjs`, 저장소 `scripts/review-probe-repo.mjs`), 보고 `artifacts/wrap-up-probe/`(로컬). Claude CLI 2.1.312·SDK
+0.3.260(claude-opus-5-5), Codex 0.165.0, 모두 2회. 캐시 비율은 그 호출의 **첫 요청**(Claude OTel `api_request`, Codex 첫
+`tokenUsage.last`)이 캐시에서 읽은 양 ÷ 직전 턴 끝의 대화 크기다.
+
+- 다음 입력 제안
+  - Claude: SDK `promptSuggestions:true`면 턴 `result` 뒤에 `prompt_suggestion` 메시지가 온다(순서 `result` → `command_lifecycle` →
+    `prompt_suggestion`). 결과 뒤 2.6–7.9초, 캐시 1.00, 새로 읽는 입력 약 500토큰·출력 10–33토큰. 보통 턴 7/8에 왔고, 대화의 첫 턴 뒤와
+    계획 모드에서는 오지 않았다(계획 모드를 끄면 다시 옴). 한국어 대화에는 한국어. 1/8은 요청은 돌았는데 메시지가 오지 않았다 → 앱은
+    기다리다 그만두고 입력창을 절대 막지 않는다.
+  - Codex: 자체 기능이 없다. `thread/prediction/request`는 `-32601 not implemented`(5/5, 2회), `experimentalPredictionMode` 분기는 읽기
+    전용 덮어쓰기와 함께 쓸 수 없다(`-32600`) → 둘 다 쓰지 않는다. 쓰는 것: /btw와 같은 읽기 전용 ephemeral 분기에 "사람이 다음에 보낼
+    말 한 줄" 지시, 그 턴만 노력 `low`(허용 최저). low: 캐시 0.995–0.997, 6.6–15.0초(대화 노력 xhigh 그대로면 8.0–24.3초), 출력
+    30–171토큰. 6번 중 3번은 "(none)"(제안 없음 — 다 끝난 턴 뒤), 나머지는 쓸 만한 한 줄. 제안이 실험 대화의 말투("도구는 쓰지 말고:
+    …")를 그대로 흉내 냈다 — 품질은 합성 대화로 본 것이다.
+- 요약 카드
+  - Claude: `askSideQuestion`(/btw 경로) 캐시 1.00, 3.6–7.1초, 3–4줄. 4/4가 실제로 한 일만 말했다(바꾼 파일·기다리는 질문·확인할 것),
+    한국어 대화엔 한국어.
+  - Codex: /btw 모양 읽기 전용 ephemeral 분기, 캐시 0.99, 12.1–20.7초, 3–4줄. 4/4가 실제로 한 일만 말했다 — "테스트·빌드·설치는
+    실행하지 않았습니다"까지 정확(스크립트의 '테스트 실행을 말함' 표시는 단어 검사의 오탐).
+  - 언제: Claude `session_state_changed`는 한 번도 오지 않았다 → 쓰지 않는다. 호스트가 턴이 끝날 때 스스로 판단한다: ① AI가 사람을
+    기다림(승인·질문·계획 확인 — 이미 대화 상태로 있음) ② 아무 화면도 그 대화를 보고 있지 않았음 — 이 신호는 지금 호스트에 없다
+    (`attendedTurn`은 누가 턴을 보냈는지만 안다). 새로 만든다: 각 클라이언트가 보고 있는 대화를 호스트에 알린다(데스크톱 = 창에 초점이
+    있고 그 대화 탭이 보임, 폰 = 앱이 앞에 있고 그 대화가 열림, 주기 신호가 끊기면 안 보는 것으로), 연결된 클라이언트 중 아무도 안 보면
+    "안 봄".
+- 제안 작업
+  - 도구: 세션 MCP 엔드포인트(`ezterminal_orchestration`)에 `suggest_task{title ≤120, prompt ≤4,000, rationale ≤500, worktree?}`.
+    오케스트레이션 토글과 무관하게 늘 있고, 부르면 카드 하나가 생길 뿐 아무것도 실행·변경하지 않는다. `readOnlyHint:true`.
+  - Claude: 도구 검색 뒤에 숨어 있으면 0/2(모델이 찾지 않음). 서버 `alwaysLoad`로 처음부터 실으면 2/2 — 1회차는 버그 3개를 한 제안에
+    묶어 1번, 2회차는 3번(하나씩). 서버 전체를 실으면 오케스트레이션 도구 전부가 매 턴 실리므로 **도구 자신의
+    `_meta['anthropic/alwaysLoad']`로 그 도구만 싣는다**(2/2: 시작부터 실림, 도구 검색 없이 바로 부름; 비교용은 2/2 숨음). 승인: 기본
+    모드는 매번 `canUseTool`로 묻는다 — MCP 서버의 도구별 `permission_policy:'always_allow'`(짧은 이름·전체 이름 모두)로도 그대로였고,
+    `allowedTools`에 전체 이름을 넣거나 계획 모드일 때만 묻지 않았다 → `allowedTools`에 정확한 이름 하나.
+  - Codex: MCP 서버 `instructions`와 도구 설명만으로는 0/2. `thread/start`의 `developerInstructions`에 "맡은 일 밖의 일은 하지 말고
+    suggest_task로 넘겨라" 한 줄을 넣으면 2/2(매번 3개, 정확, 하나씩), 턴 사이 캐시는 그대로(0.995–1.0). `readOnlyHint`가 없으면
+    elicitation 승인 요청이 온다(스레드 설정 `tools.suggest_task.approval_mode:'approve'`로도 면제됨). `thread/resume`에도
+    `developerInstructions` 인자가 있다 — 이미 있는 대화에 적용되는지와 첫 턴 캐시 비용은 구현 때 확인한다(안 되면 Codex 제안 작업은
+    새 대화부터).
+  - 이미 있는 Claude 대화는 도구가 하나 늘어나는 첫 턴에 한 번 캐시를 새로 쓴다(MCP 설정이 바뀔 때와 같음).
+- 실험의 안전: Codex 편집 대화는 이 PC의 workspace-write 멈춤 때문에 샌드박스 없이 돌려야 해서, 플래그(`--allow-unsandboxed`)가 있을
+  때만 돌고 승인 정책 `untrusted`로 모든 명령을 거절하고 저장소 안 파일 편집만 승인했다(다시 돌린 실험에서 승인 없이 돈 것 0건).
+  제품의 실행 방식과는 무관하다.
+- 정한 방식: 다음 입력 제안 = Claude 자체 기능, Codex 읽기 전용 분기(low). 요약 = 두 AI 모두 /btw 경로. 제안 작업 = 세션 MCP 도구 +
+  Claude 그 도구만 항상 싣기·`allowedTools` + Codex `developerInstructions`. 한도 근처 = 사용량 표시가 위험 단계(`agentUsageLevel`
+  'danger', 90% 이상)면 자동 호출(다음 입력 제안·요약)을 멈춘다. 제안 작업은 AI 자신의 턴 안 도구라 따로 부르는 호출이 아니다.
+- 시안 단계로 넘김: Codex 다음 입력 제안 기본값(위 숫자), 수락 키, 요약 카드 조건과 실패 표시, 제안 작업 시작 기본값(AI·폴더·워크트리),
+  모두 시작 확인, 한 턴 제안 상한, 폰(새 워크트리는 데스크톱 IPC `workspace-worktrees:create`뿐이라 폰에서 못 만듦), 설정 위치.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약
