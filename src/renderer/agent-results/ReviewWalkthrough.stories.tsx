@@ -57,7 +57,7 @@ function services(): ResultsServices {
   };
 }
 
-function Results({ id, make, args, review, findingIndex, worktree = true, turnActive = false, locale = 'ko' }: {
+function Results({ id, make, args, review, findingIndex, worktree = true, turnActive = false, locale = 'ko', width = 560, height = '100vh' }: {
   readonly id: string;
   readonly make: (now: number) => ReviewFixture;
   readonly args: Args;
@@ -67,6 +67,9 @@ function Results({ id, make, args, review, findingIndex, worktree = true, turnAc
   readonly worktree?: boolean;
   readonly turnActive?: boolean;
   readonly locale?: 'ko' | 'en';
+  /** The Results tab's width: 560 beside a conversation, 385 in a narrow group. */
+  readonly width?: number;
+  readonly height?: number | string;
 }): JSX.Element {
   const sessionId = `review-results-${id}`;
   const [fixture] = useState(() => inSession(make(Date.parse('2026-10-29T00:50:00.000Z')), sessionId));
@@ -90,7 +93,7 @@ function Results({ id, make, args, review, findingIndex, worktree = true, turnAc
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <HighlighterProvider>
-        <div style={{ width: 560, height: '100vh', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--ui-border-subtle)' }}>
+        <div style={{ width, height, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--ui-border-subtle)' }}>
           <ConversationResults source={source} services={hostServices} navigation={navigation} />
         </div>
       </HighlighterProvider>
@@ -120,6 +123,47 @@ export const Walkthrough: Story = {
     await userEvent.click(canvas.getByRole('button', { name: '이전 문제' }));
     await expect(canvas.getByTestId('results-walkthrough-position')).toHaveTextContent('문제 2/5');
   },
+};
+/**
+ * The strip stays at the top of the Changes scroll area while the change scrolls under it (wide and narrow), and the
+ * problem's line it steps to is never hidden beneath it.
+ */
+async function stripStaysInView(canvasElement: HTMLElement): Promise<void> {
+  const canvas = within(canvasElement);
+  await position(canvasElement);
+  const strip = canvas.getByTestId('results-walkthrough');
+  const scroller = strip.closest<HTMLElement>('.conversation-results__panel')!;
+  await userEvent.click(canvas.getByTestId('results-walkthrough-next'));
+  await userEvent.click(canvas.getByTestId('results-walkthrough-next'));
+  scroller.scrollTop = scroller.scrollHeight;
+  await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+  const inView = (): void => {
+    const box = scroller.getBoundingClientRect();
+    const rect = strip.getBoundingClientRect();
+    expect(rect.top).toBeGreaterThanOrEqual(box.top - 1);
+    expect(rect.bottom).toBeLessThanOrEqual(box.bottom + 1);
+  };
+  await waitFor(inView);
+  // Stepping back to the first problem scrolls its line into view below the strip, not under it.
+  await userEvent.click(canvas.getByTestId('results-walkthrough-previous'));
+  await userEvent.click(canvas.getByTestId('results-walkthrough-previous'));
+  await expect(canvas.getByTestId('results-walkthrough-position')).toHaveTextContent('문제 1/5');
+  await waitFor(() => {
+    const line = canvasElement.querySelector<HTMLElement>('.results-patch__line[data-focus="true"]');
+    expect(line).not.toBeNull();
+    expect(line!.getBoundingClientRect().top).toBeGreaterThanOrEqual(strip.getBoundingClientRect().bottom - 1);
+  });
+  inView();
+}
+/** Beside the conversation (560 px), scrolled down: 문제 n/m · 이전/다음 · 고치기/무시 · 닫기 stay at the top. */
+export const WalkthroughScrolled: Story = {
+  render: (args) => <Results id="walk-scrolled" make={() => otherAiReview()} args={args} review height={560} />,
+  play: async ({ canvasElement }) => stripStaysInView(canvasElement),
+};
+/** The same in a narrow group (385 px). */
+export const WalkthroughScrolledNarrow: Story = {
+  render: (args) => <Results id="walk-scrolled-narrow" make={() => otherAiReview()} args={args} review width={385} height={640} />,
+  play: async ({ canvasElement }) => stripStaysInView(canvasElement),
 };
 /** A problem on a line the change does not touch: 변경 범위 밖, and the file at that line. */
 export const WalkthroughOutside: Story = {

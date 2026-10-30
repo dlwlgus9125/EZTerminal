@@ -117,6 +117,24 @@ describe('the review sheet with an AI review (findings mode)', () => {
   });
 });
 
+describe('the queue receipt on a phone', () => {
+  it('says the comments wait in the queue only until their turn starts', async () => {
+    const onSendComments = vi.fn(async (comments: string) => ({ ok: true as const, queued: comments.length > 0 }));
+    const line = (text: string): HTMLButtonElement => [...document.querySelectorAll<HTMLButtonElement>('button.conversation-review__line')].find((element) => element.textContent?.includes(text))!;
+    show({ openRequest: 1, onSendComments, onQuote: vi.fn(), turnActive: true });
+    act(() => line('   }').click());
+    act(() => line('   }').click());
+    act(() => byTestId('conversation-review-quote-only')!.click());
+    await act(async () => byTestId('results-send-comments')!.click());
+    expect(byTestId('results-send-status')?.textContent).toBe('대기열에 추가됨');
+    const sent = onSendComments.mock.calls[0]![0];
+    show({ openRequest: 1, onSendComments, onQuote: vi.fn(), turnActive: true, queuedTexts: [sent] });
+    expect(byTestId('results-send-status')?.textContent).toBe('대기열에 추가됨');
+    show({ openRequest: 1, onSendComments, onQuote: vi.fn(), turnActive: true, queuedTexts: [] });
+    expect(byTestId('results-send-status')?.textContent).toBe('대화에 보냈습니다.');
+  });
+});
+
 describe('comments on a phone (no Shift)', () => {
   const line = (text: string): HTMLButtonElement => [...document.querySelectorAll<HTMLButtonElement>('button.conversation-review__line')].find((element) => element.textContent?.includes(text))!;
 

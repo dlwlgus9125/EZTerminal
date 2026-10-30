@@ -1332,6 +1332,14 @@
 .structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__identity p { display: none; }
 .structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__identity .structured-agent__eyebrow + h1 { margin-left: 0; }
 .structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__status { flex: 0 1 auto; }
+/* A read-only conversation (history, a finished reviewer) shows its settings in the header. In a narrow panel the title
+   (shortened; its tooltip and name keep it whole) and the state keep the first row, and the controls wrap below them:
+   never wider than the panel, so nothing scrolls sideways when one takes focus. */
+.structured-agent--live[data-variant='desktop'][data-compact='true'][data-history-only] .structured-agent-session-header { flex-wrap: wrap; }
+.structured-agent--live[data-variant='desktop'][data-compact='true'][data-history-only] .structured-agent-session-header__status { flex: none; }
+.structured-agent--live[data-variant='desktop'][data-compact='true'][data-history-only] .structured-agent-session-controls {
+  flex: 1 1 100%; flex-wrap: wrap; min-width: 0; margin-left: 0;
+}
 
 .chat-header-more {
   width: 2rem;

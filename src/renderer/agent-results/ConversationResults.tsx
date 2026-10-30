@@ -174,6 +174,7 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               onViewFile={showFile}
               {...(source.baseRef ? { baseRef: source.baseRef } : {})}
               {...(source.workspaceId ? { workspaceId: source.workspaceId } : {})}
+              {...(source.queuedTexts ? { queuedTexts: source.queuedTexts } : {})}
               {...(source.sendNow ? { sendNow: source.sendNow } : {})}
               {...(source.reviewAction ? { reviewAction: source.reviewAction } : {})}
               {...(source.openReviewStart ? { openReviewStart: source.openReviewStart } : {})}

@@ -10,7 +10,8 @@ import './review-comment-tray.css';
 
 type SendState =
   | { readonly phase: 'idle' | 'sending' }
-  | { readonly phase: 'sent'; readonly queued: boolean; readonly position?: number }
+  /** `text`: what went, to follow it in the conversation's queue. */
+  | { readonly phase: 'sent'; readonly queued: boolean; readonly position?: number; readonly text: string }
   | { readonly phase: 'error'; readonly message: string };
 
 /**
@@ -19,7 +20,7 @@ type SendState =
  * message box. Only the comments that went are taken off — ones added while sending stay — and a
  * place in the queue is said only when the host gave it.
  */
-export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insertIntoDraft, turnActive, draftUnavailable }: {
+export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insertIntoDraft, turnActive, draftUnavailable, queuedTexts }: {
   readonly comments: readonly ReviewComment[];
   readonly onRemove: (id: string) => void;
   /** These comments went (sent, or put into the message box): take them off. */
@@ -29,6 +30,8 @@ export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insert
   /** The conversation is answering: a send waits in its queue. */
   readonly turnActive: boolean;
   readonly draftUnavailable?: 'history' | 'disabled';
+  /** The messages still waiting in the conversation's queue: a sent receipt says 대기열 only while its message is there. */
+  readonly queuedTexts?: readonly string[];
 }): JSX.Element | null {
   const copy = useResultsCopy();
   const locale = useChatLocale();
@@ -49,15 +52,24 @@ export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insert
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the signature is the ids
   }, [signature]);
 
+  // Queued, then sent once its turn started: the message left the queue (seen there, or the conversation went idle).
+  const [seenQueued, setSeenQueued] = useState(false);
+  const queuedText = sendState.phase === 'sent' && sendState.queued ? sendState.text : undefined;
+  const inQueue = queuedText !== undefined && (queuedTexts ?? []).includes(queuedText);
+  useEffect(() => { if (inQueue) setSeenQueued(true); }, [inQueue]);
+  const waiting = queuedText !== undefined && (queuedTexts === undefined ? turnActive : inQueue || (!seenQueued && turnActive));
+
   const send = async (): Promise<void> => {
     if (!sendNow || tooLong || !draftText || sendState.phase === 'sending') return;
     const sent = ids;
+    const text = draftText;
     setSendState({ phase: 'sending' });
     setInserted(false);
-    const result = await sendNow(draftText).catch((): ResultsSendResult => ({ ok: false, message: '' }));
+    setSeenQueued(false);
+    const result = await sendNow(text).catch((): ResultsSendResult => ({ ok: false, message: '' }));
     if (result.ok) {
       onTaken(sent);
-      setSendState({ phase: 'sent', queued: result.queued, ...(result.position !== undefined ? { position: result.position } : {}) });
+      setSendState({ phase: 'sent', queued: result.queued, text, ...(result.position !== undefined ? { position: result.position } : {}) });
     } else {
       setSendState({ phase: 'error', message: result.message });
     }
@@ -108,7 +120,7 @@ export function ReviewCommentTray({ comments, onRemove, onTaken, sendNow, insert
       )}
       {sendState.phase === 'sent' && (
         <p className="results-tray__note" role="status" data-testid="results-send-status">
-          {sendState.queued ? (sendState.position !== undefined ? copy.queuedAt(sendState.position) : copy.queuedPlain) : copy.sent}
+          {waiting ? (sendState.position !== undefined ? copy.queuedAt(sendState.position) : copy.queuedPlain) : copy.sent}
         </p>
       )}
       {inserted && !comments.length && sendState.phase !== 'sent' && <p className="results-tray__note" role="status">{copy.insertedDraft}</p>}

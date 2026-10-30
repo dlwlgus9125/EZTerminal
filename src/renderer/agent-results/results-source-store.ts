@@ -43,6 +43,8 @@ export interface ResultsDockPart {
   readonly turnActive: boolean;
   /** The conversation works in a worktree off this branch: Changes offers 기준 브랜치와 비교. */
   readonly baseRef?: string;
+  /** The messages waiting in the conversation's queue (sent review comments say 대기열 while theirs is there). */
+  readonly queuedTexts?: readonly string[];
   readonly readTranscriptPage?: (afterSequence: number, limit: number) => Promise<readonly DaemonTranscriptItem[]>;
   readonly openRelatedSession?: (sessionId: string) => void;
   readonly openProjectFiles?: () => void;

@@ -1284,6 +1284,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const ko = i18n.language.startsWith('ko');
   const [queueBusy, setQueueBusy] = useState(false);
   const queueBusyRef = useRef(false);
+  /** Queued review fixes whose message is shown (원문 보기). */
+  const [openQueued, setOpenQueued] = useState<ReadonlySet<string>>(() => new Set());
+  const reviewCopy = chatCopy(ko ? 'ko' : 'en').aiReview;
   const composerId = useId();
   const disabledReasonId = `${composerId}-disabled-reason`;
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1545,8 +1548,17 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
         {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
-        <ol>{queueItems.map(item => <li key={item.turnId} className="chat-queue__item">
-          <p>{item.text}</p>
+        <ol>{queueItems.map(item => <li key={item.turnId} className="chat-queue__item" data-review-fix={item.reviewFix ? true : undefined}>
+          {item.reviewFix ? <>
+            {/* A review's 고치기: named as in the transcript; the prompt itself (English, JSON) only on demand. */}
+            <p className="chat-queue__review"><Glyph name="edit" /><span>{reviewCopy.fixTurn(item.reviewFix.findings)}</span>
+              <button type="button" className="chat-link-button" aria-expanded={openQueued.has(item.turnId)}
+                onClick={() => setOpenQueued(current => { const next = new Set(current); if (!next.delete(item.turnId)) next.add(item.turnId); return next; })}>
+                {openQueued.has(item.turnId) ? reviewCopy.hideText : reviewCopy.showText}
+              </button>
+            </p>
+            {openQueued.has(item.turnId) && <p className="chat-queue__original">{item.text}</p>}
+          </> : <p>{item.text}</p>}
           {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
           {onQueueAction && <div className="conversation-queue__actions">{(['run-next', 'take', 'remove'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
             disabled={disabled || sendDisabled || queueBusy || submitting !== null || uncertain || (action === 'take' && !!value.parkedDraft)} onClick={() => {
@@ -2358,6 +2370,8 @@ export function StructuredAgentSessionPanel({
     if (results) results.open({ activate: true, target: { section: 'changes', review: { reviewId: action.reviewId, ...(findingId ? { findingId } : {}) } } });
     else setFindingsRequest((current) => ({ sequence: (current?.sequence ?? 0) + 1, reviewId: action.reviewId, ...(findingId ? { findingId } : {}) }));
   };
+  // What waits in this conversation's queue, so a sent review comment's receipt can follow its message.
+  const queuedTexts = useMemo(() => (queueItems ?? []).map((item) => item.text), [queueItems]);
   /** Review comments sent as a message of their own (queued behind a running turn), never mixed into the draft. */
   const canSendComments = !historyOnly && !composerDisabled && !disabled && !sendDisabled;
   const sendComments = async (text: string): Promise<ResultsSendResult> => {
@@ -2857,7 +2871,7 @@ export function StructuredAgentSessionPanel({
         {...(findingsRequest ? { findingsRequest } : {})}
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
         {...(canSendComments ? { onSendComments: sendComments } : {})}
-        turnActive={turnCurrent} />}
+        turnActive={turnCurrent} queuedTexts={queuedTexts} />}
       {full && workflowContext}
       {full && <StructuredAgentTranscript
         beforeMessages={beforeMessages}

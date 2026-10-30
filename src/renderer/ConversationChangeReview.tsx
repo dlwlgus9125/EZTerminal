@@ -64,7 +64,7 @@ function findingLines(changes: readonly ConversationFileChange[], finding: ChatR
 }
 
 export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange, openRequest = 0, hideTrigger = false, returnFocusRef,
-  turns, workspaceRoot, findingsRequest, onReviewAction, onSendComments, turnActive = false }: {
+  turns, workspaceRoot, findingsRequest, onReviewAction, onSendComments, turnActive = false, queuedTexts }: {
   sessionId: string; items: readonly DaemonTranscriptItem[]; wide: boolean; mobile: boolean; ownerDocument?: Document; onQuote?: (text: string) => void; onOpenProjectFiles?: () => void;
   /** Reports whether the review is docked beside the transcript, so the panel can reserve room without :has(). */
   onAsideChange?: (open: boolean) => void;
@@ -86,6 +86,8 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   onSendComments?: (text: string) => Promise<ResultsSendResult>;
   /** The conversation is answering: sent comments wait in its queue. */
   turnActive?: boolean;
+  /** The messages waiting in the conversation's queue (a sent receipt says 대기열 while its message is there). */
+  queuedTexts?: readonly string[];
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const chat = useChatCopy();
@@ -200,7 +202,7 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
         {state.reviewed.includes(selected.id) ? (ko ? '미확인으로 표시' : 'Mark unread') : (ko ? '확인함으로 표시' : 'Mark reviewed')}
       </Button></div>
     </>}
-    <ReviewCommentTray comments={comments} turnActive={turnActive}
+    <ReviewCommentTray comments={comments} turnActive={turnActive} {...(queuedTexts ? { queuedTexts } : {})}
       onTaken={ids => updateWith(current => ({ comments: (current.comments ?? []).filter(comment => !ids.includes(comment.id)) }))}
       onRemove={id => updateWith(current => ({ comments: (current.comments ?? []).filter(comment => comment.id !== id) }))}
       {...(onSendComments ? { sendNow: onSendComments } : {})}

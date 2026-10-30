@@ -95,8 +95,10 @@ export interface ReviewCounts {
   readonly problems: number;
   /** The fix turn's reply said fixed. */
   readonly fixed: number;
-  /** Sent and not answered yet: requested or being fixed. */
-  readonly inProgress: number;
+  /** Sent, waiting for its turn (고침 요청됨). */
+  readonly requested: number;
+  /** Its fix turn runs (고치는 중). */
+  readonly fixing: number;
   readonly notChanged: number;
   /** The fix turn finished without saying. */
   readonly unconfirmed: number;
@@ -109,7 +111,8 @@ export function reviewCounts(review: Pick<ChatReview, 'findings'>): ReviewCounts
   return {
     problems: review.findings.length,
     fixed: count((finding) => finding.status === 'fixed'),
-    inProgress: count((finding) => finding.status === 'requested' || finding.status === 'fixing'),
+    requested: count((finding) => finding.status === 'requested'),
+    fixing: count((finding) => finding.status === 'fixing'),
     notChanged: count((finding) => finding.status === 'not-changed'),
     unconfirmed: count((finding) => finding.status === 'unconfirmed'),
     dismissed: count((finding) => finding.status === 'dismissed'),
@@ -117,12 +120,13 @@ export function reviewCounts(review: Pick<ChatReview, 'findings'>): ReviewCounts
   };
 }
 
-/** `문제 6 · 고침 1 · 고치는 중 1 · 안 고침 1 · 확인 필요 1 · 무시 1`: only what is there. */
+/** `문제 6 · 고침 1 · 고침 요청됨 1 · 고치는 중 1 · 안 고침 1 · 확인 필요 1 · 무시 1`: only what is there, named as on each problem. */
 export function countsText(counts: ReviewCounts, copy: ChatCopy, withProblems = true): string {
   return [
     ...(withProblems ? [copy.aiReview.problems(counts.problems)] : []),
     ...(counts.fixed ? [copy.aiReview.fixes(counts.fixed)] : []),
-    ...(counts.inProgress ? [copy.aiReview.fixing(counts.inProgress)] : []),
+    ...(counts.requested ? [copy.aiReview.requestedCount(counts.requested)] : []),
+    ...(counts.fixing ? [copy.aiReview.fixing(counts.fixing)] : []),
     ...(counts.notChanged ? [copy.aiReview.notChangedCount(counts.notChanged)] : []),
     ...(counts.unconfirmed ? [copy.aiReview.unconfirmedCount(counts.unconfirmed)] : []),
     ...(counts.dismissed ? [copy.aiReview.dismissedCount(counts.dismissed)] : []),

@@ -61,7 +61,7 @@ export function AgentPhaseSettings({ ko, profiles, phases, providers, disabled =
     <div className="agent-phase-settings__group" data-provider="any">
       <p className="agent-phase-settings__group-title"><Glyph name="search" />{text('모든 대화 공통', 'Every conversation')}</p>
       <ol className="agent-phase-settings__rows">
-        {row('review', '3', text('검토', 'Review'), text('검토 맡기기 · 워크플로 검토 단계의 기본 (새 대화라 다른 AI도 됨)', 'Hand off a review, and the workflow review default (a new conversation, any AI)'), phases.review?.profileId, profiles,
+        {row('review', '3', text('검토', 'Review'), text('검토… › 다른 AI로 검토 · 워크플로 검토 단계의 기본 (새 대화라 다른 AI도 됨)', 'Review… › Another AI, and the workflow review default (a new conversation, any AI)'), phases.review?.profileId, profiles,
           value => onChange({ ...phases, review: value ? { profileId: value } : undefined }))}
       </ol>
     </div>

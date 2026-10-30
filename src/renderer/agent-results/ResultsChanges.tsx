@@ -144,7 +144,7 @@ function useGitScope(
 
 export function ResultsChanges({
   sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive,
-  folderReadable = true, onViewFile, baseRef, workspaceId, sendNow, reviewAction, openReviewStart,
+  folderReadable = true, onViewFile, baseRef, workspaceId, sendNow, reviewAction, openReviewStart, queuedTexts,
 }: {
   readonly sessionId: string;
   readonly workspaceRoot?: string;
@@ -171,6 +171,8 @@ export function ResultsChanges({
   readonly baseRef?: string;
   /** The conversation's workspace, which 기준 브랜치와 비교 is read for. */
   readonly workspaceId?: string;
+  /** The messages waiting in the conversation's queue. */
+  readonly queuedTexts?: readonly string[];
   /** Sends the comments as a message of their own (queued behind a running turn). */
   readonly sendNow?: (text: string) => Promise<ResultsSendResult>;
   /** Fix, dismiss or reopen the problem on screen (host actions). */
@@ -555,7 +557,7 @@ export function ResultsChanges({
         </>
       )}
 
-      <ReviewCommentTray comments={view.comments} turnActive={turnActive} onTaken={takeComments}
+      <ReviewCommentTray comments={view.comments} turnActive={turnActive} onTaken={takeComments} {...(queuedTexts ? { queuedTexts } : {})}
         onRemove={(id) => setView((current) => ({ ...current, comments: current.comments.filter((entry) => entry.id !== id) }))}
         {...(sendNow ? { sendNow } : {})} {...(insertIntoDraft ? { insertIntoDraft } : {})} {...(draftUnavailable ? { draftUnavailable } : {})} />
     </div>

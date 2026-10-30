@@ -2064,6 +2064,39 @@
   font-size: var(--ui-font-size-xs);
 }
 
+/* A queued review fix: named as the transcript names it, its message (English, JSON) only on demand. No flex gap (Android). */
+.chat-queue__item > .chat-queue__review {
+  display: flex;
+  align-items: center;
+}
+
+.chat-queue__review > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
+.chat-queue__review > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-queue__review > .chat-link-button {
+  flex: none;
+  margin-left: var(--ui-space-2);
+}
+
+.chat-queue__item > .chat-queue__original {
+  flex-basis: 100%;
+  overflow: visible;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Provider-native subagents: the call that started one links to it, its result
  * reads as one compact block, and the child opens on its parent's instruction. */
 .chat-chip {

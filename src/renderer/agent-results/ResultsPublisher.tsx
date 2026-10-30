@@ -50,6 +50,8 @@ export function ResultsPublisher({ ownerPanelId, ...part }: ResultsPublisherProp
   const hasRelated = Boolean(part.openRelatedSession);
   const hasProjectFiles = Boolean(part.openProjectFiles);
   const childrenKey = part.children.map((child) => `${child.sessionId}:${child.state}:${child.title}`).join('|');
+  const queuedKey = (part.queuedTexts ?? []).join('\u0000');
+  const queuedTexts = useMemo(() => part.queuedTexts, [queuedKey]); // eslint-disable-line react-hooks/exhaustive-deps -- identity follows content
   const children = useMemo(() => part.children, [childrenKey]); // eslint-disable-line react-hooks/exhaustive-deps -- identity follows content
   const baselineSequence = baseline.current ?? 0;
 
@@ -61,6 +63,7 @@ export function ResultsPublisher({ ownerPanelId, ...part }: ResultsPublisherProp
       ...(part.workspaceRoot ? { workspaceRoot: part.workspaceRoot } : {}),
       ...(part.workspaceId ? { workspaceId: part.workspaceId } : {}),
       ...(part.baseRef ? { baseRef: part.baseRef } : {}),
+      ...(queuedTexts ? { queuedTexts } : {}),
       items,
       children,
       transcriptFloor: part.transcriptFloor,
@@ -73,7 +76,7 @@ export function ResultsPublisher({ ownerPanelId, ...part }: ResultsPublisherProp
       ...(hasProjectFiles ? { openProjectFiles: callbacks.openProjectFiles } : {}),
     });
   }, [baselineSequence, callbacks, children, hasProjectFiles, hasRead, hasRelated, historyOnly, items, loaded, ownerPanelId,
-    part.baseRef, part.providerLabel, part.title, part.transcriptFloor, part.turnActive, part.workspaceId, part.workspaceRoot, sessionId]);
+    part.baseRef, part.providerLabel, part.title, part.transcriptFloor, part.turnActive, part.workspaceId, part.workspaceRoot, queuedTexts, sessionId]);
   useEffect(() => () => publishResultsDock(ownerPanelId, undefined), [ownerPanelId]);
 
   const fresh = scanned.current.fresh;

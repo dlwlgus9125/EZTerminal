@@ -1216,6 +1216,7 @@ export function StructuredAgentDockPanel(
     return { ok: true };
   };
 
+  const queueItems = conversationQueue(sessionId, snapshot?.turns ?? [], transcriptItems);
   const heartbeat = snapshot?.heartbeats.find((candidate) => candidate.sessionId === sessionId);
   const sessionTurns = (snapshot?.turns ?? []).filter((turn) => turn.sessionId === sessionId);
   const automationReady = snapshot?.runtime.keepRunning === true && snapshot.runtime.startAtLogin === true;
@@ -1254,6 +1255,7 @@ export function StructuredAgentDockPanel(
         {...(workspaceRoot ? { workspaceRoot } : {})}
         {...(workspace ? { workspaceId: workspace.id } : {})}
         {...(baseRef ? { baseRef } : {})}
+        queuedTexts={queueItems.map((entry) => entry.text)}
         items={transcriptItems}
         children={directChildren}
         transcriptFloor={transcriptFloor}
@@ -1287,7 +1289,7 @@ export function StructuredAgentDockPanel(
       awaitingFirstMessage={!historyOnly && (agent ? agent.state === 'idle' && !agent.providerSessionId && !snapshot?.turns.some((turn) => turn.sessionId === sessionId) : Boolean(createdDraft && !createdDraft.initialPrompt))}
       state={historyOnly ? 'archived' : agent?.state ?? (createdDraft ? createdDraft.initialPrompt ? 'starting' : 'idle' : loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
-      queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], transcriptItems)}
+      queueItems={queueItems}
       onQueueAction={!historyOnly && owner === 'managed' && snapshot?.capabilities?.includes('agent-queue')
         ? (item, action) => queueConversationTurn(commandAccess, sessionId, item, action)
         : undefined}

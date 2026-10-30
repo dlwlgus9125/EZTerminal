@@ -20,6 +20,7 @@ import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } fr
 import { DialogPortalContext } from '../ui/Dialog';
 import type { ChatReviewAction } from './ChatContext';
 import type { ChatSkin } from '../chat-view-state';
+import { conversationQueue } from '../conversation-queue';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import {
   applyReviewAction, BRANCH_DIFF, deletedFileReview, emptyReview, failedReview, fixOutcomesReview, inSession, interruptedReview, mixedSelfReview, otherAiReview,
@@ -102,6 +103,12 @@ function panelProps(sessionId: string, fixture: { readonly items: readonly Daemo
   };
 }
 
+/** What waits in the conversation's queue, as the host lists it (a 고치기 sent while it answers lands there). */
+function queueOf(sessionId: string, host: { readonly items: readonly DaemonTranscriptItem[]; readonly turns: readonly DaemonTurn[] }) {
+  const queueItems = conversationQueue(sessionId, host.turns, host.items);
+  return { queuedCount: queueItems.length, queueItems };
+}
+
 /** A host that answers card actions the way the real one will: the transcript grows and the card follows it. */
 function useStoryHost(fixture: ReviewFixture, report: (action: ChatReviewAction) => void): {
   readonly items: readonly DaemonTranscriptItem[];
@@ -134,7 +141,7 @@ function ChatScreen({ id, make, args, skin = 'bubble', width = 1100, height = 78
   const host = useStoryHost(fixture, args.onReviewAction);
   return (
     <Desk width={width} height={height}>
-      <StructuredAgentSessionPanel {...panelProps(sessionId, host, fixture.state, locale)} skin={skin}
+      <StructuredAgentSessionPanel {...panelProps(sessionId, host, fixture.state, locale)} {...queueOf(sessionId, host)} skin={skin}
         onReviewAction={host.onReviewAction} reviewStart={{ options: START_OPTIONS, onStart: args.onStart }} />
     </Desk>
   );
@@ -188,8 +195,10 @@ export const ClaudeComplete: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'src/cart.ts:5 고치기' }));
     await waitFor(() => expect(args.onReviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'fix' })));
     // Sent, not fixed yet: counted apart from 고침. The pressed button went; focus is on the problem's title, and the change is said once.
-    await waitFor(() => expect(review.querySelector('[data-testid="chat-review-counts"]')).toHaveTextContent('문제 3 · 고치는 중 2 · 무시 1'));
+    await waitFor(() => expect(review.querySelector('[data-testid="chat-review-counts"]')).toHaveTextContent('문제 3 · 고침 요청됨 1 · 고치는 중 1 · 무시 1'));
     await waitFor(() => expect(document.activeElement).toBe(canvas.getByRole('button', { name: /^The loop runs to index/u })));
+    // The queued fix waits under the transcript as the transcript names it, its message on demand.
+    await waitFor(() => expect(canvasElement.querySelector('.chat-queue__item[data-review-fix]')).toHaveTextContent('검토 결과 고치기 · 1개'));
     await expect(canvas.getByTestId('chat-review-announce')).toHaveTextContent('src/cart.ts:5 · 고침 요청됨');
     // Reopen the dismissed one, then dismiss it again.
     await userEvent.click(canvas.getByRole('button', { name: 'src/discount.ts:4 다시 열기' }));
@@ -284,10 +293,35 @@ export const CliTruncated: Story = chat('cli-truncated', truncatedReview, { skin
 export const ReviewerConversation: Story = {
   render: () => <ReviewerScreen />,
 };
-function ReviewerScreen(): JSX.Element {
+/**
+ * The reviewer conversation opened beside Results (a 385 px group): the read-only header fits — the title shortens
+ * (the full one in its tooltip and name), the state stays readable, its settings wrap below, nothing scrolls sideways.
+ */
+export const ReviewerConversationNarrow: Story = {
+  render: () => <ReviewerScreen width={385} />,
+  play: async ({ canvasElement }) => {
+    const panel = await waitFor(() => {
+      const element = canvasElement.querySelector<HTMLElement>('[data-testid="structured-agent-session"]');
+      expect(element?.dataset.compact).toBe('true');
+      return element!;
+    });
+    const header = panel.querySelector<HTMLElement>('.structured-agent-session-header')!;
+    const fits = async (element: HTMLElement): Promise<void> => { await expect(element.scrollWidth).toBeLessThanOrEqual(element.clientWidth + 1); };
+    await fits(header);
+    await fits(panel);
+    await expect(header.querySelector('h1')!.getAttribute('title')).toContain('검토 · 가격 표시와 할인 함수');
+    const state = header.querySelector<HTMLElement>('.structured-agent-state')!;
+    await fits(state);
+    await expect(state.getBoundingClientRect().right).toBeLessThanOrEqual(panel.getBoundingClientRect().right + 1);
+    // Keyboard focus on ⋯ scrolls nothing sideways.
+    header.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.focus();
+    for (let node: HTMLElement | null = panel; node && node !== canvasElement.parentElement; node = node.parentElement) await expect(node.scrollLeft).toBe(0);
+  },
+};
+function ReviewerScreen({ width }: { readonly width?: number }): JSX.Element {
   const locale = useContext(StoryLocale);
   return (
-    <Desk>
+    <Desk {...(width ? { width } : {})}>
       <StructuredAgentSessionPanel {...panelProps(REVIEWER_SESSION, { items: reviewerConversation(), turns: [] }, 'done', locale)}
         title={locale === 'ko' ? '검토 · 가격 표시와 할인 함수' : 'Review · Price display and discounts'} providerId="codex" providerLabel="Codex"
         model="gpt-6.1-sol" modelOptions={[{ id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' }]} permissionPreset="plan" historyOnly />
@@ -320,6 +354,9 @@ export const StartMenu: Story = {
     const dialog = within(await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="review-start-dialog"]'); expect(element).not.toBeNull(); return element!; }));
     await expect(dialog.getByRole('radio', { name: /이 AI · Claude/u })).toBeChecked();
     await expect(dialog.getByTestId('review-start-self-settings')).toHaveTextContent('사용: Opus 5.5 · 높음');
+    // Korean reads in the body face, like the hint above it (mono would space it out).
+    const hint = (testId: string) => getComputedStyle(dialog.getByTestId(testId)).fontFamily;
+    await expect(hint('review-start-self-settings')).toBe(getComputedStyle(dialog.getByTestId('review-start-self').closest('label')!.querySelector('.review-start__hint')!).fontFamily);
     await userEvent.type(dialog.getByRole('textbox'), '금액 계산과 권한 검사');
     await userEvent.click(dialog.getByRole('button', { name: '검토 시작' }));
     await expect(args.onStart).toHaveBeenCalledWith({ reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, focus: '금액 계산과 권한 검사' });
@@ -495,7 +532,7 @@ function PhoneScreen({ id, make, args, width, height }: {
   const [openFiles] = useState(() => fn());
   return (
     <Phone width={width} height={height}>
-      <MobileStructuredAgentSession {...panelProps(sessionId, host, fixture.state, locale)} folders={undefined}
+      <MobileStructuredAgentSession {...panelProps(sessionId, host, fixture.state, locale)} {...queueOf(sessionId, host)} folders={undefined}
         onReviewAction={host.onReviewAction} reviewStart={{ options: START_OPTIONS, onStart: args.onStart }} onBack={fn()} onOpenProjectFiles={openFiles} />
     </Phone>
   );

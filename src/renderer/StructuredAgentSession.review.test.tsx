@@ -118,6 +118,15 @@ describe('reviews in the conversation panel', () => {
     expect(source?.openReviewStart).toBeTypeOf('function');
   });
 
+  it('shows a queued fix as the transcript names it, with the original on demand', () => {
+    render(panel({ state: 'working', queuedCount: 1, queueItems: [{ turnId: 'q', revision: 1, text: 'Fix only the review findings below.', reviewFix: { findings: 2 } }] }));
+    const queued = container.querySelector<HTMLElement>('.chat-queue__item')!;
+    expect(queued.textContent).toContain('검토 결과 고치기 · 2개');
+    expect(queued.textContent).not.toContain('Fix only the review findings below.');
+    act(() => [...queued.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '원문 보기')!.click());
+    expect(queued.textContent).toContain('Fix only the review findings below.');
+  });
+
   it('keeps the cards read-only in history', () => {
     render(panel({ historyOnly: true, onReviewAction: vi.fn(), reviewStart }));
     expect(container.querySelector('[data-testid="chat-review-card"]')).not.toBeNull();

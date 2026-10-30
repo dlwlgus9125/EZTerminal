@@ -1,11 +1,14 @@
 import type { ChatMessageContext } from '../shared/chat-message';
 import type { DaemonTranscriptItem, DaemonTurn } from '../shared/daemon-protocol';
+import { parseTranscriptPayload } from '../shared/transcript-payload';
 
 export interface ConversationQueueItem {
   readonly turnId: string;
   readonly revision: number;
   readonly text: string;
   readonly context?: ChatMessageContext;
+  /** A review's 고치기: shown as the transcript names it ("검토 결과 고치기 · N개"), the message on demand. */
+  readonly reviewFix?: { readonly findings: number };
 }
 export type ConversationQueueAction = 'remove' | 'take' | 'run-next';
 
@@ -16,6 +19,11 @@ export function conversationQueue(sessionId: string, turns: readonly DaemonTurn[
     .sort((a, b) => (a.enqueueSequence ?? a.revision) - (b.enqueueSequence ?? b.revision))
     .flatMap(turn => {
       const message = messages.get(turn.id);
-      return message ? [{ turnId: turn.id, revision: turn.revision, text: message.text, context: message.context }] : [];
+      if (!message) return [];
+      const payload = message.payload ? parseTranscriptPayload(message.payload) : undefined;
+      return [{
+        turnId: turn.id, revision: turn.revision, text: message.text, context: message.context,
+        ...(payload?.type === 'review-fix' ? { reviewFix: { findings: payload.findingIds.length } } : {}),
+      }];
     });
 }

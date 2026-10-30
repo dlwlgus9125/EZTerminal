@@ -187,6 +187,22 @@ describe('stepping through an AI review in Changes', () => {
     expect(text('results-send-status')).toBe('대기열에 추가됨');
   });
 
+  it('says the comments wait in the queue only until their turn starts', async () => {
+    const sendNow = vi.fn(async (comments: string): Promise<ResultsSendResult> => ({ ok: true, queued: comments.length > 0 }));
+    const nav: ResultsNavigation = { sequence: 1, section: 'changes', review: { reviewId: OTHER_REVIEW_ID } };
+    await show(otherAiReview(), nav, { sendNow, turnActive: true, insertIntoDraft: vi.fn() });
+    await act(async () => container.querySelector<HTMLButtonElement>('.results-patch__line[data-focus="true"]')!.click());
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '줄만 인용')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="results-send-comments"]')!.click());
+    expect(text('results-send-status')).toBe('대기열에 추가됨');
+    const sent = sendNow.mock.calls[0]![0];
+    await show(otherAiReview(), nav, { sendNow, turnActive: true, insertIntoDraft: vi.fn(), queuedTexts: [sent] });
+    expect(text('results-send-status')).toBe('대기열에 추가됨');
+    // The earlier turn ended and this one runs: it left the queue.
+    await show(otherAiReview(), nav, { sendNow, turnActive: true, insertIntoDraft: vi.fn(), queuedTexts: [] });
+    expect(text('results-send-status')).toBe('대화에 보냈습니다.');
+  });
+
   it('keeps comments from going both ways: while sending, they cannot be put in the message or removed', async () => {
     let finish: (result: ResultsSendResult) => void = () => undefined;
     const sendNow = vi.fn(() => new Promise<ResultsSendResult>((resolve) => { finish = resolve; }));

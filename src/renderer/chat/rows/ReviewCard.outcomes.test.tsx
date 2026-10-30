@@ -123,6 +123,24 @@ describe('a fixed problem', () => {
   }
 });
 
+describe('a fix that waits and one that runs', () => {
+  it('reads 고침 요청됨 and 고치는 중 alike in the header and on each problem', () => {
+    const findings: ReviewFinding[] = [CLAUDE_FORMAT, CLAUDE_DISCOUNT, CLAUDE_CART].map((draft) => withId('r1', draft));
+    const [waiting, running] = findings;
+    show(buildChatModel({
+      items: [
+        item(1, 'notice', 'review', { payload: reviewPayload({ reviewId: 'r1', reviewer: { mode: 'self', providerId: 'claude' }, target: { kind: 'uncommitted' }, state: 'complete', findings }) }),
+        item(2, 'user-message', 'fix', { turnId: 'run', payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [running!.id] } }),
+        item(3, 'user-message', 'fix', { turnId: 'wait', payload: { v: 1, type: 'review-fix', reviewId: 'r1', findingIds: [waiting!.id] } }),
+      ],
+      turns: [turn('run', 'working'), turn('wait', 'queued')],
+    }).rows, vi.fn());
+    expect(container.querySelector('[data-testid="chat-review-counts"]')?.textContent).toBe('문제 3 · 고침 요청됨 1 · 고치는 중 1');
+    const statuses = [...container.querySelectorAll('.chat-review-status')].map((element) => element.textContent);
+    expect(statuses).toEqual(expect.arrayContaining(['고침 요청됨', '고치는 중']));
+  });
+});
+
 describe('모두 고치기 over the fix message limit', () => {
   it('offers the first batch that fits, names how many are left, and sends only those', () => {
     const onReviewAction = vi.fn();
