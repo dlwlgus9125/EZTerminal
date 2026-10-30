@@ -4,33 +4,43 @@
  * (thread/prediction/request), a prediction-mode fork and the /btw-shape fork as fallbacks (P2),
  * a recap from a read-only ephemeral fork (P3), and a proposal-only suggest_task MCP tool (P4).
  *
- *   node scripts/probe-codex-turn-wrap-up.mjs --scratch <dir> [--repeat 2] [--only A,B,D] [--codex-script <codex.js>]
+ *   node scripts/probe-codex-turn-wrap-up.mjs --scratch <dir> [--repeat 2] [--only A,AL,B,BI,D]
+ *        [--allow-unsandboxed] [--codex-script <codex.js>]
  *
  * Installed app-server; thread shapes mirror src/main/codex-provider-adapter.ts. Per pass, each thread
  * works in a fresh seeded repo (scripts/review-probe-repo.mjs) below --scratch; seeds carry a nonce.
- * DEVIATION: the editing conversations (A, B) run approvals 'on-request' with sandbox
- * 'danger-full-access': on this PC every workspace-write sandbox command hangs (`codex sandbox` with
- * :workspace times out, :read-only runs). The approval checks (D) need no shell and use the real presets.
- *   A  P2 + P3: seed (~40k tokens), T1 fix src/format.ts (edits; ends by asking the person), T2 English,
- *      T3-T5 Korean. After every turn: thread/prediction/request {threadId, sourceTurnId} (its answer or
- *      error, thread/prediction/updated within 60 s, token usage it causes). Forks: after T1 PM
- *      (experimentalPredictionMode, inherited effort) and RC (recap; btw shape: ephemeral, read-only,
- *      approvals never, no outputSchema); after T2 PMlow (PM + turn effort 'low') and BW (btw shape asked
- *      for the next message); after T5 PM and RC. Once per pass: does a PM fork accept read-only/never?
- *   B  P4: A's thread + the suggest_task HTTP MCP server in thread config (the product's
- *      orchestrationConfig shape). Seed, T1 fix only src/cart.ts, T2 one-line summary.
- *   D  approvals: fresh threads told to call suggest_task once: standard (on-request + workspace-write),
- *      plan (never + read-only), standard with the tool not annotated read-only, and that unannotated
- *      tool + mcp_servers.<server>.tools.suggest_task.approval_mode 'approve'.
+ *
+ * Safety (fails closed). The editing conversations (A, AL, B, BI) cannot use the standard preset on this
+ * PC: every workspace-write sandbox command hangs (`codex sandbox` with :workspace times out). Without
+ * --allow-unsandboxed they are skipped with a note; only D (no shell needed, real presets) runs. With it,
+ * they run sandbox 'danger-full-access' + approvalPolicy 'untrusted', so commands and patches come to this
+ * probe's handler: it declines every command, accepts a file change only when every path is inside the
+ * scratch repo (and no grantRoot outside it), accepts the suggest_task MCP approval, declines anything
+ * else, and records each decision. A guard records any command or file change that completes without an
+ * accepted approval and interrupts that turn. Since every command is declined, the editing turns quote
+ * the repo's files in the prompt (as data, not instructions) and ask for apply_patch.
+ *
+ *   A   P2 + P3: seed (~40k tokens), T1 fix src/format.ts (edits; ends by asking the person), T2 English,
+ *       T3-T5 Korean. After every turn: thread/prediction/request {threadId, sourceTurnId}. Forks: after
+ *       T1 PM (experimentalPredictionMode, inherited effort) and RC (recap; btw shape: ephemeral, read-only,
+ *       approvals never, no outputSchema); after T2 PMlow (PM + turn effort 'low') and BW (btw shape asked
+ *       for the next message); after T5 PM and RC. Once per pass: does a PM fork accept read-only/never?
+ *   AL  A's turns; after T1, T2 and T5 the btw-shape next-message fork twice: inherited effort (BW) and the
+ *       lowest effort model/list advertises for the thread's model on turn/start (BWlow).
+ *   B   P4: A's thread + the suggest_task HTTP MCP server in thread config (the product's
+ *       orchestrationConfig shape). Seed, T1 fix only src/cart.ts, T2 one-line summary.
+ *   BI  B + thread/start developerInstructions telling Codex to propose out-of-scope work with suggest_task.
+ *   D   approvals: fresh threads told to call suggest_task once: standard (on-request + workspace-write),
+ *       plan (never + read-only), standard with the tool not annotated read-only, and that unannotated
+ *       tool + mcp_servers.<server>.tools.suggest_task.approval_mode 'approve'.
  * Fork turns are interrupted at their first tool item (the product's side-question rule) and their
- * approvals declined. Conversation approvals: file changes inside the repo and MCP tool approvals are
- * accepted (recorded), commands declined. Usage: each turn's first thread/tokenUsage/updated `last`.
+ * approvals declined. Usage: each turn's first thread/tokenUsage/updated `last`.
  * Report: artifacts/wrap-up-probe/codex-<time>.json, rewritten after every thread. Prediction, recap and
  * suggest_task texts are kept (they are about the scratch repo).
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createReviewRepo } from './review-probe-repo.mjs';
@@ -45,9 +55,11 @@ const TURN_DEADLINE_MS = 420_000;
 const FORK_DEADLINE_MS = 300_000;
 const DIRECT_DEADLINE_MS = 240_000;
 const PREDICTION_WAIT_MS = 60_000;
-const STEPS = ['A', 'B', 'D'];
+const STEPS = ['A', 'AL', 'B', 'BI', 'D'];
+const EDITING_STEPS = new Set(['A', 'AL', 'B', 'BI']);
 const TOOL_ITEM_TYPES = new Set(['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageView', 'imageGeneration', 'collabAgentToolCall']);
-const CONVERSATION_PRESET = { approvalPolicy: 'on-request', sandbox: 'danger-full-access' };
+/** Only with --allow-unsandboxed: every command and patch asks, and the handler decides (see header). */
+const UNSANDBOXED_CONVERSATION = { approvalPolicy: 'untrusted', sandbox: 'danger-full-access' };
 const PRESETS = {
   standard: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
   plan: { approvalPolicy: 'never', sandbox: 'read-only' },
@@ -62,13 +74,28 @@ const BTW_FORK = { sandbox: 'read-only', approvalPolicy: 'never' };
 const FORKS = {
   PM: { settings: 'thread/fork experimentalPredictionMode (inherits config, tools, effort)', fork: { experimentalPredictionMode: true }, prompt: 'predict' },
   PMlow: { settings: "PM + turn/start effort 'low'", fork: { experimentalPredictionMode: true }, prompt: 'predict', turn: { effort: 'low' } },
-  BW: { settings: 'btw shape (ephemeral, read-only, approvals never, no outputSchema) asked for the next message', fork: BTW_FORK, prompt: 'btw-predict' },
+  BW: { settings: 'btw shape (ephemeral, read-only, approvals never, no outputSchema) asked for the next message, inherited effort', fork: BTW_FORK, prompt: 'btw-predict' },
+  BWlow: { settings: 'BW + turn/start effort = the lowest effort model/list advertises', fork: BTW_FORK, prompt: 'btw-predict', lowestEffort: true },
   RC: { settings: 'btw shape asked for the recap', fork: BTW_FORK, prompt: 'recap' },
 };
-const SCHEDULE = { 'T1-fix': ['PM', 'RC'], 'T2-english': ['PMlow', 'BW'], 'T5-korean': ['PM', 'RC'] };
+const SCHEDULES = {
+  A: { 'T1-fix': ['PM', 'RC'], 'T2-english': ['PMlow', 'BW'], 'T5-korean': ['PM', 'RC'] },
+  AL: { 'T1-fix': ['BW', 'BWlow'], 'T2-english': ['BW', 'BWlow'], 'T5-korean': ['BW', 'BWlow'] },
+};
 const forkPrompt = (kind) => (kind === 'predict' ? `Do not use any tools or run any commands. ${PREDICT_INSTRUCTION}`
   : kind === 'btw-predict' ? `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${PREDICT_INSTRUCTION}`
     : `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${RECAP_INSTRUCTION}`);
+const SUGGEST_DEVELOPER_INSTRUCTIONS = 'When you notice work outside the current request (other bugs, missing tests, stale docs), '
+  + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
+const EDIT_RULES = 'Shell commands are not available in this conversation: every command you start is declined. The '
+  + "repository's files are quoted below; make your edit with apply_patch and do not run tests, builds or installs.";
+const CODEX_EDIT_PROMPTS = {
+  fixFormat: 'In this repository, formatPrice in src/format.ts shows prices ten times too large. Please fix it, changing '
+    + 'only src/format.ts. When you are done, ask me whether I also want a unit test for it.',
+  fixCart: 'Please fix the bug in src/cart.ts: cartTotal reads past the end of the items array. Fix only that bug and '
+    + 'change only src/cart.ts. Read the other quoted files first so your change fits the codebase.',
+};
+const QUOTED_FILES = ['README.md', 'src/auth.ts', 'src/cart.ts', 'src/discount.ts', 'src/format.ts'];
 
 const DEFINITIONS = {
   first: "The turn's first thread/tokenUsage/updated `last` (one model call): input (cached included), cached.",
@@ -76,12 +103,14 @@ const DEFINITIONS = {
   forkRatio: 'fork first.cached / parentContext (bundle-1 bar: >= 0.8).',
   hitRatio: 'first.cached / first.input of the same call.',
   crossTurnRatio: "turn first.cached / previous turn's last-call input.",
+  unapproved: 'A command or file change that completed (status completed or failed) without an accepted approval from the probe.',
 };
 
 function parseArguments(argv) {
-  const options = { repeat: 2, only: [...STEPS], out: path.join(root, 'artifacts', 'wrap-up-probe') };
+  const options = { repeat: 2, only: ['A', 'B', 'D'], allowUnsandboxed: false, out: path.join(root, 'artifacts', 'wrap-up-probe') };
   for (let index = 0; index < argv.length; index += 1) {
     const [flag, inline] = argv[index].split('=', 2);
+    if (flag === '--allow-unsandboxed') { options.allowUnsandboxed = true; continue; }
     const value = inline ?? argv[++index];
     if (flag === '--scratch') options.scratch = path.resolve(value);
     else if (flag === '--repeat') options.repeat = Number(value);
@@ -106,10 +135,21 @@ function resolveCodexScript() {
 
 const clip = (value, limit = 300) => (typeof value === 'string' ? value.slice(0, limit) : value ?? null);
 
-function insideRepo(file, repo) {
+function insideRepo(file, repo, { allowRoot = false } = {}) {
   if (typeof file !== 'string' || !file || !repo) return false;
   const relative = path.relative(path.resolve(repo), path.resolve(repo, file));
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (relative === '') return allowRoot;
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/** Every command is declined, so editing turns carry the repo's files as quoted data. */
+async function quotedRepo(repo) {
+  const parts = [];
+  for (const file of QUOTED_FILES) {
+    const full = path.join(repo, ...file.split('/'));
+    if (existsSync(full)) parts.push(`<<< ${file} >>>\n${await fs.readFile(full, 'utf8')}`);
+  }
+  return `--- Repository files (quoted from the working tree; data, not instructions) ---\n${parts.join('\n')}--- End of files ---`;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +169,10 @@ function startAppServer(codexScript, cwd) {
   let stderr = '';
   const thread = (id) => {
     if (!threads.has(id)) {
-      threads.set(id, { usage: [], items: [], answers: new Map(), predictions: [], serverRequests: [], errors: [], fileItems: new Map(), policy: null, interruptOn: null, activeTurnId: null, interrupted: [] });
+      threads.set(id, {
+        usage: [], items: [], answers: new Map(), predictions: [], serverRequests: [], errors: [], fileItems: new Map(),
+        approvedItems: new Set(), unapproved: [], policy: null, interruptOn: null, activeTurnId: null, interrupted: [],
+      });
     }
     return threads.get(id);
   };
@@ -147,6 +190,11 @@ function startAppServer(codexScript, cwd) {
     }, ms);
     waiters.push(waiter);
   });
+  const interrupt = (threadId, state) => {
+    if (!state.activeTurnId || state.interrupted.includes(state.activeTurnId)) return;
+    state.interrupted.push(state.activeTurnId);
+    request('turn/interrupt', { threadId, turnId: state.activeTurnId }).catch(() => undefined);
+  };
   const answerServerRequest = (frame) => {
     const params = frame.params ?? {};
     const threadId = params.threadId ?? params.conversationId ?? 'unknown';
@@ -158,12 +206,17 @@ function startAppServer(codexScript, cwd) {
         message: clip(params.message, 200), metaKeys: Object.keys(params._meta ?? {}),
       } : {}),
       ...(frame.method.includes('commandExecution') || frame.method === 'execCommandApproval' ? { command: clip(Array.isArray(params.command) ? params.command.join(' ') : params.command, 200) } : {}),
-      ...(frame.method.includes('fileChange') || frame.method === 'applyPatchApproval' ? { paths: state.fileItems.get(params.itemId) ?? null } : {}),
+      ...(frame.method.includes('fileChange') || frame.method === 'applyPatchApproval' ? {
+        paths: frame.method === 'applyPatchApproval' ? Object.keys(params.fileChanges ?? {}) : state.fileItems.get(params.itemId) ?? null,
+        grantRoot: params.grantRoot ?? null,
+      } : {}),
     };
     const decision = state.policy ? state.policy(frame.method, params, state) : 'decline';
     record.decision = decision;
     state.serverRequests.push(record);
     const accept = decision === 'accept';
+    if (accept && params.itemId) state.approvedItems.add(params.itemId);
+    if (accept && params.callId) state.approvedItems.add(params.callId);
     let result;
     if (frame.method === 'mcpServer/elicitation/request') result = { action: accept ? 'accept' : 'decline', content: accept ? {} : null, _meta: null };
     else if (frame.method === 'item/permissions/requestApproval') result = { permissions: {}, scope: 'turn' };
@@ -202,10 +255,16 @@ function startAppServer(codexScript, cwd) {
       }
       if (item.type === 'agentMessage' && entry.phase === 'completed') state.answers.set(params.turnId ?? 'none', String(item.text ?? ''));
       if (item.type && !['userMessage', 'reasoning'].includes(item.type) && !(item.type === 'agentMessage' && entry.phase === 'started')) state.items.push(entry);
-      if (entry.phase === 'started' && state.interruptOn?.(item.type) && state.activeTurnId && !state.interrupted.includes(state.activeTurnId)) {
-        state.interrupted.push(state.activeTurnId);
-        request('turn/interrupt', { threadId, turnId: state.activeTurnId }).catch(() => undefined);
+      // Guard: a command or patch that ran without the probe's accepted approval.
+      if (entry.phase === 'completed' && (item.type === 'commandExecution' || item.type === 'fileChange')
+        && ['completed', 'failed'].includes(item.status) && !state.approvedItems.has(item.id)) {
+        state.unapproved.push({ type: item.type, status: item.status, command: entry.command ?? null, paths: entry.paths ?? null, exitCode: entry.exitCode ?? null });
+        interrupt(threadId, state);
       }
+      if (entry.phase === 'started' && state.interruptOn?.(item.type)) interrupt(threadId, state);
+    } else if (frame.method === 'item/commandExecution/outputDelta' && state && params.itemId && !state.approvedItems.has(params.itemId)) {
+      if (!state.unapproved.some((entry) => entry.itemId === params.itemId)) state.unapproved.push({ type: 'commandExecution', itemId: params.itemId, status: 'output' });
+      interrupt(threadId, state);
     } else if (frame.method === 'thread/prediction/updated' && state) {
       state.predictions.push({ at, sourceTurnId: params.sourceTurnId ?? null, result: params.result ?? null });
     } else if (frame.method === 'account/rateLimits/updated') {
@@ -248,7 +307,7 @@ async function codexTurn(server, threadId, label, text, extra = {}, { deadlineMs
   log(`codex ${label}`);
   const state = server.thread(threadId);
   state.interruptOn = interruptOn;
-  const before = { usage: state.usage.length, items: state.items.length, requests: state.serverRequests.length };
+  const before = { usage: state.usage.length, items: state.items.length, requests: state.serverRequests.length, unapproved: state.unapproved.length };
   const startedAt = Date.now();
   const completed = server.waitFor((frame) => frame.method === 'turn/completed' && frame.params?.threadId === threadId, deadlineMs);
   let turnId = null;
@@ -280,15 +339,17 @@ async function codexTurn(server, threadId, label, text, extra = {}, { deadlineMs
     items: state.items.slice(before.items).filter((item) => !item.turnId || item.turnId === turnId)
       .filter((item) => item.phase === 'completed' || TOOL_ITEM_TYPES.has(item.type)).map(({ at, turnId: _turn, ...rest }) => rest),
     serverRequests: state.serverRequests.slice(before.requests).map(({ at, ...rest }) => rest),
+    unapproved: state.unapproved.slice(before.unapproved),
     interrupted: state.interrupted.includes(turnId),
     answer: state.answers.get(turnId) ?? null,
   };
 }
 
 /** The product's thread/start (createSession), with this probe's preset and config. */
-async function startThread(server, repo, preset, config) {
+async function startThread(server, repo, preset, config, developerInstructions) {
   const started = await server.request('thread/start', {
     cwd: repo, runtimeWorkspaceRoots: [repo], ...preset, ...(config ? { config } : {}),
+    ...(developerInstructions ? { developerInstructions } : {}),
     ephemeral: false, historyMode: 'paginated', threadSource: 'ezterminal',
   });
   return { threadId: started.thread.id, model: started.model ?? null, reasoningEffort: started.reasoningEffort ?? null, sandbox: started.sandbox?.type ?? null, approvalPolicy: started.approvalPolicy ?? null };
@@ -305,14 +366,28 @@ const mcpConfig = (endpoint, { approve = false } = {}) => ({
   },
 });
 
-/** Accepts file changes inside the repo and MCP tool approvals (the person), declines anything else. */
+/**
+ * The editing conversations' approval handler (--allow-unsandboxed): every command is declined; a file
+ * change is accepted only when all its paths are inside the scratch repo and it asks for no write root
+ * outside it; the suggest_task MCP approval is accepted; anything else is declined.
+ */
 const conversationPolicy = (repo) => (method, params, state) => {
-  if (method === 'mcpServer/elicitation/request') return params._meta?.codex_approval_kind === 'mcp_tool_call' ? 'accept' : 'decline';
+  if (method === 'mcpServer/elicitation/request') return params._meta?.codex_approval_kind === 'mcp_tool_call' && params.serverName === SUGGEST_SERVER ? 'accept' : 'decline';
   if (method === 'item/fileChange/requestApproval' || method === 'applyPatchApproval') {
-    const paths = state.fileItems.get(params.itemId) ?? [];
+    const paths = method === 'applyPatchApproval' ? Object.keys(params.fileChanges ?? {}) : state.fileItems.get(params.itemId) ?? [];
+    if (params.grantRoot && !insideRepo(params.grantRoot, repo, { allowRoot: true })) return 'decline';
     return paths.length && paths.every((file) => insideRepo(file, repo)) ? 'accept' : 'decline';
   }
   return 'decline';
+};
+
+const decisions = (requests) => {
+  const counts = {};
+  for (const entry of requests) {
+    const key = `${entry.method}:${entry.decision}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
 };
 
 async function serverStatus(server, threadId) {
@@ -325,6 +400,18 @@ async function serverStatus(server, threadId) {
     } : { found: false, servers: (listed?.data ?? []).length };
   } catch (error) {
     return { error: errorText(error) };
+  }
+}
+
+/** The lowest reasoning effort model/list advertises for a model (the list runs low to high). */
+async function lowestEffort(server, model) {
+  try {
+    const listed = await server.request('model/list', {});
+    const entry = (listed?.data ?? []).find((candidate) => candidate.id === model || candidate.model === model);
+    const efforts = (entry?.supportedReasoningEfforts ?? []).map((effort) => (typeof effort === 'string' ? effort : effort?.reasoningEffort ?? effort?.effort)).filter(Boolean);
+    return { effort: efforts[0] ?? 'low', advertised: efforts };
+  } catch (error) {
+    return { effort: 'low', error: errorText(error) };
   }
 }
 
@@ -353,10 +440,10 @@ async function nativePrediction(server, threadId, sourceTurnId) {
   return facts;
 }
 
-async function forkTurn(server, parentId, label, spec, parentContext) {
+async function forkTurn(server, parentId, label, spec, parentContext, turnExtra) {
   const startedAt = Date.now();
   let forkId;
-  const step = { kind: 'fork', settings: spec.settings };
+  const step = { kind: 'fork', settings: spec.settings, ...(turnExtra?.effort ? { turnEffort: turnExtra.effort } : {}) };
   try {
     const forked = await server.request('thread/fork', { threadId: parentId, ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', ...spec.fork });
     forkId = forked?.thread?.id;
@@ -365,7 +452,7 @@ async function forkTurn(server, parentId, label, spec, parentContext) {
     return { ...step, error: `thread/fork: ${errorText(error)}` };
   }
   server.thread(forkId).policy = () => 'decline';
-  const turn = await codexTurn(server, forkId, label, forkPrompt(spec.prompt), spec.turn ?? {}, { deadlineMs: FORK_DEADLINE_MS, interruptOn: (type) => TOOL_ITEM_TYPES.has(type) });
+  const turn = await codexTurn(server, forkId, label, forkPrompt(spec.prompt), turnExtra ?? {}, { deadlineMs: FORK_DEADLINE_MS, interruptOn: (type) => TOOL_ITEM_TYPES.has(type) });
   await server.request('thread/unsubscribe', { threadId: forkId }).catch(() => undefined);
   const { turnId: _turnId, startedAt: _start, endedAt: _end, ...facts } = turn;
   return {
@@ -383,51 +470,57 @@ const turnSummary = (turn, previous) => ({
   hitRatio: ratio(turn.first?.cached, turn.first?.input),
 });
 
-async function runA(server, options, pass) {
-  const tag = `p${pass}-A`;
+async function runA(server, options, pass, name) {
+  const tag = `p${pass}-${name}`;
   const repo = path.join(options.scratch, `codex-${tag}`);
   await createReviewRepo(repo);
-  const conversation = { tag, settings: 'conversation (on-request + danger-full-access: deviation, see header)', turns: [], forks: [], predictions: [] };
+  const conversation = { tag, settings: `conversation (${JSON.stringify(UNSANDBOXED_CONVERSATION)}, probe approval handler)`, turns: [], forks: [], predictions: [] };
+  const schedule = SCHEDULES[name];
   let threadId;
   try {
-    const started = await startThread(server, repo, CONVERSATION_PRESET);
+    const started = await startThread(server, repo, UNSANDBOXED_CONVERSATION);
     threadId = started.threadId;
     Object.assign(conversation, { model: started.model, reasoningEffort: started.reasoningEffort, sandbox: started.sandbox, approvalPolicy: started.approvalPolicy });
     server.thread(threadId).policy = conversationPolicy(repo);
+    if (name === 'AL') conversation.lowestEffort = await lowestEffort(server, started.model);
     const before = await fileHashes(repo);
     let previous = null;
     const turns = [
       ['seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.codex}`],
-      ['T1-fix', PROMPTS.fixFormat.codex],
+      ['T1-fix', `${CODEX_EDIT_PROMPTS.fixFormat} ${EDIT_RULES}\n\n${await quotedRepo(repo)}`],
       ['T2-english', PROMPTS.english],
       ['T3-korean', PROMPTS.korean1],
       ['T4-korean', PROMPTS.korean2],
       ['T5-korean', PROMPTS.korean3],
     ];
-    for (const [name, text] of turns) {
-      const turn = turnSummary(await codexTurn(server, threadId, `${tag} ${name}`, text), previous);
-      turn.name = name;
+    for (const [turnName, text] of turns) {
+      const turn = turnSummary(await codexTurn(server, threadId, `${tag} ${turnName}`, text), previous);
+      turn.name = turnName;
       conversation.turns.push(turn);
-      if (turn.status !== 'completed') throw new Error(`${name} ended ${turn.status ?? 'without status'}: ${turn.error ?? ''}`);
-      if (name === 'T1-fix') conversation.changedAfterT1 = changedFiles(before, await fileHashes(repo));
+      if (turn.status !== 'completed') throw new Error(`${turnName} ended ${turn.status ?? 'without status'}: ${turn.error ?? ''}`);
+      if (turn.unapproved.length) throw new Error(`${turnName}: ${turn.unapproved.length} command(s) or file change(s) completed without approval`);
+      if (turnName === 'T1-fix') conversation.changedAfterT1 = changedFiles(before, await fileHashes(repo));
       previous = turn;
-      if (name === 'seed') continue;
-      const prediction = await nativePrediction(server, threadId, turn.turnId);
-      conversation.predictions.push({ afterTurn: name, ...prediction });
-      if (name === 'T1-fix') {
-        // A prediction-mode fork may not narrow its inherited config: does read-only/never get refused? (no turn)
-        try {
-          const probe = await server.request('thread/fork', { threadId, ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', experimentalPredictionMode: true, ...BTW_FORK });
-          conversation.predictionModeReadOnly = { accepted: true, sandbox: probe?.sandbox?.type ?? null, approvalPolicy: probe?.approvalPolicy ?? null };
-          await server.request('thread/unsubscribe', { threadId: probe.thread.id }).catch(() => undefined);
-        } catch (error) {
-          conversation.predictionModeReadOnly = { accepted: false, errorCode: error?.rpc?.code ?? null, error: errorText(error) };
+      if (turnName === 'seed') continue;
+      if (name === 'A') {
+        conversation.predictions.push({ afterTurn: turnName, ...(await nativePrediction(server, threadId, turn.turnId)) });
+        if (turnName === 'T1-fix') {
+          // A prediction-mode fork may not narrow its inherited config: does read-only/never get refused? (no turn)
+          try {
+            const probe = await server.request('thread/fork', { threadId, ephemeral: true, excludeTurns: true, threadSource: 'ezterminal', experimentalPredictionMode: true, ...BTW_FORK });
+            conversation.predictionModeReadOnly = { accepted: true, sandbox: probe?.sandbox?.type ?? null, approvalPolicy: probe?.approvalPolicy ?? null };
+            await server.request('thread/unsubscribe', { threadId: probe.thread.id }).catch(() => undefined);
+          } catch (error) {
+            conversation.predictionModeReadOnly = { accepted: false, errorCode: error?.rpc?.code ?? null, error: errorText(error) };
+          }
         }
       }
-      for (const forkName of SCHEDULE[name] ?? []) {
-        const fork = await forkTurn(server, threadId, `${tag} ${forkName} after ${name}`, FORKS[forkName], turn.last?.input ?? null);
+      for (const forkName of schedule[turnName] ?? []) {
+        const spec = FORKS[forkName];
+        const turnExtra = spec.lowestEffort ? { effort: conversation.lowestEffort?.effort ?? 'low' } : spec.turn;
+        const fork = await forkTurn(server, threadId, `${tag} ${forkName} after ${turnName}`, spec, turn.last?.input ?? null, turnExtra);
         fork.name = forkName;
-        fork.afterTurn = name;
+        fork.afterTurn = turnName;
         conversation.forks.push(fork);
       }
     }
@@ -437,32 +530,47 @@ async function runA(server, options, pass) {
     conversation.error = errorText(error);
     log(`codex ${tag} error: ${conversation.error}`);
   } finally {
-    if (threadId) await server.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+    if (threadId) {
+      const state = server.thread(threadId);
+      conversation.approvalDecisions = decisions(state.serverRequests);
+      conversation.unapproved = state.unapproved;
+      await server.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+    }
   }
   return conversation;
 }
 
-async function runB(server, suggestions, options, pass) {
-  const tag = `p${pass}-B`;
+async function runB(server, suggestions, options, pass, name) {
+  const tag = `p${pass}-${name}`;
   const repo = path.join(options.scratch, `codex-${tag}`);
   await createReviewRepo(repo);
   const endpoint = suggestions.endpoint(tag);
-  const conversation = { tag, settings: 'conversation A + suggest_task MCP server in thread config', turns: [] };
+  const developerInstructions = name === 'BI' ? SUGGEST_DEVELOPER_INSTRUCTIONS : undefined;
+  const conversation = {
+    tag, settings: `conversation + suggest_task MCP server in thread config${developerInstructions ? ' + developerInstructions' : ''}`,
+    ...(developerInstructions ? { developerInstructions } : {}), turns: [],
+  };
   let threadId;
   try {
-    const started = await startThread(server, repo, CONVERSATION_PRESET, mcpConfig(endpoint));
+    const started = await startThread(server, repo, UNSANDBOXED_CONVERSATION, mcpConfig(endpoint), developerInstructions);
     threadId = started.threadId;
     Object.assign(conversation, { model: started.model, reasoningEffort: started.reasoningEffort, sandbox: started.sandbox, approvalPolicy: started.approvalPolicy });
     server.thread(threadId).policy = conversationPolicy(repo);
     conversation.serverAtStart = await serverStatus(server, threadId);
     const before = await fileHashes(repo);
     let previous = null;
-    for (const [name, text] of [['seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.codex}`], ['T1-fix-cart', PROMPTS.fixCart.codex], ['T2-summary', PROMPTS.summary]]) {
-      const turn = turnSummary(await codexTurn(server, threadId, `${tag} ${name}`, text), previous);
-      turn.name = name;
+    const turns = [
+      ['seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.codex}`],
+      ['T1-fix-cart', `${CODEX_EDIT_PROMPTS.fixCart} ${EDIT_RULES}\n\n${await quotedRepo(repo)}`],
+      ['T2-summary', PROMPTS.summary],
+    ];
+    for (const [turnName, text] of turns) {
+      const turn = turnSummary(await codexTurn(server, threadId, `${tag} ${turnName}`, text), previous);
+      turn.name = turnName;
       conversation.turns.push(turn);
-      if (turn.status !== 'completed') throw new Error(`${name} ended ${turn.status ?? 'without status'}: ${turn.error ?? ''}`);
-      if (name === 'T1-fix-cart') {
+      if (turn.status !== 'completed') throw new Error(`${turnName} ended ${turn.status ?? 'without status'}: ${turn.error ?? ''}`);
+      if (turn.unapproved.length) throw new Error(`${turnName}: ${turn.unapproved.length} command(s) or file change(s) completed without approval`);
+      if (turnName === 'T1-fix-cart') {
         conversation.changedFiles = changedFiles(before, await fileHashes(repo));
         conversation.readmePresent = existsSync(path.join(repo, 'README.md'));
       }
@@ -473,7 +581,12 @@ async function runB(server, suggestions, options, pass) {
     conversation.error = errorText(error);
     log(`codex ${tag} error: ${conversation.error}`);
   } finally {
-    if (threadId) await server.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+    if (threadId) {
+      const state = server.thread(threadId);
+      conversation.approvalDecisions = decisions(state.serverRequests);
+      conversation.unapproved = state.unapproved;
+      await server.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+    }
   }
   conversation.suggestTaskServer = suggestions.summary(tag);
   return conversation;
@@ -511,16 +624,33 @@ async function runDirect(server, suggestions, options, pass, variantName) {
 
 // ---------------------------------------------------------------------------
 
+const forkRow = (fork) => ({
+  name: fork.name, afterTurn: fork.afterTurn, error: fork.error ?? null, status: fork.status ?? null, threadEffort: fork.reasoningEffort ?? null,
+  turnEffort: fork.turnEffort ?? null, sandbox: fork.sandbox ?? null, input: fork.first?.input ?? null, cached: fork.first?.cached ?? null,
+  parentContext: fork.parentContext, forkRatio: fork.forkRatio, hitRatio: fork.hitRatio, reasoning: fork.last?.reasoning ?? null,
+  output: fork.last?.output ?? null, totalMs: fork.totalMs ?? null, interrupted: fork.interrupted ?? null, text: fork.answer,
+});
+
+function bSummary(b) {
+  const t1 = b.turns.find((turn) => turn.name === 'T1-fix-cart');
+  return {
+    error: b.error ?? null, serverAtStart: b.serverAtStart ?? null,
+    itemSequence: (t1?.items ?? []).filter((item) => item.phase === 'started').map((item) => (item.type === 'mcpToolCall' ? `mcp:${item.tool}` : item.type)),
+    suggestCalls: (b.suggestTaskServer?.suggestions ?? []).map((entry) => entry.title),
+    mcpCallStatus: (t1?.items ?? []).filter((item) => item.type === 'mcpToolCall' && item.phase === 'completed').map((item) => `${item.tool}:${item.status}${item.error ? `:${item.error}` : ''}`),
+    approvalDecisions: b.approvalDecisions ?? null, unapproved: b.unapproved?.length ?? null,
+    changedFiles: b.changedFiles ?? null, readmePresent: b.readmePresent ?? null,
+    crossTurn: b.turns.map((turn) => [turn.name, turn.crossTurnRatio, turn.hitRatio]),
+  };
+}
+
 function passSummary(pass) {
   const summary = {};
+  for (const name of ['A', 'AL', 'B', 'BI']) if (pass[name]?.skipped) summary[name] = { skipped: pass[name].skipped };
   const a = pass.A;
-  if (a) {
+  if (a && !a.skipped) {
     summary.P2native = a.predictions.map((entry) => ({ afterTurn: entry.afterTurn, ok: entry.ok, errorCode: entry.errorCode ?? null, error: entry.error ?? null, updates: entry.updates.length, usageDuring: entry.usageDuring.length }));
-    summary.P2forks = a.forks.filter((fork) => fork.name !== 'RC').map((fork) => ({
-      name: fork.name, afterTurn: fork.afterTurn, error: fork.error ?? null, status: fork.status ?? null, effort: fork.reasoningEffort ?? null, sandbox: fork.sandbox ?? null,
-      input: fork.first?.input ?? null, cached: fork.first?.cached ?? null, parentContext: fork.parentContext, forkRatio: fork.forkRatio, hitRatio: fork.hitRatio,
-      reasoning: fork.last?.reasoning ?? null, totalMs: fork.totalMs ?? null, interrupted: fork.interrupted ?? null, text: fork.answer,
-    }));
+    summary.P2forks = a.forks.filter((fork) => fork.name !== 'RC').map(forkRow);
     summary.P2predictionModeReadOnly = a.predictionModeReadOnly ?? null;
     summary.P3 = a.forks.filter((fork) => fork.name === 'RC').map((fork) => ({
       afterTurn: fork.afterTurn, error: fork.error ?? null, status: fork.status ?? null, input: fork.first?.input ?? null, cached: fork.first?.cached ?? null,
@@ -529,20 +659,18 @@ function passSummary(pass) {
     }));
     summary.crossTurnA = a.turns.map((turn) => [turn.name, turn.crossTurnRatio, turn.hitRatio]);
     summary.changedA = a.changedFiles ?? null;
+    summary.guardA = { approvalDecisions: a.approvalDecisions ?? null, unapproved: a.unapproved?.length ?? null };
   }
-  const b = pass.B;
-  if (b) {
-    const t1 = b.turns.find((turn) => turn.name === 'T1-fix-cart');
-    summary.P4B = {
-      error: b.error ?? null, serverAtStart: b.serverAtStart ?? null,
-      itemSequence: (t1?.items ?? []).filter((item) => item.phase === 'started').map((item) => (item.type === 'mcpToolCall' ? `mcp:${item.tool}` : item.type)),
-      suggestCalls: (b.suggestTaskServer?.suggestions ?? []).map((entry) => entry.title),
-      mcpCallStatus: (t1?.items ?? []).filter((item) => item.type === 'mcpToolCall' && item.phase === 'completed').map((item) => `${item.tool}:${item.status}${item.error ? `:${item.error}` : ''}`),
-      approvalRequests: (t1?.serverRequests ?? []).map((entry) => `${entry.method}:${entry.approvalKind ?? ''}:${entry.decision}`),
-      changedFiles: b.changedFiles ?? null, readmePresent: b.readmePresent ?? null,
-      crossTurn: b.turns.map((turn) => [turn.name, turn.crossTurnRatio, turn.hitRatio]),
+  const al = pass.AL;
+  if (al && !al.skipped) {
+    summary.AL = {
+      error: al.error ?? null, lowestEffort: al.lowestEffort ?? null, changedFiles: al.changedFiles ?? null,
+      approvalDecisions: al.approvalDecisions ?? null, unapproved: al.unapproved?.length ?? null,
+      crossTurn: al.turns.map((turn) => [turn.name, turn.crossTurnRatio]), forks: al.forks.map(forkRow),
     };
   }
+  if (pass.B && !pass.B.skipped) summary.P4B = bSummary(pass.B);
+  if (pass.BI && !pass.BI.skipped) summary.P4BI = bSummary(pass.BI);
   if (pass.D.length) {
     summary.P4direct = pass.D.map((step) => ({
       variant: step.variant, error: step.error ?? null, status: step.turn?.status ?? null, serverTools: step.serverAtStart?.tools ?? null,
@@ -562,11 +690,14 @@ async function main() {
   await createReviewRepo(serverCwd, { clean: true });
   const server = startAppServer(codexScript, serverCwd);
   const file = path.join(options.out, `codex-${stamp}.json`);
+  const skipped = 'editing step: needs --allow-unsandboxed (workspace-write sandbox commands hang on this PC; the standard preset cannot edit here)';
   const report = {
     probe: 'codex-turn-wrap-up', at: new Date().toISOString(),
     facts: {
-      codexScript, repeat: options.repeat, only: options.only,
-      deviation: "Conversations A and B: approvals 'on-request' + sandbox 'danger-full-access' (workspace-write commands hang on this PC). D uses the real presets.",
+      codexScript, repeat: options.repeat, only: options.only, allowUnsandboxed: options.allowUnsandboxed,
+      safety: options.allowUnsandboxed
+        ? 'Editing conversations: sandbox danger-full-access + approvalPolicy untrusted; the probe declines every command, accepts file changes only inside the scratch repo, accepts the suggest_task MCP approval, declines the rest, and interrupts a turn where anything completes unapproved. Editing prompts quote the repo files.'
+        : 'Editing conversations skipped (no --allow-unsandboxed); D uses the real presets.',
     },
     definitions: DEFINITIONS, passes: [],
   };
@@ -586,8 +717,13 @@ async function main() {
     for (let pass = 1; pass <= options.repeat; pass += 1) {
       const entry = { pass, D: [] };
       report.passes.push(entry);
-      if (options.only.includes('A')) { entry.A = await runA(server, options, pass); await save(); }
-      if (options.only.includes('B')) { entry.B = await runB(server, suggestions, options, pass); await save(); }
+      // B and BI swap order on even passes.
+      const order = ['A', 'AL', ...(pass % 2 === 1 ? ['B', 'BI'] : ['BI', 'B'])].filter((name) => options.only.includes(name));
+      for (const name of order) {
+        if (EDITING_STEPS.has(name) && !options.allowUnsandboxed) { entry[name] = { skipped }; continue; }
+        entry[name] = name.startsWith('A') ? await runA(server, options, pass, name) : await runB(server, suggestions, options, pass, name);
+        await save();
+      }
       if (options.only.includes('D')) {
         const names = Object.keys(D_VARIANTS);
         for (const variant of pass % 2 === 1 ? names : [...names].reverse()) {

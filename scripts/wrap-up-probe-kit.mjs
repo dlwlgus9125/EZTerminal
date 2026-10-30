@@ -67,13 +67,11 @@ export const PROMPTS = {
     codex: 'The list above is reference notes for later questions. Do not run any commands or read files. Reply with exactly: OK',
   },
   // P1/P2/P3 conversation (A): one editing turn that ends waiting on the person, then ordinary turns.
+  // The Codex editing turns are composed in probe-codex-turn-wrap-up.mjs (commands are declined there).
   fixFormat: {
     claude: 'In this repository, formatPrice in src/format.ts shows prices ten times too large. Please fix it. You may read '
       + 'and edit files, but do not run shell commands, and change only src/format.ts. When you are done, ask me whether I '
       + 'also want a unit test for it.',
-    codex: 'In this repository, formatPrice in src/format.ts shows prices ten times too large. Please fix it. You may read '
-      + 'files and edit them, but do not run tests, builds or installs, and change only src/format.ts. When you are done, '
-      + 'ask me whether I also want a unit test for it.',
   },
   english: 'No test for now. Without using any tools: what else could go wrong in formatPrice, for example with negative '
     + 'or fractional cents? Three short bullets.',
@@ -84,8 +82,6 @@ export const PROMPTS = {
   fixCart: {
     claude: 'Please fix the bug in src/cart.ts: cartTotal reads past the end of the items array. Fix only that bug and change '
       + 'only src/cart.ts. Skim the other files in src/ first so your change fits the codebase. Do not run shell commands.',
-    codex: 'Please fix the bug in src/cart.ts: cartTotal reads past the end of the items array. Fix only that bug and change '
-      + 'only src/cart.ts. Skim the other files in src/ first so your change fits the codebase. Do not run tests, builds or installs.',
   },
   summary: 'Without using any tools: summarize your change in one line.',
   // Approval checks (D): the tool named outright, no seed.
