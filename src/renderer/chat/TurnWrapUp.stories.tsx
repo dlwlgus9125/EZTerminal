@@ -21,10 +21,11 @@ import { DialogPortalContext } from '../ui/Dialog';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatWrapUpAction } from './ChatContext';
+import { useChatCopy } from './copy';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import { RECOMMENDED_WRAP_UP_DECISIONS, WrapUpDecisionsProvider, type WrapUpDecisions } from './wrap-up/wrap-up-decisions';
 import {
-  applyWrapUpAction, cartStory, formatStory, inSession, waitingStory, WRAP_ROOT, WRAP_T0,
+  applyWrapUpAction, cartStory, formatStory, inSession, LONG_FOLDER, longWordsStory, waitingStory, WRAP_ROOT, WRAP_T0,
   type WrapLanguage, type WrapProvider, type WrapUpFixture,
 } from './wrap-up/wrap-up-fixtures';
 import '../index.css';
@@ -100,7 +101,7 @@ function Phone({ children, width, height }: { readonly children: ReactNode; read
 }
 
 // ── The story host: answers card actions the way the real one will ────────────────────────────────────
-const SETTLING: ReadonlySet<ChatWrapUpAction['kind']> = new Set(['task-start', 'task-start-all', 'recap-retry']);
+const SETTLING: ReadonlySet<ChatWrapUpAction['kind']> = new Set(['task-start', 'task-retry', 'task-start-all', 'recap-retry']);
 
 interface StoryHost {
   readonly state: WrapUpFixture;
@@ -146,11 +147,16 @@ function TaskStartForm({ host, args }: { readonly host: StoryHost; readonly args
   const tasks = (host.state.tasks ?? []).flatMap((card) => card.tasks);
   const index = host.custom ? tasks.findIndex((task) => task.id === host.custom!.taskId) : -1;
   const task = index >= 0 ? tasks[index] : undefined;
-  const branch = task?.worktree ? suggestedTaskBranch(task.title, index) : undefined;
+  // A failed start comes back as it was asked for; otherwise the AI's recommendation fills the form.
+  const failed = task?.outcome.kind === 'start-failed' ? task.outcome.start : undefined;
+  const branch = failed ? (failed.where.kind === 'new-worktree' ? failed.where.branch : undefined) : task?.worktree ? suggestedTaskBranch(task.title, index) : undefined;
+  const copy = useChatCopy();
   return (
     <DelegateAgentDialog open={Boolean(task)} onOpenChange={(open) => { if (!open) host.closeCustom(); }} mode="handoff"
+      title={copy.taskSuggestions.startForm}
       profiles={TASK_PROFILES} providerLabels={{ claude: 'Claude', codex: 'Codex' }} workspaces={[{ id: 'ws-cart', label: 'cart-kit', kind: 'local' }]}
       defaultWorkspaceId="ws-cart" initialInstruction={task?.prompt ?? ''} {...(branch ? { initialWorkspace: { kind: 'new-worktree' as const, branch } } : {})}
+      {...(failed?.profileId ? { initialProfileId: failed.profileId } : {})}
       onSubmit={async (request) => {
         args.onDelegate(request);
         if (task) host.startedViaForm(task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
@@ -224,7 +230,7 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   );
 }
 
-function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height }: {
+function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height, folder }: {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -232,6 +238,8 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   readonly provider?: WrapProvider;
   readonly width: number;
   readonly height: number;
+  /** The working folder's name, when not the cart kit's. */
+  readonly folder?: string;
 }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = `wrap-up-story-${id}`;
@@ -239,7 +247,8 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   const host = useStoryHost(fixture, args.onWrapUpAction);
   return (
     <Phone width={width} height={height}>
-      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args)} folders={undefined} onBack={fn()} />
+      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args)} folders={undefined} onBack={fn()}
+        {...(folder ? { workspace: { id: 'ws-long', label: folder, kind: 'local' as const, path: WRAP_ROOT } } : {})} />
     </Phone>
   );
 }
@@ -264,6 +273,7 @@ async function showCard(canvasElement: HTMLElement, selector = '[data-testid="ch
   return card;
 }
 const tasksOf = (card: HTMLElement): HTMLElement[] => within(card).getAllByTestId('chat-task');
+const startForm = (): Promise<HTMLElement> => waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="delegate-agent-dialog"]'); expect(element).not.toBeNull(); return element!; });
 
 function chat(id: string, topic: Topic, make: (lang: WrapLanguage) => WrapUpFixture, options: ChatOptions = {}): Story {
   return { render: (args) => <ChatScreen id={id} topic={topic} make={make} args={args} {...options} /> };
@@ -440,20 +450,32 @@ export const RecapWaiting: Story = {
 };
 /** While Claude writes it: one quiet line where the card goes. */
 export const RecapGenerating: Story = chat('recap-generating', 'format', (lang) => formatStory(lang, 'claude', { recap: 'generating', suggestion: false }));
-/** D4 option b: it could not be written — one small line and 다시 만들기. */
+/** The person answered and the turn went on: nothing waits any more, so the card stops saying it does. */
+export const RecapAnswered: Story = {
+  ...chat('recap-answered', 'format', (lang) => waitingStory(lang, { answered: true })),
+  play: async ({ canvasElement }) => {
+    const card = await findIn(canvasElement, '[data-testid="chat-recap-card"]');
+    await expect(card).toHaveTextContent('답을 기다렸던 턴');
+    await expect(card).not.toHaveTextContent('멈추고 답을 기다림');
+    await expect(card).not.toHaveTextContent('AI가 답을 기다립니다');
+    await expect(within(card).queryByRole('button', { name: '답하러 가기' })).toBeNull();
+  },
+};
+/** D4 option b: it could not be written — one small line, the host's reason in short, and 다시 만들기. */
 export const RecapFailedLine: Story = {
-  ...chat('recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false })),
+  ...chat('recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false, failure: 'usage-limit' })),
   play: async ({ canvasElement }) => {
     const line = await findIn(canvasElement, '[data-testid="chat-recap-line"]');
-    await expect(line).toHaveTextContent('요약을 만들지 못했습니다');
+    await expect(line).toHaveTextContent('요약을 만들지 못했습니다 · 사용량 한도');
     await expect(within(line).getByRole('button', { name: '다시 만들기' })).toBeVisible();
   },
 };
 /** 다시 만들기 asks the host again: the line says it is being written, then the card comes. */
 export const RecapRetry: Story = {
-  ...chat('recap-retry', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false })),
+  ...chat('recap-retry', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false, failure: 'no-response' })),
   play: async ({ canvasElement, args }) => {
     const line = await findIn(canvasElement, '[data-testid="chat-recap-line"]');
+    await expect(line).toHaveTextContent('응답 없음');
     await userEvent.click(within(line).getByRole('button', { name: '다시 만들기' }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({ kind: 'recap-retry', turnId: 'turn-plan' });
     await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-recap-line"]')).toHaveTextContent('요약 만드는 중'));
@@ -478,13 +500,22 @@ export const RecapHeadingTurn: Story = {
   ...chat('heading-turn', 'format', (lang) => waitingStory(lang), { decisions: { recapHeading: 'turn' } }),
   play: async ({ canvasElement }) => { await expect(await findIn(canvasElement, '[data-testid="chat-recap-card"]')).toHaveTextContent('이번 턴 요약'); },
 };
-/** CLI skin: `⏺ 요약(Claude) 자리를 비운 사이`, the AI's lines as `⎿` lines. */
-export const CliRecap: Story = chat('cli-recap', 'format', (lang) => formatStory(lang, 'codex', { suggestion: false }), { skin: 'cli', provider: 'codex' });
+/** CLI skin: `⏺ 요약(Codex) 자리를 비운 사이`, the AI's lines as `⎿` lines. The `⏺` is neutral: a recap is not a success. */
+export const CliRecap: Story = {
+  ...chat('cli-recap', 'format', (lang) => formatStory(lang, 'codex', { suggestion: false }), { skin: 'cli', provider: 'codex' }),
+  play: async ({ canvasElement }) => {
+    const card = await findIn(canvasElement, '.chat-cli-action-card[data-kind="recap"]');
+    await expect(card.querySelector('.chat-cli-glyph')).toHaveAttribute('data-tone', 'muted');
+  },
+};
 /** CLI skin: the waiting recap — its line, and 답하러 가기 as a real button. */
 export const CliRecapWaiting: Story = chat('cli-recap-waiting', 'format', (lang) => waitingStory(lang), { skin: 'cli' });
 /** CLI skin: the one-line states. */
 export const CliRecapGenerating: Story = chat('cli-recap-generating', 'format', (lang) => formatStory(lang, 'claude', { recap: 'generating', suggestion: false }), { skin: 'cli' });
-export const CliRecapFailed: Story = chat('cli-recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false }), { skin: 'cli' });
+export const CliRecapFailed: Story = {
+  ...chat('cli-recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false, failure: 'disconnected' }), { skin: 'cli' }),
+  play: async ({ canvasElement }) => { await expect(await findIn(canvasElement, '[data-testid="chat-recap-line"]')).toHaveTextContent('요약을 만들지 못했습니다 · 연결 끊김'); },
+};
 
 // ── 4. The suggested-task card ────────────────────────────────────────────────────────────────────────
 /**
@@ -496,7 +527,7 @@ export const TasksClaude: Story = {
   ...chat('tasks-claude', 'cart', (lang) => cartStory(lang, 'claude')),
   play: async ({ canvasElement, args }) => {
     const card = await showCard(canvasElement);
-    await expect(within(card).getByTestId('chat-task-defaults')).toHaveTextContent('새 하위 대화: Claude · Opus 5.5 · 높음 · 승인 후 실행 · 이 폴더');
+    await expect(within(card).getByTestId('chat-task-defaults')).toHaveTextContent('새 하위 대화: Claude · Opus 5.5 · 높음 · 승인 후 실행 · 이 폴더 (cart-kit)');
     // The suggest_task calls are not tool rows.
     await expect(canvasElement.querySelector('.chat-viewport__scroll')).not.toHaveTextContent('suggest_task');
     const [first, second, third] = tasksOf(card);
@@ -526,26 +557,89 @@ export const TasksCodex: Story = {
 };
 /**
  * After the person acted, each task says only what the host confirmed: 시작함 (하위 대화 열기), 대기열에 넣음 · 2번째 (여기서
- * 하기 while a turn runs), 무시함 (다시 열기), and a start the host refused with its reason (다시 시도 · 무시).
+ * 하기 while a turn runs), 무시함 (다시 열기), and a start the host refused, with where it tried and why. The header counts
+ * each kind apart.
  */
 export const TasksStates: Story = {
   ...chat('tasks-states', 'cart', (lang) => cartStory(lang, 'claude', 'states')),
   play: async ({ canvasElement }) => {
     const card = await showCard(canvasElement);
-    await expect(card.querySelector('.chat-action-card__state')).toHaveTextContent('4개 · 시작함 1 · 여기서 함 1 · 무시 1');
+    await expect(card.querySelector('.chat-action-card__state')).toHaveTextContent('4개 · 시작함 1 · 대기열 1 · 무시 1 · 시작 실패 1');
     const tasks = tasksOf(card);
     await expect(within(tasks[1]!).getByTestId('chat-task-outcome')).toHaveTextContent('대기열에 넣음 · 2번째');
-    await expect(within(tasks[3]!).getByTestId('chat-task-outcome')).toHaveTextContent('이미 있는 브랜치입니다: suggest/reject-negative-and-fractional');
+    await expect(within(tasks[3]!).getByTestId('chat-task-outcome')).toHaveTextContent('시작하지 못함 · 새 워크트리 suggest/reject-negative-and-fractional');
+    await expect(within(tasks[3]!).getByTestId('chat-task-outcome')).toHaveTextContent('같은 이름의 브랜치가 이미 있습니다.');
     // 여기서 하기 put task 2's instruction second in the queue the message box shows.
     const queued = canvasElement.querySelectorAll('.chat-queue__item');
     await expect(queued).toHaveLength(2);
     await expect(queued[1]).toHaveTextContent('In src/format.ts, formatPrice divides cents by 10');
   },
 };
-/** One task the AI recommends a worktree for (Claude's first run put the three bugs in one). */
+/** Two starts the host refused: each says where it tried and why, and offers 다시 시도 · 무시. */
+export const TasksFailedStarts: Story = {
+  ...chat('tasks-failed', 'cart', (lang) => cartStory(lang, 'claude', 'retry')),
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    await expect(card.querySelector('.chat-action-card__state')).toHaveTextContent('2개 · 시작 실패 2');
+    await expect(within(tasksOf(card)[0]!).getByTestId('chat-task-outcome')).toHaveTextContent('디스크 공간이 부족해 워크트리를 만들지 못했습니다.');
+  },
+};
+/** 다시 시도 repeats the start exactly as it was asked for: the failed worktree stays that worktree, this folder stays this folder. */
+export const TasksRetryKeepsWhere: Story = {
+  ...chat('tasks-retry', 'cart', (lang) => cartStory(lang, 'claude', 'retry')),
+  play: async ({ canvasElement, args }) => {
+    const card = await showCard(canvasElement);
+    const [first, second] = tasksOf(card);
+    const settings = 'Claude · Opus 5.5 · 높음 · 승인 후 실행';
+    await expect(within(first!).getByTestId('chat-task-outcome')).toHaveTextContent('시작하지 못함 · 새 워크트리 suggest/fix-the-always-true-role-check');
+    await userEvent.click(within(first!).getByRole('button', { name: /^다시 시도: Fix the always-true/u }));
+    await expect(args.onWrapUpAction).toHaveBeenCalledWith({
+      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-1', start: { where: { kind: 'new-worktree', branch: 'suggest/fix-the-always-true-role-check' }, settings },
+    });
+    await waitFor(() => expect(within(first!).getByTestId('chat-task-outcome')).toHaveTextContent('시작함 · 새 워크트리 suggest/fix-the-always-true-role-check'), { timeout: 4_000 });
+    await userEvent.click(within(second!).getByRole('button', { name: /^다시 시도: Fix cents-to-dollars/u }));
+    await expect(args.onWrapUpAction).toHaveBeenCalledWith({
+      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-2', start: { where: { kind: 'this-folder' }, settings },
+    });
+  },
+};
+/** The branch name is taken: a plain retry would fail again, so it opens the start form on that name to change it. */
+export const TasksRetryBranchTaken: Story = {
+  ...chat('tasks-branch-taken', 'cart', (lang) => cartStory(lang, 'claude', 'states')),
+  play: async ({ canvasElement, args }) => {
+    const card = await showCard(canvasElement);
+    const task = tasksOf(card)[3]!;
+    await expect(within(task).queryByRole('button', { name: /^다시 시도: /u })).toBeNull();
+    await userEvent.click(within(task).getByRole('button', { name: /^이름 바꿔 다시 시도…: Reject negative/u }));
+    await expect(args.onWrapUpAction).toHaveBeenCalledWith({ kind: 'task-start-custom', turnId: 'turn-cart', taskId: 'task-claude-4' });
+    const dialog = within(await startForm());
+    await waitFor(() => expect(dialog.getByRole('heading', { name: '제안 작업 시작' })).toBeVisible());
+    await expect(dialog.getByTestId('delegate-agent-branch')).toHaveValue('suggest/reject-negative-and-fractional');
+  },
+};
+/** The AI recommends a worktree (Claude's first run put the three bugs in one): no one click into this folder against that advice. */
 export const TasksWorktree: Story = {
   ...chat('tasks-worktree', 'cart', (lang) => cartStory(lang, 'claude', 'combined')),
-  play: async ({ canvasElement }) => { await expect(within(await showCard(canvasElement)).getByTestId('chat-task-worktree')).toHaveTextContent('워크트리 권장'); },
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    await expect(within(card).getByTestId('chat-task-worktree')).toHaveTextContent('워크트리 권장');
+    await expect(within(card).getByRole('button', { name: /^새 하위 대화로 시작…: Fix logic bugs/u })).toBeVisible();
+    await expect(within(card).queryByRole('button', { name: /^새 하위 대화로 시작: /u })).toBeNull();
+    await expect(within(card).queryByRole('button', { name: /^바꿔서 시작…/u })).toBeNull();
+  },
+};
+/** Its main button opens the start form with the new worktree and branch already filled in. */
+export const TasksWorktreeStart: Story = {
+  ...chat('tasks-worktree-start', 'cart', (lang) => cartStory(lang, 'claude', 'combined')),
+  play: async ({ canvasElement, args }) => {
+    const card = await showCard(canvasElement);
+    await userEvent.click(within(card).getByRole('button', { name: /^새 하위 대화로 시작…: Fix logic bugs/u }));
+    await expect(args.onWrapUpAction).toHaveBeenCalledWith({ kind: 'task-start-custom', turnId: 'turn-cart', taskId: 'task-claude-1' });
+    const dialog = within(await startForm());
+    await waitFor(() => expect(dialog.getByRole('heading', { name: '제안 작업 시작' })).toBeVisible());
+    await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('Fix three bugs in src/:');
+    await expect(dialog.getByTestId('delegate-agent-branch')).toHaveValue('suggest/fix-logic-bugs-in-auth-format');
+  },
 };
 /**
  * D6: 모두 시작 asks first — each open task, where it works (this folder, or a new worktree on its `suggest/…` branch;
@@ -561,6 +655,7 @@ export const TasksStartAll: Story = {
     await expect(tasks).toHaveLength(4);
     await expect(within(tasks[3]!).getByTestId('task-start-all-worktree')).toBeChecked();
     await expect(tasks[3]).toHaveTextContent('suggest/reject-negative-and-fractional');
+    await expect(tasks[0]).toHaveTextContent('이 폴더 (cart-kit)');
     await expect(dialog).toHaveTextContent('동시에 실행할 수 있는 대화는 4개');
     await userEvent.click(within(tasks[0]!).getByTestId('task-start-all-worktree'));
     await userEvent.click(within(dialog).getByRole('button', { name: '4개 시작' }));
@@ -575,16 +670,18 @@ export const TasksStartAll: Story = {
     await waitFor(() => expect(within(card).getAllByTestId('chat-task-outcome')).toHaveLength(4));
   },
 };
-/** D5 option a's way out: 바꿔서 시작… opens the existing start form (맡기기) filled from the task — instruction and worktree. */
+/** D5 option a's way out: 바꿔서 시작… opens the existing start form (맡기기) filled from the task, in this folder. */
 export const TasksChangeAndStart: Story = {
-  ...chat('tasks-change', 'cart', (lang) => cartStory(lang, 'claude', 'combined')),
+  ...chat('tasks-change', 'cart', (lang) => cartStory(lang, 'claude')),
   play: async ({ canvasElement, args }) => {
     const card = await showCard(canvasElement);
-    await userEvent.click(within(card).getByRole('button', { name: /^바꿔서 시작…: Fix logic bugs/u }));
+    await userEvent.click(within(card).getByRole('button', { name: /^바꿔서 시작…: Fix the always-true/u }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({ kind: 'task-start-custom', turnId: 'turn-cart', taskId: 'task-claude-1' });
-    const dialog = within(await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="delegate-agent-dialog"]'); expect(element).not.toBeNull(); return element!; }));
-    await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('Fix three bugs in src/:');
-    await expect(dialog.getByTestId('delegate-agent-branch')).toHaveValue('suggest/fix-logic-bugs-in-auth-format');
+    const dialog = within(await startForm());
+    await waitFor(() => expect(dialog.getByRole('heading', { name: '제안 작업 시작' })).toBeVisible());
+    await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('In src/auth.ts, canAccess returns');
+    await expect(dialog.getByTestId('delegate-agent-workspace')).toHaveValue('ws-cart');
+    await expect(dialog.queryByTestId('delegate-agent-branch')).toBeNull();
   },
 };
 /** D5 option b: every start opens the form (no defaults line, no one-click start). */
@@ -602,7 +699,7 @@ export const TasksCap: Story = {
   play: async ({ canvasElement }) => {
     const card = await findIn(canvasElement, '[data-testid="chat-task-card"]');
     await expect(tasksOf(card)).toHaveLength(8);
-    await expect(card).toHaveTextContent('그 밖의 제안 3개는 버렸습니다');
+    await expect(card).toHaveTextContent('그 밖의 제안 3개는 받지 않았습니다 (한 턴에 8개까지)');
   },
 };
 /** A narrow conversation (520 px): titles wrap, the buttons go under the task. */
@@ -625,6 +722,7 @@ export const CliTasks: Story = {
   ...chat('cli-tasks', 'cart', (lang) => cartStory(lang, 'claude'), { skin: 'cli' }),
   play: async ({ canvasElement, args }) => {
     const card = await showCard(canvasElement);
+    await expect(card.querySelector('.chat-cli-glyph')).toHaveAttribute('data-tone', 'muted');
     const start = within(card).getByRole('button', { name: '새 하위 대화로 시작: Fix the always-true role check in src/auth.ts' });
     start.focus();
     await userEvent.keyboard('{Enter}');
@@ -670,8 +768,11 @@ export const PhoneTasks360: Story = {
   render: (args) => <PhoneScreen id="phone-tasks-360" topic="cart" make={(lang) => cartStory(lang, 'claude', 'mixed')} args={args} width={360} height={800} />,
   play: async ({ canvasElement }) => {
     const card = await showCard(canvasElement);
+    await expect(within(card).getByTestId('chat-task-defaults')).toHaveTextContent('이 폴더 (cart-kit)');
     await expect(within(card).getByTestId('chat-task-worktree-desktop')).toHaveTextContent('새 워크트리는 데스크톱에서 고를 수 있습니다');
     await expect(within(card).queryByRole('button', { name: /^바꿔서 시작…/u })).toBeNull();
+    // No start form on the phone: a worktree-recommended task still starts here, with the note above.
+    await waitFor(() => expect(within(card).getByRole('button', { name: /^새 하위 대화로 시작: Reject negative/u })).toBeVisible());
     const targets = [...card.querySelectorAll<HTMLElement>('.chat-task__actions button, .chat-task__toggle')];
     for (const target of targets) {
       const box = target.getBoundingClientRect();
@@ -685,6 +786,19 @@ export const PhoneTasks412: Story = {
   render: (args) => <PhoneScreen id="phone-tasks-412" topic="cart" make={(lang) => cartStory(lang, 'codex')} args={args} provider="codex" width={412} height={915} />,
   play: async ({ canvasElement }) => { await showCard(canvasElement); },
 };
+/**
+ * Phone: a start that failed in a new worktree cannot be repeated here (only the desktop creates worktrees), and it does
+ * not drift to this folder either: no 다시 시도, and the card says where it can be done. One that failed in this folder retries.
+ */
+export const PhoneRetryWhere: Story = {
+  render: (args) => <PhoneScreen id="phone-retry" topic="cart" make={(lang) => cartStory(lang, 'claude', 'retry')} args={args} width={412} height={915} />,
+  play: async ({ canvasElement }) => {
+    const [worktree, folder] = tasksOf(await showCard(canvasElement));
+    await expect(within(worktree!).queryByRole('button', { name: /^다시 시도/u })).toBeNull();
+    await expect(within(worktree!).getByTestId('chat-task-worktree-desktop')).toHaveTextContent('새 워크트리는 데스크톱에서 고를 수 있습니다');
+    await waitFor(() => expect(within(folder!).getByRole('button', { name: /^다시 시도: /u })).toBeVisible());
+  },
+};
 /** Phone: 모두 시작 as a sheet — everything starts in this folder there. */
 export const PhoneStartAll: Story = {
   render: (args) => <PhoneScreen id="phone-start-all" topic="cart" make={(lang) => cartStory(lang, 'claude', 'mixed')} args={args} width={412} height={915} />,
@@ -692,8 +806,44 @@ export const PhoneStartAll: Story = {
     const card = await showCard(canvasElement);
     await userEvent.click(within(card).getByTestId('chat-task-start-all'));
     const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
-    await expect(within(dialog).getByTestId('task-start-all-phone')).toHaveTextContent('새 워크트리는 데스크톱에서 고를 수 있습니다');
+    await expect(within(dialog).getByTestId('task-start-all-phone')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
+    await expect(within(dialog).getAllByTestId('task-start-all-task')[0]).toHaveTextContent('이 폴더 (cart-kit)');
     await expect(within(dialog).queryAllByTestId('task-start-all-worktree')).toHaveLength(0);
+  },
+};
+/**
+ * The WebView 74 floor: `overflow-wrap: anywhere` needs Chrome 80, so there the declared `break-word` fallback is what
+ * runs, and it does not lower a flex item's min-content. This style forces that case in a current browser.
+ */
+const WEBVIEW_74_WRAP = '.phone-i4-frame *, .task-start-all-dialog * { overflow-wrap: break-word !important; }';
+async function fitsWithin(box: HTMLElement): Promise<void> {
+  const right = box.getBoundingClientRect().right + 1;
+  for (const element of box.querySelectorAll<HTMLElement>('*')) await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(right);
+}
+/** Phone 360×800: unbroken paths, identifiers, an unbroken instruction and a long folder name wrap inside the card. */
+export const PhoneLongWords360: Story = {
+  render: (args) => (
+    <>
+      <style>{WEBVIEW_74_WRAP}</style>
+      <PhoneScreen id="phone-long-words" topic="cart" make={longWordsStory} args={args} width={360} height={800} folder={LONG_FOLDER} />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    await userEvent.click(within(tasksOf(card)[0]!).getByTestId('chat-task-prompt-toggle'));
+    await fitsWithin(card);
+    await expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth + 1);
+  },
+};
+/** The same words in the 모두 시작 sheet, at the same floor. */
+export const PhoneLongWordsSheet360: Story = {
+  render: PhoneLongWords360.render!,
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    await userEvent.click(within(card).getByTestId('chat-task-start-all'));
+    const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
+    await fitsWithin(dialog);
+    await expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth + 1);
   },
 };
 
@@ -770,6 +920,11 @@ export const SettingsTurnWrapUp: Story = {
   play: async ({ canvasElement }) => {
     const section = await showSettings(canvasElement);
     await expect(within(section).getByRole('switch', { name: /Codex/u })).toBeChecked();
+    // What each costs, as the probes measured it.
+    await expect(section).toHaveTextContent('턴이 끝나고 3–8초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음');
+    await expect(section).toHaveTextContent('턴이 끝나고 7–15초 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음');
+    await expect(section).toHaveTextContent('그때만 작은 호출 한 번');
+    await expect(section).toHaveTextContent('AI 턴 안에서 제안하므로 따로 부르는 호출이 없습니다');
     await userEvent.click(within(section).getByRole('switch', { name: /요약 카드/u }));
     await expect(within(section).getByRole('switch', { name: /요약 카드/u })).not.toBeChecked();
     await userEvent.click(within(section).getByRole('switch', { name: /요약 카드/u }));

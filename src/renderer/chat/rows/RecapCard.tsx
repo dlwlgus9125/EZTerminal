@@ -9,10 +9,11 @@ import { ActionCard, type ActionCardAction } from './ActionCard';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
-/** D3: the words after 요약 — one for every recap, or the one that says why it was written. */
-function headingText(recap: RowOf<'recap'>['recap'], decisions: WrapUpDecisions, copy: ChatCopy): string {
+/** D3: the words after 요약 — one for every recap, or the one that says why it was written, true also once it was answered. */
+function headingText({ recap, waitingNow }: RowOf<'recap'>, decisions: WrapUpDecisions, copy: ChatCopy): string {
   if (decisions.recapHeading !== 'trigger') return copy.recap.heading[decisions.recapHeading];
-  return copy.recap.heading[recap.trigger === 'waiting' ? 'waiting' : 'away'];
+  if (recap.trigger !== 'waiting') return copy.recap.heading.away;
+  return copy.recap.heading[waitingNow ? 'waiting' : 'answered'];
 }
 
 /** While the AI writes it, and when it could not (D4 b): one quiet line where the card goes. */
@@ -22,6 +23,7 @@ function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
   const { recap } = row;
   const provider = providerName(recap.providerId);
   const generating = recap.state === 'generating';
+  const failed = recap.failure ? `${copy.recap.failed} · ${copy.recap.failure[recap.failure]}` : copy.recap.failed;
   const retry = !generating && context.onWrapUpAction
     ? (): void => context.onWrapUpAction?.({ kind: 'recap-retry', turnId: recap.turnId }) : undefined;
   if (context.skin === 'cli') {
@@ -30,7 +32,7 @@ function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
         <span className="chat-cli-glyph" data-tone={generating ? 'live' : 'muted'} aria-hidden="true">✻</span>
         <div className="chat-cli-line__body">
           {!generating && <Glyph name="warn" className="chat-cli-action-card__icon" />}
-          <span className="chat-cli-dim">{generating ? copy.recap.generatingBy(provider) : copy.recap.failed}</span>
+          <span className="chat-cli-dim">{generating ? copy.recap.generatingBy(provider) : failed}</span>
           {retry && <><span className="chat-cli-dim" aria-hidden="true"> · </span><button type="button" className="chat-cli-action" onClick={retry}>{copy.recap.retry}</button></>}
         </div>
       </section>
@@ -39,7 +41,8 @@ function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
   return (
     <p className="chat-recap-line" data-state={recap.state} data-testid="chat-recap-line">
       {generating ? <Led tone="on" /> : <Glyph name="warn" />}
-      <span>{generating ? copy.recap.generatingBy(provider) : copy.recap.failed}</span>
+      <span>{generating ? copy.recap.generatingBy(provider) : failed}</span>
+      {retry && <span aria-hidden="true">·</span>}
       {retry && <button type="button" className="chat-link-button" onClick={retry}>{copy.recap.retry}</button>}
     </p>
   );
@@ -56,7 +59,7 @@ export function RecapCard({ row }: { readonly row: RowOf<'recap'> }): JSX.Elemen
   const { recap } = row;
   if (recap.state !== 'complete' || !recap.text?.trim()) return <RecapLine row={row} />;
   const provider = providerName(recap.providerId);
-  const heading = headingText(recap, decisions, copy);
+  const heading = headingText(row, decisions, copy);
   const clock = formatClock(recap.createdAt, context.locale);
   const lines = aiLines(recap.text);
   const waiting = row.waitingNow && recap.waiting ? copy.recap.waiting[recap.waiting] : undefined;

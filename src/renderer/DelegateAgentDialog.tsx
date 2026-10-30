@@ -43,6 +43,10 @@ export interface DelegateAgentDialogProps {
   readonly allowNewWorktree?: boolean;
   /** Where it starts when it opens, if not `defaultWorkspaceId` (a suggested task the AI recommends a worktree for). */
   readonly initialWorkspace?: DelegateWorkspaceChoice;
+  /** The profile chosen when it opens, if not the first (a failed start being tried again). */
+  readonly initialProfileId?: string;
+  /** Instead of the title `mode` gives it. */
+  readonly title?: string;
 }
 
 const NEW_WORKTREE = '__new-worktree__';
@@ -55,7 +59,7 @@ const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
  */
 export function DelegateAgentDialog({
   open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles, allowNewWorktree = true,
-  initialWorkspace,
+  initialWorkspace, initialProfileId, title,
 }: DelegateAgentDialogProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
@@ -64,7 +68,8 @@ export function DelegateAgentDialog({
   const startWorkspace = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? NEW_WORKTREE
     : initialWorkspace?.kind === 'existing' ? initialWorkspace.workspaceId : defaultWorkspaceId;
   const startBranch = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? initialWorkspace.branch : '';
-  const [profileId, setProfileId] = useState(profiles[0]?.id ?? '');
+  const startProfile = profiles.some((entry) => entry.id === initialProfileId) ? initialProfileId! : profiles[0]?.id ?? '';
+  const [profileId, setProfileId] = useState(startProfile);
   const [workspaceId, setWorkspaceId] = useState(startWorkspace);
   const [branch, setBranch] = useState(startBranch);
   const [instruction, setInstruction] = useState(initialInstruction);
@@ -74,13 +79,13 @@ export function DelegateAgentDialog({
 
   useEffect(() => {
     if (!open) return;
-    setProfileId(profiles[0]?.id ?? '');
+    setProfileId(startProfile);
     setWorkspaceId(startWorkspace);
     setBranch(startBranch);
     setInstruction(initialInstruction);
     setReportBack(mode === 'review');
     setError(undefined);
-  }, [open, mode, startWorkspace, startBranch, initialInstruction, profiles]);
+  }, [open, mode, startProfile, startWorkspace, startBranch, initialInstruction, profiles]);
 
   const profile = profiles.find((entry) => entry.id === profileId);
   const newWorktree = workspaceId === NEW_WORKTREE;
@@ -113,7 +118,7 @@ export function DelegateAgentDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => { if (!busy) onOpenChange(next); }}
-      title={mode === 'review' ? text('검토 맡기기', 'Ask for a review') : text('다른 에이전트에게 맡기기', 'Hand off to another agent')}
+      title={title ?? (mode === 'review' ? text('검토 맡기기', 'Ask for a review') : text('다른 에이전트에게 맡기기', 'Hand off to another agent'))}
       description={text(
         '새 에이전트가 이 대화의 하위 대화로 시작합니다. 진행은 입력창 위 서브에이전트 목록과 프로젝트 목록에서 볼 수 있습니다.',
         'The new agent starts as a child of this conversation. Follow it above the composer and in the project list.',

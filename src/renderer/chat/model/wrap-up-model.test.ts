@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cartStory, formatStory, waitingStory } from '../wrap-up/wrap-up-fixtures';
+import { cartStory, formatStory, WAITING_DECISION_ID, waitingStory } from '../wrap-up/wrap-up-fixtures';
 import { buildChatModel } from './build-chat-model';
 import type { ChatRow } from './types';
 
@@ -54,5 +54,16 @@ describe('turn wrap-up rows (시안)', () => {
     });
     const after = answered.rows.find((row) => row.kind === 'recap');
     expect(after?.kind === 'recap' && after.waitingNow).toBeFalsy();
+  });
+
+  it('ties the wait to the decision the recap stopped for, not to any approval', () => {
+    const fixture = waitingStory('en');
+    const [question] = fixture.approvals!;
+    // Its question was answered; a later turn asks something else. The old recap must not read as waiting again.
+    const approvals = [{ ...question!, state: 'allowed' as const }, { ...question!, id: 'approval-later', turnId: 'turn-later' }];
+    const model = buildChatModel({ items: fixture.items, turns: fixture.turns, approvals, wrapUp: { recaps: fixture.recaps! } });
+    const recap = model.rows.find((row) => row.kind === 'recap');
+    expect(fixture.recaps![0]!.decisionId).toBe(WAITING_DECISION_ID);
+    expect(recap?.kind === 'recap' && recap.waitingNow).toBeFalsy();
   });
 });

@@ -36,20 +36,25 @@ export function outcomeText(outcome: SuggestedTaskOutcome, copy: ChatCopy): stri
     case 'sent': return copy.taskSuggestions.outcome.sent;
     case 'queued': return outcome.position === undefined ? copy.taskSuggestions.outcome.queued : copy.taskSuggestions.outcome.queuedAt(outcome.position);
     case 'dismissed': return copy.taskSuggestions.outcome.dismissed;
-    case 'start-failed': return copy.taskSuggestions.outcome.startFailed;
+    case 'start-failed':
+      return outcome.start.where.kind === 'new-worktree' ? copy.taskSuggestions.outcome.startFailedIn(outcome.start.where.branch) : copy.taskSuggestions.outcome.startFailed;
   }
 }
 
-/** `3개`, then what came of them: `3개 · 시작함 1 · 무시 1`. */
+/** `3개`, then what came of them, each kind apart: `4개 · 시작함 1 · 대기열 1 · 무시 1 · 시작 실패 1`. */
 export function taskCountText(tasks: readonly SuggestedTaskState[], copy: ChatCopy): string {
   const count = (kinds: readonly SuggestedTaskOutcome['kind'][]): number => tasks.filter((task) => kinds.includes(task.outcome.kind)).length;
   const started = count(['started']);
-  const here = count(['sent', 'queued']);
+  const sent = count(['sent']);
+  const queued = count(['queued']);
   const dismissed = count(['dismissed']);
+  const failed = count(['start-failed']);
   const parts = [
     ...(started ? [copy.taskSuggestions.startedCount(started)] : []),
-    ...(here ? [copy.taskSuggestions.hereCount(here)] : []),
+    ...(sent ? [copy.taskSuggestions.sentCount(sent)] : []),
+    ...(queued ? [copy.taskSuggestions.queuedCount(queued)] : []),
     ...(dismissed ? [copy.taskSuggestions.dismissedCount(dismissed)] : []),
+    ...(failed ? [copy.taskSuggestions.failedCount(failed)] : []),
   ];
   return parts.length ? copy.taskSuggestions.countMore(tasks.length, parts.join(' · ')) : copy.taskSuggestions.count(tasks.length);
 }

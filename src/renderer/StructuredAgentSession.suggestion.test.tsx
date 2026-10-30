@@ -120,6 +120,17 @@ describe('next-prompt suggestion', () => {
     expect(ghost()?.textContent).toContain('Show negatives in parentheses');
   });
 
+  it('stays away when the person typed and cleared before it arrived', () => {
+    render(panel({ wrapUp: {} }));
+    type('Use parentheses');
+    type('');
+    // Nothing was offered while they typed; the guess that arrives now is still set aside for this turn.
+    render(panel());
+    expect(ghost()).toBeNull();
+    render(panel({ turns: [turn('turn-1', 'completed', AT), turn('turn-2', 'completed', LATER)], wrapUp: { suggestion: { turnId: 'turn-2', text: 'Show negatives in parentheses' } } }));
+    expect(ghost()?.textContent).toContain('Show negatives in parentheses');
+  });
+
   it('shows only the newest finished turn’s guess, not in plan mode, not while a turn runs', () => {
     // A newer turn without a guess (Codex said none): the older guess does not come back.
     render(panel({ turns: [turn('turn-1', 'completed', AT), turn('turn-2', 'completed', LATER)] }));
@@ -161,5 +172,18 @@ describe('next-prompt suggestion', () => {
     expect(input().value).toBe(SUGGESTION);
     expect(onSend).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="structured-agent-suggestion-chip"]')).toBeNull();
+  });
+
+  it('says how to send for the device: Enter on the desktop, the send button on the phone (Enter is a new line there)', () => {
+    const announcement = (): string | null | undefined => container.querySelector('[data-testid="structured-agent-plan-announcement"]')?.textContent;
+    render(panel());
+    input().focus();
+    key({ key: 'Tab' });
+    expect(announcement()).toBe('Suggestion filled in. Edit it or press Enter to send.');
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(panel({ variant: 'mobile' }));
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-suggestion-fill"]')!.click());
+    expect(announcement()).toBe('Suggestion filled in. Edit it, then press the send button.');
   });
 });

@@ -38,6 +38,7 @@
   font-size: 0.9em;
   /* The characters a copy would paste: the root turns contextual alternates on, which draws `>=` as one glyph. */
   font-feature-settings: 'calt' 0, 'liga' 0;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -51,6 +52,7 @@
   color: var(--ui-text-primary);
   font-size: var(--ui-font-size-sm);
   line-height: var(--ui-line-height-normal);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -102,7 +104,12 @@
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
   line-height: var(--ui-line-height-normal);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
+}
+
+.chat-task-defaults > span {
+  min-width: 0;
 }
 
 .chat-task-defaults > svg {
@@ -150,6 +157,7 @@
   font-size: var(--ui-font-size-sm);
   font-weight: 600;
   line-height: var(--ui-line-height-normal);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -195,6 +203,7 @@
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
   line-height: var(--ui-line-height-normal);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -243,6 +252,7 @@
   font: var(--ui-font-size-xs) / 1.5 var(--ui-font-mono);
   font-feature-settings: 'calt' 0, 'liga' 0;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -277,9 +287,14 @@
   margin-right: var(--ui-space-1);
 }
 
+/* Beside its glyph also when a long branch name wraps; a reason takes the next line. */
 .chat-task__outcome > strong {
+  min-width: 0;
+  max-width: calc(100% - 1.25rem);
   color: var(--ui-text-primary);
   font-weight: 600;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .chat-task__outcome[data-outcome='started'] > svg {
@@ -291,7 +306,9 @@
 }
 
 .chat-task__reason {
+  min-width: 0;
   margin-left: var(--ui-space-1);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -390,6 +407,7 @@
   color: var(--ui-text-primary);
   font-size: var(--ui-font-size-sm);
   font-weight: 600;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -450,7 +468,13 @@
   accent-color: var(--ui-accent);
 }
 
-.task-start-all__choice > span {
+.task-start-all__folder {
+  min-width: 0;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.task-start-all__worktree {
   flex: none;
   white-space: nowrap;
 }
@@ -460,6 +484,7 @@
   margin-left: var(--ui-space-2);
   color: var(--ui-text-secondary);
   font: var(--ui-font-size-2xs) / 1.4 var(--ui-font-mono);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -467,6 +492,8 @@
   margin: var(--ui-space-1) 0 0 1.5rem;
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .task-start-all__note {
@@ -475,6 +502,12 @@
   margin: var(--ui-space-2) 0 0;
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.task-start-all__note > span {
+  min-width: 0;
 }
 
 .task-start-all__note > svg {

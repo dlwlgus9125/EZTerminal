@@ -7,9 +7,9 @@ import { createContext, useContext } from 'react';
  *
  * - D2 `acceptKeys`: Tab fills the suggestion (`tab`), or Tab and → do (`tab-arrow`).
  * - D3 `recapHeading`: one heading on every recap (`away` 자리를 비운 사이, `turn` 이번 턴 요약), or the one that
- *   says why it was written (`trigger`: 자리를 비운 사이 / 멈추고 답을 기다림).
+ *   says why it was written (`trigger`: 자리를 비운 사이 / 멈추고 답을 기다림, once answered 답을 기다렸던 턴).
  * - D5 `taskStart`: 새 하위 대화로 시작 starts in one click with the defaults line and 바꿔서 시작… (`one-click`), or
- *   always opens the start form (`dialog`).
+ *   always opens the start form (`dialog`). A task the AI recommends a worktree for opens the form on the desktop either way.
  */
 export interface WrapUpDecisions {
   readonly acceptKeys: 'tab' | 'tab-arrow';

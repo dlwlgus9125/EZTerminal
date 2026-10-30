@@ -83,7 +83,8 @@ export interface ActionCardProps {
   readonly kind?: string;
   /**
    * A card that reports something already written rather than a process (a recap, suggested tasks) leads with this
-   * glyph instead of a lamp; the words after the title say what it is.
+   * glyph instead of a lamp; the words after the title say what it is. The CLI keeps its `⏺` in a neutral tone: nothing
+   * succeeded.
    */
   readonly glyph?: GlyphName;
 }
@@ -124,7 +125,7 @@ export function ActionCard({
   if (skin === 'cli') {
     return (
       <section className="chat-cli-line chat-cli-action-card" data-state={state} data-kind={kind} aria-label={label} data-testid={testId}>
-        <span className="chat-cli-glyph" data-tone={CLI_TONE[state]} aria-hidden="true">⏺</span>
+        <span className="chat-cli-glyph" data-tone={glyph ? 'muted' : CLI_TONE[state]} aria-hidden="true">⏺</span>
         <div className="chat-cli-line__body">
           <p className="chat-cli-action-card__head" tabIndex={-1} data-card-heading="">
             <span className="chat-cli-tool__name">{cliName}</span>

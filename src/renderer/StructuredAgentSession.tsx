@@ -972,7 +972,7 @@ export interface StructuredAgentTranscriptProps {
   readonly wrapUp?: {
     readonly cards?: { readonly recaps?: readonly TurnRecap[]; readonly tasks?: readonly TurnTaskSuggestions[] };
     readonly onAction?: (action: ChatWrapUpAction) => void;
-    readonly taskStart?: { readonly settings: string; readonly phone: boolean };
+    readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean };
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
   readonly onFocusDecision?: () => boolean;
@@ -1257,6 +1257,8 @@ export interface StructuredAgentComposerProps {
    * the next turn's. `id` names the turn it follows.
    */
   readonly suggestion?: { readonly id: string; readonly text: string };
+  /** The conversation's newest turn: typing sets that turn's suggestion aside, also one that has not arrived yet. */
+  readonly latestTurnId?: string;
 }
 
 /** A message box holding `/btw …` is a side question being typed: its text never reaches draft storage. */
@@ -1305,6 +1307,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   sideQuestion,
   plan,
   suggestion,
+  latestTurnId,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1469,7 +1472,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     if (!suggestion) return;
     setSetAside(suggestion.id);
     updateDraft({ ...valueRef.current, text: suggestion.text, selectionStart: suggestion.text.length, selectionEnd: suggestion.text.length });
-    setAnnouncement(nextCopy.filled);
+    setAnnouncement(variant === 'mobile' ? nextCopy.filledMobile : nextCopy.filled);
     inputRef.current?.focus();
   };
 
@@ -1704,8 +1707,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             }}
             onChange={(event) => {
               recall.current = undefined;
-              // Typing sets the suggestion aside, also when the box is emptied again.
-              if (suggestion) setSetAside(suggestion.id);
+              // Typing sets this turn's suggestion aside, also when the box is emptied again and when it comes only later.
+              const typedTurn = latestTurnId ?? suggestion?.id;
+              if (typedTurn) setSetAside(typedTurn);
               updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
               setError(null);
             }}
@@ -2605,7 +2609,7 @@ export function StructuredAgentSessionPanel({
     ...(effortSupported && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
   };
   const taskSettings = `${providerName} · ${settingsText(taskValues, true)}`;
-  const taskStart = useMemo(() => ({ settings: taskSettings, phone: variant === 'mobile' }), [taskSettings, variant]);
+  const taskStart = useMemo(() => ({ settings: taskSettings, folder: workspace.label, phone: variant === 'mobile' }), [taskSettings, variant, workspace.label]);
   const wrapUpRecaps = wrapUp?.recaps;
   const wrapUpTasks = wrapUp?.tasks;
   const onWrapUpAction = wrapUp?.onAction;
@@ -3112,6 +3116,7 @@ export function StructuredAgentSessionPanel({
           appCommands={appCommands}
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}
           {...(composerSuggestion ? { suggestion: composerSuggestion } : {})}
+          {...(newestTurnId ? { latestTurnId: newestTurnId } : {})}
         />
       )}
     </section>

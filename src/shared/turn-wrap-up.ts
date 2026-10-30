@@ -26,6 +26,9 @@ export type TurnRecapTrigger = 'unattended' | 'waiting';
 /** What the AI waits on when it stopped for the person. */
 export type TurnRecapWaiting = 'approval' | 'question' | 'plan';
 
+/** Why a recap could not be written, as a code the app words itself. */
+export type TurnRecapFailure = 'usage-limit' | 'disconnected' | 'no-response';
+
 /** A recap of one turn, written by the conversation's AI (the /btw path: no tools, nothing saved to the conversation). */
 export interface TurnRecap {
   readonly turnId: string;
@@ -36,6 +39,10 @@ export interface TurnRecap {
   readonly text?: string;
   /** Still waiting on the person when the recap was written. */
   readonly waiting?: TurnRecapWaiting;
+  /** The decision it stopped for (the approval's id): the card says the AI waits only while that one is pending. */
+  readonly decisionId?: string;
+  /** Why it failed, when the host knows. */
+  readonly failure?: TurnRecapFailure;
   readonly createdAt: string;
 }
 
@@ -50,10 +57,20 @@ export interface SuggestedTask {
   readonly worktree?: boolean;
 }
 
+/** What a start asked for. A failed start keeps it, so 다시 시도 repeats exactly that and never drifts to the defaults. */
+export interface SuggestedTaskStart {
+  readonly where: SuggestedTaskWhere;
+  /** What it starts with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`). */
+  readonly settings: string;
+  /** Started from the start form with this profile instead of the defaults. */
+  readonly profileId?: string;
+}
+
 /**
  * What came of a suggested task, as the host confirms it: nothing yet, a start or send in flight, a sub-conversation
  * started (in a new worktree when `branch` is set), sent to this conversation or queued behind its running turn
- * (`position` only when the host gave one), dismissed, or a start the host refused with its reason.
+ * (`position` only when the host gave one), dismissed, or a start the host refused with its reason and what was asked
+ * for (`branchTaken`: the branch name exists, so a retry needs another name).
  */
 export type SuggestedTaskOutcome =
   | { readonly kind: 'open' }
@@ -63,7 +80,7 @@ export type SuggestedTaskOutcome =
   | { readonly kind: 'sent' }
   | { readonly kind: 'queued'; readonly position?: number }
   | { readonly kind: 'dismissed' }
-  | { readonly kind: 'start-failed'; readonly reason: string };
+  | { readonly kind: 'start-failed'; readonly reason: string; readonly start: SuggestedTaskStart; readonly branchTaken?: boolean };
 
 export type SuggestedTaskState = SuggestedTask & { readonly outcome: SuggestedTaskOutcome };
 

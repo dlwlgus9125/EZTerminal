@@ -1,7 +1,9 @@
 import { encodeFileChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
-import type {
-  NextPromptSuggestion, SuggestedTask, SuggestedTaskOutcome, SuggestedTaskState, TurnRecap, TurnTaskSuggestions,
+import {
+  suggestedTaskBranch,
+  type NextPromptSuggestion, type SuggestedTask, type SuggestedTaskOutcome, type SuggestedTaskStart, type SuggestedTaskState, type TurnRecap,
+  type TurnRecapFailure, type TurnTaskSuggestions,
 } from '../../../shared/turn-wrap-up';
 import type { ChatWrapUpAction } from '../ChatContext';
 
@@ -222,7 +224,10 @@ const TEXT = {
     planOptions: ['괄호로 표시 · -0.4는 $0.00', '괄호로 표시 · -0.4는 ($0.00)', '지금처럼 둠'],
     followUp: '장바구니 합계 테스트도 추가해 줘.',
     queuedAsk: '끝나면 바꾼 내용을 한 줄로 정리해 줘.',
-    branchExists: '이미 있는 브랜치입니다: suggest/reject-negative-and-fractional',
+    branchExists: '같은 이름의 브랜치가 이미 있습니다.',
+    diskFull: '디스크 공간이 부족해 워크트리를 만들지 못했습니다.',
+    childLimit: '이 대화 아래 하위 대화는 10분에 12개까지 만들 수 있습니다.',
+    planAnswered: '알겠습니다. 음수는 괄호로 표시하기로 하고, 코드는 다음 요청에서 바꾸겠습니다.',
   },
   en: {
     fixAsk: 'formatPrice in src/format.ts shows prices ten times too high. Fix it, and don’t run any shell commands.',
@@ -235,7 +240,10 @@ const TEXT = {
     planOptions: ['Yes — vitest, src/format.test.ts', 'Not now'],
     followUp: 'Add a test for cartTotal too.',
     queuedAsk: 'When you are done, sum up the change in one line.',
-    branchExists: 'The branch suggest/reject-negative-and-fractional already exists.',
+    branchExists: 'A branch with this name already exists.',
+    diskFull: 'Not enough disk space to create the worktree.',
+    childLimit: 'At most 12 sub-conversations can start here in 10 minutes.',
+    planAnswered: 'Understood: no unit test for now.',
   },
 } as const;
 
@@ -285,11 +293,13 @@ const SUGGESTION_TEXT: Readonly<Record<WrapProvider, Readonly<Record<WrapLanguag
 /**
  * The turn ended while no screen showed the conversation: the AI's recap and its guess of the next message.
  * `recap: false` leaves the recap out (a recap that failed under D4 a, or one the setting turned off); `suggestion:
- * false` is a turn without a guess (Codex's "(none)", or paused near the usage limit).
+ * false` is a turn without a guess (Codex's "(none)", or paused near the usage limit); `failure` says why a failed
+ * recap failed.
  */
 export function formatStory(lang: WrapLanguage, provider: WrapProvider, options: {
   readonly recap?: TurnRecap['state'] | false;
   readonly suggestion?: boolean;
+  readonly failure?: TurnRecapFailure;
 } = {}): WrapUpFixture {
   const { items, turns, lastTurnId } = formatTurns(lang);
   const recapState = options.recap ?? 'complete';
@@ -299,31 +309,45 @@ export function formatStory(lang: WrapLanguage, provider: WrapProvider, options:
     ...(recapState === false ? {} : {
       recaps: [{
         turnId: lastTurnId, providerId: provider, trigger: 'unattended', state: recapState,
-        ...(recapState === 'complete' ? { text: RECAP_TEXT[provider][lang] } : {}), createdAt: iso(lang === 'ko' ? 75 : 24),
+        ...(recapState === 'complete' ? { text: RECAP_TEXT[provider][lang] } : {}), ...(options.failure ? { failure: options.failure } : {}),
+        createdAt: iso(lang === 'ko' ? 75 : 24),
       }],
     }),
   };
 }
 
-/** The AI stopped to ask (a question the dock holds) while nobody watched: the recap says it waits and leads there. */
-export function waitingStory(lang: WrapLanguage): WrapUpFixture {
+export const WAITING_DECISION_ID = 'approval-question';
+
+/**
+ * The AI stopped to ask (a question the dock holds) while nobody watched: the recap says it waits and leads there.
+ * `answered`: the person answered since and the turn went on, so nothing waits any more.
+ */
+export function waitingStory(lang: WrapLanguage, { answered = false }: { readonly answered?: boolean } = {}): WrapUpFixture {
   const { items, turns, lastTurnId } = formatTurns(lang);
   const text = TEXT[lang];
   const callId = 'call-question';
   const questions = [{ question: text.planQuestion, multiSelect: false, options: text.planOptions.map((label) => ({ label })) }];
   const asked = items.length + 40;
+  const question = item(asked, 'tool-call', `AskUserQuestion\n${JSON.stringify({ questions })}`, {
+    turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'call', status: 'running' },
+  });
+  const answer = [
+    item(asked + 1, 'tool-result', text.planOptions[0], {
+      turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'result', status: 'completed' },
+    }),
+    item(asked + 2, 'assistant-message', text.planAnswered, { turnId: lastTurnId }),
+  ];
   return {
-    items: [...items, item(asked, 'tool-call', `AskUserQuestion\n${JSON.stringify({ questions })}`, {
-      turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'call', status: 'running' },
-    })],
-    turns: turns.map((entry) => (entry.id === lastTurnId ? turn(lastTurnId, 'blocked', entry.createdAt) : entry)),
+    items: answered ? [...items, question, ...answer] : [...items, question],
+    turns: turns.map((entry) => (entry.id !== lastTurnId ? entry
+      : answered ? turn(lastTurnId, 'completed', entry.createdAt, iso((asked + 2) * 3)) : turn(lastTurnId, 'blocked', entry.createdAt))),
     approvals: [{
-      id: 'approval-question', sessionId: WRAP_SESSION, turnId: lastTurnId, providerRequestId: callId, risk: 'read', title: 'Question', state: 'pending',
+      id: WAITING_DECISION_ID, sessionId: WRAP_SESSION, turnId: lastTurnId, providerRequestId: callId, risk: 'read', title: 'Question', state: answered ? 'allowed' : 'pending',
       request: { v: 1, kind: 'question', callId, questions }, revision: 1, createdAt: iso(asked * 3), updatedAt: iso(asked * 3),
     }],
-    state: 'blocked',
+    state: answered ? 'idle' : 'blocked',
     recaps: [{
-      turnId: lastTurnId, providerId: 'claude', trigger: 'waiting', waiting: 'question', state: 'complete',
+      turnId: lastTurnId, providerId: 'claude', trigger: 'waiting', waiting: 'question', decisionId: WAITING_DECISION_ID, state: 'complete',
       text: lang === 'ko' ? PROBE_RECAPS.claude.afterPlanKoWaiting : PROBE_RECAPS.claude.afterFixEn, createdAt: iso(asked * 3 + 6),
     }],
   };
@@ -351,22 +375,34 @@ function taskStates(prefix: string, drafts: readonly TaskDraft[], outcomes: read
   return drafts.map((draft, index) => ({ ...draft, id: `${prefix}-${String(index + 1)}`, outcome: outcomes[index] ?? { kind: 'open' } }));
 }
 
-export type TaskSet = 'probe' | 'combined' | 'mixed' | 'states' | 'cap';
+export type TaskSet = 'probe' | 'combined' | 'mixed' | 'states' | 'retry' | 'cap';
+
+/** What the one-click start asked for in these conversations, as a failed start keeps it. */
+const START_SETTINGS: Readonly<Record<WrapProvider, Readonly<Record<WrapLanguage, string>>>> = {
+  claude: { ko: 'Claude · Opus 5.5 · 높음 · 승인 후 실행', en: 'Claude · Opus 5.5 · High · Ask before running' },
+  codex: { ko: 'Codex · GPT-6-Astra · 높음 · 승인 후 실행', en: 'Codex · GPT-6-Astra · High · Ask before running' },
+};
 
 /**
  * The cart turn with its suggested-task card: the AI's probe suggestions (`probe`), Claude's single combined one with a
  * worktree recommendation (`combined`), the probe ones and one recommended for a worktree (`mixed`), what came of each
- * after the person acted (`states`), or a turn that suggested more than a card keeps (`cap`: eight shown, three left out).
+ * after the person acted (`states`), two starts that failed where they were asked to start (`retry`: a new worktree and
+ * this folder), or a turn that suggested more than a card keeps (`cap`: eight shown, three left out).
  */
 export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskSet = 'probe'): WrapUpFixture {
   const probe = provider === 'claude' ? CLAUDE_TASKS : CODEX_TASKS;
   const drafts = set === 'combined' ? [CLAUDE_COMBINED_TASK] : set === 'cap' ? [...probe, ...DRAFTED_TASKS]
-    : set === 'states' || set === 'mixed' ? [...probe, DRAFTED_TASKS[0]!] : probe;
+    : set === 'states' || set === 'mixed' ? [...probe, DRAFTED_TASKS[0]!] : set === 'retry' ? probe.slice(0, 2) : probe;
+  const settings = START_SETTINGS[provider][lang];
+  const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch(draft.title, index) }, settings });
   const outcomes: readonly SuggestedTaskOutcome[] = set === 'states' ? [
     { kind: 'started', sessionId: 'wrap-up-child-auth' },
     { kind: 'queued', position: 2 },
     { kind: 'dismissed' },
-    { kind: 'start-failed', reason: TEXT[lang].branchExists },
+    { kind: 'start-failed', reason: TEXT[lang].branchExists, start: inWorktree(drafts[3]!, 3), branchTaken: true },
+  ] : set === 'retry' ? [
+    { kind: 'start-failed', reason: TEXT[lang].diskFull, start: inWorktree(drafts[0]!, 0) },
+    { kind: 'start-failed', reason: TEXT[lang].childLimit, start: { where: { kind: 'this-folder' }, settings } },
   ] : [];
   const { items, turns } = cartTurn(lang, provider, drafts);
   // States: the person's follow-up runs now and another message of theirs waits; 여기서 하기 put task 2 behind it (2nd).
@@ -389,6 +425,38 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
       turnId: 'turn-cart', providerId: provider, createdAt: turns[0]!.finishedAt ?? iso(48),
       tasks: taskStates(`task-${provider}`, drafts.slice(0, 8), outcomes),
       ...(set === 'cap' ? { dropped: 3 } : {}),
+    }],
+  };
+}
+
+const LONG_PATH = 'src/features/checkout/pricing/discounts/implementations/percentage/applyPercentageDiscountToCartTotalBeforeTaxCalculation.ts';
+const LONG_WORD = 'discountCalculationResultCacheInvalidationCoordinatorFactoryProviderConfigurationRegistryImplementation';
+export const LONG_FOLDER = 'cart-kit-checkout-pricing-discounts-rewrite-worktree-for-the-autumn-release';
+const LONG_BRANCH = 'suggest/fix-the-percentage-discount-cache-invalidation-coordinator-factory-provider-registry';
+
+/** Unbroken paths, identifiers, prompts and branch names, for the narrowest phone (시안 data). */
+export function longWordsStory(lang: WrapLanguage): WrapUpFixture {
+  const drafts: readonly TaskDraft[] = [
+    {
+      title: `Fix ${LONG_PATH}`, rationale: `${LONG_WORD} returns a stale total. See \`${LONG_PATH}\`.`,
+      prompt: `${LONG_PATH}${LONG_WORD}${LONG_PATH}${LONG_WORD}`, worktree: true,
+    },
+    { title: LONG_WORD, rationale: LONG_PATH, prompt: LONG_WORD },
+    { title: 'Fix the discount cache', rationale: 'It keeps a stale total.', prompt: 'Fix the discount cache.' },
+    { title: 'Fix the tax cache', rationale: 'It keeps a stale total too.', prompt: 'Fix the tax cache.' },
+  ];
+  const { items, turns } = cartTurn(lang, 'claude', drafts);
+  const settings = START_SETTINGS.claude[lang];
+  return {
+    items, turns, state: 'idle',
+    tasks: [{
+      turnId: 'turn-cart', providerId: 'claude', createdAt: turns[0]!.finishedAt ?? iso(48),
+      tasks: taskStates('task-long', drafts, [
+        { kind: 'open' },
+        { kind: 'open' },
+        { kind: 'started', sessionId: 'wrap-up-child-long', branch: LONG_BRANCH },
+        { kind: 'start-failed', reason: `${LONG_PATH}: ${LONG_WORD}`, start: { where: { kind: 'new-worktree', branch: LONG_BRANCH }, settings } },
+      ]),
     }],
   };
 }
@@ -422,6 +490,10 @@ export function applyWrapUpAction(state: WrapUpFixture, action: ChatWrapUpAction
   switch (action.kind) {
     case 'task-start':
       return outcome(action.taskId, settle ? { kind: 'started', sessionId: `${sessionId}-child-${action.taskId}` } : { kind: 'starting' });
+    case 'task-retry': {
+      const branch = action.start.where.kind === 'new-worktree' ? { branch: action.start.where.branch } : {};
+      return outcome(action.taskId, settle ? { kind: 'started', sessionId: `${sessionId}-child-${action.taskId}`, ...branch } : { kind: 'starting' });
+    }
     case 'task-start-all':
       return {
         ...state,

@@ -73,7 +73,10 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
               checked={settings.suggestions.claude}
               onChange={(event) => save({ ...settings, suggestions: { ...settings.suggestions, claude: event.target.checked } })}
               label="Claude"
-              description={text('Claude가 턴 끝에 함께 보내 줍니다 · 추가 호출 거의 없음', 'Claude sends it with the end of its turn · almost no extra call')}
+              description={text(
+                '턴이 끝나고 3–8초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음',
+                'Shows 3–8 s after a turn ends · a small call that reuses the conversation’s cache · none after the first turn or in plan mode',
+              )}
               data-testid="turn-wrap-up-suggestions-claude"
             />
             <Switch
@@ -81,8 +84,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
               onChange={(event) => save({ ...settings, suggestions: { ...settings.suggestions, codex: event.target.checked } })}
               label="Codex"
               description={text(
-                '턴이 끝나면 읽기 전용 호출을 한 번 더 합니다 · 7–15초 뒤 나타남, 절반쯤은 제안 없음',
-                'One more read-only call when a turn ends · shows 7–15 s later, about half the time none',
+                '턴이 끝나고 7–15초 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음',
+                'Shows 7–15 s after a turn ends · a read-only call that reuses the conversation’s cache · about half the time none',
               )}
               data-testid="turn-wrap-up-suggestions-codex"
             />
@@ -92,8 +95,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
             onChange={(event) => save({ ...settings, recaps: event.target.checked })}
             label={text('요약 카드', 'Recap card')}
             description={text(
-              'AI가 기다리거나, 아무 화면도 그 대화를 보지 않는 사이 턴이 끝나면 3–4줄로 정리합니다',
-              'When the AI waits for you, or a turn ends while no screen shows the conversation, it sums the turn up in 3–4 lines',
+              'AI가 기다리거나, 아무 화면도 그 대화를 보지 않는 사이 턴이 끝나면 3–4줄로 정리합니다. 그때만 작은 호출 한 번',
+              'When the AI waits for you, or a turn ends while no screen shows the conversation, it sums the turn up in 3–4 lines. One small call, only then',
             )}
             data-testid="turn-wrap-up-recaps"
           />
@@ -102,8 +105,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
             onChange={(event) => save({ ...settings, tasks: event.target.checked })}
             label={text('제안 작업', 'Suggested tasks')}
             description={text(
-              'AI가 맡은 일 밖에서 본 일을 카드로 제안합니다. 누르기 전에는 아무것도 실행하지 않습니다',
-              'The AI suggests, as a card, work it noticed outside its task. Nothing runs until you press it',
+              'AI가 맡은 일 밖에서 본 일을 카드로 제안합니다. AI 턴 안에서 제안하므로 따로 부르는 호출이 없습니다. 누르기 전에는 아무것도 실행하지 않습니다',
+              'The AI suggests, as a card, work it noticed outside its task. It does so within its own turn, so there is no separate call. Nothing runs until you press it',
             )}
             data-testid="turn-wrap-up-tasks"
           />

@@ -25,13 +25,15 @@ function initialChoices(tasks: readonly SuggestedTaskState[], phone: boolean): C
  * sub-conversation with the settings line; on the desktop each works in this folder or in a new worktree on its own
  * `suggest/…` branch. The phone cannot create worktrees, so everything starts in this folder there.
  */
-export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone, ownerDocument, onStart }: {
+export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, ownerDocument, onStart }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** The open tasks of one card, in its order. */
   readonly tasks: readonly SuggestedTaskState[];
   /** What each new sub-conversation starts with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`). */
   readonly settings: string;
+  /** This conversation's folder, by name. */
+  readonly folder: string;
   readonly phone: boolean;
   readonly ownerDocument?: Document;
   readonly onStart: (starts: readonly TaskStart[]) => void;
@@ -82,19 +84,19 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
               {task.worktree && <span className="task-start-all__chip"><Glyph name="wt" />{copy.worktreeRecommended}</span>}
             </p>
             {phone ? (
-              <p className="task-start-all__here">{copy.confirm.thisFolder}</p>
+              <p className="task-start-all__here">{copy.confirm.thisFolder(folder)}</p>
             ) : (
               <fieldset className="task-start-all__choices">
                 <legend className="chat-visually-hidden">{copy.named(copy.confirm.where, task.title)}</legend>
                 <label className="task-start-all__choice" data-checked={!worktree[task.id] || undefined}>
                   <input type="radio" name={`${id}-${task.id}`} checked={!worktree[task.id]} onChange={() => choose(task.id, false)}
                     data-testid="task-start-all-here" />
-                  <span>{copy.confirm.thisFolder}</span>
+                  <span className="task-start-all__folder">{copy.confirm.thisFolder(folder)}</span>
                 </label>
                 <label className="task-start-all__choice" data-checked={worktree[task.id] || undefined}>
                   <input type="radio" name={`${id}-${task.id}`} checked={worktree[task.id] === true} onChange={() => choose(task.id, true)}
                     data-testid="task-start-all-worktree" />
-                  <span>{copy.confirm.newWorktree}</span>
+                  <span className="task-start-all__worktree">{copy.confirm.newWorktree}</span>
                   <code className="task-start-all__branch">{branches[index]}</code>
                 </label>
               </fieldset>
@@ -102,8 +104,8 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
           </li>
         ))}
       </ol>
-      {phone && <p className="task-start-all__note" data-testid="task-start-all-phone"><Glyph name="info" />{copy.confirm.phoneFolder}</p>}
-      {tasks.length > 1 && <p className="task-start-all__note"><Glyph name="clock" />{copy.confirm.limit}</p>}
+      {phone && <p className="task-start-all__note" data-testid="task-start-all-phone"><Glyph name="info" /><span>{copy.confirm.phoneFolder(folder)}</span></p>}
+      {tasks.length > 1 && <p className="task-start-all__note"><Glyph name="clock" /><span>{copy.confirm.limit}</span></p>}
     </Dialog>
   );
 }

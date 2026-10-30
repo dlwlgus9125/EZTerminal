@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useId, useRef, useState, type RefObject } from 'react';
 
-import { TASK_SUGGESTION_LIMITS, type SuggestedTaskOutcome, type SuggestedTaskState, type TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
+import {
+  TASK_SUGGESTION_LIMITS, type SuggestedTaskOutcome, type SuggestedTaskStart, type SuggestedTaskState, type TurnTaskSuggestions,
+} from '../../../shared/turn-wrap-up';
 import { Button } from '../../ui/Button';
 import { Glyph, type GlyphName } from '../../ui/Glyph';
 import { useChatContext, type ChatWrapUpAction } from '../ChatContext';
@@ -14,6 +16,7 @@ import { ActionCard, type ActionCardAction } from './ActionCard';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 type TaskActionKind = Extract<ChatWrapUpAction, { readonly taskId: string }>['kind'];
+type PlainTaskAction = Exclude<TaskActionKind, 'task-retry'>;
 
 const OUTCOME_GLYPH: Readonly<Record<Exclude<SuggestedTaskOutcome['kind'], 'open'>, GlyphName>> = {
   starting: 'spin',
@@ -43,6 +46,11 @@ function useOutcomeAnnouncement(tasks: readonly SuggestedTaskState[], copy: Chat
   return useClearing(announcement, setAnnouncement);
 }
 
+/** Only the desktop creates worktrees: the phone says so where a task wants one (recommended, or a failed start in one). */
+function wantsDesktop(task: SuggestedTaskState, phone: boolean): boolean {
+  return phone && (task.worktree === true || (task.outcome.kind === 'start-failed' && task.outcome.start.where.kind === 'new-worktree'));
+}
+
 interface TaskProps {
   readonly suggestions: TurnTaskSuggestions;
   readonly task: SuggestedTaskState;
@@ -60,10 +68,17 @@ function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'inde
   const decisions = useWrapUpDecisions();
   const onAction = context.onWrapUpAction;
   const phone = context.taskStart?.phone === true;
-  // D5: the phone has no start form, so it always starts with the defaults.
-  const viaForm = decisions.taskStart === 'dialog' && !phone;
-  const act = (kind: TaskActionKind) => (): void => {
+  // D5, and the AI's own advice: a task it recommends a worktree for is not one click into this folder. The phone has no
+  // start form, so it always starts with the defaults (and says the desktop can pick a worktree).
+  const viaForm = !phone && (decisions.taskStart === 'dialog' || task.worktree === true);
+  const act = (kind: PlainTaskAction) => (): void => {
     onAction?.({ kind, turnId: suggestions.turnId, taskId: task.id });
+    // The start form takes focus and hands it back to this button, which stays.
+    if (kind !== 'task-start-custom') focusAfterAction(titleRef);
+  };
+  /** Exactly the start that failed: the same place, branch and settings, never the defaults. */
+  const retry = (start: SuggestedTaskStart) => (): void => {
+    onAction?.({ kind: 'task-retry', turnId: suggestions.turnId, taskId: task.id, start });
     focusAfterAction(titleRef);
   };
   type Choice = { readonly kind: TaskActionKind | 'open-child'; readonly label: string; readonly emphasis: 'main' | 'quiet' | 'link'; readonly run: () => void };
@@ -75,7 +90,10 @@ function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'inde
     { kind: 'task-dismiss', label: copy.taskSuggestions.dismiss, emphasis: 'quiet', run: act('task-dismiss') },
     ...(!viaForm && !phone ? [{ kind: 'task-start-custom' as const, label: copy.taskSuggestions.changeAndStart, emphasis: 'link' as const, run: act('task-start-custom') }] : []),
   ] : outcome.kind === 'start-failed' ? [
-    { kind: 'task-start', label: copy.taskSuggestions.retry, emphasis: 'main', run: act('task-start') },
+    // The phone cannot repeat a start in a new worktree; a taken branch needs another name, which the start form takes.
+    ...(phone && outcome.start.where.kind === 'new-worktree' ? [] : outcome.branchTaken
+      ? [{ kind: 'task-start-custom' as const, label: copy.taskSuggestions.retryRename, emphasis: 'main' as const, run: act('task-start-custom') }]
+      : [{ kind: 'task-retry' as const, label: copy.taskSuggestions.retry, emphasis: 'main' as const, run: retry(outcome.start) }]),
     { kind: 'task-dismiss', label: copy.taskSuggestions.dismiss, emphasis: 'quiet', run: act('task-dismiss') },
   ] : outcome.kind === 'dismissed' ? [
     { kind: 'task-reopen', label: copy.taskSuggestions.reopen, emphasis: 'link', run: act('task-reopen') },
@@ -150,7 +168,7 @@ function BubbleTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.E
         {task.worktree && <span className="chat-task__chip" data-testid="chat-task-worktree"><Glyph name="wt" />{copy.taskSuggestions.worktreeRecommended}</span>}
       </div>
       <p className="chat-task__rationale"><InlineCode text={task.rationale} /></p>
-      {task.worktree && phone && <p className="chat-task__note" data-testid="chat-task-worktree-desktop"><Glyph name="info" />{copy.taskSuggestions.worktreeDesktop}</p>}
+      {wantsDesktop(task, phone) && <p className="chat-task__note" data-testid="chat-task-worktree-desktop"><Glyph name="info" />{copy.taskSuggestions.worktreeDesktop}</p>}
       <button type="button" className="chat-link-button chat-task__toggle" aria-expanded={prompt.open} aria-controls={prompt.open ? promptId : undefined}
         onClick={prompt.toggle} data-testid="chat-task-prompt-toggle">
         <Glyph name="next" className="chat-chevron" />{prompt.open ? copy.taskSuggestions.hidePrompt : copy.taskSuggestions.showPrompt}
@@ -183,7 +201,7 @@ function CliTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.Elem
           {task.worktree && <span className="chat-cli-dim" data-testid="chat-task-worktree"> [{copy.taskSuggestions.worktreeRecommended}]</span>}
         </span>
         <span className="chat-cli-result__line chat-cli-task__rationale"><InlineCode text={task.rationale} /></span>
-        {task.worktree && phone && <span className="chat-cli-result__line chat-cli-dim" data-testid="chat-task-worktree-desktop">{copy.taskSuggestions.worktreeDesktop}</span>}
+        {wantsDesktop(task, phone) && <span className="chat-cli-result__line chat-cli-dim" data-testid="chat-task-worktree-desktop">{copy.taskSuggestions.worktreeDesktop}</span>}
         <span className="chat-cli-result__line">
           <button type="button" className="chat-cli-action" aria-expanded={prompt.open} aria-controls={prompt.open ? promptId : undefined}
             onClick={prompt.toggle} data-testid="chat-task-prompt-toggle">
@@ -220,9 +238,10 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
   const [confirmOpen, setConfirmOpen] = useState(false);
   const openTasks = suggestions.tasks.filter((task) => task.outcome.kind === 'open');
   const settings = context.taskStart?.settings;
+  const folder = context.taskStart?.folder ?? '';
   // D5: the line says exactly what one click starts; with the form (b) the form says it instead.
   const defaults = settings && (decisions.taskStart === 'one-click' || phone)
-    ? copy.taskSuggestions.defaults(`${settings} · ${copy.taskSuggestions.thisFolder}`) : undefined;
+    ? copy.taskSuggestions.defaults(`${settings} · ${copy.taskSuggestions.thisFolder(folder)}`) : undefined;
   const onAction = context.onWrapUpAction;
   const actions: ActionCardAction[] = onAction && settings && openTasks.length > 1
     ? [{ id: 'start-all', label: copy.taskSuggestions.startAll(openTasks.length), onSelect: () => setConfirmOpen(true), testId: 'chat-task-start-all' }] : [];
@@ -254,7 +273,7 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
           <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
           <div className="chat-cli-result__body"><span className="chat-cli-result__line" data-testid="chat-task-defaults">{defaults}</span></div>
         </div>
-      ) : <p className="chat-task-defaults" data-testid="chat-task-defaults"><Glyph name="kids" />{defaults}</p>)}
+      ) : <p className="chat-task-defaults" data-testid="chat-task-defaults"><Glyph name="kids" /><span>{defaults}</span></p>)}
       <ol className={cli ? 'chat-cli-tasks' : 'chat-tasks'}>
         {suggestions.tasks.map((task, index) => (cli
           ? <CliTask key={task.id} suggestions={suggestions} task={task} index={index} />
@@ -262,7 +281,7 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
       </ol>
       <span ref={anchorRef} className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-task-announce">{announcement}</span>
       {onAction && settings && (
-        <TaskStartAllDialog open={confirmOpen} onOpenChange={setConfirmOpen} tasks={openTasks} settings={settings} phone={phone}
+        <TaskStartAllDialog open={confirmOpen} onOpenChange={setConfirmOpen} tasks={openTasks} settings={settings} folder={folder} phone={phone}
           ownerDocument={anchorRef.current?.ownerDocument}
           onStart={(starts) => onAction({ kind: 'task-start-all', turnId: suggestions.turnId, starts })} />
       )}

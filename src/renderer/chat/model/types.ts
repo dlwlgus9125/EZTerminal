@@ -205,7 +205,7 @@ export type ChatRow =
   | (RowBase & { readonly kind: 'task-suggestions'; readonly turnId: string; readonly suggestions: TurnTaskSuggestions })
   /**
    * Turn wrap-up (시안): the AI's recap of a turn nobody was watching, or one that stopped for the person.
-   * `waitingNow`: the decision it stopped for is still pending (its 답하러 가기 shows only then).
+   * `waitingNow`: the very decision it stopped for is still pending (its 답하러 가기 shows only then).
    */
   | (RowBase & { readonly kind: 'recap'; readonly turnId: string; readonly recap: TurnRecap; readonly waitingNow?: boolean });
 

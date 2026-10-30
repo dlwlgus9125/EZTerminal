@@ -708,8 +708,8 @@ export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: Bu
       const recap = recapCards.get(row.turnId);
       if (recap) {
         recapCards.delete(row.turnId);
-        // What it stopped for may have been answered since: the card says it waits only while it does.
-        const waitingNow = recap.waiting !== undefined && approvals.some((approval) => approval.state === 'pending');
+        // What it stopped for may have been answered since, and a later turn's approval is not this one.
+        const waitingNow = recap.decisionId !== undefined && approvals.some((approval) => approval.id === recap.decisionId && approval.state === 'pending');
         finalRows.push({ kind: 'recap', id: `recap:${row.turnId}`, turnId: row.turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) });
       }
       const status = liveStatus.get(row.turnId);
