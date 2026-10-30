@@ -296,11 +296,11 @@ export interface CapabilityAccess {
   readonly files: FileAccess;
   /** Optional so test doubles need not supply it; absent means the screen is unavailable. */
   readonly agentManagement?: AgentManagementAccess;
-  /** Settings › 에이전트 › 턴 마무리 (시안 2026-10-30). No host provides it yet, so the section is not shown in the app. */
+  /** Settings › 에이전트 › 턴 마무리, on a host with `turn-wrap-up-v1`. Optional so test doubles need not supply it. */
   readonly turnWrapUp?: TurnWrapUpAccess;
 }
 
-/** The turn wrap-up settings and any pause near a usage limit in force now (시안: only the stories provide this). */
+/** The turn wrap-up settings and any pause near a usage limit in force now. */
 export interface TurnWrapUpAccess {
   readonly load: () => Promise<{ readonly settings: TurnWrapUpSettings; readonly paused: readonly TurnWrapUpPause[] }>;
   readonly save: (settings: TurnWrapUpSettings) => Promise<TurnWrapUpSettings>;
@@ -442,6 +442,12 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     if (!api || (operation !== 'versions' && typeof api[operation] !== 'function')) {
       throw new RequiredCapabilityUnavailableError(operation);
     }
+    return api;
+  };
+
+  const settingsBridge = (): NonNullable<EzTerminalApi['settingsChanges']> => {
+    const api = resolveCore()?.settingsChanges;
+    if (!api) throw new RequiredCapabilityUnavailableError('settingsChanges');
     return api;
   };
 
@@ -1005,6 +1011,11 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
   };
 
+  const turnWrapUp: TurnWrapUpAccess = {
+    load: async () => settingsBridge().turnWrapUp(),
+    save: async (settings) => settingsBridge().setTurnWrapUp(settings),
+  };
+
   return {
     snapshot: () => ({
       core: resolveCore() ? 'available' : 'unavailable',
@@ -1024,6 +1035,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     appUpdates,
     files,
     agentManagement,
+    turnWrapUp,
   };
 }
 

@@ -7,7 +7,7 @@ import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavig
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
 import type { ChatAgentProfile } from '../../shared/chat-agent-profiles';
-import type { TurnWrapUpPause, TurnWrapUpSettings } from '../../shared/turn-wrap-up';
+import { TURN_WRAP_UP_CAPABILITY, type TurnWrapUpPause, type TurnWrapUpSettings } from '../../shared/turn-wrap-up';
 import type { CapabilityAccess, TurnWrapUpAccess } from '../capability-access';
 import type { ChatSkin } from '../chat-view-state';
 import { DelegateAgentDialog, type DelegateAgentRequest } from '../DelegateAgentDialog';
@@ -888,7 +888,8 @@ function wrapUpAccess(settings: TurnWrapUpSettings, paused: readonly TurnWrapUpP
 }
 function settingsCapabilities(locale: WrapLanguage, access: TurnWrapUpAccess): CapabilityAccess {
   const base = storyCapabilities(locale);
-  return { ...base, daemon: { ...base.daemon, getSnapshot: async () => shellSnapshot() }, turnWrapUp: access };
+  const snapshot = shellSnapshot();
+  return { ...base, daemon: { ...base.daemon, getSnapshot: async () => ({ ...snapshot, capabilities: [...(snapshot.capabilities ?? []), TURN_WRAP_UP_CAPABILITY] }) }, turnWrapUp: access };
 }
 
 function SettingsScreen({ settings = SETTINGS_ON, paused = [] }: {

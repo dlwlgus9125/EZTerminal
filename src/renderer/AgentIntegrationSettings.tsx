@@ -10,6 +10,7 @@ import {
 import { rendererCapabilities, type AgentManagementAccess, type CapabilityAccess } from './capability-access';
 import { AgentManagementSettings, agentManagementInputs } from './AgentManagementSettings';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import { TURN_WRAP_UP_CAPABILITY } from '../shared/turn-wrap-up';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
 import { ScheduleSettings } from './ScheduleSettings';
@@ -106,6 +107,16 @@ export function AgentIntegrationSettings({
   useEffect(() => {
     void refresh().catch(() => setMessage({ kind: 'unavailable' }));
   }, [refresh]);
+
+  // The host keeps these settings: one without `turn-wrap-up-v1` has nothing to show here.
+  const [wrapUpOffered, setWrapUpOffered] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void capabilities.daemon.getSnapshot()
+      .then((snapshot) => { if (alive) setWrapUpOffered(snapshot?.capabilities?.includes(TURN_WRAP_UP_CAPABILITY) === true); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [capabilities]);
 
   const mutateIntegration = async (provider: AgentIntegrationProvider, enabled: boolean): Promise<void> => {
     if (busyProvider) return;
@@ -305,7 +316,7 @@ export function AgentIntegrationSettings({
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>
       <ChatAgentCollaborationSettings capabilities={capabilities} />
-      {capabilities.turnWrapUp && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
+      {capabilities.turnWrapUp && wrapUpOffered && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
       <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}

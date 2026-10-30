@@ -8,6 +8,7 @@ import type {
 } from '../shared/ipc';
 import type { OpenClawVisibility } from '../shared/openclaw';
 import type { AppUpdateSnapshot } from '../shared/app-update';
+import { DEFAULT_TURN_WRAP_UP_SETTINGS } from '../shared/turn-wrap-up';
 import {
   createCapabilityAccess,
   RequiredCapabilityUnavailableError,
@@ -26,6 +27,23 @@ function accessFor(mutable: MutableSource) {
   };
   return createCapabilityAccess(source);
 }
+
+describe('turnWrapUp', () => {
+  it('reads and saves through the desktop’s settings bridge', async () => {
+    const settings = DEFAULT_TURN_WRAP_UP_SETTINGS;
+    const turnWrapUp = vi.fn(async () => ({ settings, paused: [] }));
+    const setTurnWrapUp = vi.fn(async (next: typeof settings) => next);
+    const access = accessFor({ core: { settingsChanges: { turnWrapUp, setTurnWrapUp } } as unknown as EzTerminalApi, desktop: undefined });
+    await expect(access.turnWrapUp?.load()).resolves.toEqual({ settings, paused: [] });
+    await expect(access.turnWrapUp?.save(settings)).resolves.toEqual(settings);
+    expect(setTurnWrapUp).toHaveBeenCalledWith(settings);
+  });
+
+  it('rejects where there is no such bridge, for the section to say so', async () => {
+    const access = accessFor({ core: undefined, desktop: undefined });
+    await expect(access.turnWrapUp?.load()).rejects.toBeInstanceOf(RequiredCapabilityUnavailableError);
+  });
+});
 
 describe('CapabilityAccess Interface', () => {
   it('fails closed for an absent optional desktop bridge and names a missing required core operation', async () => {
