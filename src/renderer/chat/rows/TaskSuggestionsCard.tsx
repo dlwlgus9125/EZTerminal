@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, type RefObject } from 'react';
 
-import type { SuggestedTaskOutcome, SuggestedTaskState, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
+import { TASK_SUGGESTION_LIMITS, type SuggestedTaskOutcome, type SuggestedTaskState, type TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
 import { Button } from '../../ui/Button';
 import { Glyph, type GlyphName } from '../../ui/Glyph';
 import { useChatContext, type ChatWrapUpAction } from '../ChatContext';
@@ -246,7 +246,7 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
         </>
       )}
       cliMeta={`${copy.taskSuggestions.foundOutside} · ${clock}`}
-      {...(suggestions.dropped ? { notes: [{ id: 'dropped', text: copy.taskSuggestions.dropped(suggestions.dropped) }] } : {})}
+      {...(suggestions.dropped ? { notes: [{ id: 'dropped', text: copy.taskSuggestions.dropped(suggestions.dropped, TASK_SUGGESTION_LIMITS.perTurn) }] } : {})}
       actions={actions}
     >
       {defaults && (cli ? (

@@ -220,6 +220,9 @@ const TEXT = {
     cartDone: '`src/cart.ts`의 루프 조건을 `index <= items.length`에서 `index < items.length`로 고쳤습니다. 바꾼 파일은 이것 하나입니다. 살펴보다가 맡은 일 밖에서 버그 세 개를 봤고, 고치지 않고 제안 작업으로 남겼습니다.',
     planQuestion: '음수를 괄호로 표시할까요?',
     planOptions: ['괄호로 표시 · -0.4는 $0.00', '괄호로 표시 · -0.4는 ($0.00)', '지금처럼 둠'],
+    followUp: '장바구니 합계 테스트도 추가해 줘.',
+    queuedAsk: '끝나면 바꾼 내용을 한 줄로 정리해 줘.',
+    branchExists: '이미 있는 브랜치입니다: suggest/reject-negative-and-fractional',
   },
   en: {
     fixAsk: 'formatPrice in src/format.ts shows prices ten times too high. Fix it, and don’t run any shell commands.',
@@ -230,6 +233,9 @@ const TEXT = {
     cartDone: 'Changed the loop in `src/cart.ts` from `index <= items.length` to `index < items.length`. That is the only file I changed. While reading src/ I saw three bugs outside this task; I left them as suggested tasks instead of fixing them.',
     planQuestion: 'Add a unit test for formatPrice?',
     planOptions: ['Yes — vitest, src/format.test.ts', 'Not now'],
+    followUp: 'Add a test for cartTotal too.',
+    queuedAsk: 'When you are done, sum up the change in one line.',
+    branchExists: 'The branch suggest/reject-negative-and-fractional already exists.',
   },
 } as const;
 
@@ -360,14 +366,24 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
     { kind: 'started', sessionId: 'wrap-up-child-auth' },
     { kind: 'queued', position: 2 },
     { kind: 'dismissed' },
-    { kind: 'start-failed', reason: lang === 'ko' ? '브랜치 suggest/reject-negative-and-fractional가 이미 있습니다.' : 'The branch suggest/reject-negative-and-fractional already exists.' },
+    { kind: 'start-failed', reason: TEXT[lang].branchExists },
   ] : [];
   const { items, turns } = cartTurn(lang, provider, drafts);
-  // A busy conversation queues 여기서 하기 (the states story shows one queued behind a running turn).
+  // States: the person's follow-up runs now and another message of theirs waits; 여기서 하기 put task 2 behind it (2nd).
   const busy = set === 'states';
+  const busyItems = (): DaemonTranscriptItem[] => [
+    item(60, 'user-message', TEXT[lang].followUp, { turnId: 'turn-follow', createdAt: iso(200) }),
+    item(61, 'user-message', TEXT[lang].queuedAsk, { turnId: 'turn-queued', createdAt: iso(205) }),
+    item(62, 'user-message', drafts[1]!.prompt, { turnId: 'turn-here', createdAt: iso(210) }),
+  ];
+  const busyTurns = (): DaemonTurn[] => [
+    turn('turn-follow', 'working', iso(200)),
+    { ...turn('turn-queued', 'queued', iso(205)), enqueueSequence: 1 },
+    { ...turn('turn-here', 'queued', iso(210)), enqueueSequence: 2 },
+  ];
   return {
-    items: busy ? [...items, item(60, 'user-message', drafts[1]!.prompt, { turnId: 'turn-here', createdAt: iso(200) })] : items,
-    turns: busy ? [...turns, turn('turn-here', 'working', iso(200))] : turns,
+    items: busy ? [...items, ...busyItems()] : items,
+    turns: busy ? [...turns, ...busyTurns()] : turns,
     state: busy ? 'working' : 'idle',
     tasks: [{
       turnId: 'turn-cart', providerId: provider, createdAt: turns[0]!.finishedAt ?? iso(48),

@@ -293,7 +293,7 @@ const EN = {
     retry: 'Try again',
     openChild: 'Open the sub-conversation',
     startAll: (count: number): string => `Start all (${count})`,
-    dropped: (count: number): string => `${count} more ${count === 1 ? 'suggestion was' : 'suggestions were'} dropped (8 per turn).`,
+    dropped: (count: number, limit: number): string => `${count} more ${count === 1 ? 'suggestion was' : 'suggestions were'} dropped (${limit} per turn).`,
     outcome: {
       starting: 'Starting…',
       started: 'Started',
@@ -618,7 +618,7 @@ const KO: typeof EN = {
     retry: '다시 시도',
     openChild: '하위 대화 열기',
     startAll: (count: number): string => `모두 시작 (${count})`,
-    dropped: (count: number): string => `그 밖의 제안 ${count}개는 버렸습니다 (한 턴에 8개까지).`,
+    dropped: (count: number, limit: number): string => `그 밖의 제안 ${count}개는 버렸습니다 (한 턴에 ${limit}개까지).`,
     outcome: {
       starting: '시작하는 중…',
       started: '시작함',

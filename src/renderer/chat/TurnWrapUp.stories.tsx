@@ -14,6 +14,7 @@ import { DelegateAgentDialog, type DelegateAgentRequest } from '../DelegateAgent
 import { AppI18nProvider, useAppTranslation } from '../i18n';
 import { shellSnapshot } from '../shell/shell-fixtures';
 import { SettingsFixture, storyCapabilities } from '../shell/tool-screen-fixtures';
+import { conversationQueue } from '../conversation-queue';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { TurnWrapUpSettings as TurnWrapUpSection } from '../TurnWrapUpSettings';
 import { DialogPortalContext } from '../ui/Dialog';
@@ -171,7 +172,10 @@ type Topic = keyof typeof TITLES;
 
 function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, topic: Topic, locale: WrapLanguage, args: Args): StructuredAgentSessionPanelProps {
   const { state } = host;
+  // What waits in the conversation's queue, as the host lists it (여기서 하기 while a turn runs lands there).
+  const queueItems = conversationQueue(sessionId, state.turns, state.items);
   return {
+    queuedCount: queueItems.length, queueItems,
     sessionId, title: TITLES[topic][locale], providerId: provider, providerLabel: provider === 'claude' ? 'Claude' : 'Codex',
     workspace: { id: 'ws-cart', label: 'cart-kit', kind: 'local', path: WRAP_ROOT },
     folders: { primary: WRAP_ROOT, additional: [], missing: [] },
@@ -285,6 +289,11 @@ export const AwayCodex: Story = {
     await findIn(canvasElement, '[data-testid="chat-recap-card"]');
     await findIn(canvasElement, '[data-testid="structured-agent-suggestion"]');
   },
+};
+/** English, Codex: its recap and its guess after the fix. */
+export const AwayCodexEnglish: Story = {
+  render: (args) => <StoryLocale.Provider value="en"><ChatScreen id="away-codex-en" topic="format" make={(lang) => formatStory(lang, 'codex')} args={args} provider="codex" /></StoryLocale.Provider>,
+  play: async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="structured-agent-suggestion"]'); },
 };
 /** English: Claude after the fix, asking about a unit test. */
 export const AwayEnglish: Story = {
@@ -526,7 +535,11 @@ export const TasksStates: Story = {
     await expect(card.querySelector('.chat-action-card__state')).toHaveTextContent('4개 · 시작함 1 · 여기서 함 1 · 무시 1');
     const tasks = tasksOf(card);
     await expect(within(tasks[1]!).getByTestId('chat-task-outcome')).toHaveTextContent('대기열에 넣음 · 2번째');
-    await expect(within(tasks[3]!).getByTestId('chat-task-outcome')).toHaveTextContent('브랜치 suggest/reject-negative-and-fractional가 이미 있습니다.');
+    await expect(within(tasks[3]!).getByTestId('chat-task-outcome')).toHaveTextContent('이미 있는 브랜치입니다: suggest/reject-negative-and-fractional');
+    // 여기서 하기 put task 2's instruction second in the queue the message box shows.
+    const queued = canvasElement.querySelectorAll('.chat-queue__item');
+    await expect(queued).toHaveLength(2);
+    await expect(queued[1]).toHaveTextContent('In src/format.ts, formatPrice divides cents by 10');
   },
 };
 /** One task the AI recommends a worktree for (Claude's first run put the three bugs in one). */
@@ -595,6 +608,11 @@ export const TasksCap: Story = {
 /** A narrow conversation (520 px): titles wrap, the buttons go under the task. */
 export const TasksNarrow: Story = {
   ...chat('tasks-narrow', 'cart', (lang) => cartStory(lang, 'claude', 'mixed'), { width: 520, height: 900 }),
+  play: async ({ canvasElement }) => { await showCard(canvasElement); },
+};
+/** English, Codex. */
+export const TasksCodexEnglish: Story = {
+  render: (args) => <StoryLocale.Provider value="en"><ChatScreen id="tasks-codex-en" topic="cart" make={(lang) => cartStory(lang, 'codex')} args={args} provider="codex" /></StoryLocale.Provider>,
   play: async ({ canvasElement }) => { await showCard(canvasElement); },
 };
 /** English. */
