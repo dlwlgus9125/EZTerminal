@@ -172,8 +172,7 @@ const taskRows = (items: readonly DaemonTranscriptItem[], taskId: string): numbe
 
 /** The receipt comes before the row: hold until the transcript shows it, so a card never steps back between the two. */
 async function taskRowArrived(input: TurnWrapUpHostInput, taskId: string, before: number): Promise<void> {
-  const deadline = Date.now() + TASK_ROW_WAIT_MS;
-  while (taskRows(input.items(), taskId) === before && Date.now() < deadline) {
+  for (let waited = 0; waited < TASK_ROW_WAIT_MS && taskRows(input.items(), taskId) === before; waited += TASK_ROW_POLL_MS) {
     await new Promise((resolve) => { setTimeout(resolve, TASK_ROW_POLL_MS); });
   }
 }

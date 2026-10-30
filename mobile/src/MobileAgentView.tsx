@@ -15,6 +15,7 @@ import { conversationQueue } from '../../src/renderer/conversation-queue';
 import { createCapabilityAccess } from '../../src/renderer/capability-access';
 import { structuredAgentModelOptions } from '../../src/renderer/structured-agent-create';
 import { reviewHost } from '../../src/renderer/review-commands';
+import { turnWrapUpHost, useWrapUpPending } from '../../src/renderer/turn-wrap-up-commands';
 import { useProviderModelCatalogs } from '../../src/renderer/use-provider-models';
 import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
@@ -445,6 +446,9 @@ export function MobileAgentView({
   );
   // /btw over the bridge; offered only while connected to a PC that advertises side-questions-v1.
   const sideQuestionClient = useMemo(() => createSideQuestionClient(transport), [transport]);
+  const wrapUpPending = useWrapUpPending();
+  // A card's command waits on the transcript for the PC's row.
+  const wrapUpItems = useRef<readonly DaemonTranscriptItem[]>([]);
   const historyClient = useMemo<ConversationHistoryClient | undefined>(() => transport
     && typeof transport.listConversations === 'function' && typeof transport.readConversation === 'function'
     && typeof transport.prepareHistoryResume === 'function' && typeof transport.resumeHistory === 'function' ? {
@@ -1542,6 +1546,16 @@ export function MobileAgentView({
       ).find((option) => option.id === model)?.label ?? model,
       openSession: selectSession,
     }) : undefined;
+    // turn-wrap-up-v1: the chip, the cards' buttons and the 모두 시작 sheet go to the PC the same way. Without worktrees
+    // or a start form here, a task starts in this folder; an older PC keeps today's screen.
+    wrapUpItems.current = selectedTranscript;
+    const wrapUp = !providerOwned && !archivedHistory && !disconnected && chatCommands ? turnWrapUpHost({
+      snapshot: daemonRuntimeState.snapshot ?? null,
+      sessionId: selectedDaemonSession.id,
+      items: () => wrapUpItems.current,
+      access: chatCommands,
+      ...wrapUpPending,
+    }) : undefined;
     return (<>
       <MobileStructuredAgentSession
         capabilityClient={capabilityClient}
@@ -1672,6 +1686,7 @@ export function MobileAgentView({
         } : {})}
         onOpenRelatedSession={selectSession}
         {...(reviews ? { reviewStart: reviews.reviewStart, onReviewAction: reviews.onReviewAction } : {})}
+        {...(wrapUp ? { wrapUp } : {})}
         {...(canCancel ? {
           onCancel: () => dispatchDaemonCommand(createDaemonCommand({
             ...buildCommandBase(),

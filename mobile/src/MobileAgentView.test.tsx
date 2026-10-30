@@ -21,6 +21,7 @@ import { createDaemonCommand } from '../../src/shared/daemon-protocol';
 import {
   CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM, fixOutcomesReview, inSession, otherAiReview, OTHER_REVIEW_ID, OUTCOMES_REVIEW_ID, withId,
 } from '../../src/renderer/chat/review/review-fixtures';
+import { cartStory, formatStory, inSession as wrapUpInSession, type WrapUpFixture } from '../../src/renderer/chat/wrap-up/wrap-up-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -1987,6 +1988,148 @@ describe('MobileAgentView', () => {
       overrideReason: 'Reviewed failing tests and accepted the risk.',
     });
     expect(testIds('mobile-managed-merge-override')).toHaveLength(0);
+  });
+});
+
+describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
+  const noop = {
+    onBack: () => undefined,
+    onFocusSession: () => undefined,
+    onSendFollowup: async () => ({ ok: true }) as const,
+    agentCreateRecovery: readyRecoveryController(),
+  };
+  const SESSION = 'structured-session-1';
+  const CAPABILITY = 'turn-wrap-up-v1';
+  const ANDROID = { kind: 'android', id: 'mobile-agent-ui' };
+
+  async function open(fixture: WrapUpFixture, capabilities: readonly string[], overrides: Partial<DaemonSnapshot> = {}) {
+    const moved = wrapUpInSession(fixture, SESSION);
+    const items: DaemonTranscriptItem[] = moved.items.map((entry, index) => ({ ...entry, sequence: index + 1, id: `wrap-item-${String(index + 1)}` }));
+    let emit: ((event: DaemonEvent, continuity: 'next') => void) | undefined;
+    /** What a PC does with a start: the row in its transcript, and word of it to the phone. */
+    const started = (taskId: string, turnId: string, sessionId: string): void => {
+      const sequence = items.length + 1;
+      items.push({
+        id: `wrap-item-${String(sequence)}`, sessionId: SESSION, sequence, turnId, kind: 'notice', text: 'Suggested task started.', isDelta: false, isSensitive: false, createdAt: DAEMON_TIMESTAMP,
+        payload: { v: 1, type: 'task-suggestion-status', taskId, turnId, outcome: 'started', sessionId },
+      });
+      emit?.({
+        protocolVersion: 12, eventId: `event-${String(sequence)}`, sequence: 100 + sequence, revision: 9, occurredAt: DAEMON_TIMESTAMP,
+        kind: 'transcript.appended', payload: { sessionId: SESSION, fromSequence: sequence, toSequence: sequence },
+      }, 'next');
+    };
+    const authority = daemonSnapshotOf({
+      capabilities: [...capabilities], turns: [...moved.turns],
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: items.length, itemCount: items.length }],
+      ...overrides,
+    });
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => {
+      if (command.type === 'agent.create' && command.payload.wrapUpTask) started(command.payload.wrapUpTask.taskId, command.payload.wrapUpTask.turnId, command.payload.sessionId);
+      return { ok: true as const, status: 'applied' as const, commandId: command.commandId, revision: 9, eventSequence: 13 };
+    });
+    const transport = {
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => authority,
+      getDaemonTranscript: vi.fn(async (_sessionId: string, afterSequence = 0) => items.filter((entry) => entry.sequence > afterSequence)),
+      sendDaemonCommand,
+      setDaemonEventsSubscribed: vi.fn(async () => undefined),
+      onDaemonEvent: vi.fn((listener: typeof emit) => { emit = listener; return () => undefined; }),
+    } as unknown as WsEzTerminalTransport;
+    const records = new Map<string, MobileChatRecord>();
+    const chatStateStore = {
+      load: async (scope: MobileChatRecord['scope']) => records.get(`${scope.projectId}/${scope.sessionId}`) ?? null,
+      save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
+    };
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
+      chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} />);
+    await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    return { sendDaemonCommand };
+  }
+  const creates = (send: { readonly mock: { readonly calls: readonly (readonly [{ readonly type: string; readonly payload: unknown }])[] } }) => (
+    send.mock.calls.map(([command]) => command).filter((command) => command.type === 'agent.create').map((command) => command.payload as Record<string, unknown>)
+  );
+
+  it('offers nothing on an older PC: the card reads as a record', async () => {
+    await open(cartStory('en', 'codex'), []);
+    await until(() => { expect(testIds('chat-task-card')[0]).toBeDefined(); });
+    expect(container.querySelector('[data-action]')).toBeNull();
+    expect(testIds('chat-task-defaults')).toHaveLength(0);
+  });
+
+  it('shows the PC’s suggestion as the chip', async () => {
+    const fixture = cartStory('en', 'codex');
+    await open(fixture, [CAPABILITY], { nextPromptSuggestions: { [SESSION]: { turnId: 'turn-cart', text: 'Add a test too' } } });
+    await until(() => { expect(testIds('structured-agent-suggestion-chip')[0]?.textContent).toContain('Add a test too'); });
+  });
+
+  it('starts a task on the PC as the phone, in this folder', async () => {
+    const { sendDaemonCommand } = await open(cartStory('en', 'codex'), [CAPABILITY]);
+    await until(() => { expect(container.querySelector('[data-action="task-start"]')).not.toBeNull(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-action="task-start"]')!.click(); await Promise.resolve(); });
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'agent.create', principal: ANDROID, expectedRevision: 8,
+        payload: expect.objectContaining({
+          sessionId: 'suggested-task-codex-1', workspaceId: 'workspace-1', parentSessionId: SESSION, permissionPreset: 'standard',
+          wrapUpTask: { turnId: 'turn-cart', taskId: 'task-codex-1', oneClick: true },
+        }) as unknown,
+      }));
+    });
+  });
+
+  it('starts a worktree-recommended task here too: there is no form on the phone, and the card says where it can be picked', async () => {
+    const { sendDaemonCommand } = await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY]);
+    await until(() => { expect(testIds('chat-task-worktree-desktop')[0]).toBeDefined(); });
+    expect(container.querySelector('[data-action="task-start-custom"]')).toBeNull();
+    const buttons = container.querySelectorAll<HTMLButtonElement>('[data-action="task-start"]');
+    expect(buttons).toHaveLength(4);
+    await act(async () => { buttons[3]!.click(); await Promise.resolve(); });
+    await until(() => { expect(creates(sendDaemonCommand)).toHaveLength(1); });
+    expect(creates(sendDaemonCommand)[0]).toMatchObject({ workspaceId: 'workspace-1', wrapUpTask: { taskId: 'task-codex-4', oneClick: true } });
+    expect((creates(sendDaemonCommand)[0]!.wrapUpTask as { readonly branch?: string }).branch).toBeUndefined();
+    expect(document.querySelector('[data-testid="delegate-agent-dialog"]')).toBeNull();
+  });
+
+  it('모두 시작 starts each open task here, one at a time, from the sheet', async () => {
+    const { sendDaemonCommand } = await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY]);
+    await until(() => { expect(testIds('chat-task-start-all')[0]).toBeDefined(); });
+    await act(async () => { testIds('chat-task-start-all')[0]!.click(); await Promise.resolve(); });
+    await until(() => { expect(document.querySelector('[data-testid="task-start-all-phone"]')).not.toBeNull(); });
+    expect(document.querySelectorAll('[data-testid="task-start-all-worktree"]')).toHaveLength(0);
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="task-start-all-submit"]')!.click(); await Promise.resolve(); });
+    await until(() => { expect(creates(sendDaemonCommand)).toHaveLength(4); });
+    expect(creates(sendDaemonCommand).map((payload) => payload.workspaceId)).toEqual(['workspace-1', 'workspace-1', 'workspace-1', 'workspace-1']);
+    // Each card shows it started: the overlay is gone and the PC's rows speak.
+    await until(() => { expect(container.querySelectorAll('[data-testid="chat-task"][data-outcome="started"]')).toHaveLength(4); });
+  });
+
+  it('sends 여기서 하기 and 무시 to the PC', async () => {
+    const { sendDaemonCommand } = await open(cartStory('en', 'codex'), [CAPABILITY]);
+    await until(() => { expect(container.querySelector('[data-action="task-here"]')).not.toBeNull(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-action="task-here"]')!.click(); await Promise.resolve(); });
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'agent.submit', principal: ANDROID, payload: expect.objectContaining({ sessionId: SESSION, wrapUpTask: { turnId: 'turn-cart', taskId: 'task-codex-1' } }) as unknown,
+      }));
+    });
+  });
+
+  const failedRecap = (): WrapUpFixture => formatStory('en', 'codex', { recap: 'failed', failure: 'disconnected', suggestion: false });
+
+  it('offers 다시 만들기 while the PC has the conversation attached', async () => {
+    const { sendDaemonCommand } = await open(failedRecap(), [CAPABILITY], { sideQuestionSessionIds: [SESSION] });
+    await until(() => { expect(testIds('chat-recap-line')[0]?.querySelector('button')).toBeTruthy(); });
+    await act(async () => { testIds('chat-recap-line')[0]!.querySelector('button')!.click(); await Promise.resolve(); });
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'wrap-up.recap-retry', principal: ANDROID, payload: { sessionId: SESSION, turnId: 'turn-fix' } }));
+    });
+  });
+
+  it('offers no 다시 만들기 after a restart: the line keeps its reason', async () => {
+    await open(failedRecap(), [CAPABILITY]);
+    await until(() => { expect(testIds('chat-recap-line')[0]).toBeDefined(); });
+    expect(testIds('chat-recap-line')[0]!.querySelector('button')).toBeNull();
+    expect(testIds('chat-recap-line')[0]!.textContent).toContain('Couldn’t write a recap');
   });
 });
 
