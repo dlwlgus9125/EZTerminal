@@ -30,6 +30,10 @@ export function rowSearchText(row: ChatRow): string {
         row.review.focus,
         ...row.review.findings.map((finding) => `${finding.file}${finding.line ? `:${String(finding.line)}` : ''} ${finding.title}`),
       ].filter(Boolean).join('\n');
+    case 'task-suggestions':
+      return row.suggestions.tasks.map((task) => `${task.title}\n${task.rationale}`).join('\n');
+    case 'recap':
+      return row.recap.text ?? '';
   }
 }
 

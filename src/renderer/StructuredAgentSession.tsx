@@ -1,8 +1,10 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider, type ChatReviewAction } from './chat/ChatContext';
+import { ChatProvider, type ChatReviewAction, type ChatWrapUpAction } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest, type ReviewStartTarget } from './chat/review/ReviewStartMenu';
+import { useWrapUpDecisions } from './chat/wrap-up/wrap-up-decisions';
+import type { NextPromptSuggestion, TurnRecap, TurnTaskSuggestions } from '../shared/turn-wrap-up';
 import { latestReviewPayload } from './review-commands';
 import { chatCopy, useChatLocale } from './chat/copy';
 import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
@@ -966,6 +968,14 @@ export interface StructuredAgentTranscriptProps {
   readonly approvalSession?: boolean;
   /** Review card actions (fix, dismiss, walkthrough…); absent: the cards are read-only. */
   readonly onReviewAction?: (action: ChatReviewAction) => void;
+  /** Turn wrap-up (시안): the recap and suggested-task cards, what the person does on them, and what a task starts with. */
+  readonly wrapUp?: {
+    readonly cards?: { readonly recaps?: readonly TurnRecap[]; readonly tasks?: readonly TurnTaskSuggestions[] };
+    readonly onAction?: (action: ChatWrapUpAction) => void;
+    readonly taskStart?: { readonly settings: string; readonly phone: boolean };
+  };
+  /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
+  readonly onFocusDecision?: () => boolean;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -1007,10 +1017,16 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   planReview,
   approvalSession = false,
   onReviewAction,
+  wrapUp,
+  onFocusDecision,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
-  const built = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  const wrapUpCards = wrapUp?.cards;
+  const built = useMemo(
+    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(wrapUpCards ? { wrapUp: wrapUpCards } : {}) }),
+    [items, approvals, turns, wrapUpCards],
+  );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
   useEffect(() => {
@@ -1047,6 +1063,9 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(onOpenRelatedSession ? { onOpenRelated: onOpenRelatedSession } : {})}
       {...(results ? { onOpenResults: openResults, resolveFileLink } : onReviewChanges ? { onReviewChanges } : {})}
       {...(onReviewAction ? { onReviewAction } : {})}
+      {...(wrapUp?.onAction ? { onWrapUpAction: wrapUp.onAction } : {})}
+      {...(wrapUp?.taskStart ? { taskStart: wrapUp.taskStart } : {})}
+      {...(onFocusDecision ? { onFocusDecision } : {})}
     >
       <ChatTranscript
         model={model}
@@ -1231,6 +1250,13 @@ export interface StructuredAgentComposerProps {
     /** Why it cannot switch now; announced instead of switching. */
     readonly blockedReason?: string;
   };
+  /**
+   * Turn wrap-up (시안): the AI's guess of the next message, given only while it may show (the turn has ended and is
+   * the newest, plan mode is off). It shows while the box is empty: ghost text with its key on the desktop, a chip
+   * above the box on the phone. Tab (or the chip) fills the box without sending; typing or Esc sets it aside until
+   * the next turn's. `id` names the turn it follows.
+   */
+  readonly suggestion?: { readonly id: string; readonly text: string };
 }
 
 /** A message box holding `/btw …` is a side question being typed: its text never reaches draft storage. */
@@ -1278,6 +1304,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   appCommands,
   sideQuestion,
   plan,
+  suggestion,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1287,8 +1314,13 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   /** Queued review fixes whose message is shown (원문 보기). */
   const [openQueued, setOpenQueued] = useState<ReadonlySet<string>>(() => new Set());
   const reviewCopy = chatCopy(ko ? 'ko' : 'en').aiReview;
+  const nextCopy = chatCopy(ko ? 'ko' : 'en').nextPrompt;
+  const { acceptKeys } = useWrapUpDecisions();
+  /** The suggestion the person typed past, filled in or dismissed: it stays away until the next turn's. */
+  const [setAside, setSetAside] = useState<string>();
   const composerId = useId();
   const disabledReasonId = `${composerId}-disabled-reason`;
+  const suggestionId = `${composerId}-suggestion`;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState<ChatComposerDraft>(() => {
@@ -1429,6 +1461,18 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     finally { setReadingFiles(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
   };
 
+  // Only over an empty box with nothing else in it or open over it: a draft, an attachment, a reply or the list wins.
+  const suggestionShown = suggestion !== undefined && suggestion.id !== setAside && !disabled && !draft && attachments.length === 0
+    && !value.replyTo && !completion.open && !completion.composing.current;
+  const ghost = suggestionShown && variant !== 'mobile';
+  const fillSuggestion = (): void => {
+    if (!suggestion) return;
+    setSetAside(suggestion.id);
+    updateDraft({ ...valueRef.current, text: suggestion.text, selectionStart: suggestion.text.length, selectionEnd: suggestion.text.length });
+    setAnnouncement(nextCopy.filled);
+    inputRef.current?.focus();
+  };
+
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     const shiftTab = event.key === 'Tab' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
     // An open suggestion list takes the first Shift+Tab to close, like Tab.
@@ -1445,6 +1489,18 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       if (plan.disabled) { if (!onFocusDecision?.() && plan.blockedReason) setAnnouncement(plan.blockedReason); return; }
       setAnnouncement(plan.on ? copy.planOff : copy.planOn);
       plan.onToggle();
+      return;
+    }
+    const plainKey = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+    if (ghost && plainKey && (event.key === 'Tab' || (acceptKeys === 'tab-arrow' && event.key === 'ArrowRight'))) {
+      // Fills the box, never sends: Enter sends as always.
+      event.preventDefault();
+      fillSuggestion();
+      return;
+    }
+    if (suggestionShown && plainKey && event.key === 'Escape') {
+      event.preventDefault();
+      setSetAside(suggestion?.id);
       return;
     }
     if (event.key === 'Escape' && onStop && !stopping) {
@@ -1585,6 +1641,21 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         }}>{ko ? '초안 전환' : 'Switch draft'}</Button>
       </div>}
       {completion.menu}
+      {/* The phone: the suggestion as a chip above the box; a tap fills the box, never sends. */}
+      {suggestionShown && variant === 'mobile' && suggestion && (
+        <div className="chat-suggestion-chip" data-testid="structured-agent-suggestion-chip">
+          <button type="button" className="chat-suggestion-chip__fill" aria-label={nextCopy.fillChip(suggestion.text)} onClick={fillSuggestion}
+            data-testid="structured-agent-suggestion-fill">
+            <Glyph name="spark" />
+            <span className="chat-suggestion-chip__label">{nextCopy.label}</span>
+            <span className="chat-suggestion-chip__text">{suggestion.text}</span>
+          </button>
+          <button type="button" className="chat-suggestion-chip__dismiss" aria-label={nextCopy.dismiss} onClick={() => setSetAside(suggestion.id)}
+            data-testid="structured-agent-suggestion-dismiss">
+            <Glyph name="x" />
+          </button>
+        </div>
+      )}
       <div className="chat-composer__box" data-dragging={dragging || undefined} data-disabled={disabled || undefined}>
         {value.replyTo && <div className="structured-agent-composer__reply">
           <Glyph name="undo" /><blockquote>{value.replyTo.text}</blockquote>
@@ -1617,13 +1688,13 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             rows={1}
             maxLength={65_536}
             value={draft}
-            placeholder={busy
+            placeholder={ghost ? '' : busy
               ? (ko ? '다음에 보낼 메시지를 입력하세요 (Esc로 중단)' : 'Queue a follow-up (Esc to stop)')
               : fileSearch
                 ? (ko ? '무엇이든 요청하세요 · @ 파일 참조 · / 명령' : 'Ask anything · @ to mention files · / for commands')
                 : copy.messagePlaceholder}
             disabled={disabled}
-            aria-describedby={disabledReason ? disabledReasonId : undefined}
+            aria-describedby={[disabledReason ? disabledReasonId : '', ghost ? suggestionId : ''].filter(Boolean).join(' ') || undefined}
             onKeyDown={keyDown}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData.files);
@@ -1633,6 +1704,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             }}
             onChange={(event) => {
               recall.current = undefined;
+              // Typing sets the suggestion aside, also when the box is emptied again.
+              if (suggestion) setSetAside(suggestion.id);
               updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
               setError(null);
             }}
@@ -1647,7 +1720,19 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             }}
             data-testid="structured-agent-composer-input"
           />
+          {/* One line over the empty box, its key at the end; the whole text is in the description and fills on Tab. */}
+          {ghost && suggestion && (
+            <span className="chat-composer__ghost" aria-hidden="true" data-testid="structured-agent-suggestion">
+              <span className="chat-composer__ghost-text">{suggestion.text}</span>
+              <span className="chat-composer__ghost-keys"><kbd>Tab</kbd>{acceptKeys === 'tab-arrow' && <kbd>→</kbd>}<span>{nextCopy.fill}</span></span>
+            </span>
+          )}
         </Field>
+        {ghost && suggestion && (
+          <span id={suggestionId} className="ez-ui-visually-hidden">
+            {acceptKeys === 'tab-arrow' ? nextCopy.describeArrow(suggestion.text) : nextCopy.describe(suggestion.text)}
+          </span>
+        )}
         </div>
         <div className="chat-composer__bar">
           <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
@@ -1765,7 +1850,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         </p>
       )}
       {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
-      {plan && <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="structured-agent-plan-announcement">{announcement}</span>}
+      {(plan || suggestion) && <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="structured-agent-plan-announcement">{announcement}</span>}
       {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
         {onReconcileDelivery && <Button type="button" variant="ghost" size="sm" disabled={disabled || sendDisabled || submitting !== null}
           onClick={() => { setSubmitting('send'); void onReconcileDelivery().then((result) => {
@@ -1895,6 +1980,17 @@ export interface StructuredAgentSessionPanelProps {
    * The walkthrough and "review with another AI" (the start form) are this window's own.
    */
   readonly onReviewAction?: (action: ChatReviewAction) => Promise<StructuredAgentUiResult> | void;
+  /**
+   * Turn wrap-up (시안 2026-10-30): the AI's guess of the next message for the empty message box, the recap and
+   * suggested-task cards after their turn's last message, and what the person does with them. No host fills this
+   * yet: the stories pass fixtures and every action is a callback.
+   */
+  readonly wrapUp?: {
+    readonly suggestion?: NextPromptSuggestion;
+    readonly recaps?: readonly TurnRecap[];
+    readonly tasks?: readonly TurnTaskSuggestions[];
+    readonly onAction?: (action: ChatWrapUpAction) => void;
+  };
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
   readonly heartbeatActive?: boolean;
@@ -2047,6 +2143,7 @@ export function StructuredAgentSessionPanel({
   onDelegate,
   reviewStart,
   onReviewAction,
+  wrapUp,
   onNewConversation,
   onClearConversation,
   sideQuestion,
@@ -2500,6 +2597,34 @@ export function StructuredAgentSessionPanel({
     permissionPreset: selectedPermission,
     ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
   };
+  // Turn wrap-up (시안). A suggested task starts a sub-conversation of this AI with its model and effort, asking before
+  // it runs (승인 후 실행) whatever this conversation's access is: the instruction was the AI's, not the person's.
+  const taskValues: ConversationSettingsValues = {
+    ...(selectedModel ? { model: selectedModel } : {}),
+    permissionPreset: 'standard',
+    ...(effortSupported && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
+  };
+  const taskSettings = `${providerName} · ${settingsText(taskValues, true)}`;
+  const taskStart = useMemo(() => ({ settings: taskSettings, phone: variant === 'mobile' }), [taskSettings, variant]);
+  const wrapUpRecaps = wrapUp?.recaps;
+  const wrapUpTasks = wrapUp?.tasks;
+  const onWrapUpAction = wrapUp?.onAction;
+  const wrapUpActive = !historyOnly && !providerOwned;
+  const transcriptWrapUp = useMemo(() => (wrapUpRecaps || wrapUpTasks ? {
+    cards: { ...(wrapUpRecaps ? { recaps: wrapUpRecaps } : {}), ...(wrapUpTasks ? { tasks: wrapUpTasks } : {}) },
+    ...(onWrapUpAction && wrapUpActive ? { onAction: onWrapUpAction } : {}),
+    taskStart,
+  } : undefined), [onWrapUpAction, taskStart, wrapUpActive, wrapUpRecaps, wrapUpTasks]);
+  // The suggestion follows the newest turn only once it is over: a newer turn without one leaves the box as it is.
+  const newestTurnId = useMemo(() => (turns ?? []).reduce<DaemonTurn | undefined>(
+    (latest, turn) => (!latest || turn.createdAt > latest.createdAt ? turn : latest), undefined)?.id, [turns]);
+  const offeredTurnId = wrapUp?.suggestion?.turnId;
+  const offeredText = wrapUp?.suggestion?.text;
+  const suggestionOpen = offeredTurnId !== undefined && offeredTurnId === newestTurnId && !turnCurrent && !planOn && wrapUpActive && !composerDisabled;
+  const composerSuggestion = useMemo(
+    () => (suggestionOpen && offeredTurnId && offeredText ? { id: offeredTurnId, text: offeredText } : undefined),
+    [offeredText, offeredTurnId, suggestionOpen],
+  );
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged
@@ -2903,6 +3028,7 @@ export function StructuredAgentSessionPanel({
           planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
         } : {})}
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
+        {...(transcriptWrapUp ? { wrapUp: transcriptWrapUp, onFocusDecision: focusDecision } : {})}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -2985,6 +3111,7 @@ export function StructuredAgentSessionPanel({
           {...(full ? { onFocusDecision: focusDecision } : {})}
           appCommands={appCommands}
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}
+          {...(composerSuggestion ? { suggestion: composerSuggestion } : {})}
         />
       )}
     </section>

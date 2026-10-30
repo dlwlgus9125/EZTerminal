@@ -4,6 +4,7 @@ import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
+import type { TurnRecap, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
@@ -14,7 +15,18 @@ export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
+  /**
+   * Turn wrap-up (시안): the cards to show after their turn's last message (and its change card). A card whose turn
+   * is not among the loaded rows is not shown, like a review whose rows are not loaded.
+   */
+  readonly wrapUp?: {
+    readonly recaps?: readonly TurnRecap[];
+    readonly tasks?: readonly TurnTaskSuggestions[];
+  };
 }
+
+/** The proposal-only MCP tool (`suggest_task` for Codex, `mcp__<server>__suggest_task` for Claude). */
+const SUGGEST_TASK_TOOL = /(?:^|__)suggest_task$/u;
 
 /** A transcript item after streaming fragments have been merged. */
 export interface CoalescedItem extends DaemonTranscriptItem {
@@ -351,8 +363,10 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
+  const taskCards = new Map((wrapUp?.tasks ?? []).map((suggestions) => [suggestions.turnId, suggestions]));
+  const recapCards = new Map((wrapUp?.recaps ?? []).map((recap) => [recap.turnId, recap]));
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const rows: ChatRow[] = [];
   const toolsByCallId = new Map<string, MutableTool>();
@@ -519,8 +533,9 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
             break;
           }
         }
-        // Task-list tools show as the todo rows they produce, not as tool lines.
-        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo') activityFor(item).push({ kind: 'tool', tool });
+        // Task-list tools show as the todo rows they produce, not as tool lines; suggested tasks as their turn's card.
+        const suggestion = SUGGEST_TASK_TOOL.test(tool.name) && turnId !== undefined && taskCards.has(turnId);
+        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo' && !suggestion) activityFor(item).push({ kind: 'tool', tool });
         const open = openCallsByTurn.get(turnId ?? '') ?? [];
         open.push(tool);
         openCallsByTurn.set(turnId ?? '', open);
@@ -683,6 +698,19 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
       if (entry) {
         turnFiles.delete(row.turnId);
         finalRows.push({ kind: 'changes', id: `changes:${row.turnId}`, turnId: row.turnId, createdAt: row.createdAt, files: mergeFiles(entry.files), changes: entry.changes });
+      }
+      // Turn wrap-up: the suggested tasks, then the recap the person reads first when they come back.
+      const suggestions = taskCards.get(row.turnId);
+      if (suggestions) {
+        taskCards.delete(row.turnId);
+        finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
+      }
+      const recap = recapCards.get(row.turnId);
+      if (recap) {
+        recapCards.delete(row.turnId);
+        // What it stopped for may have been answered since: the card says it waits only while it does.
+        const waitingNow = recap.waiting !== undefined && approvals.some((approval) => approval.state === 'pending');
+        finalRows.push({ kind: 'recap', id: `recap:${row.turnId}`, turnId: row.turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) });
       }
       const status = liveStatus.get(row.turnId);
       if (status) {

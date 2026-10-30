@@ -1472,6 +1472,140 @@
 }
 
 /*
+ * Turn wrap-up (시안): the AI's guess of the next message. On the desktop it lies over the empty box as one muted line
+ * in the box's own face and padding, its key at the end (the box keeps its height); on the phone it is a chip above
+ * the box. Neither takes pointer or focus from the box itself.
+ */
+.structured-agent-composer__input-row > .ez-ui-field {
+  position: relative;
+}
+
+.chat-composer__ghost {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  padding: var(--ui-space-2) var(--ui-space-2) var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font: var(--ui-font-size-md) / 1.6 var(--ui-font-body);
+  pointer-events: none;
+}
+
+.structured-agent[data-skin='cli'] .chat-composer__ghost {
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-sm);
+}
+
+.chat-composer__ghost-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer__ghost-keys {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-left: var(--ui-space-2);
+  font: 500 var(--ui-font-size-2xs) / 1 var(--ui-font-label);
+  white-space: nowrap;
+}
+
+.chat-composer__ghost-keys > * + * {
+  margin-left: var(--ui-space-1);
+}
+
+.chat-composer__ghost-keys > kbd {
+  min-width: 1.25rem;
+  padding: 0.1875rem 0.3125rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-secondary);
+  font: inherit;
+  text-align: center;
+}
+
+.chat-suggestion-chip {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  margin: 0 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-raised);
+}
+
+.chat-suggestion-chip__fill {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0 var(--ui-space-1) 0 var(--ui-space-3);
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: none;
+  color: var(--ui-text-primary);
+  font: inherit;
+  font-size: var(--ui-font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-suggestion-chip__fill > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-2);
+  color: var(--ui-accent);
+}
+
+.chat-suggestion-chip__label {
+  flex: none;
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font: 600 var(--ui-font-size-xs) / 1 var(--ui-font-label);
+}
+
+.chat-suggestion-chip__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-suggestion-chip__dismiss {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: none;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.chat-suggestion-chip__dismiss > svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.chat-suggestion-chip__fill:focus-visible,
+.chat-suggestion-chip__dismiss:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
+/*
  * The conversation's AI, in the colour its history rows and tabs use, as a
  * stripe on the message box's leading edge. Focus keeps the accent border, and
  * the model pill names the AI, so colour is never the only cue.

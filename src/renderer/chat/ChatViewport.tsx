@@ -26,6 +26,9 @@ function estimate(row: ChatRow | undefined): number {
     case 'changes': return 96;
     // Header, overall line and footer, plus one folded line per finding and a path line per file.
     case 'review': return 112 + Math.min(row.review.findings.length, 16) * 52 + new Set(row.review.findings.map((finding) => finding.file)).size * 24;
+    // Header, defaults line and footer, plus a title, two rationale lines and the actions per task.
+    case 'task-suggestions': return 120 + row.suggestions.tasks.length * 112;
+    case 'recap': return row.recap.state === 'complete' ? 150 : 32;
     default: return 36;
   }
 }

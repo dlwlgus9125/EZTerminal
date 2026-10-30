@@ -41,6 +41,8 @@ export interface DelegateAgentDialogProps {
   readonly onManageProfiles?: () => void;
   /** Offer "새 워크트리…" (desktop). */
   readonly allowNewWorktree?: boolean;
+  /** Where it starts when it opens, if not `defaultWorkspaceId` (a suggested task the AI recommends a worktree for). */
+  readonly initialWorkspace?: DelegateWorkspaceChoice;
 }
 
 const NEW_WORKTREE = '__new-worktree__';
@@ -53,14 +55,18 @@ const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
  */
 export function DelegateAgentDialog({
   open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles, allowNewWorktree = true,
+  initialWorkspace,
 }: DelegateAgentDialogProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const text = (korean: string, english: string): string => ko ? korean : english;
   const instructionId = useId();
+  const startWorkspace = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? NEW_WORKTREE
+    : initialWorkspace?.kind === 'existing' ? initialWorkspace.workspaceId : defaultWorkspaceId;
+  const startBranch = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? initialWorkspace.branch : '';
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? '');
-  const [workspaceId, setWorkspaceId] = useState(defaultWorkspaceId);
-  const [branch, setBranch] = useState('');
+  const [workspaceId, setWorkspaceId] = useState(startWorkspace);
+  const [branch, setBranch] = useState(startBranch);
   const [instruction, setInstruction] = useState(initialInstruction);
   const [reportBack, setReportBack] = useState(mode === 'review');
   const [busy, setBusy] = useState(false);
@@ -69,12 +75,12 @@ export function DelegateAgentDialog({
   useEffect(() => {
     if (!open) return;
     setProfileId(profiles[0]?.id ?? '');
-    setWorkspaceId(defaultWorkspaceId);
-    setBranch('');
+    setWorkspaceId(startWorkspace);
+    setBranch(startBranch);
     setInstruction(initialInstruction);
     setReportBack(mode === 'review');
     setError(undefined);
-  }, [open, mode, defaultWorkspaceId, initialInstruction, profiles]);
+  }, [open, mode, startWorkspace, startBranch, initialInstruction, profiles]);
 
   const profile = profiles.find((entry) => entry.id === profileId);
   const newWorktree = workspaceId === NEW_WORKTREE;

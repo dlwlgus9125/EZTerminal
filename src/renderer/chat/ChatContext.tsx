@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import type { ChatReplyReference } from '../../shared/chat-message';
+import type { SuggestedTaskWhere } from '../../shared/turn-wrap-up';
 import type { ResolveFileLink } from './markdown/file-links';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 import type { ChatLocale } from './model/summary';
@@ -27,6 +28,16 @@ export interface ChatReviewAction {
   readonly findingIds?: readonly string[];
 }
 
+/**
+ * Turn wrap-up (시안): what the person did on a suggested-task or recap card. Starting, sending and dismissing are the
+ * host's; `task-start-custom` opens the start form (맡기기) on the task. A started task's sub-conversation opens
+ * through `onOpenRelated`, and a recap's 답하러 가기 through `onFocusDecision`.
+ */
+export type ChatWrapUpAction =
+  | { readonly kind: 'task-start' | 'task-start-custom' | 'task-here' | 'task-dismiss' | 'task-reopen'; readonly turnId: string; readonly taskId: string }
+  | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
+  | { readonly kind: 'recap-retry'; readonly turnId: string };
+
 export interface ChatContextValue {
   readonly skin: ChatSkin;
   readonly locale: ChatLocale;
@@ -45,6 +56,15 @@ export interface ChatContextValue {
   readonly resolveFileLink?: ResolveFileLink;
   /** Review card actions. Absent (history, a host without reviews): the card is read-only. */
   readonly onReviewAction?: (action: ChatReviewAction) => void;
+  /** Turn wrap-up card actions (시안). Absent: the cards are read-only. */
+  readonly onWrapUpAction?: (action: ChatWrapUpAction) => void;
+  /**
+   * What 새 하위 대화로 시작 starts a sub-conversation with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`). On the
+   * phone it always starts in this folder: only the desktop creates worktrees and has the start form.
+   */
+  readonly taskStart?: { readonly settings: string; readonly phone: boolean };
+  /** Moves focus to the decision waiting above the message box; false when there is none. */
+  readonly onFocusDecision?: () => boolean;
   /** Disclosure state that survives virtualized unmounts and skin switches. */
   readonly isExpanded: (key: string, fallback: boolean) => boolean;
   readonly setExpanded: (key: string, open: boolean) => void;
@@ -60,7 +80,7 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({
   children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-  onReviewAction,
+  onReviewAction, onWrapUpAction, taskStart, onFocusDecision,
 }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
@@ -81,10 +101,10 @@ export function ChatProvider({
   // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
   const context = useMemo<ChatContextValue>(() => ({
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, taskStart, onFocusDecision, isExpanded, setExpanded,
   }), [
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, taskStart, onFocusDecision, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }

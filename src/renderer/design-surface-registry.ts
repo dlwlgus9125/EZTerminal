@@ -50,4 +50,6 @@ export const MOBILE_AUXILIARY_STORIES = {
   offline: { storyId: 'compositions-mobile-active-surfaces--agents-offline', readySelector: '[data-testid="mobile-agent-view"]' },
   /** Review loop: a review card's problem opened in the conversation's review sheet (시안, Production/ReviewLoop/Mockup). */
   'review-findings': { storyId: 'production-reviewloop-mockup--phone-findings-sheet', readySelector: '[data-testid="conversation-change-review"][data-mode="findings"]' },
+  /** Turn wrap-up: 모두 시작 on a suggested-task card, as the phone's sheet (시안, Production/TurnWrapUp/Mockup). */
+  'task-start-all': { storyId: 'production-turnwrapup-mockup--phone-start-all', readySelector: '[data-testid="task-start-all-dialog"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;

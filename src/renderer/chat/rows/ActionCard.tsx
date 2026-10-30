@@ -1,14 +1,14 @@
 import { Fragment, type ReactNode } from 'react';
 
 import { Button } from '../../ui/Button';
-import { Glyph, Led, type LedTone } from '../../ui/Glyph';
+import { Glyph, Led, type GlyphName, type LedTone } from '../../ui/Glyph';
 import { useChatContext } from '../ChatContext';
 
 /**
- * A transcript card that reports a result the person can act on (an AI review today; a recap or
- * a suggested task later). It reports, it does not wait: no amber and no attention mark. The
- * lamp always comes with the same state in words, a stopped or empty card says why and how to
- * recover, and both skins offer the same actions as real buttons.
+ * A transcript card that reports a result the person can act on (an AI review, a recap, suggested
+ * tasks). It reports, it does not wait: no amber and no attention mark. The lamp always comes with
+ * the same state in words, a stopped or empty card says why and how to recover, and both skins offer
+ * the same actions as real buttons.
  */
 
 export type ActionCardState = 'queued' | 'running' | 'done' | 'empty' | 'failed' | 'unsupported' | 'stopped';
@@ -81,6 +81,11 @@ export interface ActionCardProps {
   readonly actions?: readonly ActionCardAction[];
   readonly testId?: string;
   readonly kind?: string;
+  /**
+   * A card that reports something already written rather than a process (a recap, suggested tasks) leads with this
+   * glyph instead of a lamp; the words after the title say what it is.
+   */
+  readonly glyph?: GlyphName;
 }
 
 function ActionButtons({ actions, cli }: { readonly actions: readonly ActionCardAction[]; readonly cli: boolean }): JSX.Element {
@@ -113,7 +118,7 @@ function ActionButtons({ actions, cli }: { readonly actions: readonly ActionCard
 }
 
 export function ActionCard({
-  label, title, cliName, cliTarget, state, stateText, cliStateText, meta, cliMeta, message, notes = [], stale, children, actions = [], testId, kind,
+  label, title, cliName, cliTarget, state, stateText, cliStateText, meta, cliMeta, message, notes = [], stale, children, actions = [], testId, kind, glyph,
 }: ActionCardProps): JSX.Element {
   const { skin } = useChatContext();
   if (skin === 'cli') {
@@ -165,7 +170,7 @@ export function ActionCard({
   return (
     <section className="chat-action-card" data-state={state} data-kind={kind} aria-label={label} data-testid={testId}>
       <header className="chat-action-card__head">
-        <span className="chat-action-card__lamp"><Led tone={LAMP[state]} /></span>
+        <span className="chat-action-card__lamp" data-glyph={glyph}>{glyph ? <Glyph name={glyph} /> : <Led tone={LAMP[state]} />}</span>
         <span className="chat-action-card__title" tabIndex={-1} data-card-heading="">{title}</span>
         <span className="chat-action-card__state" data-state={state}>{stateText}</span>
         {meta && <span className="chat-action-card__meta">{meta}</span>}

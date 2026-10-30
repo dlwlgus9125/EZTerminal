@@ -1,0 +1,520 @@
+/* Turn wrap-up (시안 2026-10-30): the recap card and its one-line states, the suggested-task card in both skins, the
+ * 모두 시작 sheet and the Settings › 에이전트 › 턴 마무리 section.
+ *
+ * Shared with Android (WebView 74 floor): no color-mix(), :has(), flexbox `gap`, `inset` shorthand or aspect-ratio;
+ * spacing between flex children uses margins. Colours come only from --ui-* tokens. These cards report and propose;
+ * nothing here uses the warning (amber) role, which means "waiting on the person". */
+
+/* ── Shared ──────────────────────────────────────────────────────────── */
+.chat-action-card__lamp[data-glyph] > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--ui-text-secondary);
+}
+
+.chat-wrap-up-meta__who {
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.chat-wrap-up-meta__time {
+  margin-left: auto;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-action-card__meta > .chat-wrap-up-meta__time {
+  margin-right: 0;
+}
+
+/* What the AI wrote keeps its `code` as code (the same face and plate as code in a message). */
+.chat-wrap-up-code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-chat-inline-code);
+  font-family: var(--ui-font-mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+  overflow-wrap: anywhere;
+}
+
+/* ── Recap: the AI's lines, quoted as its words ──────────────────────── */
+.chat-action-card__body > .chat-recap__text {
+  margin: 0;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.chat-recap__text > p + p {
+  margin-top: var(--ui-space-1);
+}
+
+.chat-recap__text .chat-wrap-up-code {
+  background: var(--ui-surface-raised);
+}
+
+.chat-cli-recap {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-cli-recap .chat-cli-result__line {
+  color: var(--ui-text-primary);
+}
+
+/* Writing it, or it could not be written (D4 b): one quiet line where the card goes. */
+.chat-recap-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.chat-recap-line > * + * {
+  margin-left: var(--ui-space-2);
+}
+
+.chat-recap-line > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* ── Suggested tasks, bubble ─────────────────────────────────────────── */
+.chat-action-card__body > .chat-task-defaults {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.chat-task-defaults > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.15em var(--ui-space-1) 0 0;
+  color: var(--ui-text-muted);
+}
+
+.chat-tasks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-task {
+  padding: var(--ui-space-2) 0;
+}
+
+.chat-task + .chat-task {
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.chat-task__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.chat-task__index {
+  flex: none;
+  width: 1.5rem;
+  color: var(--ui-text-muted);
+  font: 600 var(--ui-font-size-xs) / 1.4 var(--ui-font-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-task__head > .chat-task__title {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.chat-task__title:focus-visible,
+.chat-cli-task__title:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+  border-radius: var(--ui-radius-sm);
+}
+
+.chat-task__chip,
+.task-start-all__chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 var(--ui-space-1);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-secondary);
+  font: 600 var(--ui-font-size-2xs) / 1.6 var(--ui-font-label);
+  white-space: nowrap;
+}
+
+.chat-task__chip > svg,
+.task-start-all__chip > svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: var(--ui-space-1);
+}
+
+/* The rest of a task lines up under its title. */
+.chat-task > .chat-task__rationale,
+.chat-task > .chat-task__note,
+.chat-task > .chat-task__toggle,
+.chat-task > .chat-task__prompt,
+.chat-task > .chat-task__actions {
+  margin-left: 1.5rem;
+}
+
+.chat-task > .chat-task__rationale {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.chat-task > .chat-task__note {
+  display: flex;
+  align-items: flex-start;
+  margin-top: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-task__note > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.1em var(--ui-space-1) 0 0;
+  color: var(--ui-info);
+}
+
+.chat-task > .chat-task__toggle {
+  margin-top: var(--ui-space-1);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-task__toggle > .chat-chevron {
+  margin-right: var(--ui-space-1);
+}
+
+.chat-task > .chat-task__prompt {
+  margin-top: var(--ui-space-1);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.chat-task__prompt > .chat-task__prompt-note {
+  margin-bottom: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-2xs);
+}
+
+.chat-task__prompt-text {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font: var(--ui-font-size-xs) / 1.5 var(--ui-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-task > .chat-task__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: var(--ui-space-2);
+}
+
+.chat-task__actions > * {
+  margin: 0 var(--ui-space-2) var(--ui-space-1) 0;
+}
+
+.chat-task__link {
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-task__outcome {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-task__outcome > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
+.chat-task__outcome > strong {
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.chat-task__outcome[data-outcome='started'] > svg {
+  color: var(--ui-success);
+}
+
+.chat-task__outcome[data-outcome='start-failed'] > svg {
+  color: var(--ui-danger);
+}
+
+.chat-task__reason {
+  margin-left: var(--ui-space-1);
+  overflow-wrap: anywhere;
+}
+
+.chat-task[data-outcome='dismissed'] .chat-task__title {
+  color: var(--ui-text-muted);
+}
+
+/* ── Suggested tasks, CLI: a `⎿` block per task, the buttons as text you can press ─ */
+.chat-cli-tasks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-cli-task + .chat-cli-task {
+  margin-top: var(--ui-space-1);
+}
+
+.chat-cli-task__index {
+  color: var(--ui-text-muted);
+}
+
+.chat-cli-task__title {
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.chat-cli-task[data-outcome='dismissed'] .chat-cli-task__title {
+  color: var(--ui-text-muted);
+}
+
+.chat-cli-task__outcome {
+  color: var(--ui-text-primary);
+}
+
+.chat-cli-task__outcome[data-outcome='start-failed'] {
+  color: var(--ui-danger);
+}
+
+.chat-cli-task__prompt {
+  margin: var(--ui-space-1) 0;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+}
+
+/* ── A phone: every action is a thumb target ─────────────────────────── */
+.structured-agent[data-variant='mobile'] .chat-task__actions .ez-ui-button,
+.structured-agent[data-variant='mobile'] .chat-task__link,
+.structured-agent[data-variant='mobile'] .chat-task__toggle,
+.structured-agent[data-variant='mobile'] .chat-recap-line .chat-link-button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  justify-content: center;
+}
+
+/* A narrow card (a phone, or a conversation under ~460px): the rest of a task uses the full width. */
+.structured-agent[data-variant='mobile'] .chat-task > .chat-task__rationale,
+.structured-agent[data-variant='mobile'] .chat-task > .chat-task__note,
+.structured-agent[data-variant='mobile'] .chat-task > .chat-task__toggle,
+.structured-agent[data-variant='mobile'] .chat-task > .chat-task__prompt,
+.structured-agent[data-variant='mobile'] .chat-task > .chat-task__actions,
+.structured-agent[data-narrow='true'] .chat-task > .chat-task__rationale,
+.structured-agent[data-narrow='true'] .chat-task > .chat-task__note,
+.structured-agent[data-narrow='true'] .chat-task > .chat-task__toggle,
+.structured-agent[data-narrow='true'] .chat-task > .chat-task__prompt,
+.structured-agent[data-narrow='true'] .chat-task > .chat-task__actions {
+  margin-left: 0;
+}
+
+.structured-agent[data-variant='mobile'] .chat-task__head > .chat-task__chip,
+.structured-agent[data-narrow='true'] .chat-task__head > .chat-task__chip {
+  margin: var(--ui-space-1) 0 0 1.5rem;
+}
+
+/* ── 모두 시작: what starts, how many and where ──────────────────────── */
+.task-start-all {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-start-all__task {
+  padding: var(--ui-space-2) 0;
+}
+
+.task-start-all__task + .task-start-all__task {
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.task-start-all__title {
+  display: flex;
+  align-items: baseline;
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.task-start-all__index {
+  flex: none;
+  width: 1.5rem;
+  color: var(--ui-text-muted);
+  font: 600 var(--ui-font-size-xs) / 1.4 var(--ui-font-label);
+}
+
+.task-start-all__choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  margin: var(--ui-space-1) 0 0 1.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.task-start-all__choices > * {
+  margin: 0 var(--ui-space-2) var(--ui-space-1) 0;
+}
+
+.task-start-all__choice {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-xs);
+  cursor: pointer;
+}
+
+.task-start-all__choice[data-checked] {
+  border-color: var(--ui-accent);
+  background: var(--ui-surface-selected);
+}
+
+.task-start-all__choice:focus-within {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.task-start-all__choice > input {
+  flex: none;
+  margin: 0 var(--ui-space-1) 0 0;
+  accent-color: var(--ui-accent);
+}
+
+.task-start-all__branch {
+  margin-left: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font: var(--ui-font-size-2xs) / 1.4 var(--ui-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.task-start-all__task > .task-start-all__here {
+  margin: var(--ui-space-1) 0 0 1.5rem;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.task-start-all__note {
+  display: flex;
+  align-items: flex-start;
+  margin: var(--ui-space-2) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.task-start-all__note > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.1em var(--ui-space-1) 0 0;
+  color: var(--ui-info);
+}
+
+/* The phone's sheet: choices and buttons are thumb targets. */
+.ez-ui-dialog[data-variant='sheet'] .task-start-all__choice,
+.ez-ui-dialog[data-variant='sheet'] .ez-ui-button {
+  min-height: 2.75rem;
+}
+
+/* ── Settings › 에이전트 › 턴 마무리 ───────────────────────────────────── */
+.turn-wrap-up-settings > * + * {
+  margin-top: var(--ui-space-3);
+}
+
+.turn-wrap-up-settings__group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.turn-wrap-up-settings__group > legend {
+  margin-bottom: var(--ui-space-1);
+  padding: 0;
+  color: var(--ui-text-secondary);
+  font: 600 var(--ui-font-size-xs) / 1.4 var(--ui-font-label);
+  letter-spacing: 0.04em;
+}
+
+.turn-wrap-up-settings__group > .ez-ui-switch + .ez-ui-switch {
+  margin-top: var(--ui-space-2);
+}
+
+.turn-wrap-up-settings__paused {
+  display: flex;
+  align-items: flex-start;
+  margin: 0;
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.turn-wrap-up-settings__paused > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.1em var(--ui-space-2) 0 0;
+  color: var(--ui-text-secondary);
+}

@@ -5,6 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
+import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
 import type { AgentCliClient } from '../shared/agent-cli';
 import type { AgentProjectLauncherSummary } from '../shared/agent-history';
@@ -295,6 +296,14 @@ export interface CapabilityAccess {
   readonly files: FileAccess;
   /** Optional so test doubles need not supply it; absent means the screen is unavailable. */
   readonly agentManagement?: AgentManagementAccess;
+  /** Settings › 에이전트 › 턴 마무리 (시안 2026-10-30). No host provides it yet, so the section is not shown in the app. */
+  readonly turnWrapUp?: TurnWrapUpAccess;
+}
+
+/** The turn wrap-up settings and any pause near a usage limit in force now (시안: only the stories provide this). */
+export interface TurnWrapUpAccess {
+  readonly load: () => Promise<{ readonly settings: TurnWrapUpSettings; readonly paused: readonly TurnWrapUpPause[] }>;
+  readonly save: (settings: TurnWrapUpSettings) => Promise<TurnWrapUpSettings>;
 }
 
 const NOOP_CLEANUP: CapabilityCleanup = () => undefined;
