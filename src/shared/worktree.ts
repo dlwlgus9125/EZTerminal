@@ -5,6 +5,7 @@ export type WorktreeErrorCode =
   | 'NOT_A_GIT_REPOSITORY'
   | 'INVALID_REQUEST'
   | 'INVALID_BRANCH'
+  | 'BRANCH_EXISTS'
   | 'INVALID_BASE'
   | 'BASE_DIRTY'
   | 'UNSAFE_ROOT'

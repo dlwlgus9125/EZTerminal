@@ -38,6 +38,15 @@ describe('createWorkspaceWorktree', () => {
     expect(d.execute).not.toHaveBeenCalled();
   });
 
+  it('says a branch is taken apart from every other git failure, so a retry can ask for another name', async () => {
+    const d = deps([{ id: 'p', rootPath: root }], []);
+    const failed = (error: string, message: string) => ({ ok: false, action: 'create', error, message }) as never;
+    d.execute.mockResolvedValueOnce(failed('BRANCH_EXISTS', 'Branch already exists: suggest/fix'));
+    expect(await createWorkspaceWorktree(d, 'p', 'suggest/fix')).toEqual({ ok: false, reason: 'branch-taken', message: 'Branch already exists: suggest/fix' });
+    d.execute.mockResolvedValueOnce(failed('GIT_FAILED', 'fatal: something else'));
+    expect(await createWorkspaceWorktree(d, 'p', 'suggest/fix')).toEqual({ ok: false, reason: 'git-failed', message: 'fatal: something else' });
+  });
+
   it('treats a folder and what is inside it as the same place, and nothing beside it', () => {
     expect(pathIsWithin(tree, tree)).toBe(true);
     expect(pathIsWithin(path.join(tree, 'web'), tree)).toBe(true);

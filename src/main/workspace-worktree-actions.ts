@@ -69,7 +69,7 @@ export async function createWorkspaceWorktree(
   if (!isSafeLocalBranch(branch)) return { ok: false, reason: 'invalid', message: 'Use letters, numbers and . _ / - for the branch name.' };
   const created = await deps.worktrees.execute({ action: 'create', cwd: project.rootPath, branch, allowDirtyBase: true }, 'desktop');
   if (!created.ok || !created.opened) {
-    return { ok: false, reason: 'git-failed', message: created.ok ? 'The worktree was not created.' : created.message };
+    return { ok: false, reason: !created.ok && created.error === 'BRANCH_EXISTS' ? 'branch-taken' : 'git-failed', message: created.ok ? 'The worktree was not created.' : created.message };
   }
   await deps.syncProjects();
   const current = deps.getSnapshot();

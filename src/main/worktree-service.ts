@@ -577,6 +577,10 @@ export class WorktreeService {
       if (error instanceof GitCommandError) throw new WorktreeServiceError('INVALID_BRANCH', `Invalid branch name: ${branch}`);
       throw error;
     }
+    // Exits 0 either way, and check-ref-format above leaves no glob in the name, so this matches it exactly.
+    if ((await this.git.run(repo.mainPath, ['branch', '--list', '--format=%(refname:short)', branch], signal)).trim()) {
+      throw new WorktreeServiceError('BRANCH_EXISTS', `Branch already exists: ${branch}`);
+    }
 
     const status = await this.git.run(repo.currentRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], signal);
     if (status.length > 0 && !request.allowDirtyBase) {

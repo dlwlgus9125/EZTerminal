@@ -208,6 +208,23 @@ describe('WorktreeService — real Git boundaries', () => {
     expect(calls.flat()).not.toContain('--force');
   }, 30_000);
 
+  it('refuses a branch name that exists before touching the disk, and only an exact match', async () => {
+    const { repo, userData } = makeRepo();
+    git(repo, ['branch', 'suggest/fix']);
+    git(repo, ['branch', 'suggest/fix-the-role']);
+    const service = new WorktreeService({ userDataDir: userData, newId: fixedIds() });
+    await service.init();
+
+    const taken = await service.execute({ action: 'create', cwd: repo, branch: 'suggest/fix' }, 'desktop');
+    expect(taken).toMatchObject({ ok: false, error: 'BRANCH_EXISTS' });
+    if (!taken.ok) expect(taken.message).toContain('suggest/fix');
+    expect(existsSync(path.join(path.dirname(repo), '.ezterminal-worktrees'))).toBe(false);
+
+    // A name that only starts like an existing one is free.
+    const free = await service.execute({ action: 'create', cwd: repo, branch: 'suggest/fix-the' }, 'desktop');
+    expect(free.ok).toBe(true);
+  }, 30_000);
+
   it('rejects dirty and in-use managed worktrees with stable errors', async () => {
     const { repo, userData } = makeRepo();
     let sessionCwds: string[] = [];

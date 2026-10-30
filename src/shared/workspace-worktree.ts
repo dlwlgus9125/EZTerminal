@@ -58,7 +58,7 @@ export type WorkspaceWorktreeIpcResult<T> =
   | { readonly ok: true; readonly value: T }
   | {
       readonly ok: false;
-      readonly reason: 'not-found' | 'invalid' | 'dirty-worktree' | 'dirty-main' | 'nothing-to-merge' | 'conflict' | 'not-a-branch' | 'git-failed' | 'in-use' | 'not-merged';
+      readonly reason: 'not-found' | 'invalid' | 'branch-taken' | 'dirty-worktree' | 'dirty-main' | 'nothing-to-merge' | 'conflict' | 'not-a-branch' | 'git-failed' | 'in-use' | 'not-merged';
       readonly message: string;
     };
 
