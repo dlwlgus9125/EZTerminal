@@ -155,10 +155,14 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
     web: tool.name === 'WebFetch' ? 'Fetching' : 'Searching the web', mcp: 'Calling', agent: 'Running subagent', todo: 'Updating tasks',
     question: 'Asking', plan: 'Proposing plan', other: 'Using',
   };
+  const attempted: Readonly<Record<string, string>> = {
+    read: 'read', search: 'search', list: 'list', command: 'run', edit: 'edit', write: 'create',
+    web: tool.name === 'WebFetch' ? 'fetch' : 'search the web', mcp: 'call', agent: 'run a subagent', todo: 'update tasks',
+    question: 'ask', plan: 'propose a plan', other: 'use',
+  };
   if (tool.awaitingApproval) return 'Awaiting approval';
   if (tool.status === 'running') return running[tool.category] ?? 'Using';
-  const verb = done[tool.category] ?? 'Used';
-  return failed ? `Tried to ${verb.charAt(0).toLowerCase()}${verb.slice(1)}` : verb;
+  return failed ? `Tried to ${attempted[tool.category] ?? 'use'}` : done[tool.category] ?? 'Used';
 }
 
 /** Short display target: a path collapses to its tail; commands stay one line. */
