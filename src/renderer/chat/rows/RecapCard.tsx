@@ -3,20 +3,18 @@ import { useChatContext } from '../ChatContext';
 import { formatClock, useChatCopy, type ChatCopy } from '../copy';
 import type { ChatRow } from '../model/types';
 import { providerName } from '../review/review-presentation';
-import { useWrapUpDecisions, type WrapUpDecisions } from '../wrap-up/wrap-up-decisions';
 import { aiLines, InlineCode } from '../wrap-up/wrap-up-presentation';
 import { ActionCard, type ActionCardAction } from './ActionCard';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
-/** D3: the words after 요약 — one for every recap, or the one that says why it was written, true also once it was answered. */
-function headingText({ recap, waitingNow }: RowOf<'recap'>, decisions: WrapUpDecisions, copy: ChatCopy): string {
-  if (decisions.recapHeading !== 'trigger') return copy.recap.heading[decisions.recapHeading];
+/** D3: the words after 요약 say why it was written, true also once it was answered. */
+function headingText({ recap, waitingNow }: RowOf<'recap'>, copy: ChatCopy): string {
   if (recap.trigger !== 'waiting') return copy.recap.heading.away;
   return copy.recap.heading[waitingNow ? 'waiting' : 'answered'];
 }
 
-/** While the AI writes it, and when it could not (D4 b): one quiet line where the card goes. */
+/** While the AI writes it, and when it could not (D4): one quiet line where the card goes, with the reason and 다시 만들기. */
 function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
@@ -24,7 +22,7 @@ function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
   const provider = providerName(recap.providerId);
   const generating = recap.state === 'generating';
   const failed = recap.failure ? `${copy.recap.failed} · ${copy.recap.failure[recap.failure]}` : copy.recap.failed;
-  const retry = !generating && context.onWrapUpAction
+  const retry = !generating && context.onWrapUpAction && context.recapRetry
     ? (): void => context.onWrapUpAction?.({ kind: 'recap-retry', turnId: recap.turnId }) : undefined;
   if (context.skin === 'cli') {
     return (
@@ -49,17 +47,16 @@ function RecapLine({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
 }
 
 /**
- * The AI's recap of a turn (시안): its own lines, quoted as its words, and — while the decision it stopped for is
- * still pending — the app's line that it waits, with 답하러 가기 (focus moves to that decision).
+ * The AI's recap of a turn: its own lines, quoted as its words, and — while the decision it stopped for is still
+ * pending — the app's line that it waits, with 답하러 가기 (focus moves to that decision).
  */
 export function RecapCard({ row }: { readonly row: RowOf<'recap'> }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
-  const decisions = useWrapUpDecisions();
   const { recap } = row;
   if (recap.state !== 'complete' || !recap.text?.trim()) return <RecapLine row={row} />;
   const provider = providerName(recap.providerId);
-  const heading = headingText(row, decisions, copy);
+  const heading = headingText(row, copy);
   const clock = formatClock(recap.createdAt, context.locale);
   const lines = aiLines(recap.text);
   const waiting = row.waitingNow && recap.waiting ? copy.recap.waiting[recap.waiting] : undefined;

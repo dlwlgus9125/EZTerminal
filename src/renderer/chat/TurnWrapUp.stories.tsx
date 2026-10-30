@@ -11,21 +11,21 @@ import { suggestedTaskBranch, type TurnWrapUpPause, type TurnWrapUpSettings } fr
 import type { CapabilityAccess, TurnWrapUpAccess } from '../capability-access';
 import type { ChatSkin } from '../chat-view-state';
 import { DelegateAgentDialog, type DelegateAgentRequest } from '../DelegateAgentDialog';
-import { AppI18nProvider, useAppTranslation } from '../i18n';
+import { AppI18nProvider } from '../i18n';
 import { shellSnapshot } from '../shell/shell-fixtures';
 import { SettingsFixture, storyCapabilities } from '../shell/tool-screen-fixtures';
 import { conversationQueue } from '../conversation-queue';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps, type StructuredAgentUiResult } from '../StructuredAgentSession';
-import { TurnWrapUpSettings as TurnWrapUpSection } from '../TurnWrapUpSettings';
 import { DialogPortalContext } from '../ui/Dialog';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
-import type { ChatWrapUpAction } from './ChatContext';
+import type { ChatWrapUpAction, ChatWrapUpPending } from './ChatContext';
 import { useChatCopy } from './copy';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
-import { RECOMMENDED_WRAP_UP_DECISIONS, WrapUpDecisionsProvider, type WrapUpDecisions } from './wrap-up/wrap-up-decisions';
+import { coalesceTranscript } from './model/build-chat-model';
+import { wrapUpCards } from './model/wrap-up-cards';
 import {
-  applyWrapUpAction, cartStory, formatStory, inSession, LONG_FOLDER, longWordsStory, waitingStory, WRAP_ROOT, WRAP_T0,
+  applyWrapUpAction, cartStory, formatStory, inSession, LONG_FOLDER, longWordsStory, pendingFor, startedTask, waitingStory, WRAP_ROOT, WRAP_T0,
   type WrapLanguage, type WrapProvider, type WrapUpFixture,
 } from './wrap-up/wrap-up-fixtures';
 import '../index.css';
@@ -43,8 +43,8 @@ import '../shell/shell.css';
  * waits as ghost text in the empty message box (a chip on the phone) and Tab fills it without sending; a turn nobody
  * watched (or one that stopped for the person) gets a recap card; work the AI noticed outside its task comes back as a
  * suggested-task card whose tasks start a sub-conversation, go to this conversation or are dismissed — only when the
- * person presses a button. Everything here is the production renderer fed by fixtures; the host is simulated by
- * `applyWrapUpAction`. The suggestions, recaps and tasks are what Claude and Codex wrote in the 2026-10-30 probes.
+ * person presses a button. Everything here is the production renderer fed by the rows a host writes; the host itself is
+ * simulated by `applyWrapUpAction`. The suggestions, recaps and tasks are what Claude and Codex wrote in the 2026-10-30 probes.
  */
 
 interface Args {
@@ -106,15 +106,18 @@ const SETTLING: ReadonlySet<ChatWrapUpAction['kind']> = new Set(['task-start', '
 interface StoryHost {
   readonly state: WrapUpFixture;
   readonly onAction: (action: ChatWrapUpAction) => void;
-  /** The task whose start form is open (바꿔서 시작…, or every start under D5 b). */
+  /** What a start has in flight until the host settles it. */
+  readonly pending: ChatWrapUpPending;
+  /** The task whose start form is open (바꿔서 시작…, or a task the AI recommends a worktree for). */
   readonly custom?: { readonly turnId: string; readonly taskId: string };
   readonly closeCustom: () => void;
   /** The start form started it: the task shows it started. */
-  readonly startedViaForm: (taskId: string, branch?: string) => void;
+  readonly startedViaForm: (turnId: string, taskId: string, branch?: string) => void;
 }
 
 function useStoryHost(fixture: WrapUpFixture, report: (action: ChatWrapUpAction) => void): StoryHost {
   const [state, setState] = useState(fixture);
+  const [pending, setPending] = useState<ChatWrapUpPending>(() => new Map());
   const [custom, setCustom] = useState<StoryHost['custom']>();
   const timers = useRef<number[]>([]);
   useEffect(() => () => { timers.current.forEach((timer) => window.clearTimeout(timer)); }, []);
@@ -122,19 +125,20 @@ function useStoryHost(fixture: WrapUpFixture, report: (action: ChatWrapUpAction)
     report(action);
     if (action.kind === 'task-start-custom') { setCustom({ turnId: action.turnId, taskId: action.taskId }); return; }
     setState((current) => applyWrapUpAction(current, action, false));
+    const flying = pendingFor(action);
+    setPending((current) => new Map([...current, ...flying]));
     // A start or a recap takes the host a moment; then it says what happened.
-    if (SETTLING.has(action.kind)) timers.current.push(window.setTimeout(() => setState((current) => applyWrapUpAction(current, action, true)), 900));
+    if (SETTLING.has(action.kind)) {
+      timers.current.push(window.setTimeout(() => {
+        setState((current) => applyWrapUpAction(current, action, true));
+        setPending((current) => new Map([...current].filter(([taskId]) => !flying.has(taskId))));
+      }, 900));
+    }
   }, [report]);
-  const startedViaForm = useCallback((taskId: string, branch?: string) => {
-    setState((current) => ({
-      ...current,
-      tasks: (current.tasks ?? []).map((card) => ({
-        ...card,
-        tasks: card.tasks.map((task) => (task.id === taskId ? { ...task, outcome: { kind: 'started' as const, sessionId: `child-${taskId}`, ...(branch ? { branch } : {}) } } : task)),
-      })),
-    }));
+  const startedViaForm = useCallback((turnId: string, taskId: string, branch?: string) => {
+    setState((current) => startedTask(current, turnId, taskId, branch));
   }, []);
-  return { state, onAction, ...(custom ? { custom } : {}), closeCustom: () => setCustom(undefined), startedViaForm };
+  return { state, onAction, pending, ...(custom ? { custom } : {}), closeCustom: () => setCustom(undefined), startedViaForm };
 }
 
 /** What 바꿔서 시작… opens: the existing start form (맡기기), filled in from the task. */
@@ -144,7 +148,7 @@ const TASK_PROFILES: readonly ChatAgentProfile[] = [
 ];
 
 function TaskStartForm({ host, args }: { readonly host: StoryHost; readonly args: Args }): JSX.Element {
-  const tasks = (host.state.tasks ?? []).flatMap((card) => card.tasks);
+  const tasks = [...wrapUpCards(coalesceTranscript(host.state.items), host.state.turns).tasks.values()].flatMap((card) => card.tasks);
   const index = host.custom ? tasks.findIndex((task) => task.id === host.custom!.taskId) : -1;
   const task = index >= 0 ? tasks[index] : undefined;
   // A failed start comes back as it was asked for; otherwise the AI's recommendation fills the form.
@@ -160,7 +164,7 @@ function TaskStartForm({ host, args }: { readonly host: StoryHost; readonly args
       {...(failed ? { initialAgent: { ...failed.agent, label: failed.settings } } : {})}
       onSubmit={async (request) => {
         args.onDelegate(request);
-        if (task) host.startedViaForm(task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
+        if (task && host.custom) host.startedViaForm(host.custom.turnId, task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
         return { ok: true };
       }} />
   );
@@ -193,12 +197,7 @@ function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, 
     onSend: args.onSend, onInterruptAndSend: fn(async () => ({ ok: true as const })),
     onChangeSettings: args.onChangeSettings, onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
-    wrapUp: {
-      ...(state.suggestion ? { suggestion: state.suggestion } : {}),
-      ...(state.recaps ? { recaps: state.recaps } : {}),
-      ...(state.tasks ? { tasks: state.tasks } : {}),
-      onAction: host.onAction,
-    },
+    wrapUp: { ...(state.suggestion ? { suggestion: state.suggestion } : {}), onAction: host.onAction, pending: host.pending, recapRetry: true },
   };
 }
 
@@ -208,10 +207,9 @@ interface ChatOptions {
   readonly permissionPreset?: StructuredAgentSessionPanelProps['permissionPreset'];
   readonly width?: number;
   readonly height?: number;
-  readonly decisions?: Partial<WrapUpDecisions>;
 }
 
-function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, decisions, permissionPreset }: ChatOptions & {
+function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, permissionPreset }: ChatOptions & {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -222,12 +220,10 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   const [fixture] = useState(() => inSession(make(locale), sessionId));
   const host = useStoryHost(fixture, args.onWrapUpAction);
   return (
-    <WrapUpDecisionsProvider value={{ ...RECOMMENDED_WRAP_UP_DECISIONS, ...decisions }}>
-      <Desk width={width} height={height}>
-        <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args)} skin={skin} {...(permissionPreset ? { permissionPreset } : {})} />
-        <TaskStartForm host={host} args={args} />
-      </Desk>
-    </WrapUpDecisionsProvider>
+    <Desk width={width} height={height}>
+      <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args)} skin={skin} {...(permissionPreset ? { permissionPreset } : {})} />
+      <TaskStartForm host={host} args={args} />
+    </Desk>
   );
 }
 
@@ -414,18 +410,6 @@ export const SuggestionWhileWorking: Story = {
     await expect(within(canvasElement).queryByTestId('structured-agent-suggestion')).toBeNull();
   },
 };
-/** D2 option B: Tab, or → at the end of the empty box, fills it (the key hint shows both). */
-export const SuggestionTabOrArrow: Story = {
-  ...chat('tab-arrow', 'format', (lang) => formatStory(lang, 'claude', { recap: false }), { decisions: { acceptKeys: 'tab-arrow' } }),
-  play: async ({ canvasElement }) => {
-    const input = await composer(canvasElement);
-    await expect(await findIn(canvasElement, '.chat-composer__ghost-keys')).toHaveTextContent('Tab→채우기');
-    await expect(input).toHaveAccessibleDescription('제안: 괄호 표시로 바꿔 주세요, 0원은 $0.00으로요 · Tab 또는 →로 채우기');
-    input.focus();
-    await userEvent.keyboard('{ArrowRight}');
-    await expect(input).toHaveValue('괄호 표시로 바꿔 주세요, 0원은 $0.00으로요');
-  },
-};
 /** A narrow conversation (520 px): the longer Codex guess shortens; the key stays at the end. */
 export const SuggestionNarrow: Story = {
   ...chat('narrow-suggestion', 'format', (lang) => formatStory(lang, 'codex', { recap: false }), { provider: 'codex', width: 520, height: 860 }),
@@ -469,7 +453,7 @@ export const RecapAnswered: Story = {
     await expect(within(card).queryByRole('button', { name: '답하러 가기' })).toBeNull();
   },
 };
-/** D4 option b: it could not be written — one small line, the host's reason in short, and 다시 만들기. */
+/** D4: it could not be written — one small line, the host's reason in short, and 다시 만들기. */
 export const RecapFailedLine: Story = {
   ...chat('recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false, failure: 'usage-limit' })),
   play: async ({ canvasElement }) => {
@@ -489,24 +473,6 @@ export const RecapRetry: Story = {
     await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-recap-line"]')).toHaveTextContent('요약 만드는 중'));
     await findIn(canvasElement, '[data-testid="chat-recap-card"]');
   },
-};
-/** D4 option a: it could not be written — nothing at all (the turn reads as it did before this feature). */
-export const RecapFailedSilent: Story = {
-  ...chat('recap-silent', 'format', (lang) => formatStory(lang, 'claude', { recap: false, suggestion: false })),
-  play: async ({ canvasElement }) => {
-    await composer(canvasElement);
-    await expect(canvasElement.querySelector('[data-testid="chat-recap-card"], [data-testid="chat-recap-line"]')).toBeNull();
-  },
-};
-/** D3 option A: every recap says 자리를 비운 사이, also when it was written because the AI stopped for an answer. */
-export const RecapHeadingAway: Story = {
-  ...chat('heading-away', 'format', (lang) => waitingStory(lang), { decisions: { recapHeading: 'away' } }),
-  play: async ({ canvasElement }) => { await expect(await findIn(canvasElement, '[data-testid="chat-recap-card"]')).toHaveTextContent('자리를 비운 사이'); },
-};
-/** D3 option B: every recap says 이번 턴 요약 (true either way, says less). */
-export const RecapHeadingTurn: Story = {
-  ...chat('heading-turn', 'format', (lang) => waitingStory(lang), { decisions: { recapHeading: 'turn' } }),
-  play: async ({ canvasElement }) => { await expect(await findIn(canvasElement, '[data-testid="chat-recap-card"]')).toHaveTextContent('이번 턴 요약'); },
 };
 /** CLI skin: `⏺ 요약(Codex) 자리를 비운 사이`, the AI's lines as `⎿` lines. The `⏺` is neutral: a recap is not a success. */
 export const CliRecap: Story = {
@@ -738,7 +704,7 @@ export const TasksStartAll: Story = {
     await waitFor(() => expect(within(card).getAllByTestId('chat-task-outcome')).toHaveLength(4));
   },
 };
-/** D5 option a's way out: 바꿔서 시작… opens the existing start form (맡기기) filled from the task, in this folder. */
+/** D5's way out of one click: 바꿔서 시작… opens the existing start form (맡기기) filled from the task, in this folder. */
 export const TasksChangeAndStart: Story = {
   ...chat('tasks-change', 'cart', (lang) => cartStory(lang, 'claude')),
   play: async ({ canvasElement, args }) => {
@@ -750,15 +716,6 @@ export const TasksChangeAndStart: Story = {
     await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('In src/auth.ts, canAccess returns');
     await expect(dialog.getByTestId('delegate-agent-workspace')).toHaveValue('ws-cart');
     await expect(dialog.queryByTestId('delegate-agent-branch')).toBeNull();
-  },
-};
-/** D5 option b: every start opens the form (no defaults line, no one-click start). */
-export const TasksStartViaForm: Story = {
-  ...chat('tasks-via-form', 'cart', (lang) => cartStory(lang, 'claude'), { decisions: { taskStart: 'dialog' } }),
-  play: async ({ canvasElement }) => {
-    const card = await showCard(canvasElement);
-    await expect(within(card).queryByTestId('chat-task-defaults')).toBeNull();
-    await expect(within(card).getAllByRole('button', { name: /^새 하위 대화로 시작…: /u })).toHaveLength(3);
   },
 };
 /** D7: at most 8 per turn — the rest are left out and the card says how many. */
@@ -925,28 +882,24 @@ function wrapUpAccess(settings: TurnWrapUpSettings, paused: readonly TurnWrapUpP
   let current = settings;
   return { load: async () => ({ settings: current, paused }), save: async (next) => { current = next; return current; } };
 }
-function settingsCapabilities(locale: WrapLanguage, access?: TurnWrapUpAccess): CapabilityAccess {
+function settingsCapabilities(locale: WrapLanguage, access: TurnWrapUpAccess): CapabilityAccess {
   const base = storyCapabilities(locale);
-  return { ...base, daemon: { ...base.daemon, getSnapshot: async () => shellSnapshot() }, ...(access ? { turnWrapUp: access } : {}) };
+  return { ...base, daemon: { ...base.daemon, getSnapshot: async () => shellSnapshot() }, turnWrapUp: access };
 }
 
-function SettingsScreen({ settings = SETTINGS_ON, paused = [], placement = 'section' }: {
+function SettingsScreen({ settings = SETTINGS_ON, paused = [] }: {
   readonly settings?: TurnWrapUpSettings;
   readonly paused?: readonly TurnWrapUpPause[];
-  /** D9: its own section on the page (A), or inside the AI 대화 group (B, drawn for comparison). */
-  readonly placement?: 'section' | 'ai-chat';
 }): JSX.Element {
   const locale = useContext(StoryLocale);
   const access = useMemo(() => wrapUpAccess(settings, paused), [settings, paused]);
-  const capabilities = useMemo(() => settingsCapabilities(locale, placement === 'section' ? access : undefined), [access, locale, placement]);
+  const capabilities = useMemo(() => settingsCapabilities(locale, access), [access, locale]);
   return (
     <Desk>
       <DesktopUiPreferencesProvider capabilities={capabilities}>
         <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
           <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={440} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
-            {placement === 'section'
-              ? <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
-              : <AiChatGroup access={access} />}
+            <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
           </SidebarShell>
           <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
             <AwayChat paused={paused.length > 0} />
@@ -954,16 +907,6 @@ function SettingsScreen({ settings = SETTINGS_ON, paused = [], placement = 'sect
         </div>
       </DesktopUiPreferencesProvider>
     </Desk>
-  );
-}
-/** D9 option B, drawn for comparison: the same section inside the AI 대화 group (closed by default in the app). */
-function AiChatGroup({ access }: { readonly access: TurnWrapUpAccess }): JSX.Element {
-  const { t } = useAppTranslation();
-  return (
-    <details className="status-section" open>
-      <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
-      <TurnWrapUpSection access={access} />
-    </details>
   );
 }
 /** The conversation beside Settings; while the automatic calls are paused it has no guess and no recap, and its usage says why. */
@@ -982,7 +925,7 @@ async function showSettings(canvasElement: HTMLElement, at = '[data-testid="turn
   target.scrollIntoView({ block: at === '[data-testid="turn-wrap-up-settings"]' ? 'start' : 'center' });
   return section;
 }
-/** D9 option A (and D1 on): its own section on Settings › 에이전트, after 에이전트 협업. Every switch says what it costs. */
+/** D9 (and D1 on): its own section on Settings › 에이전트, after 에이전트 협업. Every switch says what it costs. */
 export const SettingsTurnWrapUp: Story = {
   render: () => <SettingsScreen />,
   play: async ({ canvasElement }) => {
@@ -998,7 +941,7 @@ export const SettingsTurnWrapUp: Story = {
     await userEvent.click(within(section).getByRole('switch', { name: /요약 카드/u }));
   },
 };
-/** D1 option: Codex suggestions start off (one more call per turn, half of them empty). */
+/** The person turned Codex's suggestions off (one more call per turn, half of them empty). */
 export const SettingsCodexOff: Story = {
   render: () => <SettingsScreen settings={{ ...SETTINGS_ON, suggestions: { claude: true, codex: false } }} />,
   play: async ({ canvasElement }) => {
@@ -1013,11 +956,6 @@ export const SettingsPaused: Story = {
     const section = await showSettings(canvasElement, '[data-testid="turn-wrap-up-paused"]');
     await expect(within(section).getByTestId('turn-wrap-up-paused')).toHaveTextContent('지금 Claude 5시간 사용량 92% — 자동 호출을 멈췄습니다');
   },
-};
-/** D9 option B: inside the AI 대화 group. */
-export const SettingsInAiChat: Story = {
-  render: () => <SettingsScreen placement="ai-chat" />,
-  play: async ({ canvasElement }) => { await showSettings(canvasElement); },
 };
 /** English. */
 export const SettingsEnglish: Story = {

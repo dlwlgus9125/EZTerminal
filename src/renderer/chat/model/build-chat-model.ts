@@ -4,25 +4,17 @@ import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
-import type { TurnRecap, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
   PendingInteraction, TodoChange,
 } from './types';
+import { wrapUpCards } from './wrap-up-cards';
 
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
-  /**
-   * Turn wrap-up (시안): the cards to show after their turn's last message (and its change card). A card whose turn
-   * is not among the loaded rows is not shown, like a review whose rows are not loaded.
-   */
-  readonly wrapUp?: {
-    readonly recaps?: readonly TurnRecap[];
-    readonly tasks?: readonly TurnTaskSuggestions[];
-  };
 }
 
 /** The proposal-only MCP tool (`suggest_task` for Codex, `mcp__<server>__suggest_task` for Claude). */
@@ -363,10 +355,11 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
-  const taskCards = new Map((wrapUp?.tasks ?? []).map((suggestions) => [suggestions.turnId, suggestions]));
-  const recapCards = new Map((wrapUp?.recaps ?? []).map((recap) => [recap.turnId, recap]));
+  // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
+  // the loaded rows is not shown, like a review whose rows are not loaded.
+  const { tasks: taskCards, recaps: recapCards } = wrapUpCards(coalesced, turns);
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const rows: ChatRow[] = [];
   const toolsByCallId = new Map<string, MutableTool>();
@@ -589,6 +582,8 @@ export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: Bu
           recordTodo(item, [...payload.items]);
           break;
         }
+        // Turn wrap-up's rows are read ahead into their turn's cards. Not pushed, like a review's: the run of tool lines goes on.
+        if (payload?.type === 'recap' || payload?.type === 'task-suggestion' || payload?.type === 'task-suggestion-status' || payload?.type === 'task-suggestions-dropped') break;
         // A review keeps the place of its first row; each later row replaces what the card shows.
         // Replaced in place, not pushed: the card does not end the run of tool lines around it.
         if (payload?.type === 'review') {
@@ -674,6 +669,8 @@ export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: Bu
   // (where the work is happening); a finished turn's status heads them.
   const finalRows: ChatRow[] = [];
   const liveStatus = new Map<string, ChatRow>();
+  // A row of no turn (a child's summary) or a queued message splits a turn's rows: its cards wait for the last of them.
+  const lastRowOfTurn = new Map(rows.flatMap((row, index) => (row.turnId ? [[row.turnId, index] as const] : [])));
   const awaitingCallIds = new Set(approvals.flatMap((approval) => (approval.state === 'pending' && approval.request?.callId ? [approval.request.callId] : [])));
   for (let index = 0; index < rows.length; index += 1) {
     let row = rows[index];
@@ -700,17 +697,15 @@ export function buildChatModel({ items, approvals = [], turns = [], wrapUp }: Bu
         finalRows.push({ kind: 'changes', id: `changes:${row.turnId}`, turnId: row.turnId, createdAt: row.createdAt, files: mergeFiles(entry.files), changes: entry.changes });
       }
       // Turn wrap-up: the suggested tasks, then the recap the person reads first when they come back.
-      const suggestions = taskCards.get(row.turnId);
-      if (suggestions) {
-        taskCards.delete(row.turnId);
-        finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
-      }
-      const recap = recapCards.get(row.turnId);
-      if (recap) {
-        recapCards.delete(row.turnId);
-        // What it stopped for may have been answered since, and a later turn's approval is not this one.
-        const waitingNow = recap.decisionId !== undefined && approvals.some((approval) => approval.id === recap.decisionId && approval.state === 'pending');
-        finalRows.push({ kind: 'recap', id: `recap:${row.turnId}`, turnId: row.turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) });
+      if (lastRowOfTurn.get(row.turnId) === index) {
+        const suggestions = taskCards.get(row.turnId);
+        if (suggestions) finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
+        const recap = recapCards.get(row.turnId);
+        if (recap) {
+          // What it stopped for may have been answered since, and a later turn's approval is not this one.
+          const waitingNow = recap.decisionId !== undefined && approvals.some((approval) => approval.id === recap.decisionId && approval.state === 'pending');
+          finalRows.push({ kind: 'recap', id: `recap:${row.turnId}`, turnId: row.turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) });
+        }
       }
       const status = liveStatus.get(row.turnId);
       if (status) {

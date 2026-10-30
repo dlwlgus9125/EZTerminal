@@ -248,7 +248,6 @@ const EN = {
     label: 'Suggestion',
     fill: 'to fill',
     describe: (text: string): string => `Suggestion: ${text} · Press Tab to fill`,
-    describeArrow: (text: string): string => `Suggestion: ${text} · Press Tab or → to fill`,
     fillChip: (text: string): string => `Put in the message box: ${text}`,
     dismiss: 'Dismiss the suggestion',
     filled: 'Suggestion filled in. Edit it or press Enter to send.',
@@ -259,7 +258,7 @@ const EN = {
   recap: {
     card: 'Recap',
     cliName: 'Recap',
-    heading: { away: 'While you were away', turn: 'This turn in short', waiting: 'Stopped for your answer', answered: 'It stopped to ask' },
+    heading: { away: 'While you were away', waiting: 'Stopped for your answer', answered: 'It stopped to ask' },
     wroteBy: (provider: string): string => `Written by ${provider}`,
     generating: 'Writing a recap…',
     generatingBy: (provider: string): string => `${provider} is writing a recap…`,
@@ -585,7 +584,6 @@ const KO: typeof EN = {
     label: '제안',
     fill: '채우기',
     describe: (text: string): string => `제안: ${text} · Tab으로 채우기`,
-    describeArrow: (text: string): string => `제안: ${text} · Tab 또는 →로 채우기`,
     fillChip: (text: string): string => `입력창에 채우기: ${text}`,
     dismiss: '제안 닫기',
     filled: '제안을 채웠습니다. 고치거나 Enter로 보내세요.',
@@ -594,7 +592,7 @@ const KO: typeof EN = {
   recap: {
     card: '요약',
     cliName: '요약',
-    heading: { away: '자리를 비운 사이', turn: '이번 턴 요약', waiting: '멈추고 답을 기다림', answered: '답을 기다렸던 턴' },
+    heading: { away: '자리를 비운 사이', waiting: '멈추고 답을 기다림', answered: '답을 기다렸던 턴' },
     wroteBy: (provider: string): string => `${provider}가 정리`,
     generating: '요약 만드는 중…',
     generatingBy: (provider: string): string => `${provider}가 요약 만드는 중…`,

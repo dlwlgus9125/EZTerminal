@@ -5,7 +5,7 @@ import type { ChatCopy } from '../copy';
 import './wrap-up.css';
 
 /**
- * How the turn wrap-up reads in both skins (시안). What the AI wrote is shown as its own words, plain text with
+ * How the turn wrap-up reads in both skins. What the AI wrote is shown as its own words, plain text with
  * `code` kept as code (no markdown, links or media from a recap or a task); what the app says is app text.
  */
 

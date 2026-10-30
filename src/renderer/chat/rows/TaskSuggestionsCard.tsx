@@ -5,12 +5,11 @@ import {
 } from '../../../shared/turn-wrap-up';
 import { Button } from '../../ui/Button';
 import { Glyph, type GlyphName } from '../../ui/Glyph';
-import { useChatContext, type ChatWrapUpAction } from '../ChatContext';
+import { useChatContext, type ChatWrapUpAction, type ChatWrapUpPending } from '../ChatContext';
 import { formatClock, useChatCopy, type ChatCopy } from '../copy';
 import type { ChatRow } from '../model/types';
 import { focusAfterAction, providerName, useClearing } from '../review/review-presentation';
 import { TaskStartAllDialog } from '../wrap-up/TaskStartAllDialog';
-import { useWrapUpDecisions } from '../wrap-up/wrap-up-decisions';
 import { InlineCode, outcomeText, taskCountText } from '../wrap-up/wrap-up-presentation';
 import { ActionCard, type ActionCardAction } from './ActionCard';
 
@@ -46,6 +45,12 @@ function useOutcomeAnnouncement(tasks: readonly SuggestedTaskState[], copy: Chat
   return useClearing(announcement, setAnnouncement);
 }
 
+/** A command in flight shows on a task still open or failed; what the host confirmed wins over it. */
+function withPending(task: SuggestedTaskState, pending: ChatWrapUpPending | undefined): SuggestedTaskState {
+  const kind = pending?.get(task.id);
+  return kind && (task.outcome.kind === 'open' || task.outcome.kind === 'start-failed') ? { ...task, outcome: { kind } } : task;
+}
+
 /** Only the desktop creates worktrees: the phone says so where a task wants one (recommended, or a failed start in one). */
 function wantsDesktop(task: SuggestedTaskState, phone: boolean): boolean {
   return phone && (task.worktree === true || (task.outcome.kind === 'start-failed' && task.outcome.start.where.kind === 'new-worktree'));
@@ -65,12 +70,11 @@ interface TaskProps {
 function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'index'> & { readonly titleRef: RefObject<HTMLElement> }): JSX.Element | null {
   const copy = useChatCopy();
   const context = useChatContext();
-  const decisions = useWrapUpDecisions();
   const onAction = context.onWrapUpAction;
   const phone = context.taskStart?.phone === true;
   // D5, and the AI's own advice: a task it recommends a worktree for is not one click into this folder. The phone has no
   // start form, so it always starts with the defaults (and says the desktop can pick a worktree).
-  const viaForm = !phone && (decisions.taskStart === 'dialog' || task.worktree === true);
+  const viaForm = !phone && task.worktree === true;
   const act = (kind: PlainTaskAction) => (): void => {
     onAction?.({ kind, turnId: suggestions.turnId, taskId: task.id });
     // The start form takes focus and hands it back to this button; once the task started, to its title (data-focus-fallback).
@@ -221,15 +225,14 @@ function CliTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.Elem
 }
 
 /**
- * The tasks one turn suggested (시안): one card after its last message, the AI's `suggest_task` calls folded in. The AI
- * only proposes; a sub-conversation starts, or the instruction is sent here, only when the person presses a button,
- * and each task says what came of it as the host confirms it.
+ * The tasks one turn suggested: one card after its last message, the AI's `suggest_task` calls folded in. The AI only
+ * proposes; a sub-conversation starts, or the instruction is sent here, only when the person presses a button, and each
+ * task says what came of it as the host confirms it.
  */
 export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggestions'> }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
-  const decisions = useWrapUpDecisions();
-  const { suggestions } = row;
+  const suggestions: TurnTaskSuggestions = { ...row.suggestions, tasks: row.suggestions.tasks.map((task) => withPending(task, context.wrapUpPending)) };
   const provider = providerName(suggestions.providerId);
   const cli = context.skin === 'cli';
   const phone = context.taskStart?.phone === true;
@@ -239,10 +242,9 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
   const [confirmOpen, setConfirmOpen] = useState(false);
   const openTasks = suggestions.tasks.filter((task) => task.outcome.kind === 'open');
   const settings = context.taskStart?.settings;
-  // D5: the line says exactly what one click starts; with the form (b) the form says it instead.
-  const defaults = settings && (decisions.taskStart === 'one-click' || phone)
-    ? copy.taskSuggestions.defaults(`${settings} · ${copy.taskSuggestions.thisFolder(folder)}`) : undefined;
   const onAction = context.onWrapUpAction;
+  // D5: the line says exactly what one click starts.
+  const defaults = settings && onAction ? copy.taskSuggestions.defaults(`${settings} · ${copy.taskSuggestions.thisFolder(folder)}`) : undefined;
   const actions: ActionCardAction[] = onAction && settings && openTasks.length > 1
     ? [{ id: 'start-all', label: copy.taskSuggestions.startAll(openTasks.length), onSelect: () => setConfirmOpen(true), testId: 'chat-task-start-all' }] : [];
   const count = taskCountText(suggestions.tasks, copy);

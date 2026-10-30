@@ -1,10 +1,9 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider, type ChatReviewAction, type ChatWrapUpAction } from './chat/ChatContext';
+import { ChatProvider, type ChatReviewAction, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest, type ReviewStartTarget } from './chat/review/ReviewStartMenu';
-import { useWrapUpDecisions } from './chat/wrap-up/wrap-up-decisions';
-import type { NextPromptSuggestion, TurnRecap, TurnTaskSuggestions } from '../shared/turn-wrap-up';
+import type { NextPromptSuggestion } from '../shared/turn-wrap-up';
 import { latestReviewPayload } from './review-commands';
 import { chatCopy, useChatLocale } from './chat/copy';
 import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
@@ -968,10 +967,11 @@ export interface StructuredAgentTranscriptProps {
   readonly approvalSession?: boolean;
   /** Review card actions (fix, dismiss, walkthrough…); absent: the cards are read-only. */
   readonly onReviewAction?: (action: ChatReviewAction) => void;
-  /** Turn wrap-up (시안): the recap and suggested-task cards, what the person does on them, and what a task starts with. */
+  /** Turn wrap-up: what the person does on the cards, what is in flight, and what a task starts with. */
   readonly wrapUp?: {
-    readonly cards?: { readonly recaps?: readonly TurnRecap[]; readonly tasks?: readonly TurnTaskSuggestions[] };
     readonly onAction?: (action: ChatWrapUpAction) => void;
+    readonly pending?: ChatWrapUpPending;
+    readonly recapRetry?: boolean;
     readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean };
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
@@ -1022,10 +1022,9 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
-  const wrapUpCards = wrapUp?.cards;
   const built = useMemo(
-    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(wrapUpCards ? { wrapUp: wrapUpCards } : {}) }),
-    [items, approvals, turns, wrapUpCards],
+    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }),
+    [items, approvals, turns],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -1064,6 +1063,8 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(results ? { onOpenResults: openResults, resolveFileLink } : onReviewChanges ? { onReviewChanges } : {})}
       {...(onReviewAction ? { onReviewAction } : {})}
       {...(wrapUp?.onAction ? { onWrapUpAction: wrapUp.onAction } : {})}
+      {...(wrapUp?.pending ? { wrapUpPending: wrapUp.pending } : {})}
+      {...(wrapUp?.recapRetry ? { recapRetry: true } : {})}
       {...(wrapUp?.taskStart ? { taskStart: wrapUp.taskStart } : {})}
       {...(onFocusDecision ? { onFocusDecision } : {})}
     >
@@ -1251,7 +1252,7 @@ export interface StructuredAgentComposerProps {
     readonly blockedReason?: string;
   };
   /**
-   * Turn wrap-up (시안): the AI's guess of the next message, given only while it may show (the turn has ended and is
+   * Turn wrap-up: the AI's guess of the next message, given only while it may show (the turn has ended and is
    * the newest, plan mode is off). It shows while the box is empty: ghost text with its key on the desktop, a chip
    * above the box on the phone. Tab (or the chip) fills the box without sending; typing or Esc sets it aside until
    * the next turn's. `id` names the turn it follows.
@@ -1318,7 +1319,6 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const [openQueued, setOpenQueued] = useState<ReadonlySet<string>>(() => new Set());
   const reviewCopy = chatCopy(ko ? 'ko' : 'en').aiReview;
   const nextCopy = chatCopy(ko ? 'ko' : 'en').nextPrompt;
-  const { acceptKeys } = useWrapUpDecisions();
   /** The suggestion the person typed past, filled in or dismissed: it stays away until the next turn's. */
   const [setAside, setSetAside] = useState<string>();
   const composerId = useId();
@@ -1495,7 +1495,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       return;
     }
     const plainKey = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
-    if (ghost && plainKey && (event.key === 'Tab' || (acceptKeys === 'tab-arrow' && event.key === 'ArrowRight'))) {
+    if (ghost && plainKey && event.key === 'Tab') {
       // Fills the box, never sends: Enter sends as always.
       event.preventDefault();
       fillSuggestion();
@@ -1728,13 +1728,13 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           {ghost && suggestion && (
             <span className="chat-composer__ghost" aria-hidden="true" data-testid="structured-agent-suggestion">
               <span className="chat-composer__ghost-text">{suggestion.text}</span>
-              <span className="chat-composer__ghost-keys"><kbd>Tab</kbd>{acceptKeys === 'tab-arrow' && <kbd>→</kbd>}<span>{nextCopy.fill}</span></span>
+              <span className="chat-composer__ghost-keys"><kbd>Tab</kbd><span>{nextCopy.fill}</span></span>
             </span>
           )}
         </Field>
         {ghost && suggestion && (
           <span id={suggestionId} className="ez-ui-visually-hidden">
-            {acceptKeys === 'tab-arrow' ? nextCopy.describeArrow(suggestion.text) : nextCopy.describe(suggestion.text)}
+            {nextCopy.describe(suggestion.text)}
           </span>
         )}
         </div>
@@ -1985,15 +1985,15 @@ export interface StructuredAgentSessionPanelProps {
    */
   readonly onReviewAction?: (action: ChatReviewAction) => Promise<StructuredAgentUiResult> | void;
   /**
-   * Turn wrap-up (시안 2026-10-30): the AI's guess of the next message for the empty message box, the recap and
-   * suggested-task cards after their turn's last message, and what the person does with them. No host fills this
-   * yet: the stories pass fixtures and every action is a callback.
+   * Turn wrap-up: the AI's guess of the next message for the empty message box, what the person does on a recap or
+   * suggested-task card, and what a command has in flight. The cards themselves come from the transcript's rows.
+   * `recapRetry`: a failed recap can be written again now.
    */
   readonly wrapUp?: {
     readonly suggestion?: NextPromptSuggestion;
-    readonly recaps?: readonly TurnRecap[];
-    readonly tasks?: readonly TurnTaskSuggestions[];
     readonly onAction?: (action: ChatWrapUpAction) => void;
+    readonly pending?: ChatWrapUpPending;
+    readonly recapRetry?: boolean;
   };
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
@@ -2539,13 +2539,13 @@ export function StructuredAgentSessionPanel({
   }, [canInsertDraft, canSendComments, historyOnly, hostReviews, results, startAvailable]);
   useEffect(() => (results ? () => publishResultsSession(results.ownerPanelId, undefined) : undefined), [results]);
   /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
-  const focusDecision = (): boolean => {
+  const focusDecision = useCallback((): boolean => {
     const target = panelRef.current?.querySelector<HTMLElement>(
       '.chat-dock:not(.chat-dock--collapsed) [data-dock-primary]:not(:disabled), .chat-dock:not(.chat-dock--collapsed) .chat-dock__option, .chat-dock--collapsed button',
     );
     target?.focus();
     return Boolean(target);
-  };
+  }, []);
   /**
    * Stop the turn the way Claude Code and Codex do: queued messages are handed
    * back to the message box (taken off the queue first) instead of being dropped.
@@ -2601,7 +2601,7 @@ export function StructuredAgentSessionPanel({
     permissionPreset: selectedPermission,
     ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
   };
-  // Turn wrap-up (시안). A suggested task starts a sub-conversation of this AI with its model and effort, asking before
+  // Turn wrap-up. A suggested task starts a sub-conversation of this AI with its model and effort, asking before
   // it runs (승인 후 실행) whatever this conversation's access is: the instruction was the AI's, not the person's.
   const taskValues: ConversationSettingsValues = {
     ...(selectedModel ? { model: selectedModel } : {}),
@@ -2610,15 +2610,16 @@ export function StructuredAgentSessionPanel({
   };
   const taskSettings = `${providerName} · ${settingsText(taskValues, true)}`;
   const taskStart = useMemo(() => ({ settings: taskSettings, folder: workspace.label, phone: variant === 'mobile' }), [taskSettings, variant, workspace.label]);
-  const wrapUpRecaps = wrapUp?.recaps;
-  const wrapUpTasks = wrapUp?.tasks;
   const onWrapUpAction = wrapUp?.onAction;
+  const wrapUpPending = wrapUp?.pending;
+  const recapRetry = wrapUp?.recapRetry === true;
   const wrapUpActive = !historyOnly && !providerOwned;
-  const transcriptWrapUp = useMemo(() => (wrapUpRecaps || wrapUpTasks ? {
-    cards: { ...(wrapUpRecaps ? { recaps: wrapUpRecaps } : {}), ...(wrapUpTasks ? { tasks: wrapUpTasks } : {}) },
+  const transcriptWrapUp = useMemo(() => ({
     ...(onWrapUpAction && wrapUpActive ? { onAction: onWrapUpAction } : {}),
+    ...(wrapUpPending ? { pending: wrapUpPending } : {}),
+    ...(recapRetry ? { recapRetry } : {}),
     taskStart,
-  } : undefined), [onWrapUpAction, taskStart, wrapUpActive, wrapUpRecaps, wrapUpTasks]);
+  }), [onWrapUpAction, recapRetry, taskStart, wrapUpActive, wrapUpPending]);
   // The suggestion follows the newest turn only once it is over: a newer turn without one leaves the box as it is.
   const newestTurnId = useMemo(() => (turns ?? []).reduce<DaemonTurn | undefined>(
     (latest, turn) => (!latest || turn.createdAt > latest.createdAt ? turn : latest), undefined)?.id, [turns]);
@@ -3032,7 +3033,8 @@ export function StructuredAgentSessionPanel({
           planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
         } : {})}
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
-        {...(transcriptWrapUp ? { wrapUp: transcriptWrapUp, onFocusDecision: focusDecision } : {})}
+        wrapUp={transcriptWrapUp}
+        onFocusDecision={focusDecision}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">

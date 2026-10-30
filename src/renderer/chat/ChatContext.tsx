@@ -29,9 +29,9 @@ export interface ChatReviewAction {
 }
 
 /**
- * Turn wrap-up (시안): what the person did on a suggested-task or recap card. Starting, sending and dismissing are the
- * host's; `task-start-custom` opens the start form (맡기기) on the task; `task-retry` repeats a failed start exactly as it
- * was asked for. A started task's sub-conversation opens through `onOpenRelated`, and a recap's 답하러 가기 through
+ * Turn wrap-up: what the person did on a suggested-task or recap card. Starting, sending and dismissing are the host's;
+ * `task-start-custom` opens the start form (맡기기) on the task; `task-retry` repeats a failed start exactly as it was
+ * asked for. A started task's sub-conversation opens through `onOpenRelated`, and a recap's 답하러 가기 through
  * `onFocusDecision`.
  */
 export type ChatWrapUpAction =
@@ -39,6 +39,9 @@ export type ChatWrapUpAction =
   | { readonly kind: 'task-retry'; readonly turnId: string; readonly taskId: string; readonly start: SuggestedTaskStart }
   | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
   | { readonly kind: 'recap-retry'; readonly turnId: string };
+
+/** Tasks a command is carrying right now, by id: the client's own, never stored, so a crash cannot strand a card. */
+export type ChatWrapUpPending = ReadonlyMap<string, 'starting' | 'sending'>;
 
 export interface ChatContextValue {
   readonly skin: ChatSkin;
@@ -58,8 +61,11 @@ export interface ChatContextValue {
   readonly resolveFileLink?: ResolveFileLink;
   /** Review card actions. Absent (history, a host without reviews): the card is read-only. */
   readonly onReviewAction?: (action: ChatReviewAction) => void;
-  /** Turn wrap-up card actions (시안). Absent: the cards are read-only. */
+  /** Turn wrap-up card actions. Absent: the cards are read-only. */
   readonly onWrapUpAction?: (action: ChatWrapUpAction) => void;
+  readonly wrapUpPending?: ChatWrapUpPending;
+  /** A failed recap can be written again now; absent, its line says why it failed and offers nothing that could only fail. */
+  readonly recapRetry?: boolean;
   /**
    * What 새 하위 대화로 시작 starts a sub-conversation with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`), and this
    * conversation's folder by name. On the phone it always starts there: only the desktop creates worktrees and has
@@ -83,7 +89,7 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({
   children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-  onReviewAction, onWrapUpAction, taskStart, onFocusDecision,
+  onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision,
 }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
@@ -104,10 +110,10 @@ export function ChatProvider({
   // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
   const context = useMemo<ChatContextValue>(() => ({
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   }), [
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }

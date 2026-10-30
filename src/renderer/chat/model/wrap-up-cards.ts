@@ -1,0 +1,105 @@
+import type { DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
+import { parseTranscriptPayload, type TaskSuggestionStatusPayload } from '../../../shared/transcript-payload';
+import {
+  suggestedTaskChildSessionId,
+  type SuggestedTask, type SuggestedTaskOutcome, type TurnRecap, type TurnTaskSuggestions,
+} from '../../../shared/turn-wrap-up';
+
+/**
+ * Turn wrap-up's cards, read from the host's rows as they stand: a turn's recap is its latest `recap` row, a task's
+ * outcome the latest of its status rows and the turn its 여기서 하기 sent. `starting` and `sending` are never here: they
+ * are the client's own, while a command is in flight.
+ */
+export interface WrapUpCards {
+  /** By the turn that suggested them. */
+  readonly tasks: ReadonlyMap<string, TurnTaskSuggestions>;
+  /** By the turn they sum up. */
+  readonly recaps: ReadonlyMap<string, TurnRecap>;
+}
+
+interface CardRows {
+  readonly turnId: string;
+  readonly providerId: string;
+  readonly tasks: Map<string, SuggestedTask>;
+  createdAt: string;
+  dropped?: number;
+}
+
+interface Dated<T> {
+  readonly sequence: number;
+  readonly value: T;
+}
+
+function statusOutcome(status: TaskSuggestionStatusPayload | undefined, taskId: string): SuggestedTaskOutcome {
+  switch (status?.outcome) {
+    case 'started':
+      return { kind: 'started', sessionId: status.sessionId ?? suggestedTaskChildSessionId(taskId), ...(status.branch ? { branch: status.branch } : {}) };
+    case 'dismissed':
+      return { kind: 'dismissed' };
+    case 'start-failed':
+      if (status.reason === undefined || !status.start) return { kind: 'open' };
+      return { kind: 'start-failed', reason: status.reason, start: status.start, ...(status.branchTaken ? { branchTaken: true } : {}) };
+    default:
+      return { kind: 'open' };
+  }
+}
+
+/** Its place among the conversation's queued turns, by the order the host runs them. */
+function queuePosition(turn: DaemonTurn, turns: readonly DaemonTurn[]): number {
+  const order = (entry: DaemonTurn): number => entry.enqueueSequence ?? entry.revision;
+  return turns.filter((entry) => entry.sessionId === turn.sessionId && entry.state === 'queued' && order(entry) <= order(turn)).length;
+}
+
+/** The latest of a task's status and its send; the host's rule: a send that failed or was taken back no longer stands. */
+function taskOutcome(
+  taskId: string,
+  status: Dated<TaskSuggestionStatusPayload> | undefined,
+  send: Dated<string> | undefined,
+  turnById: ReadonlyMap<string, DaemonTurn>,
+  turns: readonly DaemonTurn[],
+): SuggestedTaskOutcome {
+  const sendTurn = send ? turnById.get(send.value) : undefined;
+  const stands = sendTurn !== undefined && sendTurn.state !== 'failed' && sendTurn.state !== 'interrupted';
+  if (status?.value.outcome === 'started' || !stands || (status && status.sequence > send!.sequence)) return statusOutcome(status?.value, taskId);
+  return sendTurn.state === 'queued' ? { kind: 'queued', position: queuePosition(sendTurn, turns) } : { kind: 'sent' };
+}
+
+/** `ordered`: by sequence, as `coalesceTranscript` leaves them. A card with no task row (a dropped count alone) is no card. */
+export function wrapUpCards(ordered: readonly DaemonTranscriptItem[], turns: readonly DaemonTurn[]): WrapUpCards {
+  const cards = new Map<string, CardRows>();
+  const recaps = new Map<string, TurnRecap>();
+  const statuses = new Map<string, Dated<TaskSuggestionStatusPayload>>();
+  const sends = new Map<string, Dated<string>>();
+  const dropped = new Map<string, number>();
+  for (const item of ordered) {
+    const type = item.payload?.type;
+    if (type !== 'recap' && type !== 'task-suggestion' && type !== 'task-suggestion-status' && type !== 'task-suggestion-send' && type !== 'task-suggestions-dropped') continue;
+    const payload = parseTranscriptPayload(item.payload);
+    if (payload?.type === 'recap') {
+      recaps.set(payload.turnId, { ...payload, createdAt: item.createdAt });
+    } else if (payload?.type === 'task-suggestion') {
+      const card = cards.get(payload.turnId) ?? { turnId: payload.turnId, providerId: payload.providerId, tasks: new Map<string, SuggestedTask>(), createdAt: item.createdAt };
+      card.createdAt = item.createdAt;
+      card.tasks.set(payload.taskId, {
+        id: payload.taskId, title: payload.title, rationale: payload.rationale, prompt: payload.prompt, ...(payload.worktree !== undefined ? { worktree: payload.worktree } : {}),
+      });
+      cards.set(payload.turnId, card);
+    } else if (payload?.type === 'task-suggestion-status') {
+      statuses.set(payload.taskId, { sequence: item.sequence, value: payload });
+    } else if (payload?.type === 'task-suggestion-send' && item.kind === 'user-message' && item.turnId) {
+      sends.set(payload.taskId, { sequence: item.sequence, value: item.turnId });
+    } else if (payload?.type === 'task-suggestions-dropped') {
+      dropped.set(payload.turnId, payload.count);
+    }
+  }
+  const turnById = new Map(turns.map((turn) => [turn.id, turn]));
+  const tasks = new Map([...cards.values()].map((card): [string, TurnTaskSuggestions] => {
+    const count = dropped.get(card.turnId);
+    return [card.turnId, {
+      turnId: card.turnId, providerId: card.providerId, createdAt: card.createdAt,
+      tasks: [...card.tasks.values()].map((task) => ({ ...task, outcome: taskOutcome(task.id, statuses.get(task.id), sends.get(task.id), turnById, turns) })),
+      ...(count ? { dropped: count } : {}),
+    }];
+  }));
+  return { tasks, recaps };
+}

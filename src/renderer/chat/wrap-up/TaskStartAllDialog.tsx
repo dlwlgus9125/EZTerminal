@@ -21,7 +21,7 @@ function initialChoices(tasks: readonly SuggestedTaskState[], phone: boolean): C
 }
 
 /**
- * 모두 시작 (D6, 시안): what starts, how many and where, before anything runs. Each open task becomes a new
+ * 모두 시작 (D6): what starts, how many and where, before anything runs. Each open task becomes a new
  * sub-conversation with the settings line; on the desktop each works in this folder or in a new worktree on its own
  * `suggest/…` branch. The phone cannot create worktrees, so everything starts in this folder there.
  */

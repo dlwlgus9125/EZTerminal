@@ -1,18 +1,21 @@
 import type { ChatAgentSettings } from '../../../shared/chat-agent-profiles';
 import { encodeFileChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
+import type { RecapPayload, TaskSuggestionStatusPayload } from '../../../shared/transcript-payload';
 import {
-  suggestedTaskBranch,
-  type NextPromptSuggestion, type SuggestedTask, type SuggestedTaskOutcome, type SuggestedTaskStart, type SuggestedTaskState, type TurnRecap,
-  type TurnRecapFailure, type TurnTaskSuggestions,
+  suggestedTaskBranch, suggestedTaskChildSessionId,
+  type NextPromptSuggestion, type SuggestedTask, type SuggestedTaskStart, type TurnRecap, type TurnRecapFailure,
 } from '../../../shared/turn-wrap-up';
-import type { ChatWrapUpAction } from '../ChatContext';
+import type { ChatWrapUpAction, ChatWrapUpPending } from '../ChatContext';
+import { coalesceTranscript } from '../model/build-chat-model';
+import { wrapUpCards } from '../model/wrap-up-cards';
 
 /**
- * Turn wrap-up fixtures for the 시안 stories and the renderer tests, on the cart kit of the review loop. The next-prompt
- * suggestions, recaps and suggested tasks are what Claude and Codex wrote in the 2026-10-30 probes about that scratch
- * repository and its seeded bugs (artifacts/turn-wrap-up/probe-texts.json); the conversations around them are written
- * to match those probe turns. The cap story's last five tasks are 시안 data (`DRAFTED_TASKS`).
+ * Turn wrap-up fixtures for the stories and the renderer tests, on the cart kit of the review loop: transcript rows as
+ * the host writes them (recap, task-suggestion, status, send), so stories run through the same model as a conversation.
+ * The next-prompt suggestions, recaps and suggested tasks are what Claude and Codex wrote in the 2026-10-30 probes about
+ * that scratch repository and its seeded bugs (artifacts/turn-wrap-up/probe-texts.json); the conversations around them
+ * are written to match those probe turns. The cap story's last five tasks are 시안 data (`DRAFTED_TASKS`).
  */
 
 export const WRAP_ROOT = 'C:\\Working\\cart-kit';
@@ -174,8 +177,8 @@ function edit(sequence: number, turnId: string, path: string, patch: string): Da
   ];
 }
 
-/** One `suggest_task` call as each AI names the tool; the card folds these rows in. */
-function suggestCall(sequence: number, turnId: string, provider: WrapProvider, task: TaskDraft): DaemonTranscriptItem[] {
+/** One `suggest_task` call as each AI names the tool, and the row the host wrote for it; the card folds the call in. */
+function suggestCall(sequence: number, turnId: string, provider: WrapProvider, task: TaskDraft, taskId: string): DaemonTranscriptItem[] {
   const callId = `call-suggest-${String(sequence)}`;
   const name = provider === 'claude' ? 'mcp__ezterminal_orchestration__suggest_task' : 'suggest_task';
   const input = JSON.stringify({ title: task.title, rationale: task.rationale, prompt: task.prompt, ...(task.worktree !== undefined ? { worktree: task.worktree } : {}) });
@@ -183,10 +186,41 @@ function suggestCall(sequence: number, turnId: string, provider: WrapProvider, t
     item(sequence, 'tool-call', `${name}\n${input}`, {
       turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'call', status: 'running', target: 'ezterminal_orchestration / suggest_task', server: 'ezterminal_orchestration' },
     }),
-    item(sequence + 1, 'tool-result', 'Suggested. Nothing ran.', {
+    item(sequence + 1, 'notice', `Suggested task: ${task.title}`, {
+      turnId, isSensitive: true,
+      payload: { v: 1, type: 'task-suggestion', taskId, turnId, providerId: provider, title: task.title, rationale: task.rationale, prompt: task.prompt, ...(task.worktree !== undefined ? { worktree: task.worktree } : {}) },
+    }),
+    item(sequence + 2, 'tool-result', 'Suggested. Nothing ran.', {
       turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'result', status: 'completed', server: 'ezterminal_orchestration' },
     }),
   ];
+}
+
+const RECAP_FAILURE_ROW: Readonly<Record<TurnRecapFailure, string>> = {
+  'usage-limit': 'a usage limit is close',
+  disconnected: 'the conversation was not connected',
+  'no-response': 'the AI did not answer',
+};
+
+/** A `recap` row: its text reads on its own for clients without cards, and it carries the AI's words. */
+function recapRow(sequence: number, recap: Omit<RecapPayload, 'v' | 'type'>, createdAt: string, sessionId = WRAP_SESSION): DaemonTranscriptItem {
+  const text = recap.text ?? (recap.failure ? `No recap of this turn: ${RECAP_FAILURE_ROW[recap.failure]}.` : 'Writing a recap of this turn.');
+  return item(sequence, 'notice', text, { sessionId, turnId: recap.turnId, createdAt, isSensitive: true, payload: { v: 1, type: 'recap', ...recap } });
+}
+
+const TASK_STATUS_ROW: Readonly<Record<TaskSuggestionStatusPayload['outcome'], string>> = {
+  started: 'Suggested task started as a sub-conversation.',
+  dismissed: 'Suggested task dismissed.',
+  open: 'Suggested task reopened.',
+  'start-failed': 'Suggested task could not start.',
+};
+
+/** A `task-suggestion-status` row: what became of a task. A failed start repeats what was asked for, so it is sensitive. */
+function statusRow(sequence: number, status: Omit<TaskSuggestionStatusPayload, 'v' | 'type'>, createdAt = iso(sequence * 3), sessionId = WRAP_SESSION): DaemonTranscriptItem {
+  return item(sequence, 'notice', TASK_STATUS_ROW[status.outcome], {
+    sessionId, turnId: status.turnId, createdAt, isSensitive: status.outcome === 'start-failed',
+    payload: { v: 1, type: 'task-suggestion-status', ...status },
+  });
 }
 
 const PATCH_FORMAT = [
@@ -254,9 +288,8 @@ export interface WrapUpFixture {
   readonly approvals?: readonly DaemonApproval[];
   /** The conversation's state for the panel. */
   readonly state: 'idle' | 'working' | 'blocked';
+  /** What `snapshot.nextPromptSuggestions` holds for it: host memory, not a transcript row. */
   readonly suggestion?: NextPromptSuggestion;
-  readonly recaps?: readonly TurnRecap[];
-  readonly tasks?: readonly TurnTaskSuggestions[];
 }
 
 /** Fix the price format (and, in Korean, plan negative amounts in parentheses), as the probe conversations went. */
@@ -293,9 +326,8 @@ const SUGGESTION_TEXT: Readonly<Record<WrapProvider, Readonly<Record<WrapLanguag
 
 /**
  * The turn ended while no screen showed the conversation: the AI's recap and its guess of the next message.
- * `recap: false` leaves the recap out (a recap that failed under D4 a, or one the setting turned off); `suggestion:
- * false` is a turn without a guess (Codex's "(none)", or paused near the usage limit); `failure` says why a failed
- * recap failed.
+ * `recap: false` leaves the recap out (a turn someone watched, or the setting is off); `suggestion: false` is a turn
+ * without a guess (Codex's "(none)", or paused near the usage limit); `failure` says why a failed recap failed.
  */
 export function formatStory(lang: WrapLanguage, provider: WrapProvider, options: {
   readonly recap?: TurnRecap['state'] | false;
@@ -304,16 +336,13 @@ export function formatStory(lang: WrapLanguage, provider: WrapProvider, options:
 } = {}): WrapUpFixture {
   const { items, turns, lastTurnId } = formatTurns(lang);
   const recapState = options.recap ?? 'complete';
+  const recap = recapState === false ? [] : [recapRow(30, {
+    turnId: lastTurnId, providerId: provider, trigger: 'unattended', state: recapState,
+    ...(recapState === 'complete' ? { text: RECAP_TEXT[provider][lang] } : {}), ...(options.failure ? { failure: options.failure } : {}),
+  }, iso(lang === 'ko' ? 75 : 24))];
   return {
-    items, turns, state: 'idle',
+    items: [...items, ...recap], turns, state: 'idle',
     ...(options.suggestion === false ? {} : { suggestion: { turnId: lastTurnId, text: SUGGESTION_TEXT[provider][lang] } }),
-    ...(recapState === false ? {} : {
-      recaps: [{
-        turnId: lastTurnId, providerId: provider, trigger: 'unattended', state: recapState,
-        ...(recapState === 'complete' ? { text: RECAP_TEXT[provider][lang] } : {}), ...(options.failure ? { failure: options.failure } : {}),
-        createdAt: iso(lang === 'ko' ? 75 : 24),
-      }],
-    }),
   };
 }
 
@@ -338,8 +367,12 @@ export function waitingStory(lang: WrapLanguage, { answered = false }: { readonl
     }),
     item(asked + 2, 'assistant-message', text.planAnswered, { turnId: lastTurnId }),
   ];
+  const recap = recapRow(asked + 3, {
+    turnId: lastTurnId, providerId: 'claude', trigger: 'waiting', waiting: 'question', decisionId: WAITING_DECISION_ID, state: 'complete',
+    text: lang === 'ko' ? PROBE_RECAPS.claude.afterPlanKoWaiting : PROBE_RECAPS.claude.afterFixEn,
+  }, iso(asked * 3 + 6));
   return {
-    items: answered ? [...items, question, ...answer] : [...items, question],
+    items: answered ? [...items, question, ...answer, recap] : [...items, question, recap],
     turns: turns.map((entry) => (entry.id !== lastTurnId ? entry
       : answered ? turn(lastTurnId, 'completed', entry.createdAt, iso((asked + 2) * 3)) : turn(lastTurnId, 'blocked', entry.createdAt))),
     approvals: [{
@@ -347,20 +380,17 @@ export function waitingStory(lang: WrapLanguage, { answered = false }: { readonl
       request: { v: 1, kind: 'question', callId, questions }, revision: 1, createdAt: iso(asked * 3), updatedAt: iso(asked * 3),
     }],
     state: answered ? 'idle' : 'blocked',
-    recaps: [{
-      turnId: lastTurnId, providerId: 'claude', trigger: 'waiting', waiting: 'question', decisionId: WAITING_DECISION_ID, state: 'complete',
-      text: lang === 'ko' ? PROBE_RECAPS.claude.afterPlanKoWaiting : PROBE_RECAPS.claude.afterFixEn, createdAt: iso(asked * 3 + 6),
-    }],
   };
 }
 
 /** Fix only the cart loop: on the way the AI saw the other bugs and suggested them instead of fixing them. */
-function cartTurn(lang: WrapLanguage, provider: WrapProvider, drafts: readonly TaskDraft[]): { readonly items: DaemonTranscriptItem[]; readonly turns: DaemonTurn[] } {
+function cartTurn(lang: WrapLanguage, provider: WrapProvider, drafts: readonly TaskDraft[], prefix: string): { readonly items: DaemonTranscriptItem[]; readonly turns: DaemonTurn[]; readonly after: number } {
   const text = TEXT[lang];
   const reads = ['src/cart.ts', 'src/auth.ts', 'src/format.ts', 'src/discount.ts'].flatMap((path, index) => read(2 + index * 2, 'turn-cart', path));
-  const calls = drafts.flatMap((draft, index) => suggestCall(12 + index * 2, 'turn-cart', provider, draft));
-  const after = 12 + drafts.length * 2;
+  const calls = drafts.flatMap((draft, index) => suggestCall(12 + index * 3, 'turn-cart', provider, draft, taskId(prefix, index)));
+  const after = 12 + drafts.length * 3;
   return {
+    after,
     items: [
       item(1, 'user-message', text.cartAsk, { turnId: 'turn-cart' }),
       ...reads,
@@ -372,9 +402,7 @@ function cartTurn(lang: WrapLanguage, provider: WrapProvider, drafts: readonly T
   };
 }
 
-function taskStates(prefix: string, drafts: readonly TaskDraft[], outcomes: readonly SuggestedTaskOutcome[] = []): SuggestedTaskState[] {
-  return drafts.map((draft, index) => ({ ...draft, id: `${prefix}-${String(index + 1)}`, outcome: outcomes[index] ?? { kind: 'open' } }));
-}
+const taskId = (prefix: string, index: number): string => `${prefix}-${String(index + 1)}`;
 
 export type TaskSet = 'probe' | 'combined' | 'mixed' | 'states' | 'retry' | 'cap';
 
@@ -399,24 +427,31 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
   const probe = provider === 'claude' ? CLAUDE_TASKS : CODEX_TASKS;
   const drafts = set === 'combined' ? [CLAUDE_COMBINED_TASK] : set === 'cap' ? [...probe, ...DRAFTED_TASKS]
     : set === 'states' || set === 'mixed' ? [...probe, DRAFTED_TASKS[0]!] : set === 'retry' ? probe.slice(0, 2) : probe;
+  const prefix = `task-${provider}`;
   const asked = { agent: START_AGENT[provider], settings: START_SETTINGS[provider][lang] };
   const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch(draft.title, index) }, ...asked });
-  const outcomes: readonly SuggestedTaskOutcome[] = set === 'states' ? [
-    { kind: 'started', sessionId: 'wrap-up-child-auth' },
-    { kind: 'queued', position: 2 },
-    { kind: 'dismissed' },
-    { kind: 'start-failed', reason: TEXT[lang].branchExists, start: inWorktree(drafts[3]!, 3), branchTaken: true },
+  const { items, turns, after } = cartTurn(lang, provider, drafts, prefix);
+  const status = (offset: number, index: number, row: Omit<TaskSuggestionStatusPayload, 'v' | 'type' | 'taskId' | 'turnId'>): DaemonTranscriptItem => (
+    statusRow(after + 1 + offset, { taskId: taskId(prefix, index), turnId: 'turn-cart', ...row })
+  );
+  const outcomes = set === 'states' ? [
+    status(0, 0, { outcome: 'started', sessionId: 'wrap-up-child-auth' }),
+    status(1, 2, { outcome: 'dismissed' }),
+    status(2, 3, { outcome: 'start-failed', reason: TEXT[lang].branchExists, start: inWorktree(drafts[3]!, 3), branchTaken: true }),
   ] : set === 'retry' ? [
-    { kind: 'start-failed', reason: TEXT[lang].diskFull, start: inWorktree(drafts[0]!, 0) },
-    { kind: 'start-failed', reason: TEXT[lang].childLimit, start: { where: { kind: 'this-folder' }, ...asked } },
+    status(0, 0, { outcome: 'start-failed', reason: TEXT[lang].diskFull, start: inWorktree(drafts[0]!, 0) }),
+    status(1, 1, { outcome: 'start-failed', reason: TEXT[lang].childLimit, start: { where: { kind: 'this-folder' }, ...asked } }),
   ] : [];
-  const { items, turns } = cartTurn(lang, provider, drafts);
+  const dropped = set === 'cap'
+    ? [item(after + 1, 'notice', '3 suggested tasks were left out.', { turnId: 'turn-cart', payload: { v: 1, type: 'task-suggestions-dropped', turnId: 'turn-cart', count: 3 } })] : [];
   // States: the person's follow-up runs now and another message of theirs waits; 여기서 하기 put task 2 behind it (2nd).
   const busy = set === 'states';
   const busyItems = (): DaemonTranscriptItem[] => [
     item(60, 'user-message', TEXT[lang].followUp, { turnId: 'turn-follow', createdAt: iso(200) }),
     item(61, 'user-message', TEXT[lang].queuedAsk, { turnId: 'turn-queued', createdAt: iso(205) }),
-    item(62, 'user-message', drafts[1]!.prompt, { turnId: 'turn-here', createdAt: iso(210) }),
+    item(62, 'user-message', drafts[1]!.prompt, {
+      turnId: 'turn-here', createdAt: iso(210), payload: { v: 1, type: 'task-suggestion-send', taskId: taskId(prefix, 1), turnId: 'turn-cart' },
+    }),
   ];
   const busyTurns = (): DaemonTurn[] => [
     turn('turn-follow', 'working', iso(200)),
@@ -424,14 +459,9 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
     { ...turn('turn-here', 'queued', iso(210)), enqueueSequence: 2 },
   ];
   return {
-    items: busy ? [...items, ...busyItems()] : items,
+    items: [...items, ...outcomes, ...dropped, ...(busy ? busyItems() : [])],
     turns: busy ? [...turns, ...busyTurns()] : turns,
     state: busy ? 'working' : 'idle',
-    tasks: [{
-      turnId: 'turn-cart', providerId: provider, createdAt: turns[0]!.finishedAt ?? iso(48),
-      tasks: taskStates(`task-${provider}`, drafts.slice(0, 8), outcomes),
-      ...(set === 'cap' ? { dropped: 3 } : {}),
-    }],
   };
 }
 
@@ -444,26 +474,26 @@ const LONG_BRANCH = 'suggest/fix-the-percentage-discount-cache-invalidation-coor
 export function longWordsStory(lang: WrapLanguage): WrapUpFixture {
   const drafts: readonly TaskDraft[] = [
     {
-      title: `Fix ${LONG_PATH}`, rationale: `${LONG_WORD} returns a stale total. See \`${LONG_PATH}\`.`,
+      // Within TASK_SUGGESTION_LIMITS.title: the host refuses a longer one.
+      title: `Fix ${LONG_PATH.slice(LONG_PATH.indexOf('discounts/'))}`, rationale: `${LONG_WORD} returns a stale total. See \`${LONG_PATH}\`.`,
       prompt: `${LONG_PATH}${LONG_WORD}${LONG_PATH}${LONG_WORD}`, worktree: true,
     },
     { title: LONG_WORD, rationale: LONG_PATH, prompt: LONG_WORD },
     { title: 'Fix the discount cache', rationale: 'It keeps a stale total.', prompt: 'Fix the discount cache.' },
     { title: 'Fix the tax cache', rationale: 'It keeps a stale total too.', prompt: 'Fix the tax cache.' },
   ];
-  const { items, turns } = cartTurn(lang, 'claude', drafts);
+  const { items, turns, after } = cartTurn(lang, 'claude', drafts, 'task-long');
   const asked = { agent: START_AGENT.claude, settings: START_SETTINGS.claude[lang] };
   return {
-    items, turns, state: 'idle',
-    tasks: [{
-      turnId: 'turn-cart', providerId: 'claude', createdAt: turns[0]!.finishedAt ?? iso(48),
-      tasks: taskStates('task-long', drafts, [
-        { kind: 'open' },
-        { kind: 'open' },
-        { kind: 'started', sessionId: 'wrap-up-child-long', branch: LONG_BRANCH },
-        { kind: 'start-failed', reason: `${LONG_PATH}: ${LONG_WORD}`, start: { where: { kind: 'new-worktree', branch: LONG_BRANCH }, ...asked } },
-      ]),
-    }],
+    items: [
+      ...items,
+      statusRow(after + 1, { taskId: taskId('task-long', 2), turnId: 'turn-cart', outcome: 'started', sessionId: 'wrap-up-child-long', branch: LONG_BRANCH }),
+      statusRow(after + 2, {
+        taskId: taskId('task-long', 3), turnId: 'turn-cart', outcome: 'start-failed', reason: `${LONG_PATH}: ${LONG_WORD}`,
+        start: { where: { kind: 'new-worktree', branch: LONG_BRANCH }, ...asked },
+      }),
+    ],
+    turns, state: 'idle',
   };
 }
 
@@ -480,66 +510,76 @@ export function inSession(fixture: WrapUpFixture, sessionId: string): WrapUpFixt
 
 const ACTIVE_TURN: ReadonlySet<DaemonTurn['state']> = new Set(['queued', 'submitting', 'working', 'blocked', 'delivery-uncertain']);
 
-/**
- * What a host does with a card action, for stories: a start is in flight, then started (`settle` finishes it);
- * 여기서 하기 sends the instruction as the person's turn (queued behind a running turn, with the place the host gives);
- * dismissing and reopening change the outcome; a recap written again is generating, then complete.
- */
-export function applyWrapUpAction(state: WrapUpFixture, action: ChatWrapUpAction, settle: boolean): WrapUpFixture {
-  const sessionId = state.items[0]?.sessionId ?? WRAP_SESSION;
-  const outcome = (taskId: string, next: SuggestedTaskOutcome): WrapUpFixture => ({
-    ...state,
-    tasks: (state.tasks ?? []).map((card) => (card.turnId !== action.turnId ? card : {
-      ...card, tasks: card.tasks.map((task) => (task.id === taskId ? { ...task, outcome: next } : task)),
-    })),
-  });
+/** The tasks a story shows as in flight until the host settles them: what `pending` holds in a conversation. */
+export function pendingFor(action: ChatWrapUpAction): ChatWrapUpPending {
   switch (action.kind) {
     case 'task-start':
-      return outcome(action.taskId, settle ? { kind: 'started', sessionId: `${sessionId}-child-${action.taskId}` } : { kind: 'starting' });
-    case 'task-retry': {
-      const branch = action.start.where.kind === 'new-worktree' ? { branch: action.start.where.branch } : {};
-      return outcome(action.taskId, settle ? { kind: 'started', sessionId: `${sessionId}-child-${action.taskId}`, ...branch } : { kind: 'starting' });
-    }
+    case 'task-retry':
+      return new Map([[action.taskId, 'starting' as const]]);
     case 'task-start-all':
-      return {
-        ...state,
-        tasks: (state.tasks ?? []).map((card) => (card.turnId !== action.turnId ? card : {
-          ...card,
-          tasks: card.tasks.map((task): SuggestedTaskState => {
-            const start = action.starts.find((entry) => entry.taskId === task.id);
-            if (!start) return task;
-            const branch = start.where.kind === 'new-worktree' ? { branch: start.where.branch } : {};
-            return { ...task, outcome: settle ? { kind: 'started', sessionId: `${sessionId}-child-${task.id}`, ...branch } : { kind: 'starting' } };
-          }),
-        })),
-      };
+      return new Map(action.starts.map((start) => [start.taskId, 'starting' as const]));
+    default:
+      return new Map();
+  }
+}
+
+/** A row a host appends to a story's conversation. */
+function appended(state: WrapUpFixture, make: (sequence: number, sessionId: string, createdAt: string) => DaemonTranscriptItem): WrapUpFixture {
+  const sessionId = state.items[0]?.sessionId ?? WRAP_SESSION;
+  const sequence = Math.max(0, ...state.items.map((entry) => entry.sequence)) + 1;
+  return { ...state, items: [...state.items, make(sequence, sessionId, new Date(WRAP_T0 + 240_000).toISOString())] };
+}
+
+/** The row the host commits with a start. */
+export function startedTask(state: WrapUpFixture, turnId: string, id: string, branch?: string): WrapUpFixture {
+  return appended(state, (sequence, sessionId, at) => statusRow(sequence, {
+    taskId: id, turnId, outcome: 'started', sessionId: suggestedTaskChildSessionId(id), ...(branch ? { branch } : {}),
+  }, at, sessionId));
+}
+
+/**
+ * What a host does with a card action, for stories, as the rows it writes. A start commits its `started` row once it is
+ * through (`settle`; until then the story holds `pendingFor`); 여기서 하기 sends the instruction as the person's turn, queued
+ * behind a running turn; dismissing and reopening write a status; a recap written again is `generating`, then complete.
+ */
+export function applyWrapUpAction(state: WrapUpFixture, action: ChatWrapUpAction, settle: boolean): WrapUpFixture {
+  const status = (id: string, outcome: 'dismissed' | 'open'): WrapUpFixture => (
+    appended(state, (sequence, sessionId, at) => statusRow(sequence, { taskId: id, turnId: action.turnId, outcome }, at, sessionId))
+  );
+  const branchOf = (where: { readonly kind: string; readonly branch?: string }): string | undefined => (where.kind === 'new-worktree' ? where.branch : undefined);
+  switch (action.kind) {
+    case 'task-start':
+      return settle ? startedTask(state, action.turnId, action.taskId) : state;
+    case 'task-retry':
+      return settle ? startedTask(state, action.turnId, action.taskId, branchOf(action.start.where)) : state;
+    case 'task-start-all':
+      return settle ? action.starts.reduce((current, start) => startedTask(current, action.turnId, start.taskId, branchOf(start.where)), state) : state;
     case 'task-here': {
-      const task = state.tasks?.flatMap((card) => card.tasks).find((entry) => entry.id === action.taskId);
+      const task = wrapUpCards(coalesceTranscript(state.items), state.turns).tasks.get(action.turnId)?.tasks.find((entry) => entry.id === action.taskId);
       if (!task) return state;
       const busy = state.turns.some((entry) => ACTIVE_TURN.has(entry.state));
-      const sequence = Math.max(0, ...state.items.map((entry) => entry.sequence)) + 1;
       const turnId = `turn-here-${action.taskId}`;
-      const at = new Date(WRAP_T0 + 240_000).toISOString();
-      const queuedCount = state.turns.filter((entry) => entry.state === 'queued').length;
-      const sent = outcome(action.taskId, busy ? { kind: 'queued', position: queuedCount + 1 } : { kind: 'sent' });
-      return {
-        ...sent,
-        items: [...state.items, item(sequence, 'user-message', task.prompt, { sessionId, turnId, createdAt: at })],
-        turns: [...state.turns, turn(turnId, busy ? 'queued' : 'working', at, undefined, sessionId)],
-        state: 'working',
-      };
+      const queued = state.turns.filter((entry) => entry.state === 'queued').length;
+      const sent = appended(state, (sequence, sessionId, at) => item(sequence, 'user-message', task.prompt, {
+        sessionId, turnId, createdAt: at, payload: { v: 1, type: 'task-suggestion-send', taskId: action.taskId, turnId: action.turnId },
+      }));
+      const row = sent.items[sent.items.length - 1]!;
+      return { ...sent, turns: [...state.turns, { ...turn(turnId, busy ? 'queued' : 'working', row.createdAt, undefined, row.sessionId), enqueueSequence: queued + 1 }], state: 'working' };
     }
     case 'task-dismiss':
-      return outcome(action.taskId, { kind: 'dismissed' });
+      return status(action.taskId, 'dismissed');
     case 'task-reopen':
-      return outcome(action.taskId, { kind: 'open' });
-    case 'recap-retry':
-      return {
-        ...state,
-        recaps: (state.recaps ?? []).map((recap) => (recap.turnId !== action.turnId ? recap : settle
-          ? { ...recap, state: 'complete', text: RECAP_TEXT[recap.providerId === 'codex' ? 'codex' : 'claude'][/[가-힣]/u.test(state.items[0]?.text ?? '') ? 'ko' : 'en'] }
-          : { ...recap, state: 'generating' })),
-      };
+      return status(action.taskId, 'open');
+    case 'recap-retry': {
+      const recap = wrapUpCards(coalesceTranscript(state.items), state.turns).recaps.get(action.turnId);
+      if (!recap) return state;
+      const { turnId, providerId, trigger } = recap;
+      const language: WrapLanguage = /[가-힣]/u.test(state.items[0]?.text ?? '') ? 'ko' : 'en';
+      return appended(state, (sequence, sessionId, at) => recapRow(sequence, {
+        turnId, providerId, trigger,
+        ...(settle ? { state: 'complete' as const, text: RECAP_TEXT[providerId === 'codex' ? 'codex' : 'claude'][language] } : { state: 'generating' as const }),
+      }, at, sessionId));
+    }
     case 'task-start-custom':
       return state;
   }
