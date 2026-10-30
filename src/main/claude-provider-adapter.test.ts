@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { AgentProviderEvent, ProviderSessionContext } from './agent-provider-adapter';
+import type { AgentProviderEvent, PromptSuggestionMode, ProviderSessionContext } from './agent-provider-adapter';
 import {
   CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION,
   ClaudeProviderAdapter,
@@ -1997,6 +1997,29 @@ describe('Claude turn wrap-up', () => {
     expect(fixture.queries).toHaveLength(2);
     expect(fixture.queries[1]!.inputOptions).toMatchObject({ resume: providerSessionId, promptSuggestions: true });
     expect(fixture.queries[1]!.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    await fixture.adapter.dispose();
+  });
+
+  it('switches suggestions per turn, so a turn no person sent spends no call on one', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    const send = (turnId: string, promptSuggestions: PromptSuggestionMode) => fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId, commandId: `command-${turnId}`, prompt: 'Hi', promptSuggestions,
+    });
+    await send('turn-1', 'off');
+    expect(fixture.query.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    finish(fixture, 'turn-1');
+    await finished(fixture, 'turn-1');
+    await send('turn-2', 'on');
+    expect(fixture.query.flagSettings.at(-1)).toEqual({ env: { [SUGGESTION_VARIABLE]: '' } });
+    await fixture.adapter.dispose();
+  });
+
+  it('ignores a per-turn mode on a session not launched for suggestions', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(context);
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', commandId: 'command-turn-1', prompt: 'Hi', promptSuggestions: 'off' });
+    expect(fixture.query.flagSettings).toEqual([]);
     await fixture.adapter.dispose();
   });
 

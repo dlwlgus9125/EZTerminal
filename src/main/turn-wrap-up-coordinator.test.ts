@@ -18,7 +18,7 @@ import type { ApprovalRequest } from '../shared/approval-request';
 import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
 import { type ConversationViewingStatus } from '../shared/conversation-viewing';
 import {
-  DEFAULT_TURN_WRAP_UP_SETTINGS, RECAP_INSTRUCTION, recapQuestion, suggestedTaskChildSessionId, TURN_RECAP_LIMITS, type TurnWrapUpSettings,
+  DEFAULT_TURN_WRAP_UP_SETTINGS, RECAP_INSTRUCTION, recapQuestion, SUGGEST_TASK_INSTRUCTIONS, suggestedTaskChildSessionId, TURN_RECAP_LIMITS, type TurnWrapUpSettings,
 } from '../shared/turn-wrap-up';
 import {
   ProviderSideQuestionError,
@@ -255,6 +255,8 @@ async function harness(options: {
   readonly stored?: unknown;
   readonly recapTimeoutMs?: number;
   readonly startLater?: boolean;
+  readonly orchestration?: boolean;
+  readonly toolListed?: boolean;
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-wrap-up-'));
   temporaryDirectories.push(directory);
@@ -284,6 +286,7 @@ async function harness(options: {
     ...(options.recapTimeoutMs ? { recapTimeoutMs: options.recapTimeoutMs } : {}),
     providers,
     settings: () => settings.current,
+    toolListed: () => options.toolListed ?? true,
     allowed: (sessionId, turn) => wrapUpAllowed(routerRef.current!.getSnapshot(), sessionId, {
       prepared: options.prepared?.(sessionId) ?? false,
       ...(turn ? { turnCommand: store.findCommand(turn.commandId)?.command ?? null } : {}),
@@ -301,6 +304,7 @@ async function harness(options: {
     findCommand: (commandId) => store.findCommand(commandId)?.command,
     executeCommand: (command) => routerRef.current!.execute(command),
     wrapUp: coordinator,
+    ...(options.orchestration === false ? {} : { orchestrationForSession: () => ({ endpoint: 'http://127.0.0.1:1/mcp/chat', bearerToken: 'token' }) }),
     now,
     idFactory: (() => { let id = 0; return () => `runtime-id-${String(++id)}`; })(),
   });
@@ -1620,5 +1624,321 @@ describe('a suggested task', () => {
         expect(await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: 'task-other', outcome: 'dismissed' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
       } finally { await dispose(h); }
     });
+  });
+});
+
+describe('suggest_task', () => {
+  const INPUT = { title: 'Add a unit test', prompt: 'Write a unit test for formatPrice.', rationale: 'formatPrice has no test.' };
+  const cards = (h: Harness) => h.router.readTranscript('chat', 0, 2_000).filter((item) => item.payload?.type === 'task-suggestion');
+  const dropped = (h: Harness) => h.router.readTranscript('chat', 0, 2_000).filter((item) => item.payload?.type === 'task-suggestions-dropped');
+  const start = async (h: Harness, principal?: DaemonPrincipal) => {
+    await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' }, principal);
+    return h.currentTurn('chat')!;
+  };
+  const many = (count: number) => Array.from({ length: count }, (_, index) => ({ ...INPUT, title: `Task ${String(index)}` }));
+
+  it('is listed for an eligible AI, whatever the tasks switch says: the list must not change', async () => {
+    const h = await harness();
+    try {
+      await start(h);
+      expect(h.coordinator.listed('chat')).toBe(true);
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, tasks: false };
+      expect(h.coordinator.listed('chat')).toBe(true);
+      h.settings.current = undefined;
+      expect(h.coordinator.listed('chat')).toBe(true);
+    } finally { await dispose(h); }
+  });
+
+  it('is not listed for a session outside wrap-up, or an AI below the measured version', async () => {
+    const prepared = await harness({ prepared: (sessionId) => sessionId === 'chat' });
+    try {
+      await start(prepared);
+      expect(prepared.coordinator.listed('chat')).toBe(false);
+    } finally { await dispose(prepared); }
+    const old = await harness({ minimumVersion: '9.0.0' });
+    try {
+      await start(old);
+      expect(old.coordinator.listed('chat')).toBe(false);
+    } finally { await dispose(old); }
+  });
+
+  it('leaves one card, with the AI\'s words marked sensitive and nothing run', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      const result = await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, worktree: true });
+      expect(result).toMatchObject({ ok: true });
+      expect(cards(h)).toHaveLength(1);
+      expect(cards(h)[0]).toMatchObject({
+        turnId, kind: 'notice', isSensitive: true,
+        payload: { v: 1, type: 'task-suggestion', turnId, providerId: 'claude', ...INPUT, worktree: true, taskId: result.ok ? result.taskId : '' },
+      });
+      expect(h.router.getSnapshot().sessions.map((session) => session.id)).toEqual(['chat']);
+    } finally { await dispose(h); }
+  });
+
+  it('adds nothing for the same call twice', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      const first = await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT);
+      const second = await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT);
+      expect(second).toEqual(first);
+      expect(cards(h)).toHaveLength(1);
+    } finally { await dispose(h); }
+  });
+
+  it('takes eight in a turn; past that it refuses, and says how many once the turn ends', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      for (const task of many(8)) expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, task)).toMatchObject({ ok: true });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Ninth' })).toMatchObject({ ok: false });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Tenth' })).toMatchObject({ ok: false });
+      expect(cards(h)).toHaveLength(8);
+      expect(dropped(h)).toEqual([]);
+      await h.finishTurn(h.claude, 'chat');
+      await until(() => dropped(h).length === 1, 'the count');
+      expect(dropped(h)[0]).toMatchObject({ turnId, isSensitive: false, payload: { v: 1, type: 'task-suggestions-dropped', turnId, count: 2 } });
+    } finally { await dispose(h); }
+  });
+
+  it('holds the cap against calls made at once, as an AI may make them', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      const results = await Promise.all(many(10).map((task) => h.coordinator.suggest({ sessionId: 'chat', turnId }, task)));
+      expect(results.filter((result) => result.ok)).toHaveLength(8);
+      expect(cards(h)).toHaveLength(8);
+      await h.finishTurn(h.claude, 'chat');
+      await until(() => dropped(h).length === 1, 'the count');
+      expect(dropped(h)[0]!.payload).toMatchObject({ count: 2 });
+    } finally { await dispose(h); }
+  });
+
+  it('writes the count for a turn that did not complete too, and only once', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      for (const task of many(9)) await h.coordinator.suggest({ sessionId: 'chat', turnId }, task);
+      await h.finishTurn(h.claude, 'chat', 'interrupted');
+      await until(() => dropped(h).length === 1, 'the count');
+      await h.router.applySystemCommit((snapshot) => {
+        const turn = snapshot.turns.find((entry) => entry.id === turnId)!;
+        return { mutations: [{ kind: 'turn.upsert', value: { id: turn.id, sessionId: turn.sessionId, commandId: turn.commandId, state: turn.state, finishedAt: turn.finishedAt! } }] };
+      });
+      await settled();
+      expect(dropped(h)).toHaveLength(1);
+    } finally { await dispose(h); }
+  });
+
+  it('writes no count for a turn within the limit', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT);
+      await h.finishTurn(h.claude, 'chat');
+      await settled();
+      expect(dropped(h)).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('counts each turn on its own', async () => {
+    const h = await harness();
+    try {
+      const first = await start(h);
+      for (const task of many(8)) await h.coordinator.suggest({ sessionId: 'chat', turnId: first }, task);
+      await h.finishTurn(h.claude, 'chat');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId: h.currentTurn('chat')! }, INPUT)).toMatchObject({ ok: true });
+    } finally { await dispose(h); }
+  });
+
+  it('refuses with the tasks switch off, and leaves no row', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, tasks: false };
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false });
+      expect(cards(h)).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('refuses a turn no person sent', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h, AUTOMATION);
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false });
+      expect(cards(h)).toEqual([]);
+    } finally { await dispose(h); }
+  });
+
+  it('refuses a turn that is no longer running, and forgets the count it took', async () => {
+    const h = await harness();
+    try {
+      const turnId = await start(h);
+      await h.finishTurn(h.claude, 'chat');
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false });
+      expect(cards(h)).toEqual([]);
+    } finally { await dispose(h); }
+  });
+});
+
+describe('launching a session', () => {
+  const launched = (adapter: ReturnType<typeof fakeAdapter>) => vi.mocked(adapter.createSession).mock.calls.at(-1)?.[0].wrapUp;
+  const orchestration = (adapter: ReturnType<typeof fakeAdapter>) => vi.mocked(adapter.createSession).mock.calls.at(-1)?.[0].orchestration;
+
+  it('gives an eligible Claude session its suggestions and the tool, even with the agent tools off', async () => {
+    const h = await harness();
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)).toEqual({ promptSuggestions: 'on', suggestTask: true, developerInstructions: SUGGEST_TASK_INSTRUCTIONS });
+      expect(orchestration(h.claude)).toBeDefined();
+    } finally { await dispose(h); }
+  });
+
+  it('gives Codex the instruction but no provider suggestions: it predicts by fork', async () => {
+    const h = await harness();
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.codex)).toEqual({ suggestTask: true, developerInstructions: SUGGEST_TASK_INSTRUCTIONS });
+    } finally { await dispose(h); }
+  });
+
+  it('launches an eligible session with suggestions available even when they are off: they cannot be turned on later otherwise', async () => {
+    const h = await harness();
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, suggestions: { claude: false, codex: true } };
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)?.promptSuggestions).toBe('off');
+    } finally { await dispose(h); }
+  });
+
+  it('launches past the near-limit stop when the pause is off', async () => {
+    const h = await harness();
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, pauseNearLimit: false };
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)?.promptSuggestions).toBe('on-past-limit');
+    } finally { await dispose(h); }
+  });
+
+  it('says nothing to a new thread with the tasks switch off, so turning it on later still tells it', async () => {
+    const h = await harness();
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, tasks: false };
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.codex)).toEqual({ suggestTask: true });
+    } finally { await dispose(h); }
+  });
+
+  it('starts a session with everything off until the settings load, keeping it eligible', async () => {
+    const h = await harness();
+    try {
+      h.settings.current = undefined;
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)).toEqual({ promptSuggestions: 'off', suggestTask: true });
+    } finally { await dispose(h); }
+  });
+
+  it('keeps a delegated first turn off, and its thread untold until a person writes', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('codex');
+      const child = suggestedTaskChildSessionId('task-1');
+      await h.execute('agent.create', { sessionId: child, workspaceId: 'workspace-1', title: 'Task', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Do it.', parentSessionId: 'chat' });
+      expect(launched(h.claude)).toEqual({ promptSuggestions: 'off', suggestTask: true });
+    } finally { await dispose(h); }
+  });
+
+  it('gives nothing to a session outside wrap-up', async () => {
+    const h = await harness({ prepared: (sessionId) => sessionId === 'chat' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)).toBeUndefined();
+      expect(orchestration(h.claude)).toBeUndefined();
+    } finally { await dispose(h); }
+  });
+
+  it('gives nothing to an AI below the measured version', async () => {
+    const h = await harness({ minimumVersion: '9.0.0' });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      await h.execute('agent.create', { sessionId: 'other', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.codex)).toBeUndefined();
+      expect(launched(h.claude)).toBeUndefined();
+      expect(vi.mocked(h.codex.submit).mock.calls.at(-1)?.[0]).not.toHaveProperty('wrapUpInstructions');
+      expect(vi.mocked(h.claude.submit).mock.calls.at(-1)?.[0]).not.toHaveProperty('promptSuggestions');
+    } finally { await dispose(h); }
+  });
+
+  it('promises no tool when the host gave the session no endpoint', async () => {
+    const h = await harness({ orchestration: false });
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
+      expect(launched(h.claude)).toEqual({ promptSuggestions: 'on' });
+    } finally { await dispose(h); }
+  });
+});
+
+describe('sending a turn', () => {
+  const sent = (adapter: ReturnType<typeof fakeAdapter>) => vi.mocked(adapter.submit).mock.calls.at(-1)?.[0];
+
+  it('tells a thread what it should have heard and says how its suggestions run', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('claude');
+      expect(sent(h.claude)).toMatchObject({ promptSuggestions: 'on', wrapUpInstructions: SUGGEST_TASK_INSTRUCTIONS });
+    } finally { await dispose(h); }
+  });
+
+  it('switches a provider\'s own suggestions off for a turn no person sent: it would otherwise spend a call on it', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('claude');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Heartbeat.' }, AUTOMATION);
+      expect(sent(h.claude)).toMatchObject({ promptSuggestions: 'off' });
+      expect(sent(h.claude)).not.toHaveProperty('wrapUpInstructions');
+      await h.finishTurn(h.claude, 'chat');
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      expect(sent(h.claude)).toMatchObject({ promptSuggestions: 'on', wrapUpInstructions: SUGGEST_TASK_INSTRUCTIONS });
+    } finally { await dispose(h); }
+  });
+
+  it('reads the pause per turn, so a window that reset needs no event', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('claude');
+      h.claude.emit({ kind: 'usage', sessionId: 'chat', limits: { fiveHour: { usedPercent: 95, resetsAt: NOW_MS + 60_000 } } });
+      await h.runtime.whenIdle();
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      expect(sent(h.claude)).toMatchObject({ promptSuggestions: 'off' });
+    } finally { await dispose(h); }
+  });
+
+  it('leaves the instruction out with the tasks switch off', async () => {
+    const h = await harness();
+    try {
+      h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, tasks: false };
+      await h.conversation('codex');
+      expect(sent(h.codex)).not.toHaveProperty('wrapUpInstructions');
+    } finally { await dispose(h); }
+  });
+
+  it('never tells a thread about a tool its session was launched without', async () => {
+    const h = await harness({ toolListed: false });
+    try {
+      await h.conversation('codex');
+      expect(sent(h.codex)).not.toHaveProperty('wrapUpInstructions');
+    } finally { await dispose(h); }
+  });
+
+  it('adds nothing for a session outside wrap-up', async () => {
+    const h = await harness({ prepared: (sessionId) => sessionId === 'chat' });
+    try {
+      await h.conversation('claude');
+      expect(sent(h.claude)).not.toHaveProperty('promptSuggestions');
+      expect(sent(h.claude)).not.toHaveProperty('wrapUpInstructions');
+    } finally { await dispose(h); }
   });
 });

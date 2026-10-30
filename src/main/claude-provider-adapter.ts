@@ -1615,6 +1615,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       session.appliedEffort = effort;
       session.flagEffort = restore ? undefined : effort;
     }
+    if (input.promptSuggestions && session.suggestionMode) session.suggestionMode = input.promptSuggestions;
     await this.applySuggestionMode(session, signal);
     this.throwIfAborted(signal);
     if (input.context?.skills?.length) {

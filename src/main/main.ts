@@ -1013,6 +1013,7 @@ app.on('ready', async () => {
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
     workflowAllowed: workflowSessionAllowed,
+    wrapUp: () => turnWrapUpCoordinator,
     settings: () => {
       const authority = settingsRef.authority;
       const advisor = settingsRef.advisor;
@@ -1097,6 +1098,7 @@ app.on('ready', async () => {
       prepared: preparedHostSession(sessionId),
       ...(turn ? { turnCommand: daemonStore.findCommand(turn.commandId)?.command ?? null } : {}),
     }),
+    toolListed: (sessionId) => agentOrchestrationMcpServer.suggestTaskListed(sessionId),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);

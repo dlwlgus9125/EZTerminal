@@ -16,6 +16,7 @@ import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/
 import { childProgress, finalAssistantText, latestFinishedTurn, reportBackRequested, type TranscriptReader } from './managed-child-transcript';
 import type { ProviderSessionContext } from './agent-provider-adapter';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { SUGGEST_TASK_TOOL, TASK_SUGGESTION_LIMITS } from '../shared/turn-wrap-up';
 import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema, type WorkflowCommand } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import { WORKFLOW_SKILL } from '../shared/workflow-skill';
@@ -85,6 +86,26 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   /** 대화로 설정 바꾸기 and 자문, for a conversation a person sees directly. */
   readonly settings?: () => SettingsToolHost | undefined;
+  /** Turn wrap-up's `suggest_task` (TurnWrapUpCoordinator, bound by the host). */
+  readonly wrapUp?: () => WrapUpToolHost | undefined;
+}
+
+/** One `suggest_task` call, within TASK_SUGGESTION_LIMITS. */
+export interface SuggestTaskInput {
+  readonly title: string;
+  readonly prompt: string;
+  readonly rationale: string;
+  readonly worktree?: boolean;
+}
+
+export type SuggestTaskResult = { readonly ok: true; readonly taskId: string } | { readonly ok: false; readonly error: string };
+
+/** What `suggest_task` calls. */
+export interface WrapUpToolHost {
+  /** This session gets the tool. Read once per launch and frozen there; it never depends on a setting. */
+  listed(sessionId: string): boolean;
+  /** A card for the turn that is running; the host owns the id, the cap and the row. */
+  suggest(context: { readonly sessionId: string; readonly turnId: string }, input: SuggestTaskInput): Promise<SuggestTaskResult>;
 }
 
 /** The conversation an AI acts from. */
@@ -112,9 +133,34 @@ export interface SettingsToolHost {
 
 const SETTINGS_TOOLS = ['settings_read', 'settings_apply', 'settings_propose', 'settings_undo', 'ask_advisor'];
 
+/**
+ * Claude loads this one tool up front (0/2 behind tool search, 2/2 with `_meta`; the whole server would load every
+ * tool each turn). `readOnlyHint` keeps Codex from asking for approval. Wording and schema as measured in
+ * scripts/wrap-up-probe-kit.mjs.
+ */
+const SUGGEST_TASK_DEFINITION: JsonObject = {
+  name: SUGGEST_TASK_TOOL,
+  description: 'Propose a follow-up task to the person instead of doing it. Use it when you notice work outside what the person asked for: another bug, a missing test, a risky pattern, a cleanup. The person sees each proposal as a card and decides whether to start it in a new conversation; calling this tool changes nothing and starts nothing. Do not use it for the work you were asked to do, and do not do the proposed work yourself. One call per task; write `prompt` as the complete instruction a new conversation would need.',
+  annotations: { readOnlyHint: true },
+  _meta: { 'anthropic/alwaysLoad': true },
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['title', 'prompt', 'rationale'],
+    properties: {
+      title: { type: 'string', minLength: 1, maxLength: TASK_SUGGESTION_LIMITS.title, description: 'Short imperative title, e.g. "Fix the always-true role check in src/auth.ts".' },
+      prompt: { type: 'string', minLength: 1, maxLength: TASK_SUGGESTION_LIMITS.prompt, description: 'The full instruction a new conversation would start with: what to change, where, and how to check it.' },
+      rationale: { type: 'string', minLength: 1, maxLength: TASK_SUGGESTION_LIMITS.rationale, description: 'Why it is worth doing: what you saw, in one or two sentences.' },
+      worktree: { type: 'boolean', description: 'true when the task should run in its own git worktree (it edits files this conversation is also changing, or it is large).' },
+    },
+  },
+};
+
+/** The client caches the list for the session: this flag never changes after launch, so no conversation loses its cache. */
 interface SessionCapability {
   readonly digest: Buffer;
   readonly projectId: string;
+  readonly suggestTask: boolean;
 }
 
 class McpRequestError extends Error {
@@ -301,11 +347,17 @@ export class AgentOrchestrationMcpServer {
     this.capabilities.set(sessionId, {
       digest: digestToken(bearerToken),
       projectId: session.projectId,
+      suggestTask: this.wrapUpEnabled(sessionId),
     });
     return {
       endpoint: `http://${this.host}:${String(this.port)}/mcp/${encodeURIComponent(sessionId)}`,
       bearerToken,
     };
+  }
+
+  /** This session's running provider was launched with `suggest_task`. */
+  suggestTaskListed(sessionId: string): boolean {
+    return this.capabilities.get(sessionId)?.suggestTask === true;
   }
 
   revokeSession(sessionId: string): void {
@@ -422,7 +474,8 @@ export class AgentOrchestrationMcpServer {
       const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
       const orchestration = snapshot.runtime.orchestrationToolsEnabled && ownerAgent.orchestrationEnabled;
       return { tools: [...(orchestration ? this.toolDefinitions(ownerAgent.permissionPreset) : []), ...(this.workflowEnabled(sessionId) ? this.workflowToolDefinitions() : []),
-        ...(this.settingsEnabled(sessionId) ? this.settingsToolDefinitions() : [])] };
+        ...(this.settingsEnabled(sessionId) ? this.settingsToolDefinitions() : []),
+        ...(this.suggestTaskListed(sessionId) ? [SUGGEST_TASK_DEFINITION] : [])] };
     }
     if (request.method !== 'tools/call') throw new McpRequestError(-32601, 'Method not found.');
     const params = strictObject(request.params, ['name', 'arguments', '_meta']);
@@ -479,6 +532,7 @@ export class AgentOrchestrationMcpServer {
       const result = await workflow.authority.execute(parsed.data, { kind: 'ai', id: `session:${sessionId}`, sessionId });
       return toolText(result, !result.ok);
     }
+    if (name === SUGGEST_TASK_TOOL) return this.suggestTask(sessionId, ownerAgent, value);
     if (!snapshot.runtime.orchestrationToolsEnabled || !ownerAgent.orchestrationEnabled) throw new McpRequestError(-32002, 'Agent orchestration is disabled.');
     switch (name) {
       case 'list_agents': {
@@ -807,7 +861,7 @@ export class AgentOrchestrationMcpServer {
       ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
       : undefined;
     if (
-      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId) && !this.settingsEnabled(sessionId))
+      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId) && !this.settingsEnabled(sessionId) && !this.suggestTaskListed(sessionId) && !this.wrapUpEnabled(sessionId))
       || !provider?.enabled
       || !agent
       || provider.health !== 'ready'
@@ -829,6 +883,27 @@ export class AgentOrchestrationMcpServer {
 
   private settingsEnabled(sessionId: string): boolean {
     return this.options.settings?.()?.allowed(sessionId) === true;
+  }
+
+  private wrapUpEnabled(sessionId: string): boolean {
+    return this.options.wrapUp?.()?.listed(sessionId) === true;
+  }
+
+  /** A proposal on the card of the turn that runs now; nothing runs or changes until a person presses a button. */
+  private async suggestTask(sessionId: string, ownerAgent: DaemonSnapshot['agents'][number], value: unknown): Promise<JsonObject> {
+    const host = this.options.wrapUp?.();
+    if (!host || !this.suggestTaskListed(sessionId)) throw new McpRequestError(-32002, 'suggest_task is unavailable for this conversation.');
+    const args = strictObject(value, ['title', 'prompt', 'rationale', 'worktree']);
+    const title = requiredString(args.title, 'title', TASK_SUGGESTION_LIMITS.title);
+    const prompt = requiredString(args.prompt, 'prompt', TASK_SUGGESTION_LIMITS.prompt);
+    const rationale = requiredString(args.rationale, 'rationale', TASK_SUGGESTION_LIMITS.rationale);
+    if (args.worktree !== undefined && typeof args.worktree !== 'boolean') throw new McpRequestError(-32602, 'worktree must be a boolean.');
+    const turnId = ownerAgent.currentTurnId;
+    if (!turnId) throw new McpRequestError(-32002, 'suggest_task works only during a turn.');
+    // A read-only tool needs no approval, so a fork of a stopped turn could otherwise land a card.
+    if (ownerAgent.state === 'blocked') throw new McpRequestError(-32002, 'suggest_task waits until the turn is no longer stopped on the person.');
+    const result = await host.suggest({ sessionId, turnId }, { title, prompt, rationale, ...(args.worktree !== undefined ? { worktree: args.worktree } : {}) });
+    return toolText(result, !result.ok);
   }
 
   /** settings_read / apply / propose / undo and ask_advisor, re-checked on every call. */

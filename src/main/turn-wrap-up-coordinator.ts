@@ -26,6 +26,8 @@ import {
 import {
   isSuggestedTaskChildSession,
   recapQuestion,
+  SUGGEST_TASK_INSTRUCTIONS,
+  TASK_SUGGESTION_LIMITS,
   TURN_RECAP_LIMITS,
   type NextPromptSuggestion,
   type TurnRecapFailure,
@@ -34,7 +36,15 @@ import {
   type TurnWrapUpPause,
   type TurnWrapUpSettings,
 } from '../shared/turn-wrap-up';
-import type { AgentProviderAdapter, AgentProviderEvent, PromptSuggestionMode, ProviderSideQuestionAnswer } from './agent-provider-adapter';
+import type { SuggestTaskInput, SuggestTaskResult, WrapUpToolHost } from './agent-orchestration-mcp-server';
+import type {
+  AgentProviderAdapter,
+  AgentProviderEvent,
+  PromptSuggestionMode,
+  ProviderSideQuestionAnswer,
+  ProviderSubmitInput,
+  ProviderWrapUpContext,
+} from './agent-provider-adapter';
 import { ProviderSideQuestionError } from './agent-provider-adapter';
 import type { DaemonSystemTransitionPlanner } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
@@ -48,6 +58,8 @@ export const TURN_SETTLE_MS = 3_000;
 const PREDICTION_TIMEOUT_MS = 60_000;
 /** A recap took 25 s at most across both AIs; one that takes minutes has failed. */
 const RECAP_TIMEOUT_MS = 120_000;
+
+const TERMINAL_TURN_STATES = new Set<DaemonTurn['state']>(['completed', 'interrupted', 'failed']);
 
 function stableId(prefix: string, ...parts: readonly string[]): string {
   return `${prefix}-${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)}`;
@@ -282,6 +294,10 @@ export interface DaemonWrapUpHost {
    */
   retryRecap(snapshot: DaemonSnapshot, input: { readonly sessionId: string; readonly turnId: string; readonly attempt: string }):
     { readonly refused: string } | { readonly row: DaemonTranscriptItemInput; begin(): void };
+  /** What a session launches and resumes with; undefined: wrap-up is off for it. */
+  sessionContext(sessionId: string): ProviderWrapUpContext | undefined;
+  /** What one turn is sent with. Read per turn, so a person's message never depends on a stale switch. */
+  turnContext(turn: DaemonTurn): Pick<ProviderSubmitInput, 'promptSuggestions' | 'wrapUpInstructions'> | undefined;
 }
 
 export interface TurnWrapUpCoordinatorOptions {
@@ -310,6 +326,8 @@ export interface TurnWrapUpCoordinatorOptions {
   readonly settings: () => TurnWrapUpSettings | undefined;
   /** `wrapUpAllowed` with the host's facts. With `turn`, the turn is asked about too. */
   readonly allowed: (sessionId: string, turn?: DaemonTurn) => boolean;
+  /** This session's running provider has `suggest_task` (a session's list is frozen at launch). */
+  readonly toolListed: (sessionId: string) => boolean;
   readonly now?: () => Date;
   readonly settleMs?: number;
   readonly predictionTimeoutMs?: number;
@@ -337,7 +355,7 @@ interface RecapJob {
  * A recap is written when no screen shows the conversation and a turn ended or stopped on the person, once per
  * turn: the recap row is the slot, so a stopped recap also stands for that turn's end.
  */
-export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
+export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
   private readonly now: () => Date;
   private readonly suggestions = new Map<string, NextPromptSuggestion>();
   private readonly predictions = new Map<string, Prediction>();
@@ -348,6 +366,8 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
   private readonly changedTurns = new Set<string>();
   /** Approvals written since the last pass. */
   private readonly changedApprovals = new Set<string>();
+  /** What `suggest_task` took per running turn. Memory is enough: the cap guards one turn, which a restart ends. */
+  private readonly taskCounts = new Map<string, { readonly accepted: Set<string>; dropped: number }>();
   /** Each session's last turn seen ending, so writing a turn again does not end it twice. */
   private readonly endedTurns = new Map<string, string>();
   /** The mode each provider's sessions were last switched to. */
@@ -416,6 +436,92 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     this.switchSuggestions(snapshot);
   }
 
+  /** Never reads the `tasks` switch: the list is frozen per session, and a change to it costs every conversation its cache. */
+  listed(sessionId: string): boolean {
+    const snapshot = this.options.getSnapshot();
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    return agent !== undefined && this.options.providers.wrapUpCapability(snapshot, agent.providerId) !== undefined && this.options.allowed(sessionId);
+  }
+
+  /**
+   * One card for a turn a person sent. Repeating a call adds nothing; past the cap it is refused and counted,
+   * and the count is written once when the turn ends.
+   */
+  async suggest(context: { readonly sessionId: string; readonly turnId: string }, input: SuggestTaskInput): Promise<SuggestTaskResult> {
+    const snapshot = this.options.getSnapshot();
+    const turn = snapshot.turns.find((entry) => entry.id === context.turnId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === context.sessionId);
+    if (!turn || !agent || !this.automatic(snapshot, agent, turn)) return { ok: false, error: 'suggest_task answers only a turn a person sent.' };
+    if (!this.options.settings()?.tasks) return { ok: false, error: 'Suggested tasks are turned off. Do not suggest more in this conversation.' };
+    if (agent.currentTurnId !== turn.id) return { ok: false, error: 'suggest_task works only during a running turn.' };
+    const taskId = stableId('task', turn.id, input.title, input.prompt);
+    const counted = this.taskCounts.get(turn.id) ?? { accepted: new Set<string>(), dropped: 0 };
+    this.taskCounts.set(turn.id, counted);
+    if (counted.accepted.has(taskId)) return { ok: true, taskId };
+    if (counted.accepted.size >= TASK_SUGGESTION_LIMITS.perTurn) {
+      counted.dropped += 1;
+      return { ok: false, error: `A turn can suggest ${String(TASK_SUGGESTION_LIMITS.perTurn)} tasks. Stop suggesting; this one was not kept.` };
+    }
+    // Before the commit: an AI may call several at once, and each must see the others.
+    counted.accepted.add(taskId);
+    let written = false;
+    await this.commit((fresh) => {
+      const session = fresh.sessions.find((entry) => entry.id === context.sessionId);
+      const running = fresh.agents.find((entry) => entry.sessionId === context.sessionId)?.currentTurnId;
+      if (!session || session.archivedAt !== undefined || running !== turn.id) return undefined;
+      written = true;
+      return this.rowCommit({
+        id: stableId('task-row', taskId),
+        sessionId: context.sessionId,
+        turnId: turn.id,
+        kind: 'notice',
+        text: `Suggested task: ${input.title}`,
+        isDelta: false,
+        isSensitive: true,
+        payload: {
+          v: 1, type: 'task-suggestion', taskId, turnId: turn.id, providerId: agent.providerId,
+          title: input.title, rationale: input.rationale, prompt: input.prompt, ...(input.worktree ? { worktree: true } : {}),
+        },
+      });
+    });
+    if (written) return { ok: true, taskId };
+    counted.accepted.delete(taskId);
+    return { ok: false, error: 'suggest_task works only during a running turn.' };
+  }
+
+  sessionContext(sessionId: string): ProviderWrapUpContext | undefined {
+    const snapshot = this.options.getSnapshot();
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    const capability = agent ? this.options.providers.wrapUpCapability(snapshot, agent.providerId) : undefined;
+    if (!agent || !capability || !this.options.allowed(sessionId)) return undefined;
+    const running = agent.currentTurnId ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId) : undefined;
+    const attended = !running || this.options.allowed(sessionId, running);
+    return {
+      // Eligible sessions always launch able to suggest: one started without cannot get it later (probe P7).
+      ...(capability.suggestions === 'native' ? { promptSuggestions: attended ? this.providerMode(snapshot, agent.providerId) : 'off' } : {}),
+      suggestTask: true,
+      // A delegated first turn may not use the tool, so its thread hears this with the first message a person sends.
+      ...(attended && this.options.settings()?.tasks ? { developerInstructions: SUGGEST_TASK_INSTRUCTIONS } : {}),
+    };
+  }
+
+  turnContext(turn: DaemonTurn): Pick<ProviderSubmitInput, 'promptSuggestions' | 'wrapUpInstructions'> | undefined {
+    const snapshot = this.options.getSnapshot();
+    const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId);
+    const capability = agent ? this.options.providers.wrapUpCapability(snapshot, agent.providerId) : undefined;
+    if (!agent || !capability || !this.options.allowed(turn.sessionId)) return undefined;
+    const attended = this.options.allowed(turn.sessionId, turn);
+    return {
+      ...(capability.suggestions === 'native' ? { promptSuggestions: attended ? this.providerMode(snapshot, agent.providerId) : 'off' } : {}),
+      ...(attended && this.options.settings()?.tasks && this.options.toolListed(turn.sessionId) ? { wrapUpInstructions: SUGGEST_TASK_INSTRUCTIONS } : {}),
+    };
+  }
+
+  private providerMode(snapshot: DaemonSnapshot, providerId: string): PromptSuggestionMode {
+    const settings = this.options.settings();
+    return settings ? suggestionMode(settings, providerId, this.providerPaused(snapshot, providerId)) : 'off';
+  }
+
   retryRecap(snapshot: DaemonSnapshot, input: { readonly sessionId: string; readonly turnId: string; readonly attempt: string }):
   { readonly refused: string } | { readonly row: DaemonTranscriptItemInput; begin(): void } {
     const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
@@ -461,6 +567,7 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     }
     for (const turnId of this.changedTurns) {
       const turn = snapshot.turns.find((entry) => entry.id === turnId);
+      if (turn && TERMINAL_TURN_STATES.has(turn.state)) this.closeTaskCount(turn);
       if (turn?.state === 'completed' && this.endedTurns.get(turn.sessionId) !== turn.id) {
         this.endedTurns.set(turn.sessionId, turn.id);
         this.afterSettling(() => this.turnEnded(turn.id));
@@ -473,6 +580,23 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     }
     this.changedApprovals.clear();
     this.switchSuggestions(snapshot);
+  }
+
+  private closeTaskCount(turn: DaemonTurn): void {
+    const counted = this.taskCounts.get(turn.id);
+    if (!counted) return;
+    this.taskCounts.delete(turn.id);
+    if (!counted.dropped) return;
+    void this.commit(this.rowCommit({
+      id: stableId('task-dropped', turn.id),
+      sessionId: turn.sessionId,
+      turnId: turn.id,
+      kind: 'notice',
+      text: `${String(counted.dropped)} more suggested tasks were left out.`,
+      isDelta: false,
+      isSensitive: false,
+      payload: { v: 1, type: 'task-suggestions-dropped', turnId: turn.id, count: counted.dropped },
+    }));
   }
 
   private afterSettling(task: () => void): void {
@@ -684,7 +808,7 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost {
     void this.commit(() => ({ events: [{ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: sessionId } }] }));
   }
 
-  private async commit(planner: DaemonSystemTransitionPlanner): Promise<void> {
+  private async commit(planner: DaemonStoreCommit | DaemonSystemTransitionPlanner): Promise<void> {
     if (this.disposed) return;
     try {
       await this.options.applySystemCommit(planner);

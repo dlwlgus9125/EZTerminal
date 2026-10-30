@@ -1118,3 +1118,148 @@ describe('AgentOrchestrationMcpServer settings tools (대화로 설정 바꾸기
     expect(ask).toHaveBeenCalledWith({ sessionId: 'lead-1', workspaceId: 'workspace-1' }, '맞나요?', expect.anything());
   });
 });
+
+describe('suggest_task, the turn wrap-up tier', () => {
+  type WrapUpHost = NonNullable<ReturnType<NonNullable<ConstructorParameters<typeof AgentOrchestrationMcpServer>[0]['wrapUp']>>>;
+  const INPUT = { title: 'Add a unit test', prompt: 'Write a unit test for formatPrice.', rationale: 'formatPrice has no test.' };
+
+  function wrapUpHost(overrides: Partial<WrapUpHost> = {}): WrapUpHost {
+    return { listed: () => true, suggest: vi.fn(async () => ({ ok: true as const, taskId: 'task-1' })), ...overrides };
+  }
+  /** A conversation with orchestration off and no other tier: only this tier keeps its endpoint alive. */
+  const alone = (): DaemonSnapshot => {
+    const current = snapshot();
+    return { ...current, agents: current.agents.map((agent) => ({ ...agent, orchestrationEnabled: false })) };
+  };
+  const running = (current: DaemonSnapshot, state: DaemonSnapshot['agents'][number]['state'] = 'working'): DaemonSnapshot => ({
+    ...current, agents: current.agents.map((agent) => ({ ...agent, currentTurnId: 'turn-1', state })),
+  });
+  async function connect(host: () => WrapUpHost | undefined, state: { current: DaemonSnapshot }) {
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => state.current, execute: vi.fn() }, wrapUp: host });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    return {
+      server,
+      initialize: async () => (await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'initialize', {}))).value?.result as { capabilities: unknown; instructions: string },
+      list: async () => ((await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/list'))).value?.result as { tools: Array<Record<string, unknown>> }).tools,
+      call: async (args: unknown) => {
+        const result = (await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/call', { name: 'suggest_task', arguments: args }))).value?.result as { content: Array<{ text: string }>; isError?: boolean };
+        return { value: JSON.parse(result.content[0]!.text) as Record<string, unknown>, isError: result.isError === true };
+      },
+    };
+  }
+
+  it('is the last tool, and tells each client what the measurements needed', async () => {
+    const { list } = await connect(() => wrapUpHost(), { current: snapshot() });
+    const tools = await list();
+    expect(tools.at(-1)).toMatchObject({
+      name: 'suggest_task',
+      annotations: { readOnlyHint: true },
+      _meta: { 'anthropic/alwaysLoad': true },
+      inputSchema: {
+        type: 'object', additionalProperties: false, required: ['title', 'prompt', 'rationale'],
+        properties: { title: { maxLength: 120 }, prompt: { maxLength: 4_000 }, rationale: { maxLength: 500 }, worktree: { type: 'boolean' } },
+      },
+    });
+    expect(tools.at(-1)!.description).toContain('calling this tool changes nothing and starts nothing');
+  });
+
+  it('adds nothing else: the server keeps its instructions and never says the list changed', async () => {
+    const plain = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() } });
+    servers.push(plain);
+    await plain.start();
+    const before = plain.descriptorForSession('lead-1');
+    const expected = (await post(before.endpoint, before.bearerToken, rpc(1, 'initialize', {}))).value?.result as { instructions: string };
+    const { initialize } = await connect(() => wrapUpHost(), { current: snapshot() });
+    const result = await initialize();
+    expect(result.instructions).toBe(expected.instructions);
+    expect(result.capabilities).toEqual({ tools: { listChanged: false } });
+  });
+
+  it('keeps a session\'s list as it was at launch, whatever the tier says later', async () => {
+    let listed = true;
+    const shown = await connect(() => wrapUpHost({ listed: () => listed }), { current: snapshot() });
+    const before = await shown.list();
+    listed = false;
+    expect(await shown.list()).toEqual(before);
+    listed = false;
+    const hidden = await connect(() => wrapUpHost({ listed: () => listed }), { current: snapshot() });
+    const without = await hidden.list();
+    listed = true;
+    expect(await hidden.list()).toEqual(without);
+    expect(without.map((tool) => tool.name)).not.toContain('suggest_task');
+  });
+
+  it('refuses a call on a session launched without it', async () => {
+    const suggest = vi.fn();
+    let listed = false;
+    const state = { current: running(snapshot()) };
+    const { call } = await connect(() => wrapUpHost({ listed: () => listed, suggest }), state);
+    listed = true;
+    expect(await call(INPUT)).toMatchObject({ isError: true, value: { ok: false } });
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('keeps the endpoint alive on its own, with every other tier off', async () => {
+    const { list } = await connect(() => wrapUpHost(), { current: alone() });
+    expect((await list()).map((tool) => tool.name)).toEqual(['suggest_task']);
+  });
+
+  it('gives no endpoint to a session no tier wants', async () => {
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: alone, execute: vi.fn() }, wrapUp: () => wrapUpHost({ listed: () => false }) });
+    servers.push(server);
+    await server.start();
+    expect(() => server.descriptorForSession('lead-1')).toThrow();
+  });
+
+  it('hands the call to the host, for the turn that is running', async () => {
+    const suggest = vi.fn(async () => ({ ok: true as const, taskId: 'task-1' }));
+    const { call } = await connect(() => wrapUpHost({ suggest }), { current: running(alone()) });
+    expect(await call({ ...INPUT, worktree: true })).toEqual({ value: { ok: true, taskId: 'task-1' }, isError: false });
+    expect(suggest).toHaveBeenCalledWith({ sessionId: 'lead-1', turnId: 'turn-1' }, { ...INPUT, worktree: true });
+  });
+
+  it('reports what the host refused', async () => {
+    const { call } = await connect(() => wrapUpHost({ suggest: vi.fn(async () => ({ ok: false as const, error: 'Suggested tasks are off.' })) }), { current: running(snapshot()) });
+    expect(await call(INPUT)).toEqual({ value: { ok: false, error: 'Suggested tasks are off.' }, isError: true });
+  });
+
+  it('refuses a call outside a turn: nothing could own the card', async () => {
+    const suggest = vi.fn();
+    const { call } = await connect(() => wrapUpHost({ suggest }), { current: snapshot() });
+    expect(await call(INPUT)).toMatchObject({ isError: true, value: { ok: false } });
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('refuses a call while the turn is stopped: a fork of it could land a card', async () => {
+    const suggest = vi.fn();
+    const { call } = await connect(() => wrapUpHost({ suggest }), { current: running(snapshot(), 'blocked') });
+    expect(await call(INPUT)).toMatchObject({ isError: true, value: { ok: false } });
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an unknown field', { ...INPUT, extra: 1 }],
+    ['no title', { prompt: INPUT.prompt, rationale: INPUT.rationale }],
+    ['a blank prompt', { ...INPUT, prompt: '   ' }],
+    ['no rationale', { title: INPUT.title, prompt: INPUT.prompt }],
+    ['a title too long', { ...INPUT, title: 'x'.repeat(121) }],
+    ['a prompt too long', { ...INPUT, prompt: 'x'.repeat(4_001) }],
+    ['a rationale too long', { ...INPUT, rationale: 'x'.repeat(501) }],
+    ['a worktree that is no boolean', { ...INPUT, worktree: 'yes' }],
+  ])('refuses %s', async (_name, args) => {
+    const suggest = vi.fn();
+    const { call } = await connect(() => wrapUpHost({ suggest }), { current: running(snapshot()) });
+    expect(await call(args)).toMatchObject({ isError: true, value: { ok: false } });
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('says whether a session was launched with it', async () => {
+    const shown = await connect(() => wrapUpHost(), { current: snapshot() });
+    expect(shown.server.suggestTaskListed('lead-1')).toBe(true);
+    expect(shown.server.suggestTaskListed('no-such-session')).toBe(false);
+    const hidden = await connect(() => wrapUpHost({ listed: () => false }), { current: snapshot() });
+    expect(hidden.server.suggestTaskListed('lead-1')).toBe(false);
+  });
+});

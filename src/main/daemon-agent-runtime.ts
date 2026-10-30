@@ -2351,7 +2351,8 @@ export class DaemonAgentRuntime {
     orchestrationEnabled: boolean,
     additionalRoots?: readonly string[],
   ): ProviderSessionContext {
-    const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId)
+    const wrapUp = this.options.wrapUp?.sessionContext(sessionId);
+    const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId) || wrapUp?.suggestTask
       ? this.options.orchestrationForSession?.(sessionId)
       : undefined;
     const prepared = this.options.preparedSessionSettings?.(sessionId);
@@ -2365,6 +2366,8 @@ export class DaemonAgentRuntime {
       ...(model ? { model } : {}),
       permissionPreset,
       ...(orchestration ? { orchestration } : {}),
+      // No endpoint means no tool: an instruction to call one that is not there is worse than none.
+      ...(wrapUp ? { wrapUp: orchestration ? wrapUp : { ...(wrapUp.promptSuggestions ? { promptSuggestions: wrapUp.promptSuggestions } : {}) } } : {}),
     };
   }
 
@@ -2734,6 +2737,7 @@ export class DaemonAgentRuntime {
             ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
           attended: this.attendedTurn(selected.turn),
           ...(additionalRoots ? { additionalRoots } : {}),
+          ...this.options.wrapUp?.turnContext(selected.turn),
         }, this.lifecycleAbortController.signal);
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);

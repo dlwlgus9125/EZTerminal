@@ -104,6 +104,11 @@ export interface ProviderSubmitInput {
    * this turn if the thread has not heard it yet, and remembers; the setting off means leaving this out.
    */
   readonly wrapUpInstructions?: string;
+  /**
+   * How a provider's own suggestions run for this turn, on a session launched for them. `off` for a turn no
+   * person sent: the provider would otherwise spend a call on it, and no one is there to read the guess.
+   */
+  readonly promptSuggestions?: PromptSuggestionMode;
 }
 
 export type AgentProviderTurnScope =
