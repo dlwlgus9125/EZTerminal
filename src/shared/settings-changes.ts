@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { ChatAgentProfileSchema } from './chat-agent-profiles';
 import { BUILTIN_THEME_IDS, ThemeNameSchema } from './layout-schema';
+import type { TurnWrapUpPause, TurnWrapUpSettings } from './turn-wrap-up';
 import { EffectIntensitySchema, UiDensitySchema, UiLocalePreferenceSchema } from './ui-preferences';
 import { WorkflowRepeatSchema } from './workflow';
 import { WorkflowTemplateInputSchema } from './workflow-templates';
@@ -149,7 +150,7 @@ export interface SettingsConversationView {
 export type SettingsUndoResult =
   | { readonly ok: true; readonly changeId: string }
   | { readonly ok: false; readonly error: 'not-found' | 'already-undone' | 'conflict' | 'needs-person' | 'failed'; readonly message: string; readonly current?: unknown };
-export type SettingsChangedDomain = SettingsDomain | 'host' | 'proposal';
+export type SettingsChangedDomain = SettingsDomain | 'host' | 'proposal' | 'turn-wrap-up';
 export interface SettingsChangedEvent {
   readonly domains: readonly SettingsChangedDomain[];
 }
@@ -160,6 +161,9 @@ export interface SettingsChangesAccess {
   undo(changeId: string): Promise<SettingsUndoResult>;
   advisor(): Promise<boolean>;
   setAdvisor(enabled: boolean): Promise<boolean>;
+  /** Settings › 에이전트 › 턴 마무리, with any pause in force now. */
+  turnWrapUp(): Promise<{ readonly settings: TurnWrapUpSettings; readonly paused: readonly TurnWrapUpPause[] }>;
+  setTurnWrapUp(settings: TurnWrapUpSettings): Promise<TurnWrapUpSettings>;
   onChanged(listener: (event: SettingsChangedEvent) => void): () => void;
 }
 

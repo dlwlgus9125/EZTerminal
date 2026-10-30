@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatAgentPhaseMap, ChatAgentProfile } from '../shared/chat-agent-profiles';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import { DEFAULT_TURN_WRAP_UP_SETTINGS } from '../shared/turn-wrap-up';
 import { createWorkflowGraph } from '../shared/workflow';
 import type { WorkflowTemplate } from '../shared/workflow-templates';
 import { ADVISOR_CALLS_PER_TURN, AgentAdvisor } from './agent-advisor';
@@ -287,6 +288,73 @@ describe('settings-changes IPC — an EZTerminal window only', () => {
     expect(file.changes.at(-1)).toMatchObject({ actor: { kind: 'person', principal: 'desktop', id: 'desktop:7:surface-1' }, undoOf: change!.changeId });
     dispose();
     expect(handlers.size).toBe(0);
+  });
+
+  it('gives turn wrap-up to an app window only, with any pause the host reports, and refuses a malformed save', async () => {
+    const { authority } = await setup();
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn((name: string) => { handlers.delete(name); }) };
+    const pause = { providerId: 'claude', window: 'five-hour', usedPercent: 93, resetsAt: 1_800_000_000_000 } as const;
+    const dispose = installSettingsChangesIpc({
+      ipc: ipc as never, authority, ready: Promise.resolve(), principal: (_event, clientId) => clientId === 'surface-1' ? 'desktop:7:surface-1' : null, turnWrapUpPauses: () => [pause],
+    });
+    const off = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, recaps: false };
+    expect(await handlers.get('settings-changes:turn-wrap-up')!({}, 'surface-1')).toEqual({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [pause] });
+    expect(await handlers.get('settings-changes:turn-wrap-up')!({}, 'other')).toEqual({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] });
+    expect(await handlers.get('settings-changes:set-turn-wrap-up')!({}, 'other', off)).toEqual(DEFAULT_TURN_WRAP_UP_SETTINGS);
+    expect(authority.turnWrapUp()).toEqual(DEFAULT_TURN_WRAP_UP_SETTINGS);
+    expect(await handlers.get('settings-changes:set-turn-wrap-up')!({}, 'surface-1', { ...off, recaps: 'no' })).toEqual(DEFAULT_TURN_WRAP_UP_SETTINGS);
+    expect(await handlers.get('settings-changes:set-turn-wrap-up')!({}, 'surface-1', off)).toEqual(off);
+    expect(authority.turnWrapUp()).toEqual(off);
+    expect(await handlers.get('settings-changes:turn-wrap-up')!({}, 'other')).toEqual({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] });
+    dispose();
+    expect(handlers.size).toBe(0);
+  });
+
+  it('answers without a pause until the host has one to report', async () => {
+    const { authority } = await setup();
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn() };
+    installSettingsChangesIpc({ ipc: ipc as never, authority, ready: Promise.resolve(), principal: () => 'desktop:7:surface-1' });
+    expect(await handlers.get('settings-changes:turn-wrap-up')!({}, 'surface-1')).toEqual({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] });
+  });
+});
+
+describe('SettingsAuthority — turn wrap-up', () => {
+  const changed = { suggestions: { claude: true, codex: false }, recaps: false, tasks: true, pauseNearLimit: false };
+
+  it('starts with everything on', async () => {
+    const { authority } = await setup();
+    expect(authority.turnWrapUp()).toEqual({ suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: true });
+  });
+
+  it('saves to its own file, keeps it across a restart, and tells the host and windows at once', async () => {
+    const { authority, dir, onChanged } = await setup();
+    await expect(authority.setTurnWrapUp(changed)).resolves.toEqual(changed);
+    expect(authority.turnWrapUp()).toEqual(changed);
+    expect(onChanged).toHaveBeenLastCalledWith({ domains: ['turn-wrap-up'] });
+    await authority.flush();
+    expect(JSON.parse(await readFile(path.join(dir, 'turn-wrap-up.json'), 'utf8'))).toEqual({ version: 1, ...changed });
+    const again = new SettingsAuthority({ dir, ui: {} as never, profiles: {} as never, templates: {} as never, host: {} as never, raiseApproval: vi.fn(), korean: async () => true });
+    await again.init();
+    expect(again.turnWrapUp()).toEqual(changed);
+  });
+
+  it('reads a damaged or newer file as the defaults: nothing to migrate', async () => {
+    for (const content of ['{not json', JSON.stringify({ version: 2, recaps: false }), JSON.stringify({ version: 1, recaps: false })]) {
+      const { dir } = await setup();
+      await writeFile(path.join(dir, 'turn-wrap-up.json'), content);
+      const again = new SettingsAuthority({ dir, ui: {} as never, profiles: {} as never, templates: {} as never, host: {} as never, raiseApproval: vi.fn(), korean: async () => true });
+      await again.init();
+      expect(again.turnWrapUp(), content).toEqual(DEFAULT_TURN_WRAP_UP_SETTINGS);
+    }
+  });
+
+  it('is not something an AI can change: only the person’s screen writes it', async () => {
+    const { authority } = await setup();
+    await expect(authority.apply(AI, { domain: 'turn-wrap-up', set: { recaps: false } })).rejects.toMatchObject({ code: 'invalid' });
+    await expect(authority.propose(AI, { domain: 'turn-wrap-up', set: { recaps: false } })).rejects.toMatchObject({ code: 'invalid' });
+    expect(authority.turnWrapUp().recaps).toBe(true);
   });
 });
 

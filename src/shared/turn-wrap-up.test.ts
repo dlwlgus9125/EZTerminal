@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { parseTranscriptPayload } from './transcript-payload';
 import {
-  nextPromptText, NEXT_PROMPT_MAX_CHARS, RECAP_INSTRUCTION, recapQuestion, recapStoppedNote, suggestedTaskBranch, suggestedTaskBranches,
-  TASK_SUGGESTION_LIMITS, TURN_RECAP_LIMITS,
+  DEFAULT_TURN_WRAP_UP_SETTINGS, nextPromptText, NEXT_PROMPT_MAX_CHARS, parseTurnWrapUpSettings, RECAP_INSTRUCTION, recapQuestion, recapStoppedNote,
+  suggestedTaskBranch, suggestedTaskBranches, TASK_SUGGESTION_LIMITS, TURN_RECAP_LIMITS,
 } from './turn-wrap-up';
 
 describe('recap prompt', () => {
@@ -87,6 +87,16 @@ describe('turn wrap-up transcript payloads', () => {
     expect(parseTranscriptPayload({ v: 1, type: 'task-suggestions-dropped', turnId: 't1', count: 3 })).toMatchObject({ count: 3 });
     expect(parseTranscriptPayload({ v: 1, type: 'task-suggestions-dropped', turnId: 't1', count: -1 })).toBeUndefined();
     expect(parseTranscriptPayload({ v: 1, type: 'task-suggestion-send', taskId: 'task-1', turnId: 't1' })).toMatchObject({ taskId: 'task-1' });
+  });
+});
+
+describe('parseTurnWrapUpSettings', () => {
+  it('accepts exactly the settings, and refuses anything else', () => {
+    expect(parseTurnWrapUpSettings(DEFAULT_TURN_WRAP_UP_SETTINGS)).toEqual(DEFAULT_TURN_WRAP_UP_SETTINGS);
+    for (const value of [null, {}, { ...DEFAULT_TURN_WRAP_UP_SETTINGS, recaps: 'yes' }, { ...DEFAULT_TURN_WRAP_UP_SETTINGS, surprise: true },
+      { ...DEFAULT_TURN_WRAP_UP_SETTINGS, suggestions: { claude: true } }]) {
+      expect(parseTurnWrapUpSettings(value), JSON.stringify(value)).toBeUndefined();
+    }
   });
 });
 

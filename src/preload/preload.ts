@@ -474,6 +474,8 @@ const api: EzTerminalApi = {
     undo: (changeId: string) => ipcRenderer.invoke('settings-changes:undo', sessionSurfaceClientId, changeId),
     advisor: () => ipcRenderer.invoke('settings-changes:advisor', sessionSurfaceClientId),
     setAdvisor: (enabled: boolean) => ipcRenderer.invoke('settings-changes:set-advisor', sessionSurfaceClientId, enabled),
+    turnWrapUp: () => ipcRenderer.invoke('settings-changes:turn-wrap-up', sessionSurfaceClientId),
+    setTurnWrapUp: (settings: import('../shared/turn-wrap-up').TurnWrapUpSettings) => ipcRenderer.invoke('settings-changes:set-turn-wrap-up', sessionSurfaceClientId, settings),
     onChanged: (listener: (event: import('../shared/settings-changes').SettingsChangedEvent) => void): (() => void) => {
       const handler = (_event: unknown, payload: import('../shared/settings-changes').SettingsChangedEvent): void => listener(payload);
       ipcRenderer.on('settings:changed', handler);

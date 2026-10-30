@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonApproval } from '../../shared/daemon-protocol';
 import type { SettingsChangedEvent, SettingsChangesAccess, SettingsConversationView } from '../../shared/settings-changes';
+import { DEFAULT_TURN_WRAP_UP_SETTINGS } from '../../shared/turn-wrap-up';
 import { useConversationSettings } from '../conversation-settings-track';
 import { AppI18nProvider } from '../i18n';
 import { clearSessionViewStates } from '../session-view-state';
@@ -112,6 +113,8 @@ describe('what the AI changed in this conversation', () => {
       undo: vi.fn(async () => ({ ok: true as const, changeId: 'c-3' })),
       advisor: async () => false,
       setAdvisor: async () => false,
+      turnWrapUp: async () => ({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] }),
+      setTurnWrapUp: async (settings) => settings,
       onChanged: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
       emit: (event) => { for (const listener of listeners) listener(event); },
     };

@@ -27,6 +27,7 @@ import {
   type SettingsUndoResult,
   type UiSettingsPatch,
 } from '../shared/settings-changes';
+import { DEFAULT_TURN_WRAP_UP_SETTINGS, parseTurnWrapUpSettings, type TurnWrapUpPause, type TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { UiPreferences } from '../shared/ui-preferences';
 import type { WorkflowRepeat } from '../shared/workflow';
 import { isBuiltinWorkflowTemplateId, type WorkflowTemplate, type WorkflowTemplateInput } from '../shared/workflow-templates';
@@ -34,6 +35,7 @@ import { JsonFile } from './json-file';
 
 const HISTORY_FILE = 'settings-changes.json';
 const ADVISOR_FILE = 'agent-advisor.json';
+const TURN_WRAP_UP_FILE = 'turn-wrap-up.json';
 const EMPTY_HISTORY: SettingsChangeFile = { version: 1, changes: [] };
 /** Proposals one conversation may leave waiting at once. */
 const MAX_PENDING_PROPOSALS = 3;
@@ -222,16 +224,19 @@ function reasonsFor(edit: Edit, earlier?: unknown): Reason[] {
 export class SettingsAuthority {
   private readonly history: JsonFile;
   private readonly advisorFile: JsonFile;
+  private readonly turnWrapUpFile: JsonFile;
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly proposals = new Map<string, ProposalRecord>();
   private changes: readonly SettingsChangeRecord[] = [];
   private advisor = false;
+  private turnWrapUpSettings = DEFAULT_TURN_WRAP_UP_SETTINGS;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly options: SettingsAuthorityOptions) {
     this.history = new JsonFile(options.dir, HISTORY_FILE);
     this.advisorFile = new JsonFile(options.dir, ADVISOR_FILE);
+    this.turnWrapUpFile = new JsonFile(options.dir, TURN_WRAP_UP_FILE);
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
   }
@@ -241,6 +246,8 @@ export class SettingsAuthority {
     this.changes = (await this.history.readValidated(validateHistory, EMPTY_HISTORY)).changes;
     await this.advisorFile.init();
     this.advisor = (await this.advisorFile.readValidated(validateAdvisor, { version: 1, enabled: false })).enabled;
+    await this.turnWrapUpFile.init();
+    this.turnWrapUpSettings = turnWrapUpFromFile(await this.turnWrapUpFile.readValidated(validateTurnWrapUp, EMPTY_TURN_WRAP_UP));
   }
 
   /** 자문 (`ask_advisor`): off until a person turns it on. */
@@ -257,10 +264,27 @@ export class SettingsAuthority {
     });
   }
 
+  /** Settings › 에이전트 › 턴 마무리. Host policy, one set per PC; read per event, so a switch acts at once. */
+  turnWrapUp(): TurnWrapUpSettings {
+    return this.turnWrapUpSettings;
+  }
+
+  /** Only the person's Settings screen writes these: no AI tool reaches them. */
+  setTurnWrapUp(settings: TurnWrapUpSettings): Promise<TurnWrapUpSettings> {
+    return this.run(async () => {
+      const next = await this.turnWrapUpFile.update(validateTurnWrapUp, EMPTY_TURN_WRAP_UP, () => ({ version: 1 as const, ...settings }), 'save turn wrap-up');
+      if (!next) throw new Error('The turn wrap-up settings could not be saved.');
+      this.turnWrapUpSettings = turnWrapUpFromFile(next);
+      this.emit(['turn-wrap-up']);
+      return this.turnWrapUpSettings;
+    });
+  }
+
   async flush(): Promise<void> {
     await this.queue.catch(() => undefined);
     await this.history.flush();
     await this.advisorFile.flush();
+    await this.turnWrapUpFile.flush();
   }
 
   // ── The AI's tools ──────────────────────────────────────────────────────────────────────────────────
@@ -790,6 +814,21 @@ function validateAdvisor(raw: unknown): { readonly version: 1; readonly enabled:
   return value.version === 1 && typeof value.enabled === 'boolean' && Object.keys(value).length === 2 ? { version: 1, enabled: value.enabled } : null;
 }
 
+type TurnWrapUpFile = TurnWrapUpSettings & { readonly version: 1 };
+const EMPTY_TURN_WRAP_UP: TurnWrapUpFile = { version: 1, ...DEFAULT_TURN_WRAP_UP_SETTINGS };
+
+/** Anything else reads as the defaults: there is nothing to migrate. */
+function validateTurnWrapUp(raw: unknown): TurnWrapUpFile | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { version, ...settings } = raw as Record<string, unknown>;
+  const parsed = version === 1 ? parseTurnWrapUpSettings(settings) : undefined;
+  return parsed ? { version: 1, ...parsed } : null;
+}
+
+function turnWrapUpFromFile({ suggestions, recaps, tasks, pauseNearLimit }: TurnWrapUpFile): TurnWrapUpSettings {
+  return { suggestions, recaps, tasks, pauseNearLimit };
+}
+
 /**
  * Settings tools are offered only to a conversation a person sees directly: not a prepared (workflow
  * stage, review, planning) session, a scheduled run, an advisor, or a managed or provider-owned child.
@@ -809,15 +848,17 @@ export function settingsConversationAllowed(
   return options.turnPrincipal === 'desktop' || options.turnPrincipal === 'android';
 }
 
-/** `settings-changes:conversation|undo|advisor|set-advisor` for the desktop renderer (a person's actions, from an app window only). */
+/** `settings-changes:conversation|undo|advisor|set-advisor|turn-wrap-up|set-turn-wrap-up` for the desktop renderer (a person's actions, from an app window only). */
 export function installSettingsChangesIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly authority: SettingsAuthority;
   readonly ready: Promise<unknown>;
   /** The desktop person behind an EZTerminal window's session surface, or null for any other sender. */
   readonly principal: (event: IpcMainInvokeEvent, clientId: unknown) => string | null;
+  /** The usage windows pausing the automatic calls now, for the Settings screen. */
+  readonly turnWrapUpPauses?: () => readonly TurnWrapUpPause[];
 }): () => void {
-  const { ipc, authority, ready, principal } = input;
+  const { ipc, authority, ready, principal, turnWrapUpPauses } = input;
   ipc.handle('settings-changes:conversation', async (event, clientId: unknown, sessionId: unknown) => {
     if (!principal(event, clientId)) return { changes: [], proposals: [] };
     await ready;
@@ -840,7 +881,17 @@ export function installSettingsChangesIpc(input: {
     if (!principal(event, clientId)) return authority.advisorEnabled();
     return typeof enabled === 'boolean' ? authority.setAdvisor(enabled) : authority.advisorEnabled();
   });
+  ipc.handle('settings-changes:turn-wrap-up', async (event, clientId: unknown) => {
+    if (!principal(event, clientId)) return { settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] };
+    await ready;
+    return { settings: authority.turnWrapUp(), paused: turnWrapUpPauses?.() ?? [] };
+  });
+  ipc.handle('settings-changes:set-turn-wrap-up', async (event, clientId: unknown, settings: unknown) => {
+    await ready;
+    const parsed = principal(event, clientId) ? parseTurnWrapUpSettings(settings) : undefined;
+    return parsed ? authority.setTurnWrapUp(parsed) : authority.turnWrapUp();
+  });
   return () => {
-    for (const channel of ['conversation', 'undo', 'advisor', 'set-advisor']) ipc.removeHandler(`settings-changes:${channel}`);
+    for (const channel of ['conversation', 'undo', 'advisor', 'set-advisor', 'turn-wrap-up', 'set-turn-wrap-up']) ipc.removeHandler(`settings-changes:${channel}`);
   };
 }

@@ -10,6 +10,8 @@
  * run as plain JavaScript, and the replay tests check recordings against these.
  */
 
+import { z } from 'zod';
+
 import type { ChatAgentSettings } from './chat-agent-profiles';
 
 export const TURN_WRAP_UP_CAPABILITY = 'turn-wrap-up-v1';
@@ -194,6 +196,22 @@ export interface TurnWrapUpSettings {
   readonly tasks: boolean;
   /** Stop the automatic calls (suggestions, recaps) while a usage window is at the danger level (90% or more). */
   readonly pauseNearLimit: boolean;
+}
+
+export const DEFAULT_TURN_WRAP_UP_SETTINGS: TurnWrapUpSettings = {
+  suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: true,
+};
+
+export const TurnWrapUpSettingsSchema = z.object({
+  suggestions: z.object({ claude: z.boolean(), codex: z.boolean() }).strict(),
+  recaps: z.boolean(),
+  tasks: z.boolean(),
+  pauseNearLimit: z.boolean(),
+}).strict();
+
+export function parseTurnWrapUpSettings(value: unknown): TurnWrapUpSettings | undefined {
+  const parsed = TurnWrapUpSettingsSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** A usage window at the danger level that pauses the automatic calls until it resets. */
