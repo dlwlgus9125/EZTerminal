@@ -101,6 +101,25 @@ export const PREDICT_INSTRUCTION = "Predict the person's most likely next messag
 export const CODEX_SIDE_QUESTION_INSTRUCTION = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '
   + 'read files, edit anything or start sub-agents. Answer only from what is already in this conversation, in one short reply.';
 
+/**
+ * P5: what a side question sees of a turn stopped mid-way, by asking for facts planted at each level:
+ * the turn's user message (ticket), its assistant text (marker), a tool result of the turn (`toolFact`),
+ * and the request that is still open (pending).
+ */
+export const visibilityQuestion = (toolFact) => 'Answer from this conversation only, in four short lines. Write "unknown" for '
+  + 'anything you cannot see; do not guess.\n'
+  + '1. ticket: the ticket number in my latest message.\n'
+  + '2. marker: the plan marker you wrote in your latest reply.\n'
+  + `3. ${toolFact}\n`
+  + '4. pending: is a tool call or a question of yours waiting for my answer right now? If so, which tool, and which file or question.';
+
+/** What the host adds to a mid-turn recap: it knows what is open; the fork may show that call as aborted. */
+export const recapStoppedNote = (waiting) => `Right now this turn is stopped, not finished: ${waiting} It is still open and waiting for the `
+  + 'person. If your history shows that call as aborted or interrupted, that is only how this side view shows it; nothing was aborted.';
+
+export const nonceWord = () => randomBytes(4).toString('hex');
+export const visibilityFlags = (text, facts) => Object.fromEntries(Object.entries(facts).map(([name, value]) => [name, String(text ?? '').includes(value)]));
+
 // ---------------------------------------------------------------------------
 // Scratch repo facts
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * Real-provider probe for bundle 2 "turn wrap-up" on Claude: next-prompt suggestions (P1),
- * recap by askSideQuestion (P3) and a proposal-only suggest_task MCP tool (P4).
+ * Real-provider probe for bundle 2 "turn wrap-up" on Claude: next-prompt suggestions (P1), recap by
+ * askSideQuestion (P3), a proposal-only suggest_task MCP tool (P4), a recap while a turn is stopped on
+ * an open request (P5), the live suggestion switch (P7), suggestions after resume (P8) and late
+ * suggestions (P9).
  *
- *   node scripts/probe-claude-turn-wrap-up.mjs --scratch <dir> [--repeat 2] [--only A,B,BAL,D]
+ *   node scripts/probe-claude-turn-wrap-up.mjs --scratch <dir> [--repeat 2] [--start-pass 1]
+ *        [--only A,B,BAL,D,P5,P7,P7env,P7clear,P7blank,P7envoff,P8,P9,P9ctrl]
  *        [--claude-executable <path>] [--post-wait-ms 60000]
  *
  * Installed CLI; session options mirror startSession in src/main/claude-provider-adapter.ts at the
@@ -22,6 +25,24 @@
  *        default + the server's per-tool permission_policy 'always_allow' (bare and full tool name),
  *        default + allowedTools, and (meta) default + allowedTools with the tool's own
  *        _meta['anthropic/alwaysLoad'] instead of the server-level alwaysLoad. --variants picks D variants.
+ *   P5   mid-turn recap: seed, a warm-up turn, then two turns (order swapped on even passes) that stop on
+ *        a request the probe leaves unanswered: a permission (canUseTool held on the Edit of src/cart.ts)
+ *        and an AskUserQuestion. While held: askSideQuestion with the recap, then a question for facts
+ *        planted at each level (the turn's message, its text, a file it read, the open request). Then the
+ *        request is answered and the turn must finish; a last turn checks the cache, and the session file
+ *        is read for duplicates and leaked side questions.
+ *   P7   live toggle: applyFlagSettings({ promptSuggestionEnabled }) between turns, starting from
+ *        promptSuggestions true (P7on: on, off, on) and false (P7off: off, on, off). P7env: as P7on, through
+ *        applyFlagSettings({ env: { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION } }), the variable the SDK says wins.
+ *        P7clear: as P7env, but back on with applyFlagSettings({ env: null }) (setting it to true would also
+ *        override the CLI's near-limit suppression). P7blank: back on with the variable set to ''.
+ *        P7envoff: as P7off, through the variable.
+ *   P8   after resume: a session with promptSuggestions, closed, then `resume` with the option passed
+ *        again (P8flag) or left out (P8noflag).
+ *   P9   late arrival: from R1 on the next message goes soon after `result` (1 s and 0.25 s in turn, swapped
+ *        on odd passes after the first: suggestions took 0.8-7.9 s), before that turn's suggestion. Each
+ *        turn ends by asking the person something, so a suggestion is due. Every prompt_suggestion and
+ *        suggestion request is placed on the turn timeline afterwards. P9ctrl: the same turns, unhurried.
  * canUseTool plays the person: edits inside the repo and suggest_task are allowed (and recorded), the
  * shell and ExitPlanMode are denied. Token facts come from Claude Code's OpenTelemetry api_request
  * events (one OTLP/HTTP JSON endpoint path per session, attributed by time window and query_source).
@@ -29,16 +50,17 @@
  * recap and suggest_task texts are kept (they are about the scratch repo); no account attributes.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, promises as fs, readFileSync, readdirSync } from 'node:fs';
 import http from 'node:http';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { createReviewRepo } from './review-probe-repo.mjs';
 import {
   CLAUDE_ENVIRONMENT_VARIABLES, PROMPTS, RECAP_INSTRUCTION, SUGGEST_SERVER, SUGGEST_TOOL,
-  changedFiles, delay, errorText, fileHashes, log, number, providerEnvironment, ratio, recapFlags, seedText,
-  startSuggestionServer, withTimeout, writeReport,
+  changedFiles, delay, errorText, fileHashes, log, nonceWord, number, providerEnvironment, ratio, recapFlags, seedText,
+  recapStoppedNote, startSuggestionServer, visibilityFlags, visibilityQuestion, withTimeout, writeReport,
 } from './wrap-up-probe-kit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,9 +69,11 @@ const SUGGEST_FULL_NAME = `mcp__${SUGGEST_SERVER}__${SUGGEST_TOOL}`;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const KEPT_ATTRIBUTES = new Set([
   'event.name', 'event.timestamp', 'query_source', 'query_source_safe', 'model', 'input_tokens', 'output_tokens',
-  'cache_read_tokens', 'cache_creation_tokens', 'duration_ms', 'speed', 'effort', 'agent_id',
+  'cache_read_tokens', 'cache_creation_tokens', 'duration_ms', 'speed', 'effort', 'agent_id', 'error', 'status_code',
 ]);
-const STEPS = ['A', 'B', 'BAL', 'D'];
+const STEPS = ['A', 'B', 'BAL', 'D', 'P5', 'P7', 'P7env', 'P7clear', 'P7blank', 'P7envoff', 'P8', 'P9', 'P9ctrl'];
+const DEFAULT_STEPS = ['A', 'B', 'BAL', 'D'];
+const MID_TURN_ABORT_MS = 60_000;
 const D_VARIANTS = {
   default: { settings: "permissionMode 'default' (standard preset)", permissionMode: 'default' },
   plan: { settings: "permissionMode 'plan' (plan preset)", permissionMode: 'plan' },
@@ -69,15 +93,17 @@ const DEFINITIONS = {
   postResult: "Requests ending after the turn's result and before the next message was sent (suggestion window).",
   suggestionRatio: "Suggestion request cache_read / the same turn's contextAtEnd (bundle-1 bar: >= 0.8).",
   recapRatio: "side_question request cache_read / contextAtEnd of the turn before the recap (bundle-1 bar: >= 0.8).",
+  midTurnRatio: "Mid-turn side_question request cache_read / the size of the last 'sdk' request that ended before it (the in-progress turn's context).",
 };
 
 function parseArguments(argv) {
-  const options = { repeat: 2, only: [...STEPS], postWaitMs: 60_000, out: path.join(root, 'artifacts', 'wrap-up-probe') };
+  const options = { repeat: 2, startPass: 1, only: [...DEFAULT_STEPS], postWaitMs: 60_000, out: path.join(root, 'artifacts', 'wrap-up-probe') };
   for (let index = 0; index < argv.length; index += 1) {
     const [flag, inline] = argv[index].split('=', 2);
     const value = inline ?? argv[++index];
     if (flag === '--scratch') options.scratch = path.resolve(value);
     else if (flag === '--repeat') options.repeat = Number(value);
+    else if (flag === '--start-pass') options.startPass = Number(value);
     else if (flag === '--only') options.only = value.split(',').map((entry) => entry.trim()).filter(Boolean);
     else if (flag === '--post-wait-ms') options.postWaitMs = Number(value);
     else if (flag === '--claude-executable') options.claudeExecutable = path.resolve(value);
@@ -136,6 +162,8 @@ class AsyncQueue {
 /** OTLP/HTTP JSON logs receiver: keeps only api_request token facts, tagged by endpoint path. */
 function startTelemetryReceiver() {
   const events = [];
+  const errors = [];
+  const names = {};
   const value = (any) => any?.stringValue ?? (any?.intValue !== undefined ? Number(any.intValue) : undefined)
     ?? any?.doubleValue ?? any?.boolValue;
   const server = http.createServer((request, response) => {
@@ -155,8 +183,11 @@ function startTelemetryReceiver() {
                 if (KEPT_ATTRIBUTES.has(attribute.key)) attributes[attribute.key] = value(attribute.value);
               }
               const name = attributes['event.name'] ?? value(record.body);
+              names[name] = (names[name] ?? 0) + 1;
               if (name === 'api_request' || name === 'claude_code.api_request') {
                 events.push({ receivedAt: Date.now(), tag: pathTag && pathTag !== 'v1' ? pathTag : null, ...attributes });
+              } else if (name === 'api_error' || name === 'claude_code.api_error') {
+                errors.push({ receivedAt: Date.now(), tag: pathTag && pathTag !== 'v1' ? pathTag : null, ...attributes });
               }
             }
           }
@@ -169,7 +200,7 @@ function startTelemetryReceiver() {
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, events, port: server.address().port }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, events, errors, names, port: server.address().port }));
   });
 }
 
@@ -200,9 +231,14 @@ const brief = (request) => (request ? { source: request.source, input: request.i
  * Attaches a session's api_requests to its windows (turn, post-result, recap) and derives the cache
  * numbers. A request belongs to the window holding its end time; side questions only to recaps.
  */
-function attribute(conversation, events) {
+function attribute(conversation, events, errors = []) {
   const requests = events.filter((event) => event.tag === conversation.tag).map((event) => requestFacts(event, conversation.origin))
     .sort((left, right) => left.at - right.at);
+  conversation.telemetryErrors = errors.filter((event) => event.tag === conversation.tag).map((event) => ({
+    atMs: (Date.parse(event['event.timestamp'] ?? '') || event.receivedAt) - conversation.origin,
+    source: event.query_source ?? event.query_source_safe ?? null, statusCode: event.status_code ?? null, error: String(event.error ?? '').slice(0, 160),
+  }));
+  if (conversation.keepRequests) conversation.requests = requests.map((request) => ({ at: request.at, atMs: request.atMs, ...brief(request) }));
   // event.timestamp is when a request ended: the main loop's last request ends before `result` is sent.
   const windows = [];
   for (const turn of conversation.turns) {
@@ -247,11 +283,14 @@ function attribute(conversation, events) {
     const mine = byWindow.get(`recap:${recap.name}`) ?? [];
     const before = conversation.turns.filter((turn) => turn.resultAt <= recap.startedAt).at(-1);
     const first = mine[0] ?? null;
+    const lastMainBefore = requests.filter((request) => request.source === 'sdk' && request.at <= recap.startedAt).at(-1) ?? null;
     recap.telemetry = {
       requests: mine.length,
-      first: brief(first),
+      first: first ? { ...brief(first), model: first.model } : null,
       contextBefore: before?.telemetry?.contextAtEnd ?? null,
       recapRatio: ratio(first?.cacheRead, before?.telemetry?.contextAtEnd),
+      contextJustBefore: total(lastMainBefore),
+      midTurnRatio: ratio(first?.cacheRead, total(lastMainBefore)),
     };
   }
   conversation.unattributedRequests = unattributed;
@@ -283,10 +322,43 @@ function personPolicy(repo, approvals) {
   };
 }
 
+/** The person walks away: the next tool request matching `arm` stays unanswered until `release`. */
+function createHold() {
+  let armed = null;
+  let current = null;
+  let waiter = null;
+  return {
+    arm(match) { armed = match; current = null; },
+    take(toolName, toolInput) {
+      if (!armed?.(toolName, toolInput)) return null;
+      armed = null;
+      let release;
+      const answered = new Promise((resolve) => { release = resolve; });
+      current = { at: Date.now(), toolName, toolInput, release, answered };
+      waiter?.(current);
+      waiter = null;
+      return current;
+    },
+    wait: () => (current ? Promise.resolve(current) : new Promise((resolve) => { waiter = resolve; })),
+  };
+}
+
+/** personPolicy, except that a held request answers when released (`release(null)`: as personPolicy would). */
+function holdingPolicy(repo, approvals, hold) {
+  const person = personPolicy(repo, approvals);
+  return async (toolName, toolInput, toolOptions) => {
+    const held = hold.take(toolName, toolInput);
+    if (!held) return person(toolName, toolInput, toolOptions);
+    approvals.push({ at: held.at, toolName, held: true, agent: toolOptions?.agentID ?? null });
+    const answer = await held.answered;
+    return answer ? { ...answer, toolUseID: toolOptions?.toolUseID } : person(toolName, toolInput, toolOptions);
+  };
+}
+
 function openClaude(query, options, sessionId) {
   const input = new AsyncQueue();
   const session = query({ prompt: input, options });
-  const state = { init: null, results: [], calls: [], messages: [], suggestions: [], rateLimits: [], toolUses: [], streamError: null };
+  const state = { init: null, results: [], calls: [], messages: [], suggestions: [], rateLimits: [], toolUses: [], assistantUuids: [], streamError: null };
   const seenCalls = new Set();
   const seenTools = new Set();
   let checks = [];
@@ -311,11 +383,12 @@ function openClaude(query, options, sessionId) {
           mcpServers: (message.mcp_servers ?? []).map((server) => ({ ours: server.name === SUGGEST_SERVER, status: server.status })),
         };
       } else if (message.type === 'prompt_suggestion') {
-        state.suggestions.push({ at, text: String(message.suggestion ?? '') });
+        state.suggestions.push({ at, text: String(message.suggestion ?? ''), uuid: message.uuid ?? null, sessionId: message.session_id ?? null, keys: Object.keys(message) });
       } else if (message.type === 'rate_limit_event') {
         const info = message.rate_limit_info ?? {};
         state.rateLimits.push({ at, status: info.status ?? null, type: info.rateLimitType ?? null, utilization: info.utilization ?? null, surpassedThreshold: info.surpassedThreshold ?? null, usingOverage: info.isUsingOverage ?? null });
       } else if (message.type === 'assistant' && !message.parent_tool_use_id) {
+        if (message.uuid) state.assistantUuids.push(message.uuid);
         const id = message.message?.id ?? `call-${state.calls.length}`;
         if (message.message?.usage && !seenCalls.has(id)) {
           seenCalls.add(id);
@@ -330,7 +403,7 @@ function openClaude(query, options, sessionId) {
         }
       } else if (message.type === 'result') {
         state.results.push({
-          at, subtype: message.subtype ?? null, isError: message.is_error ?? null, numTurns: message.num_turns ?? null,
+          at, uuid: message.uuid ?? null, subtype: message.subtype ?? null, isError: message.is_error ?? null, numTurns: message.num_turns ?? null,
           stopReason: message.stop_reason ?? null, terminalReason: message.terminal_reason ?? null,
           permissionDenials: (message.permission_denials ?? []).map((denial) => denial.tool_name),
           text: typeof message.result === 'string' ? message.result.slice(0, 1_500) : null,
@@ -345,16 +418,17 @@ function openClaude(query, options, sessionId) {
     const before = { results: state.results.length, suggestions: state.suggestions.length, messages: state.messages.length, tools: state.toolUses.length, calls: state.calls.length };
     const startedAt = Date.now();
     log(`claude ${name}`);
-    input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: randomUUID(), session_id: sessionId });
+    const userUuid = randomUUID();
+    input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: userUuid, session_id: sessionId });
     await waitUntil(() => state.results.length > before.results || state.streamError, deadlineMs);
     const result = state.results[before.results] ?? null;
     const resultAt = result?.at ?? Date.now();
     if (result) await waitUntil(() => state.suggestions.length > before.suggestions || state.streamError, postWaitMs);
     const suggestion = state.suggestions[before.suggestions] ?? null;
-    if (suggestion) await delay(3_000); // lets session_state_changed and the telemetry export land
+    if (suggestion && postWaitMs > 0) await delay(3_000); // lets session_state_changed and the telemetry export land
     const postEndAt = Date.now();
     return {
-      name, startedAt, resultAt, postEndAt, finished: Boolean(result), durationMs: resultAt - startedAt,
+      name, userUuid, startedAt, resultAt, postEndAt, finished: Boolean(result), durationMs: resultAt - startedAt,
       result, streamError: state.streamError,
       suggestion: suggestion ? { text: suggestion.text, msAfterResult: suggestion.at - resultAt } : null,
       waitedMsForSuggestion: suggestion ? null : postEndAt - resultAt,
@@ -365,23 +439,24 @@ function openClaude(query, options, sessionId) {
     };
   };
 
-  const recap = async (name) => {
+  const ask = async (name, question, abortMs) => {
     const startedAt = Date.now();
     log(`claude ${name}`);
     try {
-      const answer = await session.askSideQuestion(RECAP_INSTRUCTION, { signal: AbortSignal.timeout(180_000) });
+      const answer = await session.askSideQuestion(question, { signal: AbortSignal.timeout(abortMs) });
       return { name, startedAt, endedAt: Date.now(), durationMs: Date.now() - startedAt, ok: true, text: answer?.response ?? null, synthetic: answer?.synthetic ?? null, refusalFallback: Boolean(answer?.refusalFallback) };
     } catch (error) {
       return { name, startedAt, endedAt: Date.now(), durationMs: Date.now() - startedAt, ok: false, error: errorText(error) };
     }
   };
+  const recap = (name) => ask(name, RECAP_INSTRUCTION, 180_000);
 
   const close = async () => {
     input.close();
     session.close();
     await Promise.race([iterate.catch(() => undefined), delay(5_000)]);
   };
-  return { session, state, turn, recap, close };
+  return { session, state, turn, ask, recap, close };
 }
 
 /** Our MCP server's tools as the session sees them: in context (isLoaded) or deferred behind tool search. */
@@ -562,6 +637,376 @@ async function runDirectCall(context, pass, variantName) {
 }
 
 // ---------------------------------------------------------------------------
+// P5, P7, P8, P9
+
+/** The standard preset's session options (runConversation's), with the given policy. */
+function standardOptions(context, { repo, tag, sessionId, canUseTool, promptSuggestions, resume }) {
+  const { executable, telemetry } = context;
+  return {
+    cwd: repo,
+    pathToClaudeCodeExecutable: executable,
+    permissionMode: 'default',
+    allowDangerouslySkipPermissions: false,
+    canUseTool,
+    includePartialMessages: true,
+    forwardSubagentText: true,
+    agentProgressSummaries: true,
+    persistSession: true,
+    ...(promptSuggestions === undefined ? {} : { promptSuggestions }),
+    env: providerEnvironment(CLAUDE_ENVIRONMENT_VARIABLES, {
+      CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2',
+      CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+      ...telemetryEnvironment(telemetry.port, tag),
+    }),
+    settingSources: ['user', 'project', 'local'],
+    ...(resume ? { resume: sessionId } : { sessionId }),
+  };
+}
+
+/** What the session file holds: tool calls and results by id, and any side-question text that leaked in. */
+function sessionFileFacts(sessionId, leaks) {
+  const projects = path.join(homedir(), '.claude', 'projects');
+  const directory = readdirSync(projects).find((entry) => existsSync(path.join(projects, entry, `${sessionId}.jsonl`)));
+  if (!directory) return { found: false };
+  const toolUses = new Map();
+  const toolResults = new Map();
+  const leaked = Object.fromEntries(Object.keys(leaks).map((name) => [name, 0]));
+  let lines = 0;
+  for (const line of readFileSync(path.join(projects, directory, `${sessionId}.jsonl`), 'utf8').split(/\r?\n/u)) {
+    if (!line) continue;
+    lines += 1;
+    for (const [name, text] of Object.entries(leaks)) if (line.includes(text)) leaked[name] += 1;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (!['user', 'assistant'].includes(entry.type) || entry.isSidechain) continue;
+    for (const block of Array.isArray(entry.message?.content) ? entry.message.content : []) {
+      if (block?.type === 'tool_use') toolUses.set(block.id, (toolUses.get(block.id) ?? 0) + 1);
+      if (block?.type === 'tool_result') toolResults.set(block.tool_use_id, (toolResults.get(block.tool_use_id) ?? 0) + 1);
+    }
+  }
+  return {
+    found: true, lines, toolUses: toolUses.size, toolResults: toolResults.size,
+    toolUsesRepeated: [...toolUses.values()].filter((count) => count > 1).length,
+    toolResultsRepeated: [...toolResults.values()].filter((count) => count > 1).length,
+    toolUsesWithoutResult: [...toolUses.keys()].filter((id) => !toolResults.has(id)).length,
+    leaked,
+  };
+}
+
+/** One turn that stops on a request nobody answers: recap and visibility check while held, then the answer. */
+async function holdCycle({ claude, hold, repo, conversation, tag, name, text, match, facts, toolFact, answer }) {
+  const before = await fileHashes(repo);
+  hold.arm(match);
+  const step = { name, facts };
+  const running = claude.turn(`${tag} ${name}`, text, { postWaitMs: 15_000 });
+  const held = await Promise.race([hold.wait(), running.then(() => null)]);
+  step.held = Boolean(held);
+  if (held) {
+    step.heldTool = held.toolName;
+    step.heldTarget = held.toolInput?.file_path ? path.basename(String(held.toolInput.file_path)) : held.toolInput?.questions?.[0]?.question ?? null;
+    step.changedAtHold = changedFiles(before, await fileHashes(repo));
+    const recap = await claude.ask(`${tag} ${name} recap`, RECAP_INSTRUCTION, MID_TURN_ABORT_MS);
+    recap.flags = recapFlags(recap.text, step.changedAtHold);
+    const check = await claude.ask(`${tag} ${name} check`, visibilityQuestion(toolFact), MID_TURN_ABORT_MS);
+    check.sees = visibilityFlags(check.text, facts);
+    const waiting = held.toolName === 'AskUserQuestion'
+      ? `the person has not answered your question: "${step.heldTarget}".`
+      : `the person has not answered your request to edit ${step.heldTarget}.`;
+    const noted = await claude.ask(`${tag} ${name} noted`, `${recapStoppedNote(waiting)}\n\n${RECAP_INSTRUCTION}`, MID_TURN_ABORT_MS);
+    noted.flags = recapFlags(noted.text, step.changedAtHold);
+    conversation.recaps.push({ ...recap, name: `${name}-recap`, midTurn: true }, { ...check, name: `${name}-check`, midTurn: true }, { ...noted, name: `${name}-noted`, midTurn: true });
+    step.messagesWhileHeld = claude.state.messages.filter((entry) => entry.at >= held.at).map((entry) => entry.kind);
+    step.heldForMs = Date.now() - held.at;
+    held.release(answer ? answer(held.toolInput) : null);
+  }
+  const turn = await running;
+  turn.name = name;
+  turn.changedFiles = changedFiles(before, await fileHashes(repo));
+  conversation.turns.push(turn);
+  conversation.holds.push(step);
+  if (!turn.finished) throw new Error(`${name} did not finish: ${turn.streamError ?? 'deadline'}`);
+}
+
+async function runMidTurn(context, pass) {
+  const { query, options } = context;
+  const tag = `p${pass}-P5`;
+  const repo = path.join(options.scratch, `claude-${tag}`);
+  await createReviewRepo(repo);
+  const notes = { build: nonceWord(), release: nonceWord() };
+  await fs.writeFile(path.join(repo, 'BUILD_NOTES.md'), `# Build notes\n\nBuild tag: ${notes.build}\n`);
+  await fs.writeFile(path.join(repo, 'RELEASE_NOTES.md'), `# Release notes\n\nRelease tag: ${notes.release}\n`);
+  const sessionId = randomUUID();
+  const approvals = [];
+  const hold = createHold();
+  const conversation = {
+    tag, name: 'P5', pass, origin: Date.now(), settings: 'standard preset; canUseTool held on one request per stopped turn',
+    turns: [], recaps: [], holds: [], approvals,
+  };
+  const claude = openClaude(query, standardOptions(context, { repo, tag, sessionId, canUseTool: holdingPolicy(repo, approvals, hold), promptSuggestions: true }), sessionId);
+  const run = async (name, text, postWaitMs = 15_000) => {
+    const turn = await claude.turn(`${tag} ${name}`, text, { postWaitMs });
+    turn.name = name;
+    conversation.turns.push(turn);
+    if (!turn.finished) throw new Error(`${name} did not finish: ${turn.streamError ?? 'deadline'}`);
+    return turn;
+  };
+  const permission = async () => {
+    const facts = { ticket: `T-${nonceWord()}`, marker: nonceWord(), toolResult: notes.build };
+    await holdCycle({
+      claude, hold, repo, conversation, tag, name: 'H-permission', facts, toolFact: 'tag: the build tag in BUILD_NOTES.md.',
+      match: (toolName, toolInput) => EDIT_TOOLS.has(toolName) && /cart\.ts$/u.test(String(toolInput?.file_path ?? '')),
+      text: `Ticket ${facts.ticket}. cartTotal in src/cart.ts reads past the end of the items array. Work in this exact order, with no shell commands:\n`
+        + `1. Write one short sentence that contains the exact words "plan marker ${facts.marker}".\n`
+        + '2. Read BUILD_NOTES.md with the Read tool.\n3. Read src/cart.ts with the Read tool.\n'
+        + '4. Fix the bug with the Edit tool, changing only src/cart.ts.\nThen reply with one line saying what you changed.',
+    });
+  };
+  const question = async () => {
+    const facts = { ticket: `T-${nonceWord()}`, marker: nonceWord(), toolResult: notes.release };
+    await holdCycle({
+      claude, hold, repo, conversation, tag, name: 'H-question', facts, toolFact: 'tag: the release tag in RELEASE_NOTES.md.',
+      match: (toolName) => toolName === 'AskUserQuestion',
+      answer: (toolInput) => ({
+        behavior: 'allow',
+        updatedInput: { ...toolInput, answers: Object.fromEntries((toolInput?.questions ?? []).map((entry) => [entry.question, entry.options?.at(-1)?.label ?? '($5.00)'])) },
+      }),
+      text: `Ticket ${facts.ticket}. Negative prices need a decision. Work in this exact order, with no shell commands:\n`
+        + `1. Write one short sentence that contains the exact words "plan marker ${facts.marker}".\n`
+        + '2. Read RELEASE_NOTES.md with the Read tool.\n3. Read src/format.ts with the Read tool.\n'
+        + '4. Use the Edit tool to add the comment line "// checked for negative prices" at the top of src/format.ts.\n'
+        + '5. Use the AskUserQuestion tool to ask me whether negative prices should show as -$5.00 or ($5.00), with those two options.\n'
+        + '6. After my answer, change formatPrice in src/format.ts to show negative prices that way, and reply with one line saying what you changed.',
+    });
+  };
+  try {
+    await withTimeout(claude.session.initializationResult(), 120_000, 'initialization');
+    await run('seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.claude}`);
+    conversation.init = { ...claude.state.init };
+    await run('T1-warm', 'Without using any tools: what is the code name of module 0042 in the notes? One line.');
+    const order = pass % 2 === 1 ? [permission, question] : [question, permission];
+    for (const step of order) await step();
+    await run('T-after', 'Without using any tools: in one line, name the files you changed in this conversation.');
+    conversation.sessionFile = sessionFileFacts(sessionId, { recap: 'Recap for the person', check: 'Answer from this conversation only' });
+  } catch (error) {
+    conversation.error = errorText(error);
+    log(`claude ${tag} error: ${conversation.error}`);
+  } finally {
+    await delay(3_000);
+    await claude.close();
+  }
+  conversation.rateLimits = claude.state.rateLimits;
+  return conversation;
+}
+
+const SUGGESTION_TURNS = [
+  ['T1-fix', PROMPTS.fixFormat.claude],
+  ['T2-english', PROMPTS.english],
+  ['T3-korean', PROMPTS.korean1],
+  ['T4-korean', PROMPTS.korean2],
+  ['T5-korean', PROMPTS.korean3],
+  ['T6-korean', '도구는 쓰지 말고: 이 저장소에 테스트를 추가한다면 어떤 파일부터 볼지 한 줄로 알려 주세요.'],
+];
+
+/** P7: `plan` is the flag value applied before each listed turn. */
+async function runToggle(context, pass, name) {
+  const { query, options } = context;
+  const tag = `p${pass}-${name}`;
+  const repo = path.join(options.scratch, `claude-${tag}`);
+  await createReviewRepo(repo);
+  const sessionId = randomUUID();
+  const approvals = [];
+  const startsOn = !['P7off', 'P7envoff'].includes(name);
+  const throughEnv = name !== 'P7on' && name !== 'P7off';
+  const flagFor = (value) => {
+    if (!throughEnv) return { promptSuggestionEnabled: value };
+    if (name === 'P7clear' && value) return { env: null };
+    return { env: { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: name === 'P7blank' && value ? '' : String(value) } };
+  };
+  const plan = startsOn ? { 'T3-korean': false, 'T5-korean': true } : { 'T3-korean': true, 'T5-korean': false };
+  const conversation = {
+    tag, name, pass, origin: Date.now(), settings: `promptSuggestions ${startsOn} at start, then applyFlagSettings ${throughEnv ? 'env ' : ''}${JSON.stringify(plan)}`,
+    turns: [], recaps: [], applies: [], approvals,
+  };
+  const claude = openClaude(query, standardOptions(context, { repo, tag, sessionId, canUseTool: personPolicy(repo, approvals), promptSuggestions: startsOn }), sessionId);
+  try {
+    await withTimeout(claude.session.initializationResult(), 120_000, 'initialization');
+    let enabled = startsOn;
+    const run = async (turnName, text) => {
+      if (turnName in plan) {
+        enabled = plan[turnName];
+        const applied = { beforeTurn: turnName, value: enabled };
+        try {
+          applied.sent = flagFor(enabled);
+          await withTimeout(claude.session.applyFlagSettings(flagFor(enabled)), 30_000, 'applyFlagSettings');
+          const read = await withTimeout(claude.session.getSettings(), 30_000, 'getSettings');
+          applied.effective = (throughEnv ? read?.effective?.env?.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION : read?.effective?.promptSuggestionEnabled) ?? null;
+        } catch (error) {
+          applied.error = errorText(error);
+        }
+        conversation.applies.push(applied);
+      }
+      const turn = await claude.turn(`${tag} ${turnName}`, text, { postWaitMs: enabled ? 45_000 : 25_000 });
+      turn.name = turnName;
+      turn.flagExpected = enabled;
+      conversation.turns.push(turn);
+      if (!turn.finished) throw new Error(`${turnName} did not finish: ${turn.streamError ?? 'deadline'}`);
+    };
+    await run('seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.claude}`);
+    conversation.init = { ...claude.state.init };
+    for (const [turnName, text] of SUGGESTION_TURNS) await run(turnName, text);
+  } catch (error) {
+    conversation.error = errorText(error);
+    log(`claude ${tag} error: ${conversation.error}`);
+  } finally {
+    await delay(3_000);
+    await claude.close();
+  }
+  conversation.rateLimits = claude.state.rateLimits;
+  return conversation;
+}
+
+/** P8: a session with suggestions, closed; then resume, with the option again or without it. */
+async function runResumed(context, pass, name) {
+  const { query, options } = context;
+  const tag = `p${pass}-${name}`;
+  const repo = path.join(options.scratch, `claude-${tag}`);
+  await createReviewRepo(repo);
+  const sessionId = randomUUID();
+  const approvals = [];
+  const conversation = {
+    tag, name, pass, origin: Date.now(), settings: `promptSuggestions true, closed, resume with ${name === 'P8flag' ? 'promptSuggestions true' : 'the option left out'}`,
+    turns: [], recaps: [], approvals,
+  };
+  const canUseTool = personPolicy(repo, approvals);
+  const drive = async (claude, turns) => {
+    await withTimeout(claude.session.initializationResult(), 120_000, 'initialization');
+    for (const [turnName, text, postWaitMs] of turns) {
+      const turn = await claude.turn(`${tag} ${turnName}`, text, { postWaitMs });
+      turn.name = turnName;
+      conversation.turns.push(turn);
+      if (!turn.finished) throw new Error(`${turnName} did not finish: ${turn.streamError ?? 'deadline'}`);
+    }
+  };
+  const firstSession = openClaude(query, standardOptions(context, { repo, tag, sessionId, canUseTool, promptSuggestions: true }), sessionId);
+  try {
+    await drive(firstSession, [
+      ['seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.claude}`, 25_000],
+      ['T1-fix', PROMPTS.fixFormat.claude, 45_000],
+      ['T2-english', PROMPTS.english, 45_000],
+    ]);
+    conversation.init = { ...firstSession.state.init };
+    await delay(3_000);
+    await firstSession.close();
+    conversation.closedAt = Date.now();
+    const resumed = openClaude(query, standardOptions(context, { repo, tag, sessionId, canUseTool, promptSuggestions: name === 'P8flag' ? true : undefined, resume: true }), sessionId);
+    try {
+      await drive(resumed, [
+        ['R1-korean', PROMPTS.korean1, 45_000],
+        ['R2-korean', PROMPTS.korean2, 45_000],
+        ['R3-korean', PROMPTS.korean3, 45_000],
+      ]);
+    } finally {
+      await delay(3_000);
+      await resumed.close();
+      conversation.rateLimits = resumed.state.rateLimits;
+    }
+  } catch (error) {
+    conversation.error = errorText(error);
+    log(`claude ${tag} error: ${conversation.error}`);
+    await firstSession.close();
+  }
+  return conversation;
+}
+
+const raceTurn = (subject, first = false) => `${first ? '' : 'No, leave that for now. '}Without using any tools: in one line, name one risk in ${subject}, then ask me whether you should fix it.`;
+const RACE_TURNS = [
+  ['R1', raceTurn('formatPrice in src/format.ts', true)],
+  ['R2', raceTurn('cartTotal in src/cart.ts')],
+  ['R3', raceTurn('canAccess in src/auth.ts')],
+  ['R4', raceTurn('applyDiscount in src/discount.ts')],
+  ['R5', raceTurn('the README.md of this repository')],
+  ['R6', raceTurn('the module notes I gave you at the start')],
+  ['R7', raceTurn('how this repository tests its code')],
+  ['R8', raceTurn('how this repository handles rounding')],
+];
+
+/** P9: the next message goes 1 s after each `result` from R1 on; the last turn waits for its suggestion. */
+async function runLate(context, pass, control = false) {
+  const { query, options } = context;
+  const tag = `p${pass}-P9${control ? 'ctrl' : ''}`;
+  const repo = path.join(options.scratch, `claude-${tag}`);
+  await createReviewRepo(repo);
+  const sessionId = randomUUID();
+  const approvals = [];
+  const conversation = { tag, name: control ? 'P9ctrl' : 'P9', pass, origin: Date.now(), settings: control ? 'the same turns, waiting for each suggestion' : 'next message 0.25 s or 1 s after result', turns: [], recaps: [], approvals, keepRequests: true };
+  const claude = openClaude(query, standardOptions(context, { repo, tag, sessionId, canUseTool: personPolicy(repo, approvals), promptSuggestions: true }), sessionId);
+  const run = async (name, text, postWaitMs) => {
+    const turn = await claude.turn(`${tag} ${name}`, text, { postWaitMs });
+    turn.name = name;
+    conversation.turns.push(turn);
+    if (!turn.finished) throw new Error(`${name} did not finish: ${turn.streamError ?? 'deadline'}`);
+  };
+  try {
+    await withTimeout(claude.session.initializationResult(), 120_000, 'initialization');
+    await run('seed', `${seedText(randomUUID())}\n\n${PROMPTS.seedSuffix.claude}`, 25_000);
+    conversation.init = { ...claude.state.init };
+    await run('T1-fix', PROMPTS.fixFormat.claude, 45_000);
+    await run('T2-english', PROMPTS.english, 45_000);
+    for (const [index, [name, text]] of RACE_TURNS.entries()) {
+      const last = index === RACE_TURNS.length - 1;
+      await run(name, text, last ? 45_000 : control ? 20_000 : 0);
+      if (!last && !control) {
+        const gap = (index + pass) % 2 === 0 ? 1_000 : 250;
+        conversation.turns.at(-1).gapToNextMs = gap;
+        await delay(gap);
+      }
+    }
+  } catch (error) {
+    conversation.error = errorText(error);
+    log(`claude ${tag} error: ${conversation.error}`);
+  } finally {
+    await delay(5_000);
+    await claude.close();
+  }
+  conversation.rateLimits = claude.state.rateLimits;
+  conversation.suggestionsRaw = claude.state.suggestions;
+  conversation.ids = {
+    results: claude.state.results.map((result) => result.uuid), assistants: claude.state.assistantUuids, sessionId,
+  };
+  return conversation;
+}
+
+/** Every suggestion (and its request) placed against the turns: which turn ran when it arrived, which result it followed. */
+function raceTimeline(conversation) {
+  const turns = conversation.turns;
+  const place = (at) => {
+    const running = turns.find((turn) => at >= turn.startedAt && at <= turn.resultAt) ?? null;
+    const lastResult = turns.filter((turn) => turn.resultAt <= at).at(-1) ?? null;
+    const next = lastResult ? turns[turns.indexOf(lastResult) + 1] ?? null : null;
+    return {
+      runningTurn: running?.name ?? null, lastResultOf: lastResult?.name ?? null,
+      msAfterThatResult: lastResult ? at - lastResult.resultAt : null,
+      msAfterNextMessage: next && at >= next.startedAt ? at - next.startedAt : null,
+      msBeforeRunningResult: running ? running.resultAt - at : null,
+    };
+  };
+  const ids = conversation.ids ?? { results: [], assistants: [] };
+  const users = turns.map((turn) => turn.userUuid);
+  return {
+    suggestions: (conversation.suggestionsRaw ?? []).map((entry) => ({
+      ...place(entry.at), text: entry.text, keys: entry.keys,
+      uuidMatches: { result: ids.results.includes(entry.uuid), assistant: ids.assistants.includes(entry.uuid), user: users.includes(entry.uuid) },
+      sameSession: entry.sessionId === ids.sessionId,
+    })),
+    requests: (conversation.requests ?? []).filter((request) => request.source === 'prompt_suggestion').map((request) => ({ ...place(request.at), input: request.input, cacheRead: request.cacheRead, output: request.output, durationMs: request.durationMs })),
+    errors: conversation.telemetryErrors ?? [],
+    turnDurations: turns.map((turn) => [turn.name, turn.durationMs]),
+    gaps: turns.filter((turn) => turn.gapToNextMs).map((turn) => [turn.name, turn.gapToNextMs]),
+    endings: turns.map((turn) => [turn.name, String(turn.result?.text ?? '').slice(0, 90)]),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Verdicts
 
 function passSummary(pass) {
@@ -609,6 +1054,50 @@ function passSummary(pass) {
       suggestions: b.turns.map((entry) => [entry.name, entry.suggestion?.text ?? null]),
     };
   }
+  const p5 = pass.conversations.P5;
+  if (p5) {
+    summary.P5 = {
+      error: p5.error ?? null,
+      holds: p5.holds.map((hold) => {
+        const recap = p5.recaps.find((entry) => entry.name === `${hold.name}-recap`);
+        const check = p5.recaps.find((entry) => entry.name === `${hold.name}-check`);
+        const noted = p5.recaps.find((entry) => entry.name === `${hold.name}-noted`);
+        const turn = p5.turns.find((entry) => entry.name === hold.name);
+        return {
+          name: hold.name, held: hold.held, heldTool: hold.heldTool ?? null, heldTarget: hold.heldTarget ?? null, heldForMs: hold.heldForMs ?? null,
+          changedAtHold: hold.changedAtHold ?? null, changedAtEnd: turn?.changedFiles ?? null,
+          recap: recap ? {
+            ok: recap.ok, ms: recap.durationMs, error: recap.error ?? null, synthetic: recap.synthetic ?? null, midTurnRatio: recap.telemetry?.midTurnRatio ?? null,
+            contextJustBefore: recap.telemetry?.contextJustBefore ?? null, first: recap.telemetry?.first ?? null, requests: recap.telemetry?.requests ?? null, text: recap.text ?? null,
+          } : null,
+          check: check ? { ok: check.ok, ms: check.durationMs, error: check.error ?? null, midTurnRatio: check.telemetry?.midTurnRatio ?? null, sees: check.sees ?? null, text: check.text ?? null } : null,
+          noted: noted ? { ok: noted.ok, ms: noted.durationMs, error: noted.error ?? null, midTurnRatio: noted.telemetry?.midTurnRatio ?? null, text: noted.text ?? null } : null,
+          messagesWhileHeld: hold.messagesWhileHeld ?? null,
+          turnEnd: turn ? { finished: turn.finished, subtype: turn.result?.subtype ?? null, denials: turn.result?.permissionDenials ?? null, numTurns: turn.result?.numTurns ?? null, durationMs: turn.durationMs, tools: turn.toolUses.map((use) => use.name), text: turn.result?.text ?? null } : null,
+        };
+      }),
+      crossTurn: p5.turns.map((turn) => [turn.name, turn.telemetry?.crossTurnRatio ?? null, turn.telemetry?.firstMain?.cacheCreation ?? null, turn.telemetry?.contextAtEnd ?? null]),
+      sessionFile: p5.sessionFile ?? null, approvals: p5.approvals.map((entry) => `${entry.toolName}:${entry.held ? 'held' : entry.decision}`),
+    };
+  }
+  for (const name of ['P7on', 'P7off', 'P7env', 'P7clear', 'P7blank', 'P7envoff', 'P8flag', 'P8noflag']) {
+    const conversation = pass.conversations[name];
+    if (!conversation) continue;
+    summary[name] = {
+      error: conversation.error ?? null, applies: conversation.applies ?? null,
+      turns: conversation.turns.map((turn) => ({
+        name: turn.name, flag: turn.flagExpected ?? null, suggestion: turn.suggestion?.text ?? null, msAfterResult: turn.suggestion?.msAfterResult ?? null,
+        suggestionRequests: (turn.telemetry?.postResult ?? []).filter((request) => request.source === 'prompt_suggestion').length,
+        postResultSources: (turn.telemetry?.postResult ?? []).map((request) => request.source),
+        crossTurnRatio: turn.telemetry?.crossTurnRatio ?? null, cacheCreation: turn.telemetry?.firstMain?.cacheCreation ?? null, cacheRead: turn.telemetry?.firstMain?.cacheRead ?? null,
+      })),
+      rateLimitStatuses: [...new Set((conversation.rateLimits ?? []).map((entry) => `${entry.type}:${entry.status}:${entry.utilization ?? '?'}`))],
+    };
+  }
+  const p9 = pass.conversations.P9;
+  if (p9) summary.P9 = { error: p9.error ?? null, ...raceTimeline(p9) };
+  const p9control = pass.conversations.P9ctrl;
+  if (p9control) summary.P9 = { error: p9control.error ?? null, control: true, ...raceTimeline(p9control) };
   if (pass.direct.length) {
     summary.P4direct = pass.direct.map((step) => ({
       variant: step.variant, error: step.error ?? null, approvalRequested: step.suggestApprovalRequests, toolRan: step.suggestCallsReceived,
@@ -646,7 +1135,7 @@ async function main() {
   const settle = async () => {
     await delay(2_500);
     for (const pass of report.passes) {
-      for (const conversation of [...Object.values(pass.conversations), ...pass.direct]) attribute(conversation, telemetry.events);
+      for (const conversation of [...Object.values(pass.conversations), ...pass.direct]) attribute(conversation, telemetry.events, telemetry.errors);
       pass.summary = passSummary(pass);
     }
     report.facts.claudeVersion ??= report.passes.flatMap((pass) => [...Object.values(pass.conversations), ...pass.direct])
@@ -654,10 +1143,11 @@ async function main() {
     report.facts.model ??= report.passes.flatMap((pass) => [...Object.values(pass.conversations), ...pass.direct])
       .find((entry) => entry.init?.model)?.init.model ?? null;
     report.facts.telemetryEvents = telemetry.events.length;
+    report.facts.telemetryEventNames = telemetry.names;
     await writeReport(file, report);
   };
   try {
-    for (let pass = 1; pass <= options.repeat; pass += 1) {
+    for (let pass = options.startPass; pass < options.startPass + options.repeat; pass += 1) {
       const entry = { pass, conversations: {}, direct: [] };
       report.passes.push(entry);
       for (const name of ['A', 'B', 'BAL']) {
@@ -671,6 +1161,36 @@ async function main() {
           entry.direct.push(await runDirectCall(context, pass, variant));
           await settle();
         }
+      }
+      const order = (names) => (pass % 2 === 1 ? names : [...names].reverse());
+      if (options.only.includes('P5')) {
+        entry.conversations.P5 = await runMidTurn(context, pass);
+        await settle();
+      }
+      if (options.only.includes('P7')) {
+        for (const name of order(['P7on', 'P7off'])) {
+          entry.conversations[name] = await runToggle(context, pass, name);
+          await settle();
+        }
+      }
+      for (const name of ['P7env', 'P7clear', 'P7blank', 'P7envoff']) {
+        if (!options.only.includes(name)) continue;
+        entry.conversations[name] = await runToggle(context, pass, name);
+        await settle();
+      }
+      if (options.only.includes('P8')) {
+        for (const name of order(['P8flag', 'P8noflag'])) {
+          entry.conversations[name] = await runResumed(context, pass, name);
+          await settle();
+        }
+      }
+      if (options.only.includes('P9')) {
+        entry.conversations.P9 = await runLate(context, pass);
+        await settle();
+      }
+      if (options.only.includes('P9ctrl')) {
+        entry.conversations.P9ctrl = await runLate(context, pass, true);
+        await settle();
       }
     }
   } finally {
