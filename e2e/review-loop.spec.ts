@@ -440,6 +440,10 @@ test('/review <focus> opens the form instead of starting; a review waits for the
     await expect(problem(card, 'src/discount.ts:4').locator('.chat-review-status')).toHaveText('Fix requested');
     const queue = session.getByRole('region', { name: 'Queued requests' });
     await expect(queue.locator('.chat-queue__item')).toHaveCount(1);
+    // The queue names the fix in the reader's words; the prompt sent to the AI stays behind "Show message".
+    await expect(queue).toContainText('Fix review findings · 1');
+    await expect(queue).not.toContainText('Fix only the review findings below');
+    await queue.getByRole('button', { name: 'Show message' }).click();
     await expect(queue).toContainText('Fix only the review findings below');
 
     // Review comments from Results while the AI answers: sent as a message of their own, into the queue.
