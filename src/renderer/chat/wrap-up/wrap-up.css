@@ -486,8 +486,8 @@
 }
 
 /* The phone's sheet: choices and buttons are thumb targets. */
-.ez-ui-dialog[data-variant='sheet'] .task-start-all__choice,
-.ez-ui-dialog[data-variant='sheet'] .ez-ui-button {
+.task-start-all-dialog[data-variant='sheet'] .task-start-all__choice,
+.task-start-all-dialog[data-variant='sheet'] .ez-ui-button {
   min-height: 2.75rem;
 }
 

@@ -64,6 +64,7 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
       variant={phone ? 'sheet' : 'dialog'}
       closeLabel={copy.confirm.close}
       ownerDocument={ownerDocument}
+      className="task-start-all-dialog"
       testId="task-start-all-dialog"
       footer={(
         <>
