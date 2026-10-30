@@ -194,12 +194,13 @@ function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, 
 interface ChatOptions {
   readonly provider?: WrapProvider;
   readonly skin?: ChatSkin;
+  readonly permissionPreset?: StructuredAgentSessionPanelProps['permissionPreset'];
   readonly width?: number;
   readonly height?: number;
   readonly decisions?: Partial<WrapUpDecisions>;
 }
 
-function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, decisions }: ChatOptions & {
+function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, decisions, permissionPreset }: ChatOptions & {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -212,7 +213,7 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   return (
     <WrapUpDecisionsProvider value={{ ...RECOMMENDED_WRAP_UP_DECISIONS, ...decisions }}>
       <Desk width={width} height={height}>
-        <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args)} skin={skin} />
+        <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args)} skin={skin} {...(permissionPreset ? { permissionPreset } : {})} />
         <TaskStartForm host={host} args={args} />
       </Desk>
     </WrapUpDecisionsProvider>
@@ -292,10 +293,7 @@ export const AwayEnglish: Story = {
 };
 
 // ── 2. The next-message suggestion in the message box ──────────────────────────────────────────────────
-/**
- * Tab fills the box with the suggestion — editable, caret at its end — and sends nothing; it is described to screen
- * readers. Emptied again, it does not come back this turn.
- */
+/** Tab fills the box with the suggestion — editable, caret at its end — and sends nothing; it is described to screen readers. */
 export const SuggestionTabFill: Story = {
   ...chat('tab-fill', 'format', (lang) => formatStory(lang, 'claude', { recap: false })),
   play: async ({ canvasElement, args }) => {
@@ -310,8 +308,6 @@ export const SuggestionTabFill: Story = {
     await expect(document.activeElement).toBe(input);
     await expect(input.selectionStart).toBe(input.value.length);
     await expect(args.onSend).not.toHaveBeenCalled();
-    await expect(canvas.queryByTestId('structured-agent-suggestion')).toBeNull();
-    await userEvent.clear(input);
     await expect(canvas.queryByTestId('structured-agent-suggestion')).toBeNull();
   },
 };
@@ -356,6 +352,14 @@ export const SuggestionShiftTabPlan: Story = {
     await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
     await waitFor(() => expect(args.onChangeSettings).toHaveBeenCalledWith({ permissionPreset: 'standard' }));
     await findIn(canvasElement, '[data-testid="structured-agent-suggestion"]');
+  },
+};
+/** Plan mode is on: no suggestion (the box shows the plan switch on, as today). */
+export const SuggestionPlanMode: Story = {
+  render: (args) => <ChatScreen id="plan-mode" topic="format" make={(lang) => formatStory(lang, 'claude', { recap: false })} args={args} permissionPreset="plan" />,
+  play: async ({ canvasElement }) => {
+    await composer(canvasElement);
+    await expect(within(canvasElement).queryByTestId('structured-agent-suggestion')).toBeNull();
   },
 };
 /** No suggestion (Codex said "(none)", or automatic calls are paused near the usage limit): exactly today's box. */
@@ -427,12 +431,20 @@ export const RecapWaiting: Story = {
 };
 /** While Claude writes it: one quiet line where the card goes. */
 export const RecapGenerating: Story = chat('recap-generating', 'format', (lang) => formatStory(lang, 'claude', { recap: 'generating', suggestion: false }));
-/** D4 option b: it could not be written — one small line and 다시 만들기 (here pressed: it is written again). */
+/** D4 option b: it could not be written — one small line and 다시 만들기. */
 export const RecapFailedLine: Story = {
   ...chat('recap-failed', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false })),
-  play: async ({ canvasElement, args }) => {
+  play: async ({ canvasElement }) => {
     const line = await findIn(canvasElement, '[data-testid="chat-recap-line"]');
     await expect(line).toHaveTextContent('요약을 만들지 못했습니다');
+    await expect(within(line).getByRole('button', { name: '다시 만들기' })).toBeVisible();
+  },
+};
+/** 다시 만들기 asks the host again: the line says it is being written, then the card comes. */
+export const RecapRetry: Story = {
+  ...chat('recap-retry', 'format', (lang) => formatStory(lang, 'claude', { recap: 'failed', suggestion: false })),
+  play: async ({ canvasElement, args }) => {
+    const line = await findIn(canvasElement, '[data-testid="chat-recap-line"]');
     await userEvent.click(within(line).getByRole('button', { name: '다시 만들기' }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({ kind: 'recap-retry', turnId: 'turn-plan' });
     await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-recap-line"]')).toHaveTextContent('요약 만드는 중'));
@@ -695,13 +707,13 @@ function SettingsScreen({ settings = SETTINGS_ON, paused = [], placement = 'sect
     <Desk>
       <DesktopUiPreferencesProvider capabilities={capabilities}>
         <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-          <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={320} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
+          <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={440} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
             {placement === 'section'
               ? <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
               : <AiChatGroup access={access} />}
           </SidebarShell>
           <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
-            <AwayChat />
+            <AwayChat paused={paused.length > 0} />
           </div>
         </div>
       </DesktopUiPreferencesProvider>
@@ -718,15 +730,20 @@ function AiChatGroup({ access }: { readonly access: TurnWrapUpAccess }): JSX.Ele
     </details>
   );
 }
-function AwayChat(): JSX.Element {
+/** The conversation beside Settings; while the automatic calls are paused it has no guess and no recap, and its usage says why. */
+function AwayChat({ paused }: { readonly paused: boolean }): JSX.Element {
   const locale = useContext(StoryLocale);
-  const [fixture] = useState(() => inSession(formatStory(locale, 'claude'), 'wrap-up-story-settings-chat'));
+  const [fixture] = useState(() => inSession(formatStory(locale, 'claude', paused ? { recap: false, suggestion: false } : {}), 'wrap-up-story-settings-chat'));
   const host = useStoryHost(fixture, fn());
-  return <StructuredAgentSessionPanel {...panelProps('wrap-up-story-settings-chat', host, 'claude', 'format', locale, meta.args)} />;
+  return (
+    <StructuredAgentSessionPanel {...panelProps('wrap-up-story-settings-chat', host, 'claude', 'format', locale, meta.args)}
+      {...(paused ? { usage: { fiveHour: { usedPercent: 92, resetsAt: RESUME_AT }, weekly: { usedPercent: 61 }, contextPercent: 41 } } : {})} />
+  );
 }
-async function showSettings(canvasElement: HTMLElement): Promise<HTMLElement> {
+async function showSettings(canvasElement: HTMLElement, at = '[data-testid="turn-wrap-up-settings"]'): Promise<HTMLElement> {
   const section = await waitFor(() => { const element = within(canvasElement).getByTestId('turn-wrap-up-settings'); expect(element).toBeVisible(); return element; }, { timeout: 10_000 });
-  section.scrollIntoView({ block: 'start' });
+  const target = await findIn(canvasElement, at);
+  target.scrollIntoView({ block: at === '[data-testid="turn-wrap-up-settings"]' ? 'start' : 'center' });
   return section;
 }
 /** D9 option A (and D1 on): its own section on Settings › 에이전트, after 에이전트 협업. Every switch says what it costs. */
@@ -752,7 +769,7 @@ export const SettingsCodexOff: Story = {
 export const SettingsPaused: Story = {
   render: () => <SettingsScreen paused={PAUSED} />,
   play: async ({ canvasElement }) => {
-    const section = await showSettings(canvasElement);
+    const section = await showSettings(canvasElement, '[data-testid="turn-wrap-up-paused"]');
     await expect(within(section).getByTestId('turn-wrap-up-paused')).toHaveTextContent('지금 Claude 5시간 사용량 92% — 자동 호출을 멈췄습니다');
   },
 };

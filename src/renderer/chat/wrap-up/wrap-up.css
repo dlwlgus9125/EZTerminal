@@ -36,7 +36,8 @@
   background: var(--ui-chat-inline-code);
   font-family: var(--ui-font-mono);
   font-size: 0.9em;
-  font-variant-ligatures: none;
+  /* The characters a copy would paste: the root turns contextual alternates on, which draws `>=` as one glyph. */
+  font-feature-settings: 'calt' 0, 'liga' 0;
   overflow-wrap: anywhere;
 }
 
@@ -240,6 +241,7 @@
   margin: 0;
   color: var(--ui-text-primary);
   font: var(--ui-font-size-xs) / 1.5 var(--ui-font-mono);
+  font-feature-settings: 'calt' 0, 'liga' 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -382,6 +384,7 @@
 
 .task-start-all__title {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   margin: 0;
   color: var(--ui-text-primary);
@@ -397,22 +400,28 @@
   font: 600 var(--ui-font-size-xs) / 1.4 var(--ui-font-label);
 }
 
+.task-start-all__name {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin-right: var(--ui-space-2);
+}
+
 .task-start-all__choices {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
   margin: var(--ui-space-1) 0 0 1.5rem;
   padding: 0;
   border: 0;
 }
 
-.task-start-all__choices > * {
-  margin: 0 var(--ui-space-2) var(--ui-space-1) 0;
+.task-start-all__choices > * + * {
+  margin-top: var(--ui-space-1);
 }
 
 .task-start-all__choice {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   min-width: 0;
   min-height: 2rem;
@@ -441,8 +450,14 @@
   accent-color: var(--ui-accent);
 }
 
+.task-start-all__choice > span {
+  flex: none;
+  white-space: nowrap;
+}
+
 .task-start-all__branch {
-  margin-left: var(--ui-space-1);
+  min-width: 0;
+  margin-left: var(--ui-space-2);
   color: var(--ui-text-secondary);
   font: var(--ui-font-size-2xs) / 1.4 var(--ui-font-mono);
   overflow-wrap: anywhere;

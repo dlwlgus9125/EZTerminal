@@ -60,7 +60,7 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
       onOpenChange={onOpenChange}
       title={copy.confirm.title(tasks.length)}
       description={copy.confirm.description(settings)}
-      size="sm"
+      size={phone ? 'sm' : 'md'}
       variant={phone ? 'sheet' : 'dialog'}
       closeLabel={copy.confirm.close}
       ownerDocument={ownerDocument}
@@ -75,7 +75,11 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
       <ol className="task-start-all" data-phone={phone || undefined}>
         {tasks.map((task, index) => (
           <li key={task.id} className="task-start-all__task" data-testid="task-start-all-task">
-            <p className="task-start-all__title"><span className="task-start-all__index" aria-hidden="true">{index + 1}</span><span><InlineCode text={task.title} /></span></p>
+            <p className="task-start-all__title">
+              <span className="task-start-all__index" aria-hidden="true">{index + 1}</span>
+              <span className="task-start-all__name"><InlineCode text={task.title} /></span>
+              {task.worktree && <span className="task-start-all__chip"><Glyph name="wt" />{copy.worktreeRecommended}</span>}
+            </p>
             {phone ? (
               <p className="task-start-all__here">{copy.confirm.thisFolder}</p>
             ) : (
@@ -92,7 +96,6 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, phone,
                   <span>{copy.confirm.newWorktree}</span>
                   <code className="task-start-all__branch">{branches[index]}</code>
                 </label>
-                {task.worktree && <span className="task-start-all__chip"><Glyph name="wt" />{copy.worktreeRecommended}</span>}
               </fieldset>
             )}
           </li>
