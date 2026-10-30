@@ -2129,8 +2129,11 @@ async function runRecapWaiting(page, report, name, providerId, { kind, preset = 
   if (!whileWaiting.decisionMatches) problems.push('the recap does not name the decision it stopped for');
   const perTurn = rows.filter((item) => item.payload.turnId === seen.recap?.turnId);
   if (perTurn.length !== 2) problems.push(`${perTurn.length} recap rows for the turn`);
-  if (/중단|interrupted|aborted/iu.test(seen.recap?.text ?? '') && !/기다|대기|승인|답|waiting/iu.test(seen.recap?.text ?? '')) problems.push('the recap says the turn was interrupted and not that it waits');
-  if (facts.calls.length !== 1) problems.push(`${facts.calls.length} recap calls`);
+  // A Codex fork sees a stopped turn as aborted. Naming that at all fails, even beside a word about approval (a real recap did both).
+  if (/중단|interrupted|aborted/iu.test(seen.recap?.text ?? '')) problems.push('the recap speaks of an interruption');
+  // Once per turn: another app taking the focus during an earlier turn gives that turn its own recap.
+  const recappedTurns = new Set(rows.map((item) => item.payload.turnId)).size;
+  if (facts.calls.length !== recappedTurns) problems.push(`${facts.calls.length} recap calls for ${recappedTurns} turns`);
   report.push({ scenario: name, ...facts, problems });
   if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
 }
