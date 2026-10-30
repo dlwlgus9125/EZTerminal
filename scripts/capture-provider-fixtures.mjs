@@ -400,7 +400,7 @@ const SCENARIOS = [
     codexDeveloperInstructions: SUGGEST_DEVELOPER_INSTRUCTIONS,
   },
   {
-    // Effort low on the fork's turn only: the lowest Codex allows, and half the wait of the conversation's.
+    // Effort low on the fork's turn only, the lowest Codex allows.
     name: 'predict-fork',
     providers: ['codex'],
     review: 'fork',

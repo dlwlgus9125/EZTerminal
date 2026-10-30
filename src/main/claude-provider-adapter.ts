@@ -1613,7 +1613,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       session.appliedEffort = effort;
       session.flagEffort = restore ? undefined : effort;
     }
-    await this.applySuggestionMode(session);
+    await this.applySuggestionMode(session, signal);
+    this.throwIfAborted(signal);
     if (input.context?.skills?.length) {
       if (session.context.toolsDisabled || !session.query.supportedCommands) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
       const commands = await bounded(abortable(session.query.supportedCommands(), signal), this.operationTimeoutMs);
@@ -1735,11 +1736,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   /** A refusal leaves the mode for the next message: a suggestion is never worth failing a turn. */
-  private async applySuggestionMode(session: SessionRecord): Promise<void> {
+  private async applySuggestionMode(session: SessionRecord, signal?: AbortSignal): Promise<void> {
     const mode = session.suggestionMode;
     if (!mode || mode === session.appliedSuggestionMode || !session.query.applyFlagSettings) return;
     try {
-      await bounded(session.query.applyFlagSettings({ env: { [PROMPT_SUGGESTION_VARIABLE]: PROMPT_SUGGESTION_VALUES[mode] } }), this.operationTimeoutMs);
+      await bounded(abortable(session.query.applyFlagSettings({ env: { [PROMPT_SUGGESTION_VARIABLE]: PROMPT_SUGGESTION_VALUES[mode] } }), signal), this.operationTimeoutMs);
       session.appliedSuggestionMode = mode;
     } catch {
       // Tried again before the next message.
@@ -2207,7 +2208,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       if (session.startupError) throw session.startupError;
       this.throwIfAborted(signal);
       await this.readAppliedSettings(session, signal);
-      await this.applySuggestionMode(session);
+      await this.applySuggestionMode(session, signal);
       session.initialized = true;
       this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'idle' });
       return session.handle;

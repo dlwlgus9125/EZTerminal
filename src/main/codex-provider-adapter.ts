@@ -86,7 +86,7 @@ const SIDE_QUESTION_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reason
  * until that app-server exits (ephemeral: nothing of it is written).
  */
 const SIDE_QUESTION_FORK_TIMEOUT_MS = 600_000;
-/** The lowest effort Codex allows: half the wait of the conversation's own, same cache (probe P2). */
+/** The lowest effort Codex allows: 6.6–15.0 s against 8.0–24.3 s at xhigh, same cache (probe P2). */
 const PREDICT_EFFORT = 'low';
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;

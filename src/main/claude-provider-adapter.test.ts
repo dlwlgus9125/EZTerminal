@@ -2010,6 +2010,22 @@ describe('Claude turn wrap-up', () => {
     await fixture.adapter.dispose();
   });
 
+  it('does not hold or send a cancelled message while the CLI sits on a mode change', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    const apply = vi.spyOn(fixture.query, 'applyFlagSettings')
+      .mockRejectedValueOnce(new Error('control request failed'))
+      .mockImplementationOnce(() => new Promise<void>(() => undefined));
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
+    const controller = new AbortController();
+    const sending = fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', commandId: 'command-turn-1', prompt: 'Hi' }, controller.signal);
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(2));
+    controller.abort();
+    await expect(sending).rejects.toBeInstanceOf(ClaudeProviderError);
+    expect(fixture.events).not.toContainEqual(expect.objectContaining({ kind: 'turn-started' }));
+    await fixture.adapter.dispose();
+  });
+
   it('binds a suggestion to the turn that just finished', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession(eligible);
