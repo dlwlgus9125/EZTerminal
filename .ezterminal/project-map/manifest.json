@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c68ff76c8e5fe47d670c8e4bc14514c374c3e16baa1cbc200569cfcf3ede8e60",
+        "inputDigest": "sha256:94a8d83d3747b24c025708792fa8c0f38c801ac90b861a9855b33133b9bdacb2",
         "decision": "map-updated",
-        "reason": "AI management: the preload claim now lists PC-wide capability calls and the desktop-only program update; provider disable shares one active-conversation check with the update; the Codex version check is exported for it."
+        "reason": "Review loop: main builds a review coordinator, hands it to the provider runtime and starts it between the Agent and automation runtimes; claims now name the review handlers, both adapters' reviewer options, submit's review-conversation refusal and the dock panel's review wiring."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fef63a25f16131b86f2e2378c7253643eb70a958d420c363dab9baf6eae839bf",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (AI management): main.ts adds the PC-wide extension and program update services and their desktop IPC; the anchored window and authority lifecycle blocks only moved."
+        "inputDigest": "sha256:f228196e4497ae1b36783b5fe6ae83306a4051d340e9fc3887bc49e32d4ed28d",
+        "decision": "map-updated",
+        "reason": "Review loop: ordered authority startup now starts the review coordinator after the Agent runtime and disposes it on failure and at Agent shutdown; the startup claim names it. The store and other runtime blocks only moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6dbfbb10ddb17bb07b22dff91f86e98ed7323646648399c6069f450ecc1ef1c4",
+        "inputDigest": "sha256:6ed4f7cb44a661608a6652ff9f9a30280ed5061d06a34dea9e55ac5399316391",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (AI management): the phone transport and the bridge add capability-gated agent-host-extensions requests; the anchored session and command paths only moved."
+        "reason": "Reviewed (review loop): the protocol adds review.* commands and a host-memory reviewSupport snapshot field the router projects, and history opens reviewer conversations read-only; the anchored command, outbox, event and history paths only moved."
       }
     },
     {
@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5e0bed2d9c180a95437c66a4992358ed75ea8b0a586946bb305d78c072a09203",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (AI management): the bridge adds agent-host-extensions handlers beside the workflow and capability ones; the anchored version gates are unchanged."
+        "inputDigest": "sha256:f938a24a4d6ae169aa4e5f35e2f2c88a94ac098f0bcb5bb61de457a0f3da1366",
+        "decision": "map-updated",
+        "reason": "Review loop: the change review collects line comments that enter the draft or go as their own message and walks an AI review problem by problem; its claim says so and now anchors the whole component. The Session surface blocks only moved."
       }
     },
     {
@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:47e7e101045bdec5fd4a0e1d5546d520653f660d50fc2df68814f78ecc3fb55a",
-        "decision": "map-updated",
-        "reason": "AI management: discovery gains a PC-wide view (neutral folder, marketplaces, project installs changed only through app workspaces) and plugin browsing; Codex reads only local marketplaces (the remote catalog exceeds the frame limit)."
+        "inputDigest": "sha256:14010241bc8e511d0886fc10013ff8719be64f1e5d24c6465ea217e8df04022b",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (review loop): the Codex and Claude adapters add read-only reviewer sessions and review forks; the anchored metadata and discovery blocks are unchanged and only moved."
       }
     }
   ]
