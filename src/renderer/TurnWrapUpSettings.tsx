@@ -28,7 +28,7 @@ function pauseText(pause: TurnWrapUpPause, ko: boolean): string {
 }
 
 /**
- * Settings › 에이전트 › 턴 마무리 (시안 2026-10-30): what the app asks the AI for when a turn ends — next-prompt
+ * Settings › 에이전트 › 턴 마무리: what the app asks the AI for when a turn ends — next-prompt
  * suggestions per AI (Claude sends its own with the answer; Codex needs one more read-only call), recap cards and
  * suggested tasks — and the pause of the automatic calls near a usage limit, with a pause in force said in words.
  * The AI only proposes: nothing here runs anything on its own.
@@ -95,8 +95,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
             onChange={(event) => save({ ...settings, recaps: event.target.checked })}
             label={text('요약 카드', 'Recap card')}
             description={text(
-              'AI가 기다리거나, 아무 화면도 그 대화를 보지 않는 사이 턴이 끝나면 3–4줄로 정리합니다. 그때만 작은 호출 한 번',
-              'When the AI waits for you, or a turn ends while no screen shows the conversation, it sums the turn up in 3–4 lines. One small call, only then',
+              '아무 화면도 그 대화를 보지 않을 때 턴이 끝나거나 AI가 멈춰 기다리면 3–4줄로 정리합니다. 턴마다 한 번만, 작은 호출 한 번',
+              'When no screen shows the conversation and a turn ends or the AI stops to wait, it sums the turn up in 3–4 lines. Once per turn, one small call',
             )}
             data-testid="turn-wrap-up-recaps"
           />

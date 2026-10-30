@@ -63,6 +63,16 @@ export function agentPermissionCopy(locale: ChatLocale): AgentPermissionCopy {
  * One label for a stored preset. A conversation shows `plan` as the plan
  * switch; an automated agent shows it as plan-only, since nobody approves it.
  */
+const EFFORT: Readonly<Record<ChatLocale, Readonly<Record<string, string>>>> = {
+  en: { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' },
+  ko: { minimal: '최소', low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' },
+};
+
+/** A reasoning effort in words; one this copy does not know, as the host named it. */
+export function reasoningEffortLabel(value: string, locale: ChatLocale): string {
+  return EFFORT[locale][value] ?? value;
+}
+
 export function permissionPresetLabel(preset: PermissionPreset, locale: ChatLocale, context: 'conversation' | 'automated' = 'conversation'): string {
   const copy = COPY[locale];
   if (preset === 'plan') return context === 'automated' ? copy.planOnly : copy.plan;

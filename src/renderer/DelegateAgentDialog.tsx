@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from 'react';
 
 import { sameChatAgentSettings, type ChatAgentProfile, type ChatAgentSettings } from '../shared/chat-agent-profiles';
-import { permissionPresetLabel } from './agent-permission-copy';
+import { permissionPresetLabel, reasoningEffortLabel } from './agent-permission-copy';
+import type { ChatLocale } from './chat/model/summary';
 import { useAppTranslation } from './i18n';
 import { Button, Dialog, Field, Input, Select } from './ui';
 import './delegate-agent-dialog.css';
@@ -52,11 +53,29 @@ export interface DelegateAgentDialogProps {
   readonly title?: string;
   /** Instead of the button label `mode` gives it. */
   readonly submitLabel?: string;
+  /** A model's name; without it the model id shows. */
+  readonly modelLabel?: (providerId: string, model: string) => string;
 }
 
 const NEW_WORKTREE = '__new-worktree__';
 const AS_ASKED = '__as-asked__';
 const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
+
+/** What a start runs with, in words: `Claude · Opus 5.5 · 높음 · 승인 후 실행`, as a suggested task's card says it. */
+export function delegateAgentLine(
+  agent: ChatAgentSettings,
+  locale: ChatLocale,
+  providerLabels: Readonly<Record<string, string>>,
+  modelLabel?: (providerId: string, model: string) => string,
+): string {
+  return [
+    providerLabels[agent.providerId] ?? agent.providerId,
+    agent.model ? modelLabel?.(agent.providerId, agent.model) ?? agent.model : locale === 'ko' ? '기본 모델' : 'Default model',
+    ...(agent.reasoningEffort ? [reasoningEffortLabel(agent.reasoningEffort, locale)] : []),
+    // A delegated agent works on its own: a plan profile only plans.
+    permissionPresetLabel(agent.permissionPreset, locale, 'automated'),
+  ].join(' · ');
+}
 
 /**
  * Hand this conversation's work, or a review of it, to another agent. The new
@@ -65,7 +84,7 @@ const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
  */
 export function DelegateAgentDialog({
   open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles, allowNewWorktree = true,
-  initialWorkspace, initialAgent, title, submitLabel,
+  initialWorkspace, initialAgent, title, submitLabel, modelLabel,
 }: DelegateAgentDialogProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
@@ -99,13 +118,6 @@ export function DelegateAgentDialog({
   const newWorktree = workspaceId === NEW_WORKTREE;
   const branchInvalid = newWorktree && !BRANCH.test(branch.trim());
   const canSubmit = Boolean(profile ?? asAsked) && instruction.trim().length > 0 && !branchInvalid && !busy;
-  const profileLine = (entry: ChatAgentProfile): string => [
-    providerLabels[entry.providerId] ?? entry.providerId,
-    entry.model ?? text('기본 모델', 'Default model'),
-    entry.reasoningEffort,
-    // A delegated agent works on its own: a plan profile only plans.
-    permissionPresetLabel(entry.permissionPreset, ko ? 'ko' : 'en', 'automated'),
-  ].filter(Boolean).join(' · ');
 
   const submit = async (): Promise<void> => {
     const who = asAsked
@@ -157,7 +169,7 @@ export function DelegateAgentDialog({
         <div className="delegate-agent-dialog__form">
           <Field label={text('에이전트 프로필', 'Agent profile')} description={asAsked
             ? text('저장된 프로필이 아닙니다. 시작하려던 설정 그대로 씁니다.', 'Not a saved profile. It starts with these settings as they are.')
-            : profile ? profileLine(profile) : undefined}>
+            : profile ? delegateAgentLine(profile, ko ? 'ko' : 'en', providerLabels, modelLabel) : undefined}>
             <Select value={profileId} onChange={(event) => setProfileId(event.currentTarget.value)} data-testid="delegate-agent-profile">
               {initialAgent && !askedProfile && <option value={AS_ASKED}>{initialAgent.label}</option>}
               {profiles.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}

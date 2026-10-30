@@ -40,6 +40,9 @@ export type ChatWrapUpAction =
   | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
   | { readonly kind: 'recap-retry'; readonly turnId: string };
 
+/** What one press starts: the settings on the card's line, and that line in words. */
+export type ChatTaskDefaults = Pick<SuggestedTaskStart, 'agent' | 'settings'>;
+
 /** Tasks a command is carrying right now, by id: the client's own, never stored, so a crash cannot strand a card. */
 export type ChatWrapUpPending = ReadonlyMap<string, 'starting' | 'sending'>;
 

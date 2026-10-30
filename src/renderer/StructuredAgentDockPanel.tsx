@@ -50,7 +50,12 @@ import { linkedPhaseSettings, type ChatAgentPhaseMap, type ChatAgentProfile } fr
 import { REVIEW_LOOP_CAPABILITY } from '../shared/review-findings';
 import { reviewHost } from './review-commands';
 import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
-import { DelegateAgentDialog, type DelegateAgentRequest, type DelegateMode } from './DelegateAgentDialog';
+import { chatCopy } from './chat/copy';
+import { DelegateAgentDialog, delegateAgentLine, type DelegateAgentRequest, type DelegateMode } from './DelegateAgentDialog';
+import {
+  createChildConversation, startTaskFromForm, taskStartForm, turnWrapUpHost, useWrapUpPending,
+  type TaskFormRequest, type TaskStartFormValues, type TurnWrapUpHostInput,
+} from './turn-wrap-up-commands';
 import { useAppTranslation } from './i18n';
 import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
@@ -311,13 +316,17 @@ export function StructuredAgentDockPanel(
   const profileAccess = window.ezterminal?.chatAgentProfiles;
   const worktreeAccess = window.ezterminal?.workspaceWorktrees;
   const [delegateMode, setDelegateMode] = useState<DelegateMode | null>(null);
+  // A suggested task's start form, on what it opened with: a failure behind it must not reset what the person typed.
+  const [taskDialog, setTaskDialog] = useState<{ readonly request: TaskFormRequest; readonly values: TaskStartFormValues } | null>(null);
+  const wrapUpPending = useWrapUpPending();
   const [delegateProfiles, setDelegateProfiles] = useState<readonly ChatAgentProfile[]>([]);
+  const profilesWanted = delegateMode !== null || taskDialog !== null;
   useEffect(() => {
-    if (!delegateMode || !profileAccess) return undefined;
+    if (!profilesWanted || !profileAccess) return undefined;
     let alive = true;
     void profileAccess.list().then((profiles) => { if (alive) setDelegateProfiles(profiles); }).catch(() => undefined);
     return () => { alive = false; };
-  }, [delegateMode, profileAccess]);
+  }, [profilesWanted, profileAccess]);
   // 단계 연결: the plan approval dock says which agent implements the approved plan.
   const planApprovalPending = (snapshot?.approvals ?? []).some((approval) => (
     approval.sessionId === sessionId && approval.state === 'pending' && approval.request?.kind === 'plan'
@@ -853,6 +862,9 @@ export function StructuredAgentDockPanel(
     () => mergeOptimisticTranscript(authoritativeItems, localItems, snapshot),
     [authoritativeItems, localItems, snapshot],
   );
+  // A card's command waits on the transcript for the host's row.
+  const transcriptItemsRef = useRef(transcriptItems);
+  transcriptItemsRef.current = transcriptItems;
 
   useEffect(() => {
     const visibleLocalIds = new Set(transcriptItems.flatMap((item) => (
@@ -1096,47 +1108,34 @@ export function StructuredAgentDockPanel(
     approval.state === 'pending' && approval.request?.subagent?.sessionId === sessionId
   ));
 
-  const delegate = async (mode: DelegateMode, request: DelegateAgentRequest): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> => {
+  const providerLabels = Object.fromEntries((snapshot?.providers ?? []).map((entry) => [entry.id, entry.displayName]));
+  /** 맡기기 and 검토 맡기기, and a suggested task's start form (`task`): what starts, and for the task what its card records. */
+  const delegate = async (mode: DelegateMode, request: DelegateAgentRequest, task?: NonNullable<typeof taskDialog>): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> => {
     const profile = delegateProfiles.find((entry) => entry.id === request.profileId);
-    if (!profile || !session) return { ok: false, error: 'This conversation or profile is no longer available.' };
-    let workspaceId: string;
-    if (request.workspace.kind === 'new-worktree') {
-      if (!worktreeAccess) return { ok: false, error: 'New worktrees can be created on the desktop only.' };
-      const created = await worktreeAccess.create(session.projectId, request.workspace.branch);
-      if (!created.ok) return { ok: false, error: created.message };
-      workspaceId = created.value.workspaceId;
-    } else {
-      workspaceId = request.workspace.workspaceId;
+    const agent = request.agent ?? profile;
+    if (!agent || !session) return { ok: false, error: 'This conversation or profile is no longer available.' };
+    if (task) {
+      return startTaskFromForm(wrapUpInput, {
+        turnId: task.request.turnId, task: task.request.task, agent, workspace: request.workspace, instruction: request.instruction, reportBack: request.reportBack,
+        settings: request.agent ? task.values.initialAgent.label : delegateAgentLine(agent, korean ? 'ko' : 'en', providerLabels, modelLabel),
+      });
     }
-    const childSessionId = opaqueId('agent');
-    const title = mode === 'review'
-      ? `${korean ? '검토' : 'Review'} · ${session.title}`
-      : structuredAgentSessionTitle(request.instruction) || profile.name;
-    // The worktree sync moves the revision on; one retry reads the new one.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const authority = await latestSnapshot();
-      if (!authority) return { ok: false, error: 'The Agent daemon is unavailable.' };
-      const commandId = opaqueId('command');
-      const receipt = await sendCommand(createDaemonCommand({
-        commandId,
-        idempotencyKey: commandId,
-        expectedRevision: authority.revision,
-        issuedAt: new Date().toISOString(),
-        principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-        type: 'agent.create',
-        payload: {
-          sessionId: childSessionId, workspaceId, title, providerId: profile.providerId,
-          ...(profile.model ? { model: profile.model } : {}),
-          ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
-          permissionPreset: profile.permissionPreset, initialPrompt: request.instruction, parentSessionId: sessionId,
-          ...(request.reportBack ? { reportBack: true } : {}),
-        },
-      }));
-      if (!receipt) return { ok: false, error: 'The Agent daemon did not answer. Check the child list before trying again.' };
-      if (receipt.ok) return { ok: true };
-      if (receipt.error.code !== 'revision-conflict') return { ok: false, error: receipt.error.message };
-    }
-    return { ok: false, error: 'The project changed while handing off. Try again.' };
+    const created = await createChildConversation(commandAccess, worktreeAccess, {
+      projectId: session.projectId,
+      place: request.workspace.kind === 'new-worktree' ? { branch: request.workspace.branch } : { workspaceId: request.workspace.workspaceId },
+      child: {
+        sessionId: opaqueId('agent'),
+        title: mode === 'review'
+          ? `${korean ? '검토' : 'Review'} · ${session.title}`
+          : structuredAgentSessionTitle(request.instruction) || (profile?.name ?? request.instruction),
+        providerId: agent.providerId,
+        ...(agent.model ? { model: agent.model } : {}),
+        ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
+        permissionPreset: agent.permissionPreset, initialPrompt: request.instruction, parentSessionId: sessionId,
+        ...(request.reportBack ? { reportBack: true } : {}),
+      },
+    });
+    return created.ok ? { ok: true } : { ok: false, error: created.message };
   };
   const lastPrompt = [...transcriptItems].reverse().find((item) => item.kind === 'user-message')?.text.trim();
   const delegateInstruction = !session ? '' : delegateMode === 'review'
@@ -1247,6 +1246,23 @@ export function StructuredAgentDockPanel(
     } } : {}),
     ...(props.onOpenSession ? { openSession: openRelatedSession } : {}),
   }) : undefined;
+  const wrapUpInput: TurnWrapUpHostInput = {
+    snapshot, sessionId, items: () => transcriptItemsRef.current, access: commandAccess, ...wrapUpPending,
+    ...(worktreeAccess ? { worktrees: worktreeAccess } : {}),
+    onStartForm: (request) => setTaskDialog({ request, values: taskStartForm(request) }),
+  };
+  const wrapUp = !historyOnly && owner === 'managed' ? turnWrapUpHost(wrapUpInput) : undefined;
+
+  const delegateDialogProps = (forSession: NonNullable<typeof session>) => ({
+    profiles: delegateProfiles,
+    providerLabels,
+    modelLabel,
+    workspaces: structuredAgentWorkspaceOptions(snapshot, forSession.projectId).filter((entry) => !isRunOwnedWorkspace(entry.id))
+      .map((entry) => ({ id: entry.id, label: entry.label, kind: entry.kind === 'worktree' ? 'worktree' as const : 'local' as const })),
+    defaultWorkspaceId: forSession.workspaceId,
+    allowNewWorktree: Boolean(worktreeAccess),
+    ...(props.onOpenSettings ? { onManageProfiles: props.onOpenSettings } : {}),
+  });
 
   return (<SettingsProposalContext.Provider value={settingsProposals}><AgentResultsOwnerContext.Provider value={resultsOwner}>
     {resultsOwner && sessionId && (
@@ -1369,6 +1385,7 @@ export function StructuredAgentDockPanel(
         : undefined}
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
       {...(reviews ? { reviewStart: { ...reviews.reviewStart, onOpen: () => setReviewFormOpens((count) => count + 1) }, onReviewAction: reviews.onReviewAction } : {})}
+      {...(wrapUp ? { wrapUp } : {})}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}
@@ -1389,15 +1406,21 @@ export function StructuredAgentDockPanel(
         open
         onOpenChange={(open) => { if (!open) setDelegateMode(null); }}
         mode={delegateMode}
-        profiles={delegateProfiles}
-        providerLabels={Object.fromEntries((snapshot?.providers ?? []).map((entry) => [entry.id, entry.displayName]))}
-        workspaces={structuredAgentWorkspaceOptions(snapshot, session.projectId).filter((entry) => !isRunOwnedWorkspace(entry.id))
-          .map((entry) => ({ id: entry.id, label: entry.label, kind: entry.kind === 'worktree' ? 'worktree' as const : 'local' as const }))}
-        defaultWorkspaceId={session.workspaceId}
+        {...delegateDialogProps(session)}
         initialInstruction={delegateInstruction}
-        allowNewWorktree={Boolean(worktreeAccess)}
-        {...(props.onOpenSettings ? { onManageProfiles: props.onOpenSettings } : {})}
         onSubmit={(request) => delegate(delegateMode, request)}
+      />
+    )}
+    {taskDialog && session && (
+      <DelegateAgentDialog
+        open
+        onOpenChange={(open) => { if (!open) setTaskDialog(null); }}
+        mode="handoff"
+        title={chatCopy(korean ? 'ko' : 'en').taskSuggestions.startForm}
+        submitLabel={chatCopy(korean ? 'ko' : 'en').taskSuggestions.startFormSubmit}
+        {...delegateDialogProps(session)}
+        {...taskDialog.values}
+        onSubmit={(request) => delegate('handoff', request, taskDialog)}
       />
     )}
   </AgentResultsOwnerContext.Provider></SettingsProposalContext.Provider>);

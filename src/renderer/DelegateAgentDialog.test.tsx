@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
-import { DelegateAgentDialog } from './DelegateAgentDialog';
+import { delegateAgentLine, DelegateAgentDialog } from './DelegateAgentDialog';
 import { AppI18nProvider } from './i18n';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,6 +44,24 @@ function render(overrides: Partial<ComponentProps<typeof DelegateAgentDialog>> =
     </AppI18nProvider>,
   ));
 }
+
+const LABELS = { claude: 'Claude', codex: 'Codex' };
+
+describe('a saved profile in words', () => {
+  const opus = (_provider: string, model: string): string => (model === 'claude-opus-5-5' ? 'Opus 5.5' : model);
+
+  it('reads like the card’s line, not as raw ids', () => {
+    render({ modelLabel: opus });
+    expect(document.body.textContent).toContain('Claude · Opus 5.5 · High · Ask before running');
+    expect(document.body.textContent).not.toContain('claude-opus-5-5');
+    expect(document.body.textContent).not.toContain('· high ·');
+  });
+
+  it('says the same in Korean, and from the shared line', () => {
+    expect(delegateAgentLine(PROFILES[0]!, 'ko', LABELS, opus)).toBe('Claude · Opus 5.5 · 높음 · 승인 후 실행');
+    expect(delegateAgentLine({ providerId: 'codex', permissionPreset: 'plan' }, 'en', LABELS)).toBe('Codex · Default model · Plan only · read-only');
+  });
+});
 
 const byTestId = <T extends HTMLElement>(id: string): T => document.body.querySelector<T>(`[data-testid="${id}"]`)!;
 const profile = (): HTMLSelectElement => byTestId('delegate-agent-profile');

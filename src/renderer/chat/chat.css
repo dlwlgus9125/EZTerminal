@@ -1074,6 +1074,7 @@
 
 .chat-cli-result__line {
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 

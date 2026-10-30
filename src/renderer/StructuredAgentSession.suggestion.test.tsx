@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonTurn } from '../shared/daemon-protocol';
 import { resetPlanAccessForTests } from './agent-plan-access';
+import type { ChatTaskDefaults, ChatWrapUpAction } from './chat/ChatContext';
+import { cartStory, inSession } from './chat/wrap-up/wrap-up-fixtures';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from './StructuredAgentSession';
@@ -79,6 +81,38 @@ function type(text: string): void {
     input().dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
+
+describe('the cards’ actions', () => {
+  const cart = (onAction: (action: ChatWrapUpAction, defaults: ChatTaskDefaults) => Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> | void): JSX.Element => {
+    const fixture = inSession(cartStory('en', 'claude'), 'session-wrap');
+    return panel({
+      items: fixture.items, turns: fixture.turns, model: 'claude-opus-5-5', modelOptions: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }], effortSupported: true, reasoningEffort: 'high',
+      permissionPreset: 'full-access', wrapUp: { onAction },
+    });
+  };
+  const press = async (kind: string): Promise<void> => { await act(async () => { container.querySelector<HTMLButtonElement>(`[data-action="${kind}"]`)!.click(); await Promise.resolve(); }); };
+
+  it('hands over what the card’s line says one press starts: 승인 후 실행 whatever this conversation runs at', async () => {
+    const onAction = vi.fn<(action: ChatWrapUpAction, defaults: ChatTaskDefaults) => void>();
+    render(cart(onAction));
+    expect(container.querySelector('[data-testid="chat-task-defaults"]')?.textContent).toContain('Claude · Opus 5.5 · High · Ask before running');
+    await press('task-start');
+    expect(onAction).toHaveBeenCalledWith(
+      { kind: 'task-start', turnId: 'turn-cart', taskId: 'task-claude-1' },
+      { agent: { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', permissionPreset: 'standard' }, settings: 'Claude · Opus 5.5 · High · Ask before running' },
+    );
+  });
+
+  it('reads a refused action above the chat, and clears it with the next one', async () => {
+    const onAction = vi.fn(async (): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> => ({ ok: false, message: 'This conversation is archived.' }));
+    render(cart(onAction));
+    await press('task-here');
+    expect(container.querySelector('[data-testid="structured-agent-wrap-up-error"]')?.textContent).toContain('This conversation is archived.');
+    onAction.mockResolvedValueOnce({ ok: true });
+    await press('task-here');
+    expect(container.querySelector('[data-testid="structured-agent-wrap-up-error"]')).toBeNull();
+  });
+});
 
 describe('next-prompt suggestion', () => {
   it('fills the empty box on Tab, caret at the end, and sends nothing', () => {

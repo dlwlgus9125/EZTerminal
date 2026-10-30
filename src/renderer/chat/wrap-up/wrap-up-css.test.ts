@@ -8,6 +8,13 @@ const css = readFileSync(resolve(process.cwd(), 'src/renderer/chat/wrap-up/wrap-
   .replace(/\r\n/gu, '\n')
   .replace(/\/\*[\s\S]*?\*\//gu, '');
 
+describe('the CLI result line the cards use', () => {
+  it('has the same fallback in chat.css (the phone shows the CLI skin too)', () => {
+    const chat = readFileSync(resolve(process.cwd(), 'src/renderer/chat/chat.css'), 'utf8').replace(/\r\n/gu, '\n');
+    expect(chat).toMatch(/\.chat-cli-result__line \{[^}]*overflow-wrap: break-word;\n\s*overflow-wrap: anywhere;/u);
+  });
+});
+
 describe('wrap-up.css at the WebView 74 floor', () => {
   it('gives every overflow-wrap: anywhere a break-word fallback on the line before (anywhere needs Chrome 80)', () => {
     const lines = css.split('\n');

@@ -7,7 +7,7 @@ import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavig
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
 import type { ChatAgentProfile } from '../../shared/chat-agent-profiles';
-import { suggestedTaskBranch, type TurnWrapUpPause, type TurnWrapUpSettings } from '../../shared/turn-wrap-up';
+import type { TurnWrapUpPause, TurnWrapUpSettings } from '../../shared/turn-wrap-up';
 import type { CapabilityAccess, TurnWrapUpAccess } from '../capability-access';
 import type { ChatSkin } from '../chat-view-state';
 import { DelegateAgentDialog, type DelegateAgentRequest } from '../DelegateAgentDialog';
@@ -16,10 +16,11 @@ import { shellSnapshot } from '../shell/shell-fixtures';
 import { SettingsFixture, storyCapabilities } from '../shell/tool-screen-fixtures';
 import { conversationQueue } from '../conversation-queue';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps, type StructuredAgentUiResult } from '../StructuredAgentSession';
+import { taskStartForm } from '../turn-wrap-up-commands';
 import { DialogPortalContext } from '../ui/Dialog';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
-import type { ChatWrapUpAction, ChatWrapUpPending } from './ChatContext';
+import type { ChatTaskDefaults, ChatWrapUpAction, ChatWrapUpPending } from './ChatContext';
 import { useChatCopy } from './copy';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import { coalesceTranscript } from './model/build-chat-model';
@@ -105,11 +106,11 @@ const SETTLING: ReadonlySet<ChatWrapUpAction['kind']> = new Set(['task-start', '
 
 interface StoryHost {
   readonly state: WrapUpFixture;
-  readonly onAction: (action: ChatWrapUpAction) => void;
+  readonly onAction: (action: ChatWrapUpAction, defaults: ChatTaskDefaults) => void;
   /** What a start has in flight until the host settles it. */
   readonly pending: ChatWrapUpPending;
   /** The task whose start form is open (바꿔서 시작…, or a task the AI recommends a worktree for). */
-  readonly custom?: { readonly turnId: string; readonly taskId: string };
+  readonly custom?: { readonly turnId: string; readonly taskId: string; readonly defaults: ChatTaskDefaults };
   readonly closeCustom: () => void;
   /** The start form started it: the task shows it started. */
   readonly startedViaForm: (turnId: string, taskId: string, branch?: string) => void;
@@ -121,9 +122,9 @@ function useStoryHost(fixture: WrapUpFixture, report: (action: ChatWrapUpAction)
   const [custom, setCustom] = useState<StoryHost['custom']>();
   const timers = useRef<number[]>([]);
   useEffect(() => () => { timers.current.forEach((timer) => window.clearTimeout(timer)); }, []);
-  const onAction = useCallback((action: ChatWrapUpAction) => {
+  const onAction = useCallback((action: ChatWrapUpAction, defaults: ChatTaskDefaults) => {
     report(action);
-    if (action.kind === 'task-start-custom') { setCustom({ turnId: action.turnId, taskId: action.taskId }); return; }
+    if (action.kind === 'task-start-custom') { setCustom({ turnId: action.turnId, taskId: action.taskId, defaults }); return; }
     setState((current) => applyWrapUpAction(current, action, false));
     const flying = pendingFor(action);
     setPending((current) => new Map([...current, ...flying]));
@@ -148,23 +149,23 @@ const TASK_PROFILES: readonly ChatAgentProfile[] = [
 ];
 
 function TaskStartForm({ host, args }: { readonly host: StoryHost; readonly args: Args }): JSX.Element {
-  const tasks = [...wrapUpCards(coalesceTranscript(host.state.items), host.state.turns).tasks.values()].flatMap((card) => card.tasks);
-  const index = host.custom ? tasks.findIndex((task) => task.id === host.custom!.taskId) : -1;
-  const task = index >= 0 ? tasks[index] : undefined;
-  // A failed start comes back as it was asked for; otherwise the AI's recommendation fills the form.
-  const failed = task?.outcome.kind === 'start-failed' ? task.outcome.start : undefined;
-  const branch = failed ? (failed.where.kind === 'new-worktree' ? failed.where.branch : undefined) : task?.worktree ? suggestedTaskBranch(task.title, index) : undefined;
+  const { custom } = host;
+  const tasks = (custom && wrapUpCards(coalesceTranscript(host.state.items), host.state.turns).tasks.get(custom.turnId)?.tasks) || [];
+  const task = tasks.find((entry) => entry.id === custom?.taskId);
+  const form = custom && task ? taskStartForm({ turnId: custom.turnId, task, tasks, defaults: custom.defaults }) : undefined;
   const copy = useChatCopy();
   return (
     <DelegateAgentDialog open={Boolean(task)} onOpenChange={(open) => { if (!open) host.closeCustom(); }} mode="handoff"
       title={copy.taskSuggestions.startForm}
       profiles={TASK_PROFILES} providerLabels={{ claude: 'Claude', codex: 'Codex' }} workspaces={[{ id: 'ws-cart', label: 'cart-kit', kind: 'local' }]}
-      defaultWorkspaceId="ws-cart" initialInstruction={task?.prompt ?? ''} {...(branch ? { initialWorkspace: { kind: 'new-worktree' as const, branch } } : {})}
+      modelLabel={(provider, model) => MODELS[provider === 'codex' ? 'codex' : 'claude'].label || model}
+      defaultWorkspaceId="ws-cart" initialInstruction={form?.initialInstruction ?? ''}
+      {...(form?.initialWorkspace ? { initialWorkspace: form.initialWorkspace } : {})}
+      {...(form ? { initialAgent: form.initialAgent } : {})}
       submitLabel={copy.taskSuggestions.startFormSubmit}
-      {...(failed ? { initialAgent: { ...failed.agent, label: failed.settings } } : {})}
       onSubmit={async (request) => {
         args.onDelegate(request);
-        if (task && host.custom) host.startedViaForm(host.custom.turnId, task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
+        if (task && custom) host.startedViaForm(custom.turnId, task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
         return { ok: true };
       }} />
   );
@@ -716,6 +717,9 @@ export const TasksChangeAndStart: Story = {
     await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('In src/auth.ts, canAccess returns');
     await expect(dialog.getByTestId('delegate-agent-workspace')).toHaveValue('ws-cart');
     await expect(dialog.queryByTestId('delegate-agent-branch')).toBeNull();
+    // The form opens on what the card's line says, and a saved profile that says the same reads the same.
+    await expect(dialog.getByTestId('delegate-agent-profile')).toHaveValue('profile-claude');
+    await expect(await startForm()).toHaveTextContent('Claude · Opus 5.5 · 높음 · 승인 후 실행');
   },
 };
 /** D7: at most 8 per turn — the rest are left out and the card says how many. */
@@ -934,7 +938,7 @@ export const SettingsTurnWrapUp: Story = {
     // What each costs, as the probes measured it.
     await expect(section).toHaveTextContent('턴이 끝나고 3–8초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음');
     await expect(section).toHaveTextContent('턴이 끝나고 7–15초 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음');
-    await expect(section).toHaveTextContent('그때만 작은 호출 한 번');
+    await expect(section).toHaveTextContent('아무 화면도 그 대화를 보지 않을 때 턴이 끝나거나 AI가 멈춰 기다리면 3–4줄로 정리합니다. 턴마다 한 번만, 작은 호출 한 번');
     await expect(section).toHaveTextContent('AI 턴 안에서 제안하므로 따로 부르는 호출이 없습니다');
     await userEvent.click(within(section).getByRole('switch', { name: /요약 카드/u }));
     await expect(within(section).getByRole('switch', { name: /요약 카드/u })).not.toBeChecked();

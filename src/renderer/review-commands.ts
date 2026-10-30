@@ -9,6 +9,7 @@ import {
 } from '../shared/daemon-protocol';
 import { isReviewFailureReason, REVIEW_LOOP_CAPABILITY } from '../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload } from '../shared/transcript-payload';
+import { reasoningEffortLabel } from './agent-permission-copy';
 import type { ChatReviewAction } from './chat/ChatContext';
 import { chatCopy } from './chat/copy';
 import type { ChatLocale } from './chat/model/summary';
@@ -99,11 +100,6 @@ export interface ReviewHostProps {
   readonly onReviewAction: (action: ChatReviewAction) => Promise<StructuredAgentUiResult>;
 }
 
-const EFFORT: Readonly<Record<ChatLocale, Readonly<Record<string, string>>>> = {
-  en: { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' },
-  ko: { minimal: '최소', low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' },
-};
-
 /**
  * The start form's choices and the card's commands for one conversation, or nothing on a host without
  * `review-loop-v1` (the screen keeps its older 검토 맡기기). The model and effort shown for each reviewer
@@ -119,7 +115,7 @@ export function reviewHost(input: ReviewHostInput): ReviewHostProps | undefined 
   const copy = chatCopy(input.locale).aiReview;
   const support = snapshot.reviewSupport ?? {};
   const label = (providerId: string, model: string): string => input.modelLabel?.(providerId, model) ?? model;
-  const effort = (value: string): string => EFFORT[input.locale][value] ?? value;
+  const effort = (value: string): string => reasoningEffortLabel(value, input.locale);
   const settings = (providerId: string, model?: string, reasoningEffort?: string): string | undefined => {
     const parts = [...(model ? [label(providerId, model)] : []), ...(reasoningEffort ? [effort(reasoningEffort)] : [])];
     return parts.length ? parts.join(' · ') : undefined;

@@ -1,6 +1,6 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider, type ChatReviewAction, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
+import { ChatProvider, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest, type ReviewStartTarget } from './chat/review/ReviewStartMenu';
 import type { NextPromptSuggestion } from '../shared/turn-wrap-up';
@@ -243,6 +243,7 @@ interface StructuredAgentCopy {
   readonly reviewMenu: string;
   readonly reviewCommand: string;
   readonly reviewFailed: string;
+  readonly wrapUpFailed: string;
   readonly sendFailed: string;
   readonly heartbeatOn: string;
   readonly changedFiles: (count: number) => string;
@@ -268,7 +269,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     tabSection: 'Tab', keepTab: 'Keep open', splitRight: 'Split right', splitBelow: 'Split down',
     moveToNewWindow: 'Move to new window', moveToMainWindow: 'Move to main window', closeTab: 'Close tab',
     conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat', delegateHandoff: 'Hand off…', delegateReview: 'Ask for review…',
-    reviewMenu: 'Review…', reviewCommand: 'Have an AI review this conversation’s changes (read-only)', reviewFailed: 'The review could not be updated.',
+    reviewMenu: 'Review…', reviewCommand: 'Have an AI review this conversation’s changes (read-only)', reviewFailed: 'The review could not be updated.', wrapUpFailed: 'The request could not be completed.',
     sendFailed: 'The comments could not be sent.',
     changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
     copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
@@ -389,7 +390,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     tabSection: '탭', keepTab: '탭으로 고정', splitRight: '오른쪽으로 나누기', splitBelow: '아래로 나누기',
     moveToNewWindow: '새 창으로 옮기기', moveToMainWindow: '메인 창으로 옮기기', closeTab: '탭 닫기',
     conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트', delegateHandoff: '맡기기…', delegateReview: '검토 맡기기…',
-    reviewMenu: '검토…', reviewCommand: '이 대화의 변경을 AI가 검토 (읽기만 함)', reviewFailed: '검토 요청을 처리하지 못했습니다.',
+    reviewMenu: '검토…', reviewCommand: '이 대화의 변경을 AI가 검토 (읽기만 함)', reviewFailed: '검토 요청을 처리하지 못했습니다.', wrapUpFailed: '요청을 처리하지 못했습니다.',
     sendFailed: '의견을 보내지 못했습니다.',
     changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
     copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
@@ -1987,11 +1988,12 @@ export interface StructuredAgentSessionPanelProps {
   /**
    * Turn wrap-up: the AI's guess of the next message for the empty message box, what the person does on a recap or
    * suggested-task card, and what a command has in flight. The cards themselves come from the transcript's rows.
+   * `onAction` also gets what the card's line says one press starts; a failure is shown above the chat.
    * `recapRetry`: a failed recap can be written again now.
    */
   readonly wrapUp?: {
     readonly suggestion?: NextPromptSuggestion;
-    readonly onAction?: (action: ChatWrapUpAction) => void;
+    readonly onAction?: (action: ChatWrapUpAction, defaults: ChatTaskDefaults) => Promise<StructuredAgentUiResult> | void;
     readonly pending?: ChatWrapUpPending;
     readonly recapRetry?: boolean;
   };
@@ -2614,12 +2616,27 @@ export function StructuredAgentSessionPanel({
   const wrapUpPending = wrapUp?.pending;
   const recapRetry = wrapUp?.recapRetry === true;
   const wrapUpActive = !historyOnly && !providerOwned;
+  /** The host's answer to a card's button: a refusal the card cannot say is read above the chat, not lost. */
+  const [wrapUpError, setWrapUpError] = useState<string | null>(null);
+  // Stable for the transcript; it reads this render's settings through a ref, so what starts is what the line says now.
+  const wrapUpActionNow = useRef<(action: ChatWrapUpAction) => void>(() => undefined);
+  const wrapUpAction = useCallback((action: ChatWrapUpAction): void => wrapUpActionNow.current(action), []);
+  wrapUpActionNow.current = (action: ChatWrapUpAction): void => {
+    const result = onWrapUpAction?.(action, {
+      agent: { providerId, permissionPreset: taskValues.permissionPreset, ...(taskValues.model ? { model: taskValues.model } : {}), ...(taskValues.reasoningEffort ? { reasoningEffort: taskValues.reasoningEffort } : {}) },
+      settings: taskSettings,
+    });
+    if (!result) return;
+    setWrapUpError(null);
+    void result.then((answer) => { if (!answer.ok) setWrapUpError(answer.message || copy.wrapUpFailed); }, () => setWrapUpError(copy.wrapUpFailed));
+  };
+  const canAct = onWrapUpAction !== undefined && wrapUpActive;
   const transcriptWrapUp = useMemo(() => ({
-    ...(onWrapUpAction && wrapUpActive ? { onAction: onWrapUpAction } : {}),
+    ...(canAct ? { onAction: wrapUpAction } : {}),
     ...(wrapUpPending ? { pending: wrapUpPending } : {}),
     ...(recapRetry ? { recapRetry } : {}),
     taskStart,
-  }), [onWrapUpAction, recapRetry, taskStart, wrapUpActive, wrapUpPending]);
+  }), [canAct, recapRetry, taskStart, wrapUpAction, wrapUpPending]);
   // The suggestion follows the newest turn only once it is over: a newer turn without one leaves the box as it is.
   const newestTurnId = useMemo(() => (turns ?? []).reduce<DaemonTurn | undefined>(
     (latest, turn) => (!latest || turn.createdAt > latest.createdAt ? turn : latest), undefined)?.id, [turns]);
@@ -2985,6 +3002,13 @@ export function StructuredAgentSessionPanel({
           <Glyph name="warn" />
           <span><strong>{copy.reviewFailed}</strong> {reviewError === copy.reviewFailed ? '' : reviewError}</span>
           <Button variant="ghost" size="sm" onClick={() => setReviewError(null)}>{copy.close}</Button>
+        </div>
+      )}
+      {wrapUpError && (
+        <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert" data-testid="structured-agent-wrap-up-error">
+          <Glyph name="warn" />
+          <span><strong>{copy.wrapUpFailed}</strong> {wrapUpError === copy.wrapUpFailed ? '' : wrapUpError}</span>
+          <Button variant="ghost" size="sm" onClick={() => setWrapUpError(null)}>{copy.close}</Button>
         </div>
       )}
 
