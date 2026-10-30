@@ -584,6 +584,35 @@ describe('review.start: a reviewer conversation of its own', () => {
     }
   });
 
+  it('refuses to continue a finished reviewer conversation as a conversation of its own', async () => {
+    const h = await harness();
+    try {
+      await h.conversation('codex');
+      await h.execute('review.start', { sessionId: 'chat', reviewId: 'review-1', target: { kind: 'uncommitted' }, reviewer: { kind: 'other', providerId: 'claude', reviewerSessionId: 'review-claude-1' } });
+      await until(() => vi.mocked(h.claude.submit).mock.calls.length === 1, 'the reviewer turn');
+      const turn = await h.startTurn(h.claude, 'review-claude-1');
+      h.claude.emit({ kind: 'transcript', item: {
+        id: 'answer', sessionId: 'review-claude-1', turnId: turn.id, sequence: 1, kind: 'assistant-message',
+        text: JSON.stringify(ANSWER), isDelta: false, isSensitive: true, createdAt: '2026-10-29T10:00:01.000Z',
+      } });
+      await h.runtime.whenIdle();
+      h.claude.emit({ kind: 'turn-finished', sessionId: 'review-claude-1', turnId: turn.id, outcome: 'completed', summary: 'Claude completed the turn.' });
+      await h.runtime.whenIdle();
+      await until(() => Boolean(h.router.getSnapshot().sessions.find((session) => session.id === 'review-claude-1')?.archivedAt), 'the archived reviewer');
+      const reviewer = h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'review-claude-1')!;
+      expect(reviewer.providerSessionId).toBeTruthy();
+      // Continuing it would hand the reviewer's provider session to an ordinary conversation that can write.
+      const refused = await h.execute('agent.resume', {
+        sessionId: 'continued', sourceSessionId: 'review-claude-1', workspaceId: 'workspace-1', providerId: 'claude',
+        providerSessionId: reviewer.providerSessionId!, title: 'Continue the review', permissionPreset: 'standard',
+      });
+      expect(refused).toMatchObject({ ok: false, error: { code: 'invalid-state', message: expect.stringContaining('read-only review conversation') } });
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'review-claude-1')?.providerSessionId).toBe(reviewer.providerSessionId);
+    } finally {
+      await dispose(h);
+    }
+  });
+
   it('shows a reviewer that waits for a free run slot, and a stopped reviewer turn as stopped', async () => {
     const h = await harness();
     try {

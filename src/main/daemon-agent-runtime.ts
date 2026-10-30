@@ -959,6 +959,9 @@ export class DaemonAgentRuntime {
     ))) {
       return commandError('invalid-state', 'Provider-native subagents cannot transfer Provider Session ownership.');
     }
+    if (sourceSession.id.startsWith(REVIEWER_SESSION_PREFIX)) {
+      return commandError('invalid-state', 'This is a read-only review conversation. Fixes go to the conversation the review is for.');
+    }
     if (!TERMINAL_SESSION_STATES.has(sourceSession.state) || !TERMINAL_AGENT_STATES.has(sourceAgent.state)) {
       return commandError('invalid-state', 'Only a stopped source Agent Session can be resumed.');
     }

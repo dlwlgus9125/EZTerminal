@@ -135,6 +135,20 @@ describe('unified conversation history', () => {
     expect(page.items.map(entry => entry.linkedSessionId).sort()).toEqual(['detached-child', 'parent']);
   });
 
+  it('opens a finished review conversation read-only instead of offering to continue it', async () => {
+    const h = await harness();
+    await h.daemon.applySystemCommit({ mutations: [
+      { kind: 'session.upsert', value: { id: 'chat', projectId: 'project', workspaceId: 'workspace', kind: 'agent', title: 'Fix prices', state: 'completed', source: 'structured' } },
+      { kind: 'agent.upsert', value: { sessionId: 'chat', providerId: 'codex', providerSessionId: 'chat-thread', permissionPreset: 'standard', state: 'done', queuedTurnCount: 0, orchestrationEnabled: true } },
+      // An other-AI reviewer the host archived after it answered: its provider thread is still recorded.
+      { kind: 'session.upsert', value: { id: 'review-s-1', projectId: 'project', workspaceId: 'workspace', kind: 'agent', title: '검토 · Fix prices', state: 'archived', source: 'structured', archivedAt: now().toISOString() } },
+      { kind: 'agent.upsert', value: { sessionId: 'review-s-1', providerId: 'codex', providerSessionId: 'reviewer-thread', permissionPreset: 'plan', state: 'archived', queuedTurnCount: 0, orchestrationEnabled: false } },
+      { kind: 'agent-relation.upsert', value: { id: 'relation-review', treeId: 'chat', parentSessionId: 'chat', childSessionId: 'review-s-1', owner: 'managed', depth: 1 } },
+    ] });
+    expect(await h.service.resolveConversation({ kind: 'session', id: 'review-s-1' }))
+      .toMatchObject({ ok: true, entry: { linkedSessionId: 'review-s-1', action: 'open' } });
+  });
+
   it('keeps complete interleaved message groups across backwards page boundaries', async () => {
     const h = await harness(); const result = await h.service.resumeHistory(await h.request()); if (!result.ok) throw new Error(result.message); await h.runtime.whenIdle();
     const base = { sessionId: result.sessionId, kind: 'assistant-message' as const, isSensitive: false, createdAt: now().toISOString() };

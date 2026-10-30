@@ -8,7 +8,7 @@ import {
   type ConversationPage, type ConversationQuery, type ConversationReadResult,
   type HistoryResumePreparation, type HistoryResumePreparationRequest, type HistoryResumeRequest, type HistoryResumeResult,
 } from '../shared/conversation-history';
-import { createDaemonCommand, type DaemonAgent, type DaemonPrincipal, type DaemonSession, type DaemonSnapshot, type DaemonTranscriptItem } from '../shared/daemon-protocol';
+import { createDaemonCommand, REVIEWER_SESSION_PREFIX, type DaemonAgent, type DaemonPrincipal, type DaemonSession, type DaemonSnapshot, type DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { AgentHistorySessionSummary, AgentProjectSummary, AgentTranscriptPage } from '../shared/agent-history';
 import type { WorkflowNavigationResult, WorkflowNavigationSnapshot } from '../shared/workflow';
 import type { AgentHistoryService } from './agent-history-service';
@@ -403,15 +403,16 @@ export class ConversationHistoryService implements ConversationHistoryClient {
       ?? (agent.providerSessionId ? this.provenanceCache.byProvider.get(`${agent.providerId}:${agent.providerSessionId}`) : undefined);
     const nativeHistoryId = historyId ?? (typeof provenance?.detail?.historyId === 'string' ? provenance.detail.historyId : undefined);
     const stopped = stoppedSessions.has(session.state) || stoppedAgents.has(agent.state);
-    // A provider-owned subagent cannot be resumed; it always opens in its read-only view.
+    // A provider-owned subagent cannot be resumed, nor can a review's read-only reviewer: each always opens in its read-only view.
     const providerOwned = snapshot.agentRelations.some(relation => relation.childSessionId === session.id && relation.owner === 'provider-native');
+    const reviewer = session.id.startsWith(REVIEWER_SESSION_PREFIX);
     const identity = this.identity(session.id, snapshot);
     return { conversationId: identity.id, aliases: [...new Set([...identity.aliases, ...(nativeHistoryId ? [nativeId(nativeHistoryId)] : [])])], sessionAliases: identity.sessions,
       source: 'app', providerId: agent.providerId, projectId: session.projectId,
       projectTitle: project?.name ?? session.projectId, title: session.title, preview: this.options.store.getConversationPreview(session.id), createdAt: Date.parse(session.createdAt), updatedAt: Date.parse(session.updatedAt),
       roots: workspace ? [workspace.rootPath] : [], workspaceId: session.workspaceId, linkedSessionId: session.id,
       ...(nativeHistoryId ? { historyId: nativeHistoryId } : {}), archived: !!session.archivedAt || session.state === 'archived', state: session.state,
-      action: providerOwned || !stopped ? 'open' : agent.providerSessionId ? 'resume' : 'unavailable' };
+      action: providerOwned || reviewer || !stopped ? 'open' : agent.providerSessionId ? 'resume' : 'unavailable' };
   }
   private nativeEntry(summary: AgentHistorySessionSummary, project: AgentProjectSummary, snapshot: DaemonSnapshot): ConversationEntry {
     const identity = this.projectIdentity(project, snapshot);
