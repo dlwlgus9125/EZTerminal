@@ -14,6 +14,8 @@ export interface ConversationStartAccess {
   sendCommand(command: DaemonCommand): Promise<DaemonCommandReceipt | null>;
   history: ConversationHistoryClient;
   principal: DaemonPrincipal;
+  /** The first message's conversation, before the message goes: a phone's screen opens it only seconds into the turn. */
+  onSessionKnown?(sessionId: string): void;
 }
 /**
  * What the start form begins with. A previous conversation continues with what it last ran with —
@@ -133,6 +135,7 @@ export class ConversationStartController {
         }
       }
       if (!pending.sessionId) return { ok: false, message: 'The original conversation could not be opened.' };
+      this.access.onSessionKnown?.(pending.sessionId);
       for (let attempt = 0; attempt < 3 && !pending.accepted; attempt++) {
         if (!pending.submit) {
           const fresh = await this.access.getSnapshot();

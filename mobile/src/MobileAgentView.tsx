@@ -419,9 +419,13 @@ export function MobileAgentView({
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(initialSessionId ?? null);
   useEffect(() => { onActiveSessionChange?.(selectedDaemonSessionId); }, [onActiveSessionChange, selectedDaemonSessionId]);
-  useConversationViewing(transport, selectedDaemonSessionId, usePageVisible());
+  // A first message's conversation, while its draft is still on screen: the session opens only after several secure
+  // saves, seconds into the turn, and a turn that ends before then would look unwatched to the host.
+  const [startingSessionId, setStartingSessionId] = useState<string | null>(null);
+  useConversationViewing(transport, selectedDaemonSessionId ?? startingSessionId, usePageVisible());
   const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
   const [conversationEntry, setConversationEntry] = useState<ConversationEntry>();
+  useEffect(() => { if (!newSessionTarget && !conversationEntry) setStartingSessionId(null); }, [conversationEntry, newSessionTarget]);
   const draftIdentity = useRef(`structured-draft-${conversationOperationId()}`);
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyInvokerRef = useRef<HTMLElement | null>(null);
@@ -460,7 +464,7 @@ export function MobileAgentView({
   } : undefined, [transport]);
   const conversationAccess = useMemo<ConversationStartAccess | undefined>(() => transport && (transport.negotiatedRemoteProtocolVersion ?? 0) >= 16 && historyClient ? {
     history: historyClient, getSnapshot: () => transport.getDaemonSnapshot(), sendCommand: command => transport.sendDaemonCommand(command),
-    principal: { kind: 'android', id: 'mobile-agent-ui' },
+    principal: { kind: 'android', id: 'mobile-agent-ui' }, onSessionKnown: setStartingSessionId,
   } : undefined, [transport, historyClient]);
   // The same storage object as the conversation screen and the terminal's AI input: one draft controller per box.
   const conversationStorage = useMemo(() => (transport ? phoneChatStateAccess(transport) : mobileConversationState(() => transport!.getRemoteToken())), [transport]);

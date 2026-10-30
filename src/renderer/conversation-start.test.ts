@@ -36,6 +36,21 @@ function fixture(conversationId?: string) {
   return { access, storage, received, stored: () => stored, lose: (type: DaemonCommand['type']) => { lose = type; }, restart, ...restart() };
 }
 describe('first message transaction', () => {
+  it('says which conversation it became before the first message goes out, so a screen can claim it before the turn runs', async () => {
+    const h = fixture();
+    const order: string[] = [];
+    const access: ConversationStartAccess = {
+      ...h.access,
+      onSessionKnown: sessionId => { order.push(`known ${sessionId}`); },
+      sendCommand: async command => {
+        order.push(command.type);
+        return h.access.sendCommand(command);
+      },
+    };
+    const result = await new ConversationStartController(h.recovery, access).send(settings, 'Hello');
+    expect(result).toMatchObject({ ok: true });
+    expect(order).toEqual(['agent.create', `known ${result.ok ? result.sessionId : ''}`, 'agent.submit']);
+  });
   it('retries a rejected revision with a new command while retaining one logical session', async () => {
     const h = fixture();
     vi.mocked(h.access.sendCommand).mockImplementationOnce(async command => ({ ok: false, status: 'rejected', commandId: command.commandId, revision: 3,
