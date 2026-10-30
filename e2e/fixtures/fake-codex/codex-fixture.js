@@ -114,6 +114,32 @@ const SEEDED_FINDINGS = [
   },
 ];
 
+/** A control file's text, or the fallback when it does not exist. */
+function controlText(name, fallback) {
+  const file = controlFile(name);
+  try {
+    return file ? fs.readFileSync(file, 'utf8') : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** How full the account's usage window reads: a file, so a spec can bring it near the limit. */
+function usedPercent() {
+  return Number(controlText('ezterminal-e2e-codex-used-percent.txt', '26')) || 26;
+}
+
+/**
+ * Turn wrap-up. A recap is an askSideQuestion on a fork, told from /btw by RECAP_INSTRUCTION's opening words; a stopped
+ * turn's recap also carries recapStoppedNote (src/shared/turn-wrap-up.ts). What a fork answers comes from a control file.
+ */
+const RECAP_OPENING = 'Recap for the person';
+const STOPPED_NOTE = 'Right now this turn is stopped, not finished';
+const WRAP_UP_REPLIES = {
+  predict: 'Run the tests next.',
+  recap: 'I answered with the fixture reply.\nNothing else changed; check the reply.',
+};
+
 /** The text a turn's input carries. */
 function inputTextOf(input) {
   return (Array.isArray(input) ? input : []).map((entry) => (typeof entry === 'string' ? entry : entry?.text ?? '')).join('\n');
@@ -232,6 +258,72 @@ if (args.includes('--version')) {
     notify('turn/completed', { threadId, turn: { id: turnId, status: 'completed', error: null, items: [message] } });
   };
 
+  /**
+   * A turn wrap-up fork, framed as the real app-server's (codex-predict-fork.ndjson, codex-recap-fork.ndjson). Control
+   * files: `…-<purpose>-reply.txt` is what it says, `…-hold-<purpose>` keeps it running, `…-fail-<purpose>` ends it failed.
+   * Every fork is logged with its effort, and again with how it ended.
+   */
+  const answerWrapUpFork = async (threadId, turnId, purpose, params) => {
+    const log = (entry) => {
+      const file = controlFile('ezterminal-e2e-codex-wrap-up-forks.jsonl');
+      if (file) fs.appendFileSync(file, `${JSON.stringify({ threadId, turnId, purpose, ...entry })}\n`);
+    };
+    const prompt = inputTextOf(params?.input);
+    log({ phase: 'started', effort: params?.effort ?? null, stopped: prompt.includes(STOPPED_NOTE), prompt: prompt.slice(0, 4000) });
+    await sleep(10);
+    notify('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [], error: null } });
+    const hold = controlFile(`ezterminal-e2e-codex-hold-${purpose}`);
+    if (hold && await holdTurn(turnId, () => !fs.existsSync(hold)) === 'interrupted') {
+      log({ phase: 'interrupted' });
+      notify('turn/completed', { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } });
+      return;
+    }
+    const fail = controlFile(`ezterminal-e2e-codex-fail-${purpose}`);
+    if (fail && fs.existsSync(fail)) {
+      log({ phase: 'failed' });
+      notify('turn/completed', { threadId, turn: { id: turnId, status: 'failed', error: { message: 'Fixture fork failed.' }, items: [] } });
+      return;
+    }
+    const text = controlText(`ezterminal-e2e-codex-${purpose}-reply.txt`, WRAP_UP_REPLIES[purpose]);
+    const message = { type: 'agentMessage', id: `${turnId}-message`, text, phase: 'final_answer' };
+    notify('item/agentMessage/delta', { threadId, turnId, itemId: message.id, delta: text });
+    notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: message });
+    const tokens = { totalTokens: 18966, inputTokens: 18880, cachedInputTokens: 18784, cacheWriteInputTokens: 0, outputTokens: 86, reasoningOutputTokens: 40 };
+    notify('thread/tokenUsage/updated', { threadId, turnId, tokenUsage: { total: tokens, last: tokens, modelContextWindow: 258400 } });
+    log({ phase: 'answered' });
+    notify('turn/completed', { threadId, turn: { id: turnId, status: 'completed', error: null, items: [message] } });
+  };
+
+  /**
+   * The tasks a spec gave this turn (`EZTERMINAL_E2E_SUGGEST:<name>`, `…-suggest-<name>.json`), each one `suggest_task`
+   * call on the real endpoint, framed as the real app-server's (codex-suggest-task.ndjson). A refused call is reported
+   * `failed` and the turn goes on; what the real app-server reports for an MCP `isError` is still to be seen live.
+   */
+  const suggestTasks = async (threadId, turnId, turnSequence, name) => {
+    const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;
+    if (!descriptor) throw new Error('Missing app-tool descriptor');
+    const post = async (id, method, params) => {
+      const response = await fetch(descriptor.url, { method: 'POST', headers: { ...descriptor.http_headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+      return response.json();
+    };
+    const listed = await post(`list-${turnSequence}`, 'tools/list', {});
+    if (!listed.result?.tools?.some((tool) => tool.name === 'suggest_task')) throw new Error('suggest_task is not listed');
+    const tasks = JSON.parse(controlText(`ezterminal-e2e-codex-suggest-${name}.json`, '[]'));
+    for (const [index, task] of tasks.entries()) {
+      const item = {
+        type: 'mcpToolCall', id: `fixture-suggest-${turnSequence}-${index}`, server: 'ezterminal_orchestration', tool: 'suggest_task', status: 'inProgress',
+        arguments: task, result: null, error: null, durationMs: null,
+      };
+      notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item });
+      const data = await post(`suggest-${turnSequence}-${index}`, 'tools/call', { name: 'suggest_task', arguments: task });
+      const failed = data.error !== undefined || data.result?.isError === true;
+      notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: {
+        ...item, status: failed ? 'failed' : 'completed', result: data.result ?? null, error: data.error ? { message: data.error.message } : null, durationMs: 1,
+      } });
+    }
+    return tasks.length;
+  };
+
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
     input += chunk;
@@ -347,7 +439,19 @@ if (args.includes('--version')) {
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-thread-start.json'), JSON.stringify({
             cwd: frame.params?.cwd ?? null, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null,
           }));
+          if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-thread-starts.jsonl'), `${JSON.stringify({
+            threadId, cwd: frame.params?.cwd ?? null, approvalPolicy: frame.params?.approvalPolicy ?? null, sandbox: frame.params?.sandbox ?? null,
+            developerInstructions: frame.params?.developerInstructions ?? null,
+          })}\n`);
           // Like the real app-server, the thread's effective effort comes back with it (the config default).
+          respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture', reasoningEffort: 'medium' });
+          break;
+        }
+        case 'thread/resume': {
+          // A conversation the app reattaches after a restart.
+          const threadId = frame.params?.threadId;
+          threadConfigs.set(threadId, frame.params?.config);
+          if (typeof frame.params?.cwd === 'string') threadCwds.set(threadId, frame.params.cwd);
           respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture', reasoningEffort: 'medium' });
           break;
         }
@@ -375,6 +479,14 @@ if (args.includes('--version')) {
               void answerReview(threadId, turnId, frame.params);
               break;
             }
+            // Turn wrap-up's forks: the next-message guess, and a recap.
+            const wrapUpPurpose = String(frame.params?.clientUserMessageId ?? '').startsWith('predict:') ? 'predict'
+              : inputTextOf(frame.params?.input).includes(RECAP_OPENING) ? 'recap' : undefined;
+            if (wrapUpPurpose) {
+              respond(frame, { turn: { id: turnId, status: 'inProgress', items: [], error: null } });
+              void answerWrapUpFork(threadId, turnId, wrapUpPurpose, frame.params);
+              break;
+            }
             if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-side-input.json'), JSON.stringify(frame.params?.input));
             respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
             setTimeout(() => {
@@ -391,7 +503,7 @@ if (args.includes('--version')) {
           const turnId = `fixture-turn-${turnSequence}`;
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));
           if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-turns.jsonl'),
-            `${JSON.stringify({ threadId, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null, effort: frame.params?.effort ?? null, input: JSON.stringify(frame.params?.input ?? null).slice(0, 4000) })}\n`);
+            `${JSON.stringify({ threadId, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null, effort: frame.params?.effort ?? null, additionalContext: frame.params?.additionalContext ?? null, input: JSON.stringify(frame.params?.input ?? null).slice(0, 4000) })}\n`);
           respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
           setTimeout(async () => {
             write({
@@ -400,6 +512,14 @@ if (args.includes('--version')) {
               params: { threadId, turn: { id: turnId, status: 'inProgress', items: [] } },
             });
             const inputText = inputTextOf(frame.params?.input);
+            // Before a hold, so a card can arrive while its turn still runs.
+            const suggestionList = /EZTERMINAL_E2E_SUGGEST:([\w-]+)/u.exec(inputText)?.[1];
+            let suggested = '';
+            if (suggestionList) {
+              try {
+                suggested = `Suggested ${String(await suggestTasks(threadId, turnId, turnSequence, suggestionList))} tasks.`;
+              } catch (reason) { suggested = `Suggest fixture failed: ${String(reason)}`; }
+            }
             // A turn the spec keeps running (`EZTERMINAL_E2E_HOLD:<token>`) until it writes the token's release
             // file; stopped meanwhile, it ends interrupted with nothing said.
             const hold = /EZTERMINAL_E2E_HOLD:([\w-]+)/u.exec(inputText)?.[1];
@@ -430,6 +550,7 @@ if (args.includes('--version')) {
                 responseText = 'AI preview updated through the authenticated app tool.';
               } catch (reason) { responseText = `Preview fixture failed: ${String(reason)}`; }
             }
+            if (suggested) responseText = suggested;
             // Settings by conversation: one change applied now (a view setting), one only proposed (a new agent
             // with full access), through the same authenticated app-tool endpoint. The person applies the proposal.
             const settingsTrigger = /EZTERMINAL_E2E_SETTINGS:([a-z-]+)/u.exec(JSON.stringify(frame.params?.input))?.[1];
@@ -597,7 +718,7 @@ if (args.includes('--version')) {
               method: 'account/rateLimits/updated',
               params: { rateLimits: {
                 limitId: 'codex',
-                primary: { usedPercent: 26, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
+                primary: { usedPercent: usedPercent(), windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
                 secondary: null,
               } },
             });
@@ -616,7 +737,7 @@ if (args.includes('--version')) {
           // This account has only a weekly window, like the one the captures came from.
           respond(frame, { rateLimits: {
             limitId: 'codex',
-            primary: { usedPercent: 26, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
+            primary: { usedPercent: usedPercent(), windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
             secondary: null,
           } });
           break;

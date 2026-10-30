@@ -122,6 +122,8 @@ function fakeCodexEnvironment(profile: string): Record<string, string> {
 async function launchWithReviewingCodex(profile: string): ReturnType<typeof launchApp> {
   // The fake Codex reports this version (it reads the file beside its other control files).
   writeFileSync(path.join(profile, 'ezterminal-e2e-codex-version.txt'), REVIEW_CODEX_VERSION, 'utf8');
+  // Turn wrap-up forks each turn 3 s after it ends, and these specs count the forks a review makes.
+  writeFileSync(path.join(profile, 'turn-wrap-up.json'), JSON.stringify({ version: 1, suggestions: { claude: false, codex: false }, recaps: false, tasks: true, pauseNearLimit: true }), 'utf8');
   return launchApp(profile, fakeCodexEnvironment(profile));
 }
 
