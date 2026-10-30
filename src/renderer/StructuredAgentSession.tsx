@@ -1875,6 +1875,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly reviewStart?: {
     readonly options: ReviewStartOptions;
     readonly onStart: (request: ReviewStartRequest) => Promise<StructuredAgentUiResult> | void;
+    /** The form is opening: the host reads again what it shows (단계 연결 can change in Settings while this tab stays open). */
+    readonly onOpen?: () => void;
   };
   /**
    * Review card actions for the host (fix, dismiss, reopen, stop, retry…); a failure is shown above the chat.
@@ -2330,6 +2332,7 @@ export function StructuredAgentSessionPanel({
   const openReviewStart = (initial: { readonly target?: ReviewStartTarget; readonly focus?: string } = {}): void => {
     setReviewStartInitial(initial);
     setReviewStartOpen(true);
+    reviewStart?.onOpen?.();
   };
   /** The host's answer to a review command or start: a refusal is read above the chat, not lost. */
   const [reviewError, setReviewError] = useState<string | null>(null);

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ChatAgentPhaseMap, ChatAgentProfile } from '../shared/chat-agent-profiles';
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { inSession, otherAiReview, OTHER_REVIEW_ID } from './chat/review/review-fixtures';
@@ -154,6 +155,28 @@ describe('reviews through the host (review-loop-v1)', () => {
     await act(async () => button('Fix src/auth.ts:6').click());
     await flush();
     expect(container.querySelector('[data-testid="structured-agent-review-error"]')?.textContent).toContain('This finding is being fixed.');
+  });
+
+  it('names the review agent another AI reviews as, as 단계 연결 says when the form opens', async () => {
+    // The person links a review agent in Settings while this conversation's tab stays open.
+    const profiles: ChatAgentProfile[] = [{ id: 'careful', name: 'Careful reviewer', providerId: 'codex', reasoningEffort: 'low', permissionPreset: 'standard' }];
+    let phases: ChatAgentPhaseMap = { byProvider: {}, switchModel: false };
+    const previous = Object.getOwnPropertyDescriptor(window, 'ezterminal');
+    Object.defineProperty(window, 'ezterminal', { configurable: true, value: { ...window.ezterminal, chatAgentProfiles: { list: async () => profiles, phases: async () => phases } } });
+    try {
+      mount(snapshotWith(), []);
+      await flush();
+      phases = { ...phases, review: { profileId: 'careful' } };
+      type(composer(), '/review');
+      act(() => composer().closest('form')!.requestSubmit());
+      await flush();
+      act(() => document.querySelector<HTMLInputElement>('[data-testid="review-start-other"]')!.click());
+      await flush();
+      expect(document.querySelector('[data-testid="review-start-other-settings"]')?.textContent).toBe('Uses the review agent Careful reviewer · Low');
+    } finally {
+      if (previous) Object.defineProperty(window, 'ezterminal', previous);
+      else delete (window as { ezterminal?: unknown }).ezterminal;
+    }
   });
 
   it('keeps the older behaviour on a host without review-loop-v1', async () => {

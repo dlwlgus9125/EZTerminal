@@ -319,8 +319,10 @@ export function StructuredAgentDockPanel(
     approval.sessionId === sessionId && approval.state === 'pending' && approval.request?.kind === 'plan'
   ));
   const [phaseLinks, setPhaseLinks] = useState<{ readonly profiles: readonly ChatAgentProfile[]; readonly phases: ChatAgentPhaseMap } | null>(null);
-  // The review start form also says which agent another AI reviews as (D8): read where the host reviews.
+  // The review start form also says which agent another AI reviews as (D8): read where the host reviews, and again
+  // each time the form opens (Settings saves 단계 연결 without telling open conversations).
   const reviewsOffered = snapshot?.capabilities?.includes(REVIEW_LOOP_CAPABILITY) === true;
+  const [reviewFormOpens, setReviewFormOpens] = useState(0);
   useEffect(() => {
     if ((!planApprovalPending && !reviewsOffered) || !profileAccess?.phases) return undefined;
     let alive = true;
@@ -328,7 +330,7 @@ export function StructuredAgentDockPanel(
       .then(([profiles, phases]) => { if (alive) setPhaseLinks({ profiles, phases }); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [planApprovalPending, profileAccess, reviewsOffered]);
+  }, [planApprovalPending, profileAccess, reviewsOffered, reviewFormOpens]);
   // 대화로 설정 바꾸기: what this conversation's AI changed (되돌리기) and proposed (decided in the approval dock).
   const sessionApprovals = useMemo(() => (snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId), [snapshot?.approvals, sessionId]);
   const conversationSettings = useConversationSettings({ sessionId: sessionId ?? '', approvals: sessionApprovals, korean, access: window.ezterminal?.settingsChanges });
@@ -1360,7 +1362,7 @@ export function StructuredAgentDockPanel(
         ? () => runLifecycleCommand('agent.detach')
         : undefined}
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
-      {...(reviews ? { reviewStart: reviews.reviewStart, onReviewAction: reviews.onReviewAction } : {})}
+      {...(reviews ? { reviewStart: { ...reviews.reviewStart, onOpen: () => setReviewFormOpens((count) => count + 1) }, onReviewAction: reviews.onReviewAction } : {})}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}
