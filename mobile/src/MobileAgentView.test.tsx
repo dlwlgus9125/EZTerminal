@@ -18,7 +18,9 @@ import type {
   DaemonTranscriptItem,
 } from '../../src/shared/daemon-protocol';
 import { createDaemonCommand } from '../../src/shared/daemon-protocol';
-import { inSession, otherAiReview, OTHER_REVIEW_ID } from '../../src/renderer/chat/review/review-fixtures';
+import {
+  CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM, fixOutcomesReview, inSession, otherAiReview, OTHER_REVIEW_ID, OUTCOMES_REVIEW_ID, withId,
+} from '../../src/renderer/chat/review/review-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -2060,6 +2062,34 @@ describe('MobileAgentView reviews (review-loop-v1)', () => {
         payload: { sessionId: SESSION, reviewId: expect.stringMatching(/^rv-/u), reviewer: { kind: 'self' }, target: { kind: 'uncommitted' }, focus: '금액 계산' },
       }));
     });
+  });
+
+  it('settles each problem from its fix turn as the PC records it: 고침, 안 고침, 확인 필요, 고치는 중', async () => {
+    // A fix turn that finished (its reply says fixed / not changed, and leaves one out) and one still working.
+    const fixture = inSession(fixOutcomesReview(Date.parse(DAEMON_TIMESTAMP)), SESSION);
+    const items = fixture.items.map((entry, index) => ({ ...entry, sequence: index + 1, id: `outcome-item-${String(index + 1)}` }));
+    const authority = daemonSnapshotOf({
+      capabilities: ['review-loop-v1'],
+      reviewSupport: { codex: { self: true, reviewer: true } },
+      turns: [...fixture.turns],
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: items.length, itemCount: items.length }],
+    });
+    const transport = {
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => authority,
+      getDaemonTranscript: vi.fn(async (_sessionId: string, afterSequence = 0) => items.filter((entry) => entry.sequence > afterSequence)),
+      sendDaemonCommand: vi.fn(),
+    } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
+      initialSessionId={SESSION} {...noop} />);
+    await until(() => { expect(container.querySelectorAll('[data-testid="chat-review-finding"]')).toHaveLength(5); });
+    const status = (draft: Parameters<typeof withId>[1]): string | null | undefined => container
+      .querySelector(`[data-testid="chat-review-finding"][data-finding-id="${withId(OUTCOMES_REVIEW_ID, draft).id}"]`)?.getAttribute('data-status');
+    expect(status(CODEX_AUTH)).toBe('fixed');
+    expect(status(CODEX_DISCOUNT)).toBe('not-changed');
+    expect(status(CODEX_CART)).toBe('unconfirmed');
+    expect(status(CODEX_FORMAT)).toBe('fixing');
+    expect(status(CODEX_ITEM)).toBe('dismissed');
   });
 
   it('keeps today’s screen on a PC without review-loop-v1', async () => {

@@ -1572,6 +1572,8 @@ export function MobileAgentView({
           ...buildCommandBase(), type: 'agent.queue', payload: { sessionId: selectedDaemonSession.id, turnId: item.turnId, turnRevision: item.revision, action },
         })) : undefined}
         items={selectedTranscript}
+        // A review's problem follows its fix turn (고치는 중, 고침, 안 고침…), as on the PC.
+        turns={(daemonRuntimeState.snapshot?.turns ?? []).filter((turn) => turn.sessionId === selectedDaemonSession.id)}
         approvals={(daemonRuntimeState.snapshot?.approvals ?? []).filter((approval) => (
           approval.sessionId === selectedDaemonSession.id
         ))}
