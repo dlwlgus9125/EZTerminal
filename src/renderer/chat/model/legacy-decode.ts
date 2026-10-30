@@ -53,7 +53,7 @@ function firstLine(value: string, limit = 160): string {
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
 
-function parseObject(text: string): Record<string, unknown> | undefined {
+export function parseObject(text: string): Record<string, unknown> | undefined {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return undefined;
   try {

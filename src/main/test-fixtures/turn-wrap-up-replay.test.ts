@@ -4,10 +4,12 @@ import path from 'node:path';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 
+import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import { parseTranscriptPayload } from '../../shared/transcript-payload';
 import {
   nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, recapQuestion, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
 } from '../../shared/turn-wrap-up';
+import { buildChatModel } from '../../renderer/chat/model/build-chat-model';
 import type { AgentProviderEvent } from '../agent-provider-adapter';
 import {
   PROVIDER_CAPTURE_DIRECTORY, readProviderCaptureFixture, replayCodexSideFork, replayProviderFixture, type JsonRpcFrame, type ProviderCaptureFixture,
@@ -83,6 +85,35 @@ describe('turn wrap-up recordings', () => {
       if (item.payload !== undefined) expect(parseTranscriptPayload(item.payload), `${item.id} payload`).toBeDefined();
     }
     expect(golden.approvals).toHaveLength(1);
+  });
+
+  describe.each([
+    ['claude-suggest-task', { wrapUp: { suggestTask: true }, orchestration: { endpoint: 'http://127.0.0.1:4321/mcp/replay', bearerToken: 'replay-token' } }],
+    ['codex-suggest-task', { wrapUp: { developerInstructions: SUGGEST_TASK_INSTRUCTIONS } }],
+  ] as const)('%s, as the conversation shows it', (name, session) => {
+    const suggestCalls = (items: readonly DaemonTranscriptItem[]): readonly DaemonTranscriptItem[] => items.filter((item) => (
+      item.kind === 'tool-call' && item.payload?.type === 'tool' && item.payload.name.endsWith(SUGGEST_TASK_TOOL)
+    ));
+    /** The row the host writes for an accepted call: what the AI passed, word for word. */
+    const hostRow = (call: DaemonTranscriptItem, index: number): DaemonTranscriptItem => {
+      const args = JSON.parse(call.text.slice(call.text.indexOf('\n') + 1)) as { readonly title: string; readonly rationale: string; readonly prompt: string };
+      return {
+        id: `host-${String(index)}`, sessionId: call.sessionId, sequence: call.sequence + 0.5, turnId: call.turnId!, kind: 'notice', text: args.title, isDelta: false, isSensitive: true, createdAt: call.createdAt,
+        payload: { v: 1, type: 'task-suggestion', taskId: `task-${String(index)}`, turnId: call.turnId!, providerId: 'replay', title: args.title, rationale: args.rationale, prompt: args.prompt },
+      };
+    };
+    const shownCalls = (items: readonly DaemonTranscriptItem[]): readonly string[] => buildChatModel({ items }).rows.flatMap((row) => (
+      row.kind === 'activity' ? row.entries.flatMap((entry) => (entry.kind === 'tool' && entry.tool.name.endsWith(SUGGEST_TASK_TOOL) ? [entry.tool.name] : [])) : []
+    ));
+
+    it('folds every call that left a task, and shows the one that did not', async () => {
+      const { items } = await replayProviderFixture(readProviderCaptureFixture(name), { session });
+      const calls = suggestCalls(items);
+      expect(calls.length).toBeGreaterThan(0);
+      expect(shownCalls(items)).toHaveLength(calls.length);
+      expect(shownCalls([...items, ...calls.map(hostRow)])).toEqual([]);
+      expect(shownCalls([...items, ...calls.slice(1).map((call, index) => hostRow(call, index + 1))])).toHaveLength(1);
+    });
   });
 
   it('Codex: told at thread/start, it proposes through the tool in a read-only thread and changes nothing', async () => {

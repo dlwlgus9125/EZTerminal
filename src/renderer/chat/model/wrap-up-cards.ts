@@ -1,9 +1,11 @@
 import type { DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { parseTranscriptPayload, type TaskSuggestionStatusPayload } from '../../../shared/transcript-payload';
 import {
-  suggestedTaskChildSessionId,
+  SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskChildSessionId,
   type SuggestedTask, type SuggestedTaskOutcome, type TurnRecap, type TurnTaskSuggestions,
 } from '../../../shared/turn-wrap-up';
+import { parseObject } from './legacy-decode';
+import type { ChatTool } from './types';
 
 /**
  * Turn wrap-up's cards, read from the host's rows as they stand: a turn's recap is its latest `recap` row, a task's
@@ -15,6 +17,22 @@ export interface WrapUpCards {
   readonly tasks: ReadonlyMap<string, TurnTaskSuggestions>;
   /** By the turn they sum up. */
   readonly recaps: ReadonlyMap<string, TurnRecap>;
+  /** Tool calls that ended without finishing, by call id: failed, denied or interrupted. */
+  readonly stoppedCalls: ReadonlySet<string>;
+}
+
+/**
+ * Whether a tool call is only how a card's task got there, so the card stands for it. It must be the host's own tool
+ * (another server's `suggest_task`, or a bare name with no server, is a tool call like any other) and have left that
+ * task word for word: a call the host refused (the cap, the setting, a stopped turn, a turn no person sent) leaves no
+ * row, and stays a tool row. So does one that did not finish, or whose input cannot be read: nothing the AI did is hidden.
+ */
+export function foldsIntoCard(tool: Pick<ChatTool, 'callId' | 'name' | 'server' | 'input' | 'inputValue'>, turnId: string | undefined, cards: WrapUpCards): boolean {
+  const own = tool.name === SUGGEST_TASK_CLAUDE_TOOL || (tool.name === SUGGEST_TASK_TOOL && tool.server === SUGGEST_TASK_SERVER);
+  const card = turnId === undefined ? undefined : cards.tasks.get(turnId);
+  if (!own || !card || cards.stoppedCalls.has(tool.callId)) return false;
+  const input = tool.inputValue ?? (tool.input ? parseObject(tool.input) : undefined);
+  return card.tasks.some((task) => task.title === input?.title && task.prompt === input?.prompt);
 }
 
 interface CardRows {
@@ -71,8 +89,12 @@ export function wrapUpCards(ordered: readonly DaemonTranscriptItem[], turns: rea
   const statuses = new Map<string, Dated<TaskSuggestionStatusPayload>>();
   const sends = new Map<string, Dated<string>>();
   const dropped = new Map<string, number>();
+  const stoppedCalls = new Set<string>();
   for (const item of ordered) {
     const type = item.payload?.type;
+    if (item.kind === 'tool-result' && item.payload?.type === 'tool' && (item.payload.status === 'failed' || item.payload.status === 'denied' || item.payload.status === 'interrupted')) {
+      stoppedCalls.add(item.payload.callId);
+    }
     if (type !== 'recap' && type !== 'task-suggestion' && type !== 'task-suggestion-status' && type !== 'task-suggestion-send' && type !== 'task-suggestions-dropped') continue;
     const payload = parseTranscriptPayload(item.payload);
     if (payload?.type === 'recap') {
@@ -101,5 +123,5 @@ export function wrapUpCards(ordered: readonly DaemonTranscriptItem[], turns: rea
       ...(count ? { dropped: count } : {}),
     }];
   }));
-  return { tasks, recaps };
+  return { tasks, recaps, stoppedCalls };
 }

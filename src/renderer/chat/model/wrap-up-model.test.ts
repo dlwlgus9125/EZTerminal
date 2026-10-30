@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DaemonTranscriptItem } from '../../../shared/daemon-protocol';
-import { suggestedTaskChildSessionId } from '../../../shared/turn-wrap-up';
+import { SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskChildSessionId } from '../../../shared/turn-wrap-up';
 import { applyWrapUpAction, cartStory, formatStory, WAITING_DECISION_ID, waitingStory, WRAP_SESSION } from '../wrap-up/wrap-up-fixtures';
 import { buildChatModel } from './build-chat-model';
 import type { ChatRow } from './types';
@@ -27,6 +27,22 @@ function recapRow(rows: readonly ChatRow[]): Extract<ChatRow, { kind: 'recap' }>
 }
 
 const outcome = (rows: readonly ChatRow[], index: number) => taskCard(rows).suggestions.tasks[index]!.outcome;
+
+/** One more tool call in the cart turn, as an adapter records it. `server`: the Codex shape, beside the name. */
+function call(sequence: number, name: string, options: { readonly server?: string; readonly input?: unknown; readonly status?: 'completed' | 'failed' | 'denied' | 'interrupted' } = {}): DaemonTranscriptItem[] {
+  const { server, input = { title: 'Fix the tax rounding', rationale: 'Why', prompt: 'Do it.' }, status = 'completed' } = options;
+  const body = JSON.stringify(input, null, 2);
+  const row = (offset: number, kind: 'tool-call' | 'tool-result', text: string, phase: 'call' | 'result', state: 'running' | typeof status): DaemonTranscriptItem => ({
+    id: `extra-${String(sequence + offset)}`, sessionId: WRAP_SESSION, sequence: sequence + offset, turnId: 'turn-cart', kind, text, isDelta: false, isSensitive: false, createdAt: '2026-10-30T05:53:00.000Z',
+    payload: { v: 1, type: 'tool', callId: `extra-call-${String(sequence)}`, name, category: 'mcp', phase, status: state, ...(server ? { server } : {}) },
+  });
+  const head = server ? `${server}/${name}: inProgress` : name;
+  return [row(0, 'tool-call', `${head}\n${body}`, 'call', 'running'), row(1, 'tool-result', '{"ok":true}', 'result', status)];
+}
+
+const suggestTasksShown = (items: readonly DaemonTranscriptItem[], fixture: ReturnType<typeof cartStory>): string[] => (
+  toolNames(buildChatModel({ items, turns: fixture.turns }).rows).filter((name) => name.endsWith('suggest_task'))
+);
 
 describe('turn wrap-up rows', () => {
   it('builds the cards from the host’s rows: tasks, then the recap, after the turn’s last message and its change card', () => {
@@ -58,6 +74,58 @@ describe('turn wrap-up rows', () => {
       const withoutCards = fixture.items.filter((item) => item.payload?.type !== 'task-suggestion');
       expect(toolNames(buildChatModel({ items: withoutCards, turns: fixture.turns }).rows).filter((name) => name.endsWith('suggest_task'))).toHaveLength(3);
     }
+  });
+
+  it('leaves another server’s suggest_task a tool row beside the card, in both AIs’ shapes', () => {
+    const fixture = cartStory('en', 'claude');
+    const accepted = taskCard(buildChatModel({ items: fixture.items, turns: fixture.turns }).rows).suggestions.tasks[0]!;
+    const sameWords = { input: { title: accepted.title, rationale: accepted.rationale, prompt: accepted.prompt } };
+    for (const [name, options] of [
+      ['mcp__other__suggest_task', {}],
+      ['mcp__other__suggest_task', sameWords],
+      ['suggest_task', { server: 'other' }],
+      ['suggest_task', { server: 'other', ...sameWords }],
+      // A bare name with no server cannot be told for the host's own.
+      ['suggest_task', {}],
+      ['suggest_task', sameWords],
+    ] as const) {
+      expect(suggestTasksShown([...fixture.items, ...call(500, name, options)], fixture), `${name} ${JSON.stringify(options)}`).toEqual([name]);
+    }
+  });
+
+  it('folds the host’s own calls and nothing else of the turn', () => {
+    const fixture = cartStory('en', 'codex');
+    const items = [...fixture.items, ...call(500, 'mcp__other__suggest_task')];
+    expect(suggestTasksShown(items, fixture)).toEqual(['mcp__other__suggest_task']);
+    expect(toolNames(buildChatModel({ items, turns: fixture.turns }).rows).filter((name) => name === SUGGEST_TASK_TOOL)).toEqual([]);
+  });
+
+  it('keeps a call the host refused visible: it left no task on the card', () => {
+    for (const provider of ['claude', 'codex'] as const) {
+      const fixture = cartStory('en', provider);
+      const refused = provider === 'claude' ? call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed' }) : call(500, SUGGEST_TASK_TOOL, { server: SUGGEST_TASK_SERVER, status: 'failed' });
+      expect(suggestTasksShown([...fixture.items, ...refused], fixture)).toHaveLength(1);
+      // Refused and still marked completed (an adapter that cannot tell): no task row is what counts.
+      const quiet = provider === 'claude' ? call(500, SUGGEST_TASK_CLAUDE_TOOL) : call(500, SUGGEST_TASK_TOOL, { server: SUGGEST_TASK_SERVER });
+      expect(suggestTasksShown([...fixture.items, ...quiet], fixture)).toHaveLength(1);
+    }
+  });
+
+  it('keeps a call with a card’s words visible when it did not finish', () => {
+    const fixture = cartStory('en', 'claude');
+    const accepted = taskCard(buildChatModel({ items: fixture.items, turns: fixture.turns }).rows).suggestions.tasks[0]!;
+    const input = { title: accepted.title, rationale: accepted.rationale, prompt: accepted.prompt };
+    for (const status of ['failed', 'denied', 'interrupted'] as const) {
+      expect(suggestTasksShown([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { input, status })], fixture)).toHaveLength(1);
+    }
+    // A repeat the host answered with the same task adds nothing: it folds.
+    expect(suggestTasksShown([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { input })], fixture)).toEqual([]);
+  });
+
+  it('keeps a call whose input cannot be read visible', () => {
+    const fixture = cartStory('en', 'claude');
+    const unreadable = call(500, SUGGEST_TASK_CLAUDE_TOOL).map((row) => (row.kind === 'tool-call' ? { ...row, text: `${SUGGEST_TASK_CLAUDE_TOOL}\n{"title": "cut o` } : row));
+    expect(suggestTasksShown([...fixture.items, ...unreadable], fixture)).toHaveLength(1);
   });
 
   it('folds a call that came before its row, and keeps the tool run in one piece', () => {

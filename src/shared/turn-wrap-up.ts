@@ -50,8 +50,10 @@ export const SUGGEST_TASK_INSTRUCTIONS = 'When you notice work outside the curre
   + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
 
 export const SUGGEST_TASK_TOOL = 'suggest_task';
+/** The host's own MCP server, as both AIs name it. */
+export const SUGGEST_TASK_SERVER = 'ezterminal_orchestration';
 /** The exact name Claude's `allowedTools` needs: a per-tool MCP policy still asks (probe P4). */
-export const SUGGEST_TASK_CLAUDE_TOOL = `mcp__ezterminal_orchestration__${SUGGEST_TASK_TOOL}`;
+export const SUGGEST_TASK_CLAUDE_TOOL = `mcp__${SUGGEST_TASK_SERVER}__${SUGGEST_TASK_TOOL}`;
 
 /** The composer's one line from the AI's answer; `(none)`, nothing, or an answer too long for a next message is no suggestion. */
 export function nextPromptText(raw: string | null | undefined): string | undefined {

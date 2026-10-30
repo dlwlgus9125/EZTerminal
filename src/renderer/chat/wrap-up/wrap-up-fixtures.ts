@@ -3,7 +3,7 @@ import { encodeFileChanges, type RecordedFileChange } from '../../../shared/conv
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import type { RecapPayload, TaskSuggestionStatusPayload } from '../../../shared/transcript-payload';
 import {
-  suggestedTaskBranch, suggestedTaskChildSessionId,
+  SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskBranch, suggestedTaskChildSessionId,
   type NextPromptSuggestion, type SuggestedTask, type SuggestedTaskStart, type TurnRecap, type TurnRecapFailure,
 } from '../../../shared/turn-wrap-up';
 import type { ChatWrapUpAction, ChatWrapUpPending } from '../ChatContext';
@@ -177,21 +177,27 @@ function edit(sequence: number, turnId: string, path: string, patch: string): Da
   ];
 }
 
-/** One `suggest_task` call as each AI names the tool, and the row the host wrote for it; the card folds the call in. */
+/**
+ * One `suggest_task` call as each adapter records it (see the suggest-task recordings), and the row the host wrote for
+ * it; the card folds the call in. Claude's name holds the server; Codex names the server beside the tool.
+ */
 function suggestCall(sequence: number, turnId: string, provider: WrapProvider, task: TaskDraft, taskId: string): DaemonTranscriptItem[] {
   const callId = `call-suggest-${String(sequence)}`;
-  const name = provider === 'claude' ? 'mcp__ezterminal_orchestration__suggest_task' : 'suggest_task';
-  const input = JSON.stringify({ title: task.title, rationale: task.rationale, prompt: task.prompt, ...(task.worktree !== undefined ? { worktree: task.worktree } : {}) });
+  const input = JSON.stringify({ title: task.title, rationale: task.rationale, prompt: task.prompt, ...(task.worktree !== undefined ? { worktree: task.worktree } : {}) }, null, 2);
+  const claude = provider === 'claude';
+  const name = claude ? SUGGEST_TASK_CLAUDE_TOOL : SUGGEST_TASK_TOOL;
+  const row = claude ? {} : { server: SUGGEST_TASK_SERVER };
+  const answer = JSON.stringify({ ok: true, taskId });
   return [
-    item(sequence, 'tool-call', `${name}\n${input}`, {
-      turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'call', status: 'running', target: 'ezterminal_orchestration / suggest_task', server: 'ezterminal_orchestration' },
+    item(sequence, 'tool-call', claude ? `${name}\n${input}` : `${SUGGEST_TASK_SERVER}/${name}: inProgress\n${input}`, {
+      turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'call', status: 'running', target: `${SUGGEST_TASK_SERVER} / ${SUGGEST_TASK_TOOL}`, ...row },
     }),
     item(sequence + 1, 'notice', `Suggested task: ${task.title}`, {
       turnId, isSensitive: true,
       payload: { v: 1, type: 'task-suggestion', taskId, turnId, providerId: provider, title: task.title, rationale: task.rationale, prompt: task.prompt, ...(task.worktree !== undefined ? { worktree: task.worktree } : {}) },
     }),
-    item(sequence + 2, 'tool-result', 'Suggested. Nothing ran.', {
-      turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'result', status: 'completed', server: 'ezterminal_orchestration' },
+    item(sequence + 2, 'tool-result', claude ? answer : `${SUGGEST_TASK_SERVER}/${name}: completed\n${answer}`, {
+      turnId, payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'result', status: 'completed', ...row },
     }),
   ];
 }

@@ -9,16 +9,13 @@ import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
   PendingInteraction, TodoChange,
 } from './types';
-import { wrapUpCards } from './wrap-up-cards';
+import { foldsIntoCard, wrapUpCards } from './wrap-up-cards';
 
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
 }
-
-/** The proposal-only MCP tool (`suggest_task` for Codex, `mcp__<server>__suggest_task` for Claude). */
-const SUGGEST_TASK_TOOL = /(?:^|__)suggest_task$/u;
 
 /** A transcript item after streaming fragments have been merged. */
 export interface CoalescedItem extends DaemonTranscriptItem {
@@ -359,7 +356,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
-  const { tasks: taskCards, recaps: recapCards } = wrapUpCards(coalesced, turns);
+  const wrapUp = wrapUpCards(coalesced, turns);
+  const { tasks: taskCards, recaps: recapCards } = wrapUp;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const rows: ChatRow[] = [];
   const toolsByCallId = new Map<string, MutableTool>();
@@ -527,8 +525,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           }
         }
         // Task-list tools show as the todo rows they produce, not as tool lines; suggested tasks as their turn's card.
-        const suggestion = SUGGEST_TASK_TOOL.test(tool.name) && turnId !== undefined && taskCards.has(turnId);
-        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo' && !suggestion) activityFor(item).push({ kind: 'tool', tool });
+        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo' && !foldsIntoCard(tool, turnId, wrapUp)) activityFor(item).push({ kind: 'tool', tool });
         const open = openCallsByTurn.get(turnId ?? '') ?? [];
         open.push(tool);
         openCallsByTurn.set(turnId ?? '', open);
