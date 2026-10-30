@@ -42,12 +42,20 @@ type CommandAnswer =
 const PRINCIPAL = { kind: 'desktop', id: 'renderer-agent-ui' } as const;
 
 /**
+ * Every commit moves the one revision a command must match, so a host busy with the children a start just made can
+ * refuse several sends in a row. A race recorded nothing: each send is safe, and the pause lets a burst of commits pass.
+ */
+const REVISION_ATTEMPTS = 8;
+const REVISION_PAUSE_MS = 50;
+
+/**
  * One command against the latest snapshot, under a fresh command id each attempt: a repeated key would replay the stored
- * receipt, rejection included. A revision race is read again once. No answer is reported as such, never retried.
+ * receipt, rejection included. No answer is reported as such, never retried.
  */
 async function sendWrapUpCommand<T extends WrapUpCommandType>(access: ConversationCommandAccess, type: T, payload: DaemonCommandPayloads[T]): Promise<CommandAnswer> {
   const creating = type === 'agent.create';
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < REVISION_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => { setTimeout(resolve, REVISION_PAUSE_MS); });
     const authority = await access.latestSnapshot();
     if (!authority) return { kind: 'no-answer', message: 'The Agent daemon is unavailable.' };
     const commandId = opaqueId('command');

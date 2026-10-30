@@ -394,14 +394,21 @@ describe('the start form', () => {
 describe('createChildConversation', () => {
   const child = { sessionId: 'agent-1', title: 'Hand off', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Go', parentSessionId: WRAP_SESSION } as const;
 
-  it('reads the revision again once after a race', async () => {
+  it('reads the revision again after a race', async () => {
     const { input, commands } = harness({ answer: (command, index) => (index === 0 ? REFUSED(command, 'revision-conflict', 'Moved') : OK(command)) });
     await expect(createChildConversation(input.access, undefined, { projectId: 'project-1', place: { workspaceId: WORKSPACE }, child })).resolves.toEqual({ ok: true });
     expect(commands).toHaveLength(2);
   });
 
-  it('gives up after a second race, in words', async () => {
-    const { input } = harness({ answer: (command) => REFUSED(command, 'revision-conflict', 'Moved') });
+  it('gets through a host busy with the children it just started: each race recorded nothing, so each send is safe', async () => {
+    const { input, commands } = harness({ answer: (command, index) => (index < 5 ? REFUSED(command, 'revision-conflict', 'Moved') : OK(command)) });
+    await expect(createChildConversation(input.access, undefined, { projectId: 'project-1', place: { workspaceId: WORKSPACE }, child })).resolves.toEqual({ ok: true });
+    expect(new Set(commands.map((command) => command.commandId)).size).toBe(6);
+  });
+
+  it('gives up in the end, in words', async () => {
+    const { input, commands } = harness({ answer: (command) => REFUSED(command, 'revision-conflict', 'Moved') });
     await expect(createChildConversation(input.access, undefined, { projectId: 'project-1', place: { workspaceId: WORKSPACE }, child })).resolves.toMatchObject({ ok: false, error: 'refused', message: 'The project changed while handing off. Try again.' });
+    expect(commands.length).toBeLessThanOrEqual(8);
   });
 });
