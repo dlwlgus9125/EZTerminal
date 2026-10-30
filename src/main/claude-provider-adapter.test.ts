@@ -44,7 +44,7 @@ class FakeClaudeQuery implements ClaudeQuerySession {
   readonly input: AsyncIterable<SDKUserMessage>;
   readonly permissionModes: string[] = [];
   readonly models: Array<string | undefined> = [];
-  readonly flagSettings: Array<{ readonly effortLevel?: string | null }> = [];
+  readonly flagSettings: Array<Parameters<NonNullable<ClaudeQuerySession['applyFlagSettings']>>[0]> = [];
   closeCount = 0;
   interruptCount = 0;
   interruptReceipt: { still_queued?: readonly string[] } | undefined;
@@ -108,7 +108,7 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     this.models.push(model);
   }
 
-  async applyFlagSettings(settings: { readonly effortLevel?: string | null }): Promise<void> {
+  async applyFlagSettings(settings: Parameters<NonNullable<ClaudeQuerySession['applyFlagSettings']>>[0]): Promise<void> {
     this.flagSettings.push(settings);
   }
 
@@ -1915,6 +1915,198 @@ describe('Claude side questions (/btw)', () => {
     expect(failed).toMatchObject({ code: 'failed' });
     expect(failed.message).not.toContain('config');
     await fixture.adapter.dispose();
+  });
+});
+
+describe('Claude turn wrap-up', () => {
+  const SUGGESTION_VARIABLE = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
+  const eligible: ProviderSessionContext = { ...context, wrapUp: { promptSuggestions: 'on' } };
+  const suggestionEvents = (fixture: ReturnType<typeof makeAdapter>) => fixture.events.filter((event) => event.kind === 'prompt-suggestion');
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  async function submit(fixture: ReturnType<typeof makeAdapter>, turnId: string): Promise<void> {
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId, commandId: `command-${turnId}`, prompt: 'Hi' });
+  }
+
+  function finish(fixture: ReturnType<typeof makeAdapter>, turnId: string): void {
+    fixture.query.emit({ type: 'result', subtype: 'success', uuid: `result-${turnId}`, session_id: providerSessionId, is_error: false, result: 'done' });
+  }
+
+  async function finished(fixture: ReturnType<typeof makeAdapter>, turnId: string): Promise<void> {
+    await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId })));
+  }
+
+  it('launches an eligible session with suggestions, and only an eligible one', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    expect(fixture.query.inputOptions.promptSuggestions).toBe(true);
+    // On is the CLI's default: nothing to set before the first turn.
+    expect(fixture.query.flagSettings).toEqual([]);
+    await fixture.adapter.dispose();
+
+    const plain = makeAdapter();
+    await plain.adapter.createSession(context);
+    expect(plain.query.inputOptions).not.toHaveProperty('promptSuggestions');
+    await plain.adapter.dispose();
+  });
+
+  it('passes the option on every resume: without it the first resumed turn gets none', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.resumeSession({ ...eligible, providerSessionId });
+    expect(fixture.query.inputOptions).toMatchObject({ resume: providerSessionId, promptSuggestions: true });
+    await fixture.adapter.dispose();
+  });
+
+  it('starts with suggestions off through the variable, before any turn: an option left out could not be turned on later', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, wrapUp: { promptSuggestions: 'off' } });
+    expect(fixture.query.inputOptions.promptSuggestions).toBe(true);
+    expect(fixture.query.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    await fixture.adapter.dispose();
+  });
+
+  it('switches live through the variable: off, on again, and past the CLI’s own near-limit stop', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on');
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on-past-limit');
+    expect(fixture.query.flagSettings).toEqual([
+      { env: { [SUGGESTION_VARIABLE]: 'false' } }, { env: { [SUGGESTION_VARIABLE]: '' } }, { env: { [SUGGESTION_VARIABLE]: 'true' } },
+    ]);
+    // The same mode again sends nothing.
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on-past-limit');
+    expect(fixture.query.flagSettings).toHaveLength(3);
+    await fixture.adapter.dispose();
+  });
+
+  it('leaves a session that was not launched eligible alone, and an unknown one', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(context);
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
+    await fixture.adapter.setPromptSuggestions('no-such-session', 'off');
+    expect(fixture.query.flagSettings).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('keeps a switched-off mode across a relaunch', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'full-access' });
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.queries[1]!.inputOptions).toMatchObject({ resume: providerSessionId, promptSuggestions: true });
+    expect(fixture.queries[1]!.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    await fixture.adapter.dispose();
+  });
+
+  it('tries a mode the CLI refused again before the next message, and never fails the message for it', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    const apply = vi.spyOn(fixture.query, 'applyFlagSettings').mockRejectedValueOnce(new Error('control request failed'));
+    await expect(fixture.adapter.setPromptSuggestions(context.sessionId, 'off')).resolves.toBeUndefined();
+    await submit(fixture, 'turn-1');
+    expect(apply.mock.calls.map(([settings]) => settings)).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }, { env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    await fixture.adapter.dispose();
+  });
+
+  it('binds a suggestion to the turn that just finished', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await submit(fixture, 'turn-1');
+    finish(fixture, 'turn-1');
+    await finished(fixture, 'turn-1');
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: '  Add a unit test.\n', uuid: 'suggestion-1', session_id: providerSessionId });
+    await vi.waitFor(() => expect(suggestionEvents(fixture)).toEqual([
+      { kind: 'prompt-suggestion', sessionId: context.sessionId, turnId: 'turn-1', text: 'Add a unit test.' },
+    ]));
+    await fixture.adapter.dispose();
+  });
+
+  it('never gives a suggestion to a queued turn: any turn still open drops it', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await submit(fixture, 'turn-1');
+    await submit(fixture, 'turn-queued');
+    finish(fixture, 'turn-1');
+    await finished(fixture, 'turn-1');
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: 'Add a unit test.', uuid: 'suggestion-1', session_id: providerSessionId });
+    await settle();
+    expect(suggestionEvents(fixture)).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('closes the slot once a message is sent: a late suggestion for the turn before is dropped', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await submit(fixture, 'turn-1');
+    finish(fixture, 'turn-1');
+    await finished(fixture, 'turn-1');
+    await submit(fixture, 'turn-2');
+    finish(fixture, 'turn-2');
+    await finished(fixture, 'turn-2');
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-3', commandId: 'command-turn-3', prompt: 'Next' });
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: 'Too late.', uuid: 'suggestion-late', session_id: providerSessionId });
+    await settle();
+    expect(suggestionEvents(fixture)).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('gives an interrupted or failed turn no suggestion, and each finished turn one at most', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await submit(fixture, 'turn-1');
+    await fixture.adapter.interrupt(context.sessionId, providerSessionId);
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: 'After a stop.', uuid: 'suggestion-stopped', session_id: providerSessionId });
+    await settle();
+    expect(suggestionEvents(fixture)).toEqual([]);
+
+    await submit(fixture, 'turn-2');
+    finish(fixture, 'turn-2');
+    await finished(fixture, 'turn-2');
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: 'First.', uuid: 'suggestion-1', session_id: providerSessionId });
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: 'Second.', uuid: 'suggestion-2', session_id: providerSessionId });
+    await vi.waitFor(() => expect(suggestionEvents(fixture)).toHaveLength(1));
+    await settle();
+    expect(suggestionEvents(fixture)).toEqual([expect.objectContaining({ turnId: 'turn-2', text: 'First.' })]);
+    await fixture.adapter.dispose();
+  });
+
+  it('drops an empty suggestion and a message without one', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await submit(fixture, 'turn-1');
+    finish(fixture, 'turn-1');
+    await finished(fixture, 'turn-1');
+    fixture.query.emit({ type: 'prompt_suggestion', suggestion: '   ', uuid: 'suggestion-1', session_id: providerSessionId });
+    fixture.query.emit({ type: 'prompt_suggestion', uuid: 'suggestion-2', session_id: providerSessionId });
+    await settle();
+    expect(suggestionEvents(fixture)).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('allows suggest_task by its exact name only when the session has the tool and an endpoint', async () => {
+    const orchestration = { endpoint: 'http://127.0.0.1:4321/mcp', bearerToken: 'token-1' };
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, orchestration, wrapUp: { suggestTask: true } });
+    expect(fixture.query.inputOptions.allowedTools).toEqual(['mcp__ezterminal_orchestration__suggest_task']);
+    await fixture.adapter.dispose();
+
+    for (const session of [
+      { ...context, orchestration },
+      { ...context, wrapUp: { suggestTask: true } },
+      { ...context, orchestration, toolsDisabled: true, wrapUp: { suggestTask: true } },
+      { ...context, orchestration, readOnlyReviewer: true, wrapUp: { suggestTask: true } },
+    ] satisfies ProviderSessionContext[]) {
+      const other = makeAdapter();
+      await other.adapter.createSession(session);
+      expect(other.query.inputOptions.allowedTools).toBeUndefined();
+      await other.adapter.dispose();
+    }
+  });
+
+  it('declares how it wraps up: its own suggestions, and recaps while a turn is stopped', () => {
+    expect(makeAdapter().adapter.wrapUp).toEqual({ suggestions: 'native', recapWhileBlocked: true });
   });
 });
 

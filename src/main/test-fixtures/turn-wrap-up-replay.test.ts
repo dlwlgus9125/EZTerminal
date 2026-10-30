@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { parseTranscriptPayload } from '../../shared/transcript-payload';
 import {
   nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
 } from '../../shared/turn-wrap-up';
+import type { AgentProviderEvent } from '../agent-provider-adapter';
 import {
   PROVIDER_CAPTURE_DIRECTORY, readProviderCaptureFixture, replayProviderFixture, type JsonRpcFrame, type ProviderCaptureFixture,
 } from './provider-replay';
@@ -52,7 +53,17 @@ describe('turn wrap-up recordings', () => {
     const message = messages[suggestion] as { readonly suggestion: string };
     expect(Object.keys(message).sort()).toEqual(['session_id', 'suggestion', 'type', 'uuid']);
     expect(nextPromptText(message.suggestion)).toBe(message.suggestion);
-    await expect(replayProviderFixture(fixture)).resolves.toBeDefined();
+
+    const queries: Options[] = [];
+    const events: AgentProviderEvent[] = [];
+    await replayProviderFixture(fixture, {
+      session: { wrapUp: { promptSuggestions: 'on' } }, onClaudeQuery: (options) => queries.push(options), onEvent: (event) => events.push(event),
+    });
+    expect(queries[0]).toMatchObject({ promptSuggestions: true });
+    const finished = events.findIndex((event) => event.kind === 'turn-finished');
+    const suggested = events.findIndex((event) => event.kind === 'prompt-suggestion');
+    expect(suggested).toBeGreaterThan(finished);
+    expect(events[suggested]).toEqual({ kind: 'prompt-suggestion', sessionId: 'replay-session', turnId: 'replay-turn-1', text: message.suggestion });
   });
 
   it('Claude: suggest_task runs by its exact allowed name without asking, and only the edit asks', async () => {
@@ -62,7 +73,12 @@ describe('turn wrap-up recordings', () => {
       .filter((block) => block.type === 'tool_use' && block.name === SUGGEST_TASK_CLAUDE_TOOL);
     expect(calls.length).toBeGreaterThan(0);
     expect(fixture.lines.flatMap((line) => (line.dir === 'canUseTool' ? [line.toolName] : []))).toEqual(['Edit']);
-    const golden = await replayProviderFixture(fixture);
+    const queries: Options[] = [];
+    const golden = await replayProviderFixture(fixture, {
+      session: { wrapUp: { suggestTask: true }, orchestration: { endpoint: 'http://127.0.0.1:4321/mcp/replay', bearerToken: 'replay-token' } },
+      onClaudeQuery: (options) => queries.push(options),
+    });
+    expect(queries[0]!.allowedTools).toEqual([SUGGEST_TASK_CLAUDE_TOOL]);
     for (const item of golden.items) {
       if (item.payload !== undefined) expect(parseTranscriptPayload(item.payload), `${item.id} payload`).toBeDefined();
     }

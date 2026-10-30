@@ -39,6 +39,7 @@ import type {
   AgentProviderAdapter,
   AgentProviderEvent,
   AgentProviderEventListener,
+  PromptSuggestionMode,
   ProviderApprovalDecision,
   ProviderModel,
   ProviderProbeResult,
@@ -55,6 +56,7 @@ import type {
 import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
+import { nextPromptText, SUGGEST_TASK_CLAUDE_TOOL } from '../shared/turn-wrap-up';
 import {
   buildProviderProcessEnvironment,
   sameEnvironmentVariableSet,
@@ -85,6 +87,12 @@ export const CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION = '2.1.260';
  * `outputFormat`, a non-persisted fork): the version the real-provider probes and captures used.
  */
 export const CLAUDE_REVIEW_MINIMUM_VERSION = '2.1.312';
+/**
+ * The only live switch for suggestions (probe P7): `promptSuggestionEnabled` does nothing though `getSettings`
+ * says it did, and `env: null` does not restore them. `'true'` beats the CLI's own near-limit stop.
+ */
+const PROMPT_SUGGESTION_VARIABLE = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
+const PROMPT_SUGGESTION_VALUES: Readonly<Record<PromptSuggestionMode, string>> = { off: 'false', on: '', 'on-past-limit': 'true' };
 /** A reviewer reads the folder and the host-supplied diff: no shell (no command allow-list is safe), no writes. */
 const CLAUDE_REVIEW_TOOLS = ['Read', 'Grep', 'Glob'] as const;
 const CLAUDE_REVIEW_DISALLOWED_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task'] as const;
@@ -309,8 +317,8 @@ export interface ClaudeQuerySession extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<ClaudeInterruptReceipt | undefined>;
   setPermissionMode(mode: NonNullable<Options['permissionMode']>): Promise<void>;
   setModel(model?: string): Promise<void>;
-  /** Session-scoped settings, live-applied; used for the per-message reasoning effort. */
-  applyFlagSettings?(settings: { readonly effortLevel?: string | null }): Promise<void>;
+  /** Session-scoped settings, live-applied; used for the per-message reasoning effort and PROMPT_SUGGESTION_VARIABLE. */
+  applyFlagSettings?(settings: { readonly effortLevel?: string | null; readonly env?: Readonly<Record<string, string>> }): Promise<void>;
   /** Merged settings; `applied` is what the next request uses (in sdk.mjs, not in sdk.d.ts). */
   getSettings?(): Promise<unknown>;
   /**
@@ -449,6 +457,11 @@ interface SessionRecord {
   appliedEffort?: string;
   /** The effort this adapter set with applyFlagSettings (absent: the session runs at its own). */
   flagEffort?: string;
+  /** An eligible session's suggestion mode, and the one the CLI runs with: they differ until it is applied. */
+  suggestionMode?: PromptSuggestionMode;
+  appliedSuggestionMode?: PromptSuggestionMode;
+  /** The turn a `prompt_suggestion` belongs to: the last one completed, until the next message is sent. */
+  lastFinishedTurn?: TurnRecord;
   readonly enablement: ClaudeProviderEnablement;
   handle: ProviderSessionHandle;
   readonly abortController: AbortController;
@@ -1159,6 +1172,7 @@ function orchestrationMcpServers(
 
 export class ClaudeProviderAdapter implements AgentProviderAdapter {
   readonly reviewMinimumVersion = CLAUDE_REVIEW_MINIMUM_VERSION;
+  readonly wrapUp = { suggestions: 'native', recapWhileBlocked: true } as const;
   readonly providerId = 'claude';
 
   private readonly enablementStore: ClaudeProviderEnablementStore;
@@ -1559,6 +1573,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.throwIfAborted(signal);
     let session = this.session(input.sessionId, input.providerSessionId);
     if (session.turnsByCommand.has(input.commandId)) return;
+    // A message cancels the suggestion on its way, and one that still lands has no turn left to belong to (probe P9).
+    session.lastFinishedTurn = undefined;
     if (session.relaunchArmed) {
       // Only while Full access is still the chosen level; a lowered level cancels it.
       if (session.handle.permissionPreset === 'full-access') {
@@ -1597,6 +1613,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       session.appliedEffort = effort;
       session.flagEffort = restore ? undefined : effort;
     }
+    await this.applySuggestionMode(session);
     if (input.context?.skills?.length) {
       if (session.context.toolsDisabled || !session.query.supportedCommands) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
       const commands = await bounded(abortable(session.query.supportedCommands(), signal), this.operationTimeoutMs);
@@ -1707,6 +1724,26 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       synthetic: reply.synthetic === true,
       ...(fallbackNotice ? { fallbackNotice } : {}),
     };
+  }
+
+  async setPromptSuggestions(sessionId: string, mode: PromptSuggestionMode): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.suggestionMode || session.disposed) return;
+    session.suggestionMode = mode;
+    // A session still starting applies it itself, before its first turn.
+    if (session.initialized) await this.applySuggestionMode(session);
+  }
+
+  /** A refusal leaves the mode for the next message: a suggestion is never worth failing a turn. */
+  private async applySuggestionMode(session: SessionRecord): Promise<void> {
+    const mode = session.suggestionMode;
+    if (!mode || mode === session.appliedSuggestionMode || !session.query.applyFlagSettings) return;
+    try {
+      await bounded(session.query.applyFlagSettings({ env: { [PROMPT_SUGGESTION_VARIABLE]: PROMPT_SUGGESTION_VALUES[mode] } }), this.operationTimeoutMs);
+      session.appliedSuggestionMode = mode;
+    } catch {
+      // Tried again before the next message.
+    }
   }
 
   async setSettings(input: {
@@ -1980,6 +2017,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ...(overrides.model ? { model: overrides.model } : {}),
       ...(session.appliedEffort ? { reasoningEffort: session.appliedEffort } : {}),
       ...(additionalRoots?.length ? { additionalRoots } : {}),
+      // Its launch mode may be out of date; the person's latest choice goes on.
+      ...(session.suggestionMode ? { wrapUp: { ...base.wrapUp, promptSuggestions: session.suggestionMode } } : {}),
       permissionPreset: overrides.permissionPreset,
     };
     const providerSessionId = session.handle.providerSessionId;
@@ -2065,6 +2104,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       context,
       bypassArmed: context.permissionPreset === 'full-access' && !context.toolsDisabled,
       ...(context.reasoningEffort ? { appliedEffort: context.reasoningEffort } : {}),
+      ...(context.wrapUp?.promptSuggestions ? { suggestionMode: context.wrapUp.promptSuggestions, appliedSuggestionMode: 'on' as const } : {}),
       enablement: readiness.enablement,
       handle,
       abortController,
@@ -2125,6 +2165,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       settingSources: ['user', 'project', 'local'],
       ...(context.managedExecution ? { disallowedTools: ['Agent', 'Task'] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      // Every launch and resume: a session started without it cannot turn it on later, and the first resumed turn gets none.
+      ...(context.wrapUp?.promptSuggestions ? { promptSuggestions: true } : {}),
+      // A per-tool MCP policy still asks each time; only this exact name does not (probe P4).
+      ...(context.wrapUp?.suggestTask && mcpServers && !context.toolsDisabled && !context.readOnlyReviewer ? { allowedTools: [SUGGEST_TASK_CLAUDE_TOOL] } : {}),
       // The project's other folders, as `--add-dir`. CLAUDE.md stays the working folder's: the
       // CLI reads it from added folders only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD.
       ...(context.additionalRoots?.length && !context.toolsDisabled ? { additionalDirectories: [...context.additionalRoots] } : {}),
@@ -2163,6 +2207,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       if (session.startupError) throw session.startupError;
       this.throwIfAborted(signal);
       await this.readAppliedSettings(session, signal);
+      await this.applySuggestionMode(session);
       session.initialized = true;
       this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'idle' });
       return session.handle;
@@ -2229,6 +2274,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       case 'result':
         this.handleResult(session, raw);
         break;
+      case 'prompt_suggestion':
+        this.handlePromptSuggestion(session, raw);
+        break;
       case 'rate_limit_event': {
         const info = asObject(raw.rate_limit_info);
         const limits = claudeLimitsFromRateLimitInfo(info);
@@ -2250,6 +2298,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       default:
         break;
     }
+  }
+
+  /**
+   * The message names no turn, and turnForMessage would pick the next queued one: it belongs to the turn
+   * that just finished, and only while no other turn is open.
+   */
+  private handlePromptSuggestion(session: SessionRecord, message: JsonObject): void {
+    const turn = session.lastFinishedTurn;
+    const text = nextPromptText(asString(message.suggestion));
+    if (!turn || !text || [...session.turnsByCommand.values()].some((entry) => entry.state === 'submitted')) return;
+    session.lastFinishedTurn = undefined;
+    this.emit({ kind: 'prompt-suggestion', sessionId: session.context.sessionId, turnId: turn.turnId, text });
   }
 
   private handleCommandLifecycle(session: SessionRecord, message: JsonObject): void {
@@ -2978,6 +3038,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   ): void {
     if (turn.state !== 'submitted') return;
     turn.state = outcome;
+    if (outcome === 'completed') session.lastFinishedTurn = turn;
     session.coalescer.flushAll();
     this.emit({
       kind: 'turn-finished',

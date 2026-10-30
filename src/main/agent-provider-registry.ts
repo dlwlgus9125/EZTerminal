@@ -254,6 +254,11 @@ export class AgentProviderRegistry {
     return { minimumVersion: adapter.reviewMinimumVersion, fork: typeof adapter.reviewFork === 'function' };
   }
 
+  /** How this provider wraps up a turn (`turn-wrap-up-v1`); undefined when it does not (no launch side effects). */
+  wrapUpCapability(providerId: string): AgentProviderAdapter['wrapUp'] {
+    return this.adapters.get(providerId)?.wrapUp;
+  }
+
   async listModels(
     snapshot: Pick<DaemonSnapshot, 'providers'>,
     providerId: string,

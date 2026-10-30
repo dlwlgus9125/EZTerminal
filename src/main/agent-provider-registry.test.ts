@@ -149,6 +149,14 @@ describe('AgentProviderRegistry', () => {
     expect(listModels).toHaveBeenCalledOnce();
   });
 
+  it('reads how a provider wraps up a turn, without launching it', () => {
+    const wrapUp = { suggestions: 'native', recapWhileBlocked: true } as const;
+    const registry = new AgentProviderRegistry([adapter({ wrapUp }), adapter({ providerId: 'plain' })]);
+    expect(registry.wrapUpCapability('codex')).toBe(wrapUp);
+    expect(registry.wrapUpCapability('plain')).toBeUndefined();
+    expect(registry.wrapUpCapability('unknown')).toBeUndefined();
+  });
+
   it('disposes every adapter and reports aggregate failures', async () => {
     const first = adapter({ providerId: 'first', dispose: vi.fn(async () => { throw new Error('first failed'); }) });
     const second = adapter({ providerId: 'second', dispose: vi.fn(async () => { throw new Error('second failed'); }) });

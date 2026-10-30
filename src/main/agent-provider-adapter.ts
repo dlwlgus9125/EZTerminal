@@ -20,6 +20,26 @@ export type {
   ProviderReviewNotice,
 } from '../shared/daemon-provider';
 
+/**
+ * A session's next-prompt suggestions, on a provider that makes its own. `off` stops them, `on` leaves them
+ * to the provider's rules, `on-past-limit` keeps them on past the provider's own near-limit stop.
+ */
+export type PromptSuggestionMode = 'off' | 'on' | 'on-past-limit';
+
+/** Turn wrap-up for a conversation a person sees directly; every other session goes without. */
+export interface ProviderWrapUpContext {
+  /**
+   * The session is eligible, and how it starts. An eligible session always launches and resumes with the
+   * provider's suggestions available, because one launched without cannot get them later; this mode then
+   * applies before its first turn, and `setPromptSuggestions` changes it.
+   */
+  readonly promptSuggestions?: PromptSuggestionMode;
+  /** The session's MCP endpoint has `suggest_task`: Claude may run it without asking. */
+  readonly suggestTask?: true;
+  /** Said to a new Codex thread at `thread/start`; it stays through resumes. */
+  readonly developerInstructions?: string;
+}
+
 export interface ProviderSessionContext {
   readonly reasoningEffort?: string;
   readonly environment?: Readonly<Record<string, string>>;
@@ -32,6 +52,7 @@ export interface ProviderSessionContext {
    * answer ends the turn as its last assistant message (the JSON text).
    */
   readonly readOnlyReviewer?: true;
+  readonly wrapUp?: ProviderWrapUpContext;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
@@ -198,6 +219,13 @@ export type AgentProviderEvent =
       readonly limits?: AgentUsageLimitsReading;
       /** The conversation's last request against its model's context window, 0-100. */
       readonly contextPercent?: number;
+    }
+  | {
+      /** The provider's own guess of the person's next message after `turnId`; kept in memory only. */
+      readonly kind: 'prompt-suggestion';
+      readonly sessionId: string;
+      readonly turnId: string;
+      readonly text: string;
     };
 
 export type AgentProviderEventListener = (event: AgentProviderEvent) => void;
@@ -259,6 +287,15 @@ export interface AgentProviderAdapter {
    * No timeout here: the host bounds it through `signal`.
    */
   reviewFork?(input: ProviderReviewForkInput, signal: AbortSignal): Promise<ProviderReviewForkResult>;
+
+  /**
+   * `turn-wrap-up-v1`. `suggestions`: `native` emits `prompt-suggestion`, `fork` answers `predictNextPrompt`.
+   * `recapWhileBlocked`: a side question works while a turn is stopped on the person (probe P5).
+   * Absent: this provider does not wrap up turns.
+   */
+  readonly wrapUp?: { readonly suggestions: 'native' | 'fork'; readonly recapWhileBlocked: boolean };
+  /** Live switch for `native` suggestions; a session not launched eligible ignores it. Never rejects. */
+  setPromptSuggestions?(sessionId: string, mode: PromptSuggestionMode): Promise<void>;
 
   subscribe(listener: AgentProviderEventListener): () => void;
   reconcile(input: ProviderReconciliationInput, signal?: AbortSignal): Promise<ProviderReconciliationResult>;
