@@ -1728,6 +1728,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           forked = asObject(await connection.request('thread/fork', {
             threadId: input.providerSessionId, ephemeral: true, excludeTurns: true,
             sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+            // A fork does not inherit this override. Without it Codex resends its `exec` definition after the
+            // cached history: about 7,000 uncached tokens per fork, against about 370 with it (live check, 2026-10-31).
+            ...(this.enableUpdatePlan ? { config: { 'tools.update_plan': { enabled: true } } } : {}),
           }, { timeoutMs: SIDE_QUESTION_FORK_TIMEOUT_MS }));
         } catch (error) {
           finish(forkUnsupported(error) ? 'unsupported' : 'failed');

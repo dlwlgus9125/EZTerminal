@@ -2357,8 +2357,10 @@ describe('Codex side questions (/btw)', () => {
     const { adapter, events, ask, sent, forkTurnStarts, forkTurnStarted, fork } = await sideQuestionFixture();
     const answered = ask();
     await forkTurnStarted();
+    // The thread's own `tools.update_plan`: without it Codex resends its 7k-token `exec` definition, uncached, on every fork.
     expect(sent('thread/fork')).toEqual([{
       threadId: 'thread-1', ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+      config: { 'tools.update_plan': { enabled: true } },
     }]);
     expect(forkTurnStarts()).toEqual([{
       threadId: 'fork-1', clientUserMessageId: expect.stringMatching(/^side-question:/u),
@@ -2706,6 +2708,7 @@ describe('Codex side questions (/btw)', () => {
       await forkTurnStarted();
       expect(sent('thread/fork')).toEqual([{
         threadId: 'thread-1', ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+        config: { 'tools.update_plan': { enabled: true } },
       }]);
       expect(forkTurnStarts()).toEqual([{
         threadId: 'fork-1', clientUserMessageId: expect.stringMatching(/^predict:/u), effort: 'low',
