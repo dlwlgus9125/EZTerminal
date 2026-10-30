@@ -16,6 +16,7 @@ import {
 } from '../agent-results/results-source-store';
 import type { ResultsServices } from '../agent-results/results-services';
 import { AppI18nProvider } from '../i18n';
+import { clearSessionViewStates } from '../session-view-state';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from '../StructuredAgentSession';
 import { DialogPortalContext } from '../ui/Dialog';
 import type { ChatReviewAction } from './ChatContext';
@@ -25,7 +26,7 @@ import { HighlighterProvider } from './markdown/HighlighterProvider';
 import {
   applyReviewAction, BRANCH_DIFF, deletedFileReview, emptyReview, failedReview, fixOutcomesReview, inSession, interruptedReview, mixedSelfReview, otherAiReview,
   queuedOtherReview, slotQueuedReview,
-  REVIEW_FILES, REVIEW_ROOT, reviewerConversation, REVIEWER_SESSION, runningSelfReview, truncatedReview, UNCOMMITTED_DIFF, unsupportedReview,
+  REVIEW_FILES, REVIEW_ROOT, REVIEW_T0, reviewerConversation, REVIEWER_SESSION, runningSelfReview, truncatedReview, UNCOMMITTED_DIFF, unsupportedReview,
   type FixtureLanguage, type ReviewFixture,
 } from './review/review-fixtures';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest } from './review/ReviewStartMenu';
@@ -673,8 +674,33 @@ export const CodexOtherCompleteReference = reference(CodexOtherComplete, showCar
 export const StartMenuReference = reference(StartMenu);
 export const DeskWalkthroughReference: Story = {
   ...reference(DeskWalkthrough),
+  // Results says when it read the folder (갱신 HH:MM): the reference reads it at 09:42, so its picture holds still.
+  beforeEach: () => {
+    const realNow = Date.now.bind(Date);
+    const offset = REVIEW_T0 + 120_000 - realNow();
+    Date.now = () => realNow() + offset;
+    return () => { Date.now = realNow; };
+  },
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(within(canvasElement).getByTestId('results-walkthrough')).toBeVisible(), { timeout: 10_000 });
+    // Scrolling the problem's line into view leaves Chrome's keyboard starting point in the diff, after its last tab stop.
+    // The keyboard starts on the strip, where the walkthrough keeps it (blurred again: the picture has no focus ring).
+    await waitFor(() => expect(canvasElement.querySelector('.results-patch__line[data-focus]')).not.toBeNull());
+    await new Promise((resolve) => { requestAnimationFrame(() => requestAnimationFrame(resolve)); });
+    const next = within(canvasElement).getByTestId('results-walkthrough-next');
+    next.focus({ preventScroll: true });
+    next.blur();
   },
 };
 export const PhoneCard360Reference: Story = { ...reference(PhoneCard360), play: PhoneCard360.play };
+export const PhoneFindingsSheetReference: Story = {
+  ...reference(PhoneFindingsSheet),
+  // The sheet keeps its place per conversation: start from the closed sheet, not where PhoneFindingsSheet left it.
+  beforeEach: () => { clearSessionViewStates(); },
+  // The checker opens it in both languages: the cart problem's place by its role opens the sheet; nothing is acted on.
+  play: async ({ canvasElement }) => {
+    const review = await card(canvasElement);
+    await userEvent.click(within(review).getByRole('button', { name: /^(src\/cart\.ts:5 변경에서 보기|Show src\/cart\.ts:5 in the changes)$/u }));
+    await waitFor(() => expect(document.querySelector('[data-testid="conversation-change-review"][data-mode="findings"]')).not.toBeNull());
+  },
+};

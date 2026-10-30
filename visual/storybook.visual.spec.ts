@@ -214,6 +214,56 @@ const designReferenceCases = [
     theme: "matrix",
     viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
   },
+  // 리뷰 루프 (approved 2026-10-29): the review card in the bubble and CLI skins, the start form, the walkthrough in
+  // Results › 변경 내역, and the phone's card and findings sheet.
+  {
+    storyId: "production-reviewloop-mockup--claude-complete-reference",
+    screenshot: "reference-2-0-review-card-matrix-ko.png",
+    readySelector: "[data-testid='chat-review-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-reviewloop-mockup--cli-claude-complete-reference",
+    screenshot: "reference-2-0-review-card-cli-matrix-ko.png",
+    readySelector: ".chat-cli-action-card",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-reviewloop-mockup--start-menu-reference",
+    screenshot: "reference-2-0-review-start-matrix-ko.png",
+    readySelector: "[data-testid='review-start-dialog']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-reviewloop-mockup--desk-walkthrough-reference",
+    screenshot: "reference-2-0-review-walkthrough-matrix-ko.png",
+    readySelector: "[data-testid='results-walkthrough']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-reviewloop-mockup--phone-card-360-reference",
+    screenshot: "reference-2-0-review-phone-card-matrix-ko.png",
+    readySelector: "[data-testid='chat-review-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
+  {
+    storyId: "production-reviewloop-mockup--phone-findings-sheet-reference",
+    screenshot: "reference-2-0-review-phone-sheet-matrix-ko.png",
+    readySelector: "[data-testid='conversation-change-review'][data-mode='findings']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
 ] as const;
 
 for (const item of designReferenceCases) {

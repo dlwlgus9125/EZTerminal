@@ -549,6 +549,126 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-워크플로-하네스",
         "decidedAt": "2026-10-29"
       }
+    },
+    {
+      "id": "review-card",
+      "title": "AI review card in the conversation: problems by file with severity and place, fix and dismiss, what came of each, and the card's actions",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "ClaudeCompleteReference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--claude-complete-reference",
+        "snapshot": "reference-2-0-review-card-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-card.png",
+        "sha256": "9fae315e5b22e0092cd09518c174534b11b75d13f0e974475e4f36991801be71"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "review-card-cli",
+      "title": "The same review card in the CLI skin: a row per problem with real fix and dismiss buttons",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "CliClaudeCompleteReference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--cli-claude-complete-reference",
+        "snapshot": "reference-2-0-review-card-cli-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-card-cli.png",
+        "sha256": "24af95c92f71f41d34ec61fbf058c41325ba722886253647c0cebbd4051ffbbf"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "review-start",
+      "title": "Review start form (⋯ › 검토…): this AI or another, the scope, an optional focus and what each reviewer uses",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "StartMenuReference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--start-menu-reference",
+        "snapshot": "reference-2-0-review-start-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-start.png",
+        "sha256": "b0f58872f708cbc1856d4815c9eb47ed72efbe7bd22bc669ee857657b0a03704"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "review-walkthrough",
+      "title": "Stepping through a review in Results › Changes: problem n of m, previous and next, fix and dismiss, the problem on its line",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "DeskWalkthroughReference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--desk-walkthrough-reference",
+        "snapshot": "reference-2-0-review-walkthrough-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-walkthrough.png",
+        "sha256": "b96e7fa3762d25762a43d746bbe63df032bddac5ad908ba0ec1cc0afdf453ea3"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "review-phone-card",
+      "title": "Phone review card: a problem's marks, then its title across the width; thumb-sized actions",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "PhoneCard360Reference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--phone-card-360-reference",
+        "snapshot": "reference-2-0-review-phone-card-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-phone-card.png",
+        "sha256": "15966527211066fbe3942f95a3cefda19ce5136974cc2cf7795c17e68bf016ab"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
+    },
+    {
+      "id": "review-phone-sheet",
+      "title": "Phone findings sheet from a problem's place: previous and next, changed after the review, a line no longer there, the lines the review read",
+      "story": {
+        "file": "src/renderer/chat/ReviewFindings.stories.tsx",
+        "export": "PhoneFindingsSheetReference"
+      },
+      "visual": {
+        "storyId": "production-reviewloop-mockup--phone-findings-sheet-reference",
+        "snapshot": "reference-2-0-review-phone-sheet-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/review-phone-sheet.png",
+        "sha256": "5b83f10f7504145b94a92d9d6992b2ebe54f5385c3fc8ce5f9f59885206492e2"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
+        "decidedAt": "2026-10-29"
+      }
     }
   ]
 }

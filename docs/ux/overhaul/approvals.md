@@ -375,6 +375,40 @@ gpt-6-astra max(12건 반드시 고침: 검증 없는 자동 통과, 명령 허�
   보내는 중 의견 지움, 폰 의견 흐름, 조작 뒤 초점) + 문구 2건, 재검 잔여 5건(고침 다시 열기, 지운 파일, 모두 고치기 뒤 초점, 답 줄 판정 느슨함,
   보내는 중 입력창 넣기) — 전부 실패 테스트부터 반영. CLI 줄 표시 `⏺ ⎿ ✻` 교체 권고는 §23 계약이라 따르지 않음. 어드바이저 검토 반영.
 
+### 2.0 승인 화면 — 리뷰 루프
+
+승인한 시안 48개 가운데 대표 6개를 2.0 기준으로 고정한다. 기준 story는 시안과 같은 렌더를 Storybook 언어로 그리는
+`Production/ReviewLoop/Mockup`의 `…Reference`(시작 창·시트는 story 안에 연다)이고, 데스크톱 캡처는 격리 프로필 실 Electron(Matrix·ko·
+1440×900, 검토 실험의 카트 키트를 워크트리 `review/cart-kit`에 둔 합성 데이터, e2e 가짜 Codex 0.165.0)에서, 폰 캡처는 Android API 35
+에뮬레이터(1080×2280, 한국어, 디버그 vc81)가 같은 가짜 Codex의 격리 데스크톱에 붙어 찍었다(스크립트
+`artifacts/review-loop/capture-real/capture.spec.ts`·`phone.ts`, 커밋 안 함). 가린 것은 없다 — 찍기 전에 화면 글자에 사용자 이름·홈
+폴더·이 PC 주소가 없는지 확인했다. 1.0 화면은 대체하지 않는다.
+
+| 화면 id | 화면 | story | 캡처 | 답 |
+|---|---|---|---|---|
+| `review-card` | 대화 안 AI 검토 결과 카드: 파일별 문제(심각도·위치), 고치기·무시, 고침·무시함·검토 뒤에 바뀜, 모두 고치기·변경에서 차례로 보기·다시 검토 | `ClaudeCompleteReference` | `docs/ux/reference/2.0/captures/review-card.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+| `review-card-cli` | 같은 카드의 CLI 보기: `⏺ 검토` 줄, 문제마다 `⎿` 줄과 진짜 버튼인 고치기·무시, `✻` 동작 | `CliClaudeCompleteReference` | `docs/ux/reference/2.0/captures/review-card-cli.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+| `review-start` | 검토 시작 창(⋯ › 검토…): 이 AI 기본·다른 AI, 범위(커밋 안 한 변경·기준 브랜치와 비교), 초점, 검토자마다 쓰는 모델·노력 | `StartMenuReference` | `docs/ux/reference/2.0/captures/review-start.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+| `review-walkthrough` | 결과물 › 변경 내역에서 하나씩 보기: 문제 n/m, 이전·다음, 고치기·무시, 문제 줄 표시와 그 아래 문제 | `DeskWalkthroughReference` | `docs/ux/reference/2.0/captures/review-walkthrough.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+| `review-phone-card` | 폰 대화의 같은 카드: 표시 다음 줄에 제목이 폭 전체, 손가락 크기 동작 | `PhoneCard360Reference` | `docs/ux/reference/2.0/captures/review-phone-card.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+| `review-phone-sheet` | 폰 문제 시트: 문제 n/m과 ‹ ›, 검토 뒤에 바뀜, 이 줄을 찾을 수 없음, 검토 때 읽은 줄 | `PhoneFindingsSheetReference` | `docs/ux/reference/2.0/captures/review-phone-sheet.png` | 승인 (2026-10-29): 시안 승인 · 추천안대로 |
+
+시안과 실캡처의 차이:
+
+- 실캡처의 AI는 모두 Codex(가짜 Codex, 모델 "GPT 5.6 Fixture")다 — 시안의 대화는 Claude(Opus 5.5)이고 Codex가 다른 AI다. 가짜 AI가
+  Codex 하나뿐이라 시작 창의 "다른 AI"는 "이 PC에서 검토할 수 있는 다른 AI가 없습니다"로 꺼져 있고, 다른 AI 카드
+  (`CodexOtherCompleteReference`)와 검토한 대화는 고정하지 않았다(실앱에서 두 AI가 있어야 찍힌다). 문제 제목·본문은 시안처럼 AI의 영어다.
+- 데스크톱 카드·하나씩 보기는 같은 AI 검토(기준 브랜치와 비교, 초점 "금액 계산과 권한 검사", 문제 4개)다 — 시안 카드는 커밋 안 한 변경
+  문제 3개, 시안 하나씩 보기는 다른 AI 검토 문제 5개. 가짜 Codex는 고치기 턴을 바로 끝내므로 "고치는 중" 대신 "고침 · 검토 뒤에 바뀜"이
+  보이고, 고친 `src/format.ts`는 main과 같아져 하나씩 보기의 파일 목록에서 빠진다. 카드 두 장은 고치기 턴의 파일 변경으로 대화 옆에 저절로
+  열린 결과물을 닫고 찍었다(시안처럼 대화 폭).
+- 폰 카드는 문제 2개(커밋 안 한 변경: `src/discount.ts` 열림, `src/format.ts` 고침 · 검토 뒤에 바뀜)다 — 시안은 문제 3개(고치는 중·무시함·
+  검토 뒤에 바뀜). 폰 시트는 고친 문제(`src/format.ts:2`, 문제 2/2)라 고치기·무시 대신 다시 열기가 있다 — 시안 시트는 열린 문제
+  (`src/cart.ts:5`, 문제 3/3). 시안의 "이 줄을 찾을 수 없음" 상자에 있는 **파일에서 보기가 실앱 폰에는 없다**: 폰 대화는 그 동작을 넘기지
+  않는다(story만 넘김). 입력창 위 "초안을 기기에 저장했습니다…" 줄은 리뷰 루프와 무관한 기존 폰 안내다.
+- 하나씩 보기 story는 결과물의 "갱신" 시각을 09:42로 고정하고 키보드 시작점을 하나씩 보기 띠에 둔다 — 실시간 시계와 문제 줄 스크롤이
+  기준 검사(그림 고정·Tab 이동)를 흔들어서다. 그림은 시안과 같다.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약

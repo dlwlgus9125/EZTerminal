@@ -92,6 +92,7 @@ describe('2.0 design reference manifest', () => {
       'desk-openclaw-chat', 'desk-files', 'desk-command-center', 'desk-boot', 'desk-paste-warning', 'desk-risky-close',
       'harness-settings-agents', 'harness-composer-queued', 'harness-canvas-agents', 'harness-canvas-answer', 'harness-settings-proposal',
       'harness-phone-assign', 'harness-phone-queued',
+      'review-card', 'review-card-cli', 'review-start', 'review-walkthrough', 'review-phone-card', 'review-phone-sheet',
     ]);
     expect([...result.retired].sort()).toEqual(legacyManifest.surfaces.map((surface: { id: string }) => surface.id).sort());
   });
