@@ -6,7 +6,7 @@
  * plan, done) in both chat skins. Costs provider tokens; dev-only.
  *
  *   node scripts/capture-ux-overhaul.mjs <stage> --build   # copies + migrates the profile
- *   node scripts/verify-ux-live.mjs <stage> [--appearance=user|dark] [--allow-skips] [scenario...]
+ *   node scripts/verify-ux-live.mjs <stage> [--appearance=user|dark] [--allow-skips] [--output=<dir>] [--enable-providers] [scenario...]
  *
  * Exits non-zero when a requested scenario throws, is skipped (unless
  * --allow-skips), never runs, or a scenario name is unknown. The verdict is
@@ -15,14 +15,19 @@
  * --appearance=user restores the theme and effects of the real profile (read
  * only) into the copy; capture-ux-overhaul's second pass leaves it on Dark.
  *
- * Output: artifacts/ux-overhaul/<stage>-live/*.png and live-report.json
+ * --enable-providers reviews and enables the installed Claude and Codex in the
+ * isolated profile before the scenarios (a capture copy keeps them inert, and
+ * the review loop needs the versions installed now, not the copy's).
+ *
+ * Output: artifacts/ux-overhaul/<stage>-live/*.png and live-report.json, or --output (relative to the repository)
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
 import { liveReportVerdict } from './live-report-verdict.mjs';
+import { createReviewRepo, EXPECTED_ANCHORS, repoFingerprint, sameFingerprint } from './review-probe-repo.mjs';
 
 const { _electron: electron } = playwright;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,10 +37,12 @@ const appearance = rest.find((arg) => arg.startsWith('--appearance='))?.slice('-
 const only = rest.filter((arg) => !arg.startsWith('--'));
 /** Skipped scenarios (provider not ready, prerequisite missing) fail the run unless this is passed. */
 const allowSkips = rest.includes('--allow-skips');
+const enableProviders = rest.includes('--enable-providers');
 if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: verify-ux-live.mjs <stage> [scenario...]');
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 if (!existsSync(profile)) throw new Error(`Run capture-ux-overhaul.mjs ${stage} first: ${profile} is missing.`);
-const output = path.join(ROOT, 'artifacts', 'ux-overhaul', `${stage}-live${appearance === 'user' ? '-user' : ''}`);
+const outputArg = rest.find((arg) => arg.startsWith('--output='))?.slice('--output='.length);
+const output = outputArg ? path.resolve(ROOT, outputArg) : path.join(ROOT, 'artifacts', 'ux-overhaul', `${stage}-live${appearance === 'user' ? '-user' : ''}`);
 const workspace = path.join(ROOT, 'artifacts', 'ux-overhaul', `live-workspace-${stage}`);
 /** Outside the scratch workspace, so deleting it needs the user's approval under Standard. */
 const outsideFile = path.join(ROOT, 'artifacts', 'ux-overhaul', `outside-ux-live-${stage}.txt`);
@@ -120,7 +127,8 @@ const ALL_SCENARIOS = [
     name: 'worktree-merge', run: (page, project, report) => runWorktreeMerge(page, project, report),
   },
   {
-    // Settings → 에이전트 협업 profile, then 검토 맡기기 from a real chat: the child reviews and reports back once.
+    // Settings → 에이전트 협업 profile linked as 단계 연결 › 검토, then ⋯ › 검토… (review-loop-v1 replaces 검토 맡기기):
+    // the other AI reviews with that profile's settings into a card.
     name: 'delegate-review', run: (page, project, report) => runDelegateReview(page, project, report),
   },
   {
@@ -193,6 +201,22 @@ const ALL_SCENARIOS = [
   // /btw: a side question while the next turn runs; nothing of it reaches the turn, transcript or session file.
   { name: 'claude-btw', run: (page, project, report) => runSideQuestion(page, project, report, 'claude') },
   { name: 'codex-btw', run: (page, project, report) => runSideQuestion(page, project, report, 'codex') },
+  // Review loop (review-loop-v1) on the seeded cart kit, one copy and conversation per AI; reviews first, then fixes.
+  // Same AI: a read-only fork answering JSON text; nothing of it reaches the conversation, nothing is written.
+  { name: 'claude-review-self', run: (page, project, report) => runSelfReview(page, report, 'claude') },
+  { name: 'codex-review-self', run: (page, project, report) => runSelfReview(page, report, 'codex') },
+  // Other AI: a read-only reviewer conversation, archived after answering, opened read-only from the card.
+  { name: 'claude-review-by-codex', run: (page, project, report) => runOtherReview(page, report, 'claude', 'codex') },
+  { name: 'codex-review-by-claude', run: (page, project, report) => runOtherReview(page, report, 'codex', 'claude') },
+  // 고치기 on one problem of Claude's card: a fix turn in that conversation, judged from the reply's lines.
+  { name: 'review-fix-one', run: (page, project, report) => runFixOne(page, report) },
+  // 모두 고치기 on Codex's card while it answers: the fix waits in the queue, then runs.
+  { name: 'review-fix-all-queued', run: (page, project, report) => runFixAllQueued(page, report) },
+  { name: 'review-dismiss-reload', run: (page, project, report) => runDismissReload(page, report) },
+  // Results › Changes comments sent while the conversation is idle, then while it answers (queued).
+  { name: 'review-comments-send', run: (page, project, report) => runCommentsSend(page, report) },
+  // A worktree conversation: Results compares with the base branch, and a review of the branch since main.
+  { name: 'results-base-branch', run: (page, project, report) => runBaseBranch(page, report) },
 ];
 const SCENARIOS = ALL_SCENARIOS.filter((scenario) => only.length === 0 || only.includes(scenario.name));
 const unknownScenarios = only.filter((name) => !ALL_SCENARIOS.some((scenario) => scenario.name === name));
@@ -234,9 +258,8 @@ async function command(page, type, payload) {
   });
 }
 
-/** The desktop header keeps the skin in its session menu; a missing switch fails the run. */
-async function selectSkin(page, value) {
-  const session = page.locator('[data-testid="structured-agent-session"]:visible').first();
+/** The desktop header keeps the skin in its session menu; a missing switch fails the run. Beside another view, name the session. */
+async function selectSkin(page, value, session = page.locator('[data-testid="structured-agent-session"]:visible').first()) {
   if (await session.getAttribute('data-skin') === value) return;
   await session.getByTestId('structured-agent-menu').click();
   await page.getByTestId(`structured-agent-skin-${value}`).click();
@@ -246,10 +269,10 @@ async function selectSkin(page, value) {
   }
 }
 
-async function shoot(page, name, report) {
+async function shoot(page, name, report, session) {
   const shots = [];
   for (const value of ['cli', 'bubble']) {
-    await selectSkin(page, value);
+    await selectSkin(page, value, session);
     await wait(400);
     const file = `${name}-${value}.png`;
     await page.screenshot({ path: path.join(output, file) });
@@ -692,7 +715,11 @@ async function runAutoApproveUi(page, project, report) {
     pressed: await toggle.getAttribute('aria-pressed') });
 }
 
-/** A profile made in Settings, a parent chat that edits, 검토 맡기기, the report back, and the start panel picker. */
+/**
+ * A profile for the other AI made in Settings and linked as 단계 연결 › 검토, a parent chat that edits, then
+ * ⋯ › 검토… (a host with review-loop-v1 offers it instead of 검토 맡기기): the other AI reviews the edit with the
+ * profile's settings into a card, its conversation is archived and opens read-only, and the start panel picker.
+ */
 async function runDelegateReview(page, project, report) {
   const name = 'delegate-review';
   const shot = async (label) => {
@@ -701,12 +728,20 @@ async function runDelegateReview(page, project, report) {
     report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
   };
   const ready = (await snapshot(page)).providers.filter((entry) => entry.enabled && entry.health === 'ready').map((entry) => entry.id);
-  // Claude when it is ready: Codex sometimes stalls on reads (out of scope here).
-  const providerId = ready.includes('claude') ? 'claude' : ready.includes('codex') ? 'codex' : undefined;
-  if (!providerId) { report.push({ scenario: name, skipped: 'no provider is enabled and ready' }); return; }
-  const orchestrationBefore = (await snapshot(page)).runtime.orchestrationToolsEnabled;
-  // A rerun on the same profile starts from no saved profiles.
-  await page.evaluate(async () => { for (const profile of await window.ezterminal.chatAgentProfiles.list()) await window.ezterminal.chatAgentProfiles.remove(profile.id); });
+  // Claude edits (Codex sometimes stalls on reads); the other AI reviews.
+  const providerId = ready.includes('claude') ? 'claude' : 'codex';
+  const reviewerId = providerId === 'claude' ? 'codex' : 'claude';
+  if (!ready.includes(providerId) || !ready.includes(reviewerId)) { report.push({ scenario: name, skipped: 'Claude and Codex must both be enabled and ready' }); return; }
+  // A rerun on the same profile starts from no saved profiles and no review agent.
+  const clearProfiles = () => page.evaluate(async () => {
+    const access = window.ezterminal.chatAgentProfiles;
+    for (const profile of await access.list()) await access.remove(profile.id);
+    const phases = await access.phases?.();
+    if (phases?.review) await access.savePhases?.({ ...phases, review: undefined });
+  });
+  await clearProfiles();
+  // Results and reviewer tabs a restored layout brought back: the parent opens in the main group.
+  await closeSideTabs(page);
 
   // A parent chat that changes one line, opened in a tab.
   const parentId = `ux-live-${name}-${Date.now()}`;
@@ -719,90 +754,86 @@ async function runDelegateReview(page, project, report) {
   await page.evaluate(({ id, historyId, projectId }) => window.__ezAddDockPanel({
     id, component: 'agent-session', title: 'greet 수정', params: { historyId, projectId },
   }, { kind: 'main-tab' }), { id: panelId, historyId: `${SESSION_PREFIX}${parentId}`, projectId: project.projectId });
-  const turnsOf = async (sessionId) => (await snapshot(page)).turns.filter((turn) => turn.sessionId === sessionId);
-  const settled = (turns) => turns.length > 0 && turns.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state));
   const allowed = [];
-  // Waits for a condition, allowing whatever these chats ask for on the way.
-  const until = async (sessionIds, test, timeoutMs, label) => poll(async () => {
-    const snap = await snapshot(page);
-    for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && sessionIds.includes(entry.sessionId))) {
-      allowed.push({ sessionId: approval.sessionId, title: approval.title });
-      await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
-    }
-    return snap;
-  }, (snap) => test(snap), timeoutMs, label);
   const turnsIn = (snap, sessionId) => snap.turns.filter((turn) => turn.sessionId === sessionId);
-  // Settings → 에이전트 → 에이전트 협업: add the reviewer profile by hand.
-  await page.getByTestId('btn-toggle-settings').click();
-  await page.getByTestId('settings-category-agents').click();
-  const section = page.getByTestId('agent-collaboration-settings');
-  await section.scrollIntoViewIfNeeded();
-  await shot('settings');
-  await section.getByRole('button', { name: '프로필 추가' }).click();
-  const fields = section.getByRole('textbox');
-  await fields.nth(0).fill('꼼꼼한 검토자');
-  const selects = section.locator('select');
-  await selects.nth(0).selectOption(providerId);
-  await selects.nth(2).selectOption('low');
-  await selects.nth(3).selectOption('standard');
-  await fields.nth(1).fill('바뀐 코드를 고치지 않고 검토만 할 때');
-  await section.getByRole('button', { name: '저장', exact: true }).click();
-  await poll(() => page.evaluate(() => window.ezterminal.chatAgentProfiles.list()), (list) => list.length > 0, 10_000, 'saved profile');
-  await shot('settings-profile');
-  await page.getByTestId('btn-toggle-settings').click();
+  const settled = (turns) => turns.length > 0 && turns.every((turn) => TURN_DONE.has(turn.state));
 
-  await until([parentId], (snap) => settled(turnsIn(snap, parentId)), 300_000, 'parent edit').catch(async (error) => {
-    const snap = await snapshot(page);
-    throw new Error(`${error.message}: ${JSON.stringify(turnsIn(snap, parentId).map((turn) => [turn.state, turn.errorCode]))}`);
-  });
-  await wait(2500);
+  // Settings and the profile are put back however the scenario ends: later reviews use no review agent.
+  try {
+    // Settings → 에이전트 → 에이전트 협업: a profile for the other AI, then 단계 연결 › 검토 set to it.
+    await page.getByTestId('btn-toggle-settings').click();
+    await page.getByTestId('settings-category-agents').click();
+    const section = page.getByTestId('agent-collaboration-settings');
+    await section.scrollIntoViewIfNeeded();
+    await shot('settings');
+    await section.getByRole('button', { name: '에이전트 추가' }).click();
+    const editor = section.getByRole('group', { name: '프로필 편집' });
+    await editor.getByLabel('이름').fill('꼼꼼한 검토자');
+    await editor.getByLabel('AI', { exact: true }).selectOption(reviewerId);
+    await editor.getByLabel('강도').selectOption('low');
+    await editor.getByLabel('언제 쓰나요').fill('바뀐 코드를 고치지 않고 검토만 할 때');
+    await editor.getByRole('button', { name: '저장', exact: true }).click();
+    const profiles = await poll(() => page.evaluate(() => window.ezterminal.chatAgentProfiles.list()), (list) => list.length > 0, 10_000, 'saved profile');
+    const profile = profiles[0];
+    await section.getByTestId('agent-phase-settings').locator('[data-provider="any"] select').selectOption({ label: '꼼꼼한 검토자' });
+    const phases = await poll(() => page.evaluate(() => window.ezterminal.chatAgentProfiles.phases()), (value) => value?.review?.profileId === profile.id, 10_000, 'review agent linked');
+    await section.getByTestId('agent-phase-settings').locator('[data-provider="any"]').scrollIntoViewIfNeeded();
+    await shot('settings-profile');
+    await page.getByTestId('btn-toggle-settings').click();
 
-  // 검토 맡기기 from the conversation menu.
-  const session = page.locator('[data-testid="structured-agent-session"]:visible').first();
-  await session.getByTestId('structured-agent-menu').click();
-  await page.getByTestId('structured-agent-delegate-review').click();
-  await page.getByTestId('delegate-agent-dialog').waitFor();
-  await shot('dialog');
-  await page.getByTestId('delegate-agent-submit').click();
-  await page.getByTestId('delegate-agent-dialog').waitFor({ state: 'hidden', timeout: 30_000 });
-  const relation = await poll(() => snapshot(page), (snap) => snap.agentRelations.some((entry) => entry.parentSessionId === parentId), 30_000, 'child relation');
-  const childId = relation.agentRelations.find((entry) => entry.parentSessionId === parentId).childSessionId;
-  await wait(2000);
-  await shot('child-started');
-  await until([parentId, childId], (snap) => settled(turnsIn(snap, childId)), 300_000, 'child review');
-  // The report arrives as the parent's next turn; wait for the parent to answer it.
-  await until([parentId, childId], (snap) => turnsIn(snap, parentId).length >= 2 && settled(turnsIn(snap, parentId)), 300_000, 'parent answer to the report');
-  await wait(2000);
-  await shoot(page, `${name}-reported`, report);
-  const parentItems = await page.evaluate((id) => window.ezterminal.getDaemonTranscript?.(id), parentId);
-  const list = Array.isArray(parentItems?.items) ? parentItems.items : Array.isArray(parentItems) ? parentItems : [];
-  const reportItem = list.find((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');
-  const finalSnap = await snapshot(page);
-  const child = finalSnap.sessions.find((entry) => entry.id === childId);
-  const childAgent = finalSnap.agents.find((entry) => entry.sessionId === childId);
+    await untilAllowing(page, [parentId], (snap) => settled(turnsIn(snap, parentId)), 300_000, 'parent edit', allowed).catch(async (error) => {
+      const snap = await snapshot(page);
+      throw new Error(`${error.message}: ${JSON.stringify(turnsIn(snap, parentId).map((turn) => [turn.state, turn.errorCode]))}`);
+    });
+    await wait(2500);
 
-  // The child opens from the parent's 서브에이전트 track.
-  const track = session.locator('[data-testid="structured-agent-child"]').first();
-  if (await track.count()) { await track.click(); await wait(2500); await shoot(page, `${name}-child`, report); }
+    // ⋯ › 검토…, the other AI: the form names the review agent it reviews as.
+    const session = page.locator(`[data-testid="structured-agent-session"][data-session-id="${parentId}"]`);
+    const parent = { sessionId: parentId, root: workspace };
+    const fingerprint = await repoFingerprint(workspace);
+    const started = await startReview(page, session, parent, { other: true, name, report });
+    const card = session.getByTestId('chat-review-card').nth(started.cardIndex);
+    const review = await waitReview(page, parentId, started.reviewId);
+    const reviewerSessionId = review.reviewer.sessionId;
+    const archived = await poll(() => snapshot(page), (snap) => isArchived(snap, reviewerSessionId), 60_000, 'reviewer archived').then(() => true, () => false);
+    const finalSnap = await snapshot(page);
+    const reviewerAgent = finalSnap.agents.find((entry) => entry.sessionId === reviewerSessionId);
+    await shootCard(page, card, `${name}-card`, report, session);
+    const opened = await openReviewer(page, card, reviewerSessionId, `${name}-reviewer`, report);
+    await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.setActive(), panelId);
 
-  // New chat in this project (the work list's +): the profile picker fills AI and permission.
-  const newChat = page.getByTestId('btn-new-session');
-  if (!await newChat.isVisible()) await page.keyboard.press('Control+Backquote');
-  await newChat.click();
-  await wait(2000);
-  const picker = page.locator('[data-testid="conversation-start-profile"]:visible').first();
-  await picker.selectOption({ label: '꼼꼼한 검토자' });
-  await wait(800);
-  // The draft names its AI in the model pill under the message box.
-  const pickedProvider = await page.locator('[data-testid="conversation-start"]:visible [data-testid="structured-agent-live-model"]').first().getAttribute('aria-label');
-  await shot('start-profile');
+    // New chat in this project (the work list's +): the profile picker fills AI and permission.
+    const startPanel = await (async () => {
+      const newChat = page.getByTestId('btn-new-session');
+      if (!await newChat.isVisible()) await page.keyboard.press('Control+Backquote');
+      await newChat.click();
+      await wait(2000);
+      const picker = page.locator('[data-testid="conversation-start-profile"]:visible').first();
+      await picker.selectOption({ label: '꼼꼼한 검토자' });
+      await wait(800);
+      await shot('start-profile');
+      // The draft names its AI in the model pill under the message box.
+      return { pickedProvider: await page.locator('[data-testid="conversation-start"]:visible [data-testid="structured-agent-live-model"]').first().getAttribute('aria-label') };
+    })().catch((error) => ({ error: String(error?.message ?? error).slice(0, 200) }));
 
-  report.push({ scenario: name, providerId, orchestrationBefore, allowed, parentId, childId,
-    child: { title: child?.title, provider: childAgent?.providerId, effort: childAgent?.reasoningEffort, permission: childAgent?.permissionPreset,
-      owner: finalSnap.agentRelations.find((entry) => entry.childSessionId === childId)?.owner },
-    parentTurns: (await turnsOf(parentId)).map((turn) => turn.state), childTurns: (await turnsOf(childId)).map((turn) => turn.state),
-    reportMessage: reportItem ? { text: reportItem.text.slice(0, 300), payload: reportItem.payload } : null,
-    startPanel: { pickedProvider } });
+    const problems = [];
+    if (started.menu.delegateReview !== 0 || started.menu.review !== 1) problems.push(`menu offers 검토… ${started.menu.review}, 검토 맡기기 ${started.menu.delegateReview}`);
+    if (!started.form.otherSettings?.includes('꼼꼼한 검토자')) problems.push(`the form does not name the review agent: ${started.form.otherSettings}`);
+    if (review.state !== 'complete') problems.push(`review ${review.state} (${review.reason ?? ''})`);
+    if (reviewerAgent?.providerId !== reviewerId || reviewerAgent?.reasoningEffort !== 'low') problems.push(`reviewer ran as ${reviewerAgent?.providerId} · ${reviewerAgent?.reasoningEffort}, not the profile's ${reviewerId} · low`);
+    if (!archived) problems.push('the reviewer conversation was not archived');
+    if (!opened.historyOnly) problems.push('the reviewer conversation did not open read-only');
+    if (!sameFingerprint(fingerprint, await repoFingerprint(workspace))) problems.push('the working folder changed during the review');
+    report.push({ scenario: name, providerId, reviewerId, allowed, parentId, menu: started.menu, form: started.form,
+      profile: { id: profile.id, providerId: profile.providerId, model: profile.model ?? null, effort: profile.reasoningEffort ?? null }, phasesReview: phases.review,
+      review: { state: review.state, findings: anchorsOf(review), overall: review.overall?.slice(0, 200), durationMs: review.durationMs },
+      reviewer: { sessionId: reviewerSessionId, provider: reviewerAgent?.providerId, model: reviewerAgent?.model, effort: reviewerAgent?.reasoningEffort, permission: reviewerAgent?.permissionPreset, archived, opened },
+      parentTurns: turnsIn(finalSnap, parentId).map((turn) => turn.state), startPanel, problems });
+    if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+  } finally {
+    await clearProfiles().catch(() => undefined);
+    if (await page.getByTestId('agent-collaboration-settings').isVisible().catch(() => false)) await page.getByTestId('btn-toggle-settings').click().catch(() => undefined);
+  }
 }
 
 /** Board 워크트리 → 새 워크트리 → work lands in it → 검토 대기 → commit → merge → 완료, all in the worktree dialogs. */
@@ -937,6 +968,764 @@ async function runWorktreeCleanup(page, project, report) {
   await page.keyboard.press('Escape');
 }
 
+// ── Review loop (review-loop-v1) ─────────────────────────────────────────────
+// The seeded cart kit of the review probes (scripts/review-probe-repo.mjs): its working tree has an
+// uncommitted bug (src/format.ts:2) and a new file with one (src/discount.ts:4) beside a line aimed at
+// the reviewer. Each AI gets its own copy and conversation, so a fix in one never changes what the
+// other reviews; the scenarios share them in order (reviews first, then fixes).
+
+/** Only the review prompt has it (composeReviewPrompt): a transcript or session file with it received the review. */
+const REVIEW_PROMPT_MARKER = 'for correctness bugs only';
+const FIX_PROMPT_MARKER = 'Fix only the review findings below';
+const REVIEW_DONE = new Set(['complete', 'failed', 'unsupported', 'cancelled', 'interrupted']);
+const TURN_DONE = new Set(['completed', 'failed', 'interrupted']);
+const FIX_DONE = new Set(['fixed', 'not-changed', 'unconfirmed', 'fix-stopped']);
+const UNCOMMITTED_BUGS = EXPECTED_ANCHORS.filter((anchor) => anchor.seeded !== 'committed-on-feature');
+const cartRoot = path.join(ROOT, 'artifacts', 'ux-overhaul', `live-cart-${stage}`);
+const runId = Date.now().toString(36);
+const reviewRun = { projects: new Map(), conversations: new Map(), selfCards: new Map() };
+const providerLabel = (id) => ({ claude: 'Claude', codex: 'Codex' })[id] ?? id;
+
+/** The whole transcript of a session (pages of 2,000 rows). */
+async function transcriptOf(page, sessionId) {
+  const items = [];
+  for (let after = 0, round = 0; round < 50; round += 1) {
+    const batch = await page.evaluate(({ id, from }) => window.ezterminal.getDaemonTranscript(id, from, 2000), { id: sessionId, from: after });
+    const list = Array.isArray(batch?.items) ? batch.items : Array.isArray(batch) ? batch : [];
+    if (!list.length) break;
+    items.push(...list);
+    after = list.at(-1).sequence;
+  }
+  return items;
+}
+
+const reviewRows = (items) => items.filter((item) => item.payload?.type === 'review').map((item) => item.payload);
+const reviewIdsOf = (items) => [...new Set(reviewRows(items).map((payload) => payload.reviewId))];
+const latestReview = (items, reviewId) => reviewRows(items).filter((payload) => payload.reviewId === reviewId).at(-1);
+const turnsOfSession = (snap, sessionId) => snap.turns.filter((turn) => turn.sessionId === sessionId);
+const settledTurns = (snap, sessionId, count = 1) => {
+  const turns = turnsOfSession(snap, sessionId);
+  return turns.length >= count && turns.every((turn) => TURN_DONE.has(turn.state));
+};
+const agentOf = (snap, sessionId) => snap.agents.find((entry) => entry.sessionId === sessionId);
+const isArchived = (snap, sessionId) => {
+  const session = snap.sessions.find((entry) => entry.id === sessionId);
+  return Boolean(session && (session.archivedAt || session.state === 'archived' || agentOf(snap, sessionId)?.state === 'archived'));
+};
+const anchorsOf = (review) => (review?.findings ?? []).map((finding) => `${finding.file}:${finding.line ?? '-'}${finding.endLine && finding.endLine !== finding.line ? `-${finding.endLine}` : ''}`);
+/** Which seeded bugs the findings point at: the same file, the line within the finding's lines (or one away). */
+const seededHits = (review, seeded) => seeded.map((seed) => ({
+  at: `${seed.file}:${seed.line}`,
+  found: (review?.findings ?? []).some((finding) => finding.file === seed.file && finding.line !== undefined
+    && seed.line >= finding.line - 1 && seed.line <= (finding.endLine ?? finding.line) + 1),
+}));
+const textOf = async (locator) => ((await locator.count()) ? (await locator.first().textContent())?.trim() : undefined);
+
+/** Waits for `test`, allowing what these conversations ask on the way (a fix edits under 승인 후 실행). */
+async function untilAllowing(page, sessionIds, test, timeoutMs, label, allowed = []) {
+  const answered = new Set();
+  return poll(async () => {
+    const snap = await snapshot(page);
+    for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && sessionIds.includes(entry.sessionId) && !answered.has(entry.id))) {
+      answered.add(approval.id);
+      allowed.push({ sessionId: approval.sessionId, title: approval.title?.slice(0, 80) });
+      await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
+    }
+    return snap;
+  }, test, timeoutMs, label);
+}
+
+/** Provider session files for this folder written since `since`; a kept fork would leave one. */
+function sessionFilesSince(providerId, root, since) {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+  const recent = (directory, depth) => {
+    if (depth < 0 || !existsSync(directory)) return [];
+    return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) return recent(full, depth - 1);
+      try { return entry.name.endsWith('.jsonl') && statSync(full).mtimeMs >= since ? [full] : []; } catch { return []; }
+    });
+  };
+  if (providerId === 'claude') {
+    // Claude keeps a folder's sessions under its path with every other character a dash.
+    const key = root.replace(/[^A-Za-z0-9]/gu, '-').toLowerCase();
+    const projects = path.join(home, '.claude', 'projects');
+    if (!existsSync(projects)) return [];
+    return readdirSync(projects).filter((name) => name.toLowerCase() === key).flatMap((name) => recent(path.join(projects, name), 1));
+  }
+  // Codex keeps sessions by date; the first line names the folder.
+  return recent(path.join(home, '.codex', 'sessions'), 4).filter((file) => {
+    try { return samePath(JSON.parse(readFileSync(file, 'utf8').split('\n', 1)[0])?.payload?.cwd ?? '', root); } catch { return false; }
+  });
+}
+
+/** The conversation's own provider session file (none before its first turn). */
+function ownSessionFile(providerId, providerSessionId) {
+  if (!providerSessionId) return undefined;
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+  return (providerId === 'claude'
+    ? filesNamed(path.join(home, '.claude', 'projects'), `${providerSessionId}.jsonl`, 1)
+    : filesNamed(path.join(home, '.codex', 'sessions'), providerSessionId, 4))[0];
+}
+
+/** The isolated profile's Claude and Codex, reviewed and enabled at the versions installed now (--enable-providers). */
+async function enableInstalledProviders(page, report) {
+  const enabled = [];
+  for (const providerId of ['claude', 'codex']) {
+    const inspection = await page.evaluate((id) => window.ezterminal.inspectDaemonProvider(id), providerId);
+    if (!inspection?.ok) { enabled.push({ providerId, error: inspection?.message ?? 'inspection failed' }); continue; }
+    const { probe, reviewDigest } = inspection.value;
+    if (!probe.available) { enabled.push({ providerId, error: probe.unavailableReason ?? 'unavailable' }); continue; }
+    let receipt;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      receipt = await command(page, 'provider.enable', {
+        providerId: probe.providerId, displayName: probe.displayName, protocol: probe.protocol, executablePath: probe.executablePath,
+        executableVersion: probe.executableVersion, argv: probe.argv, environmentVariableNames: probe.environmentVariableNames,
+        capabilities: probe.capabilities, reviewDigest,
+      });
+      if (receipt?.ok || receipt?.error?.code !== 'revision-conflict') break;
+    }
+    enabled.push({ providerId, version: probe.executableVersion, ok: Boolean(receipt?.ok), ...(receipt?.ok ? {} : { error: receipt?.error?.message }) });
+  }
+  const snap = await poll(() => snapshot(page), (current) => ['claude', 'codex'].every((id) => current.providers.some((entry) => entry.id === id && entry.enabled && entry.health === 'ready')), 120_000, 'providers ready').catch(() => snapshot(page));
+  report.push({ providersEnabled: enabled, reviewSupport: snap.reviewSupport ?? null,
+    providers: snap.providers.map((entry) => ({ id: entry.id, enabled: entry.enabled, health: entry.health, version: entry.executableVersion })) });
+}
+
+/** One seeded cart kit registered as a project (clean: main only, for a worktree to branch from). */
+async function cartProject(page, key, { clean = false } = {}) {
+  const known = reviewRun.projects.get(key);
+  if (known) return known;
+  const root = path.join(cartRoot, `${runId}-${key}`);
+  await createReviewRepo(root, { clean });
+  const saved = await page.evaluate(({ primaryRoot, name }) => window.ezterminal.saveAgentProject({ name, primaryRoot, additionalRoots: [], pinned: false }),
+    { primaryRoot: root, name: `Cart kit · ${key}` });
+  if (!saved?.ok && saved?.reason !== 'duplicate') throw new Error(`saveAgentProject failed: ${JSON.stringify(saved)}`);
+  const ready = await poll(() => snapshot(page), (snap) => snap.workspaces.some((entry) => samePath(entry.rootPath, root)), 60_000, `${key} cart kit workspace`);
+  const workspace_ = ready.workspaces.find((entry) => samePath(entry.rootPath, root));
+  const project = { key, root, projectId: workspace_.projectId, workspaceId: workspace_.id };
+  reviewRun.projects.set(key, project);
+  return project;
+}
+
+/** Brings a conversation's tab forward (adding it when a scenario closed it); its view. */
+async function showConversation(page, conversation) {
+  await page.evaluate(({ id, historyId, title, projectId }) => {
+    const existing = window.__ezDock?.getPanel(id);
+    if (existing) existing.api.setActive();
+    else window.__ezAddDockPanel({ id, component: 'agent-session', title, params: { historyId, projectId } }, { kind: 'main-tab' });
+  }, { id: conversation.panelId, historyId: `${SESSION_PREFIX}${conversation.sessionId}`, title: conversation.title, projectId: conversation.projectId });
+  const panel = page.locator(`[data-testid="structured-agent-session"][data-session-id="${conversation.sessionId}"]`);
+  await panel.waitFor({ timeout: 30_000 });
+  return panel;
+}
+
+/** Results tabs and reviewer conversations a scenario opened; the conversations under test stay. */
+async function closeSideTabs(page) {
+  await page.evaluate((reviewerTab) => {
+    for (const panel of [...(window.__ezDock?.panels ?? [])]) {
+      if (panel.id.startsWith('agent-results-') || panel.id.startsWith(reviewerTab)) panel.api.close();
+    }
+  }, `agent-session-${SESSION_PREFIX}review-`);
+  await wait(500);
+}
+
+/** A conversation that has answered once (a same-AI review forks its provider session). */
+async function startConversation(page, { providerId, projectId, workspaceId, root, title, permissionPreset }) {
+  const ready = await poll(() => snapshot(page), (snap) => snap.providers.some((entry) => entry.id === providerId && entry.enabled && entry.health === 'ready'), 90_000, `${providerId} ready`).then(() => true, () => false);
+  if (!ready) throw new Error(`${providerId} is not enabled and ready`);
+  const sessionId = `ux-live-review-${providerId}-${Date.now().toString(36)}`;
+  const created = await command(page, 'agent.create', {
+    sessionId, workspaceId, title, providerId, permissionPreset,
+    // No tools in the first turn: this PC's Codex shell commands hang under the workspace-write sandbox.
+    initialPrompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
+  });
+  if (!created?.ok) throw new Error(`agent.create failed ${JSON.stringify(created)}`);
+  const conversation = { providerId, sessionId, panelId: `agent-session-${SESSION_PREFIX}${sessionId}`, title, projectId, workspaceId, root };
+  await showConversation(page, conversation);
+  const snap = await poll(() => snapshot(page), (current) => settledTurns(current, sessionId) && Boolean(agentOf(current, sessionId)?.providerSessionId), 240_000, `${title} first answer`);
+  const states = turnsOfSession(snap, sessionId).map((turn) => turn.state);
+  if (states.some((state) => state !== 'completed')) throw new Error(`${title}: first turn ${states.join(',')}`);
+  return conversation;
+}
+
+/** This AI's conversation on its own cart kit; Codex gets fix turns, so it works with full access in that scratch folder. */
+async function reviewConversation(page, providerId) {
+  const known = reviewRun.conversations.get(providerId);
+  if (known) return known;
+  const project = await cartProject(page, providerId);
+  const conversation = await startConversation(page, {
+    providerId, projectId: project.projectId, workspaceId: project.workspaceId, root: project.root,
+    title: `카트 키트 · ${providerLabel(providerId)}`, permissionPreset: providerId === 'codex' ? 'full-access' : 'standard',
+  });
+  reviewRun.conversations.set(providerId, conversation);
+  return conversation;
+}
+
+/** ⋯ › 검토… (or Results › 검토): the form as it opens, then started; the new card's id and place. */
+async function startReview(page, panel, conversation, { other = false, branch = false, results, name, report }) {
+  const before = reviewIdsOf(await transcriptOf(page, conversation.sessionId));
+  const menu = {};
+  if (results) {
+    await results.getByTestId('results-start-review').click();
+  } else {
+    await panel.getByTestId('structured-agent-menu').click();
+    await page.getByTestId('structured-agent-review').waitFor({ timeout: 10_000 }).catch(() => undefined);
+    menu.review = await page.getByTestId('structured-agent-review').count();
+    menu.delegateReview = await page.getByTestId('structured-agent-delegate-review').count();
+    await page.getByTestId('structured-agent-review').click();
+  }
+  const dialog = page.getByTestId('review-start-dialog');
+  await dialog.waitFor({ timeout: 15_000 });
+  if (other) await dialog.getByTestId('review-start-other').check();
+  if (branch) await dialog.getByTestId('review-start-branch').check();
+  await wait(500);
+  const form = {
+    reviewer: await dialog.getByTestId('review-start-self').isChecked() ? 'self' : 'other',
+    scope: await dialog.getByTestId('review-start-branch').isChecked() ? 'base-branch' : 'uncommitted',
+    selfSettings: await textOf(dialog.getByTestId('review-start-self-settings')),
+    otherSettings: await textOf(dialog.getByTestId('review-start-other-settings')),
+    otherLabel: (await dialog.locator('label', { has: page.getByTestId('review-start-other') }).textContent())?.trim(),
+    target: await textOf(dialog.getByTestId('review-start-target')),
+    waits: await textOf(dialog.getByTestId('review-start-waits')),
+    reason: await textOf(dialog.getByTestId('review-start-reason')),
+  };
+  await page.screenshot({ path: path.join(output, `${name}-form.png`) });
+  report.push({ shot: `${name}-form`, files: [`${name}-form.png`] });
+  if (form.reason) throw new Error(`${name}: the form cannot start a review: ${form.reason}`);
+  await dialog.getByTestId('review-start-submit').click();
+  await dialog.waitFor({ state: 'hidden', timeout: 15_000 });
+  const ids = await poll(async () => reviewIdsOf(await transcriptOf(page, conversation.sessionId)), (list) => list.length > before.length, 30_000, `${name} card`);
+  return { reviewId: ids.find((id) => !before.includes(id)), cardIndex: before.length, form, menu };
+}
+
+/** The review once it has ended (complete, failed, unsupported, cancelled or interrupted). */
+async function waitReview(page, sessionId, reviewId, timeoutMs = 900_000) {
+  const items = await poll(() => transcriptOf(page, sessionId), (list) => REVIEW_DONE.has(latestReview(list, reviewId)?.state), timeoutMs, `review ${reviewId}`);
+  return latestReview(items, reviewId);
+}
+
+/** The card in both skins: the window, and the card alone (a tall card can sit below the fold). */
+async function shootCard(page, card, name, report, session) {
+  const files = [];
+  for (const skin of ['bubble', 'cli']) {
+    await selectSkin(page, skin, session);
+    await wait(600);
+    await card.scrollIntoViewIfNeeded().catch(() => undefined);
+    await wait(400);
+    await page.screenshot({ path: path.join(output, `${name}-${skin}.png`) });
+    files.push(`${name}-${skin}.png`);
+    if (await card.screenshot({ path: path.join(output, `${name}-${skin}-card.png`) }).then(() => true, () => false)) files.push(`${name}-${skin}-card.png`);
+  }
+  report.push({ shot: name, files });
+}
+
+/** 검토한 대화 열기: the reviewer's conversation in a tab of its own, read-only. */
+async function openReviewer(page, card, reviewerSessionId, name, report) {
+  await card.getByTestId('chat-review-open-reviewer').click();
+  const view = page.locator(`[data-testid="structured-agent-session"][data-session-id="${reviewerSessionId}"]`);
+  const shown = await view.waitFor({ timeout: 20_000 }).then(() => true, () => false);
+  if (!shown) return { shown };
+  await wait(1500);
+  // The reviewer opens in the group the person last used, which can be the narrow one beside Results.
+  await page.screenshot({ path: path.join(output, `${name}-opened.png`) });
+  report.push({ shot: `${name}-opened`, files: [`${name}-opened.png`] });
+  const facts = {
+    shown,
+    historyOnly: await view.getAttribute('data-history-only') === 'true',
+    composer: await view.getByTestId('structured-agent-composer-input').count(),
+    // How far its header runs past the view's width (the view then scrolls sideways).
+    headerOverflowPx: await view.evaluate((element) => {
+      const header = element.querySelector('.structured-agent-session-header');
+      return header ? Math.max(0, Math.round(header.scrollWidth - element.clientWidth)) : null;
+    }),
+    reviewMenu: await (async () => {
+      await view.getByTestId('structured-agent-menu').click().catch(() => undefined);
+      const count = await page.getByTestId('structured-agent-review').count();
+      await page.keyboard.press('Escape');
+      return count;
+    })(),
+  };
+  await shoot(page, name, report, view);
+  await closeSideTabs(page);
+  return facts;
+}
+
+/** Results › Changes, opened by a problem's place: where the walkthrough stands, then the next problem. */
+async function walkthrough(page, panel, finding, name, report) {
+  // As the card names it (findingWhere): `file:5`, or `file:5-6` for a range.
+  const where = `${finding.file}:${finding.line}${finding.endLine && finding.endLine > finding.line ? `-${finding.endLine}` : ''}`;
+  await panel.locator(`[data-finding-id="${finding.id}"]`).getByRole('button', { name: `${where} 변경에서 보기`, exact: true }).click();
+  const results = page.locator('[data-testid="conversation-results"]:visible').first();
+  const walk = results.getByTestId('results-walkthrough');
+  await walk.waitFor({ timeout: 20_000 });
+  await wait(1500);
+  const read = async () => ({
+    position: await textOf(walk.getByTestId('results-walkthrough-position')),
+    scope: await results.getByRole('combobox', { name: '변경 범위' }).inputValue().catch(() => null),
+    file: (await textOf(results.locator('.results-file[aria-pressed="true"]')))?.slice(0, 80),
+    focusedLine: await results.locator('.results-patch__line[data-focus]').first().getAttribute('aria-label').catch(() => null),
+    current: (await textOf(results.getByTestId('results-finding-current')))?.slice(0, 200),
+    outside: await results.getByTestId('results-walkthrough-outside').count(),
+  });
+  const facts = { opened: where, at: await read() };
+  await page.screenshot({ path: path.join(output, `${name}.png`) });
+  const files = [`${name}.png`];
+  if (await results.screenshot({ path: path.join(output, `${name}-results.png`) }).then(() => true, () => false)) files.push(`${name}-results.png`);
+  const next = walk.getByTestId('results-walkthrough-next');
+  if (await next.isEnabled().catch(() => false)) {
+    await next.click();
+    await wait(1000);
+    facts.next = await read();
+    await page.screenshot({ path: path.join(output, `${name}-next.png`) });
+    files.push(`${name}-next.png`);
+  }
+  report.push({ shot: name, files });
+  return facts;
+}
+
+/**
+ * A same-AI review of the uncommitted changes: the card's problems against the seeded lines, the folder
+ * unchanged, and nothing of the fork in the conversation (turns, rows, approvals, its session file).
+ */
+async function runSelfReview(page, report, providerId, name = `${providerId}-review-self`) {
+  const conversation = await reviewConversation(page, providerId);
+  const panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  const snapBefore = await snapshot(page);
+  const providerSessionId = agentOf(snapBefore, conversation.sessionId)?.providerSessionId;
+  const ownFile = ownSessionFile(providerId, providerSessionId);
+  const before = {
+    fingerprint: await repoFingerprint(conversation.root),
+    turns: turnsOfSession(snapBefore, conversation.sessionId).length,
+    items: new Set((await transcriptOf(page, conversation.sessionId)).map((item) => item.id)),
+    ownFileSize: ownFile ? statSync(ownFile).size : undefined,
+  };
+  const since = Date.now();
+  const started = await startReview(page, panel, conversation, { name, report });
+  const card = panel.getByTestId('chat-review-card').nth(started.cardIndex);
+  const cardStateEarly = await card.getAttribute('data-state').catch(() => null);
+  const review = await waitReview(page, conversation.sessionId, started.reviewId);
+  const tookMs = Date.now() - since;
+  await wait(1500);
+  const snapAfter = await snapshot(page);
+  const items = await transcriptOf(page, conversation.sessionId);
+  const added = items.filter((item) => !before.items.has(item.id));
+  const facts = {
+    sessionId: conversation.sessionId, reviewId: started.reviewId, form: started.form, menu: started.menu, cardStateEarly,
+    state: review.state, reason: review.reason, reviewer: review.reviewer, findings: anchorsOf(review),
+    titles: (review.findings ?? []).map((finding) => `${finding.file}:${finding.line ?? '-'} ${finding.severity ?? ''} ${finding.title}`.slice(0, 160)),
+    overall: review.overall?.slice(0, 240), seeded: seededHits(review, UNCOMMITTED_BUGS), durationMs: review.durationMs, tookMs,
+    dropped: review.dropped ?? 0, wroteFiles: review.wroteFiles ?? false, clipped: review.clipped ?? false, rawText: review.rawText ? review.rawText.slice(0, 300) : undefined,
+    folderUnchanged: sameFingerprint(before.fingerprint, await repoFingerprint(conversation.root)),
+    gitStatus: execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: conversation.root, encoding: 'utf8' }).trim().split(/\r?\n/u),
+    turnsBefore: before.turns, turnsAfter: turnsOfSession(snapAfter, conversation.sessionId).length,
+    agentState: agentOf(snapAfter, conversation.sessionId)?.state,
+    approvals: snapAfter.approvals.filter((entry) => entry.sessionId === conversation.sessionId).length,
+    addedRows: added.map((item) => `${item.kind}${item.payload?.type ? `/${item.payload.type}` : ''}`),
+    rowsWithPrompt: added.filter((item) => item.payload?.type !== 'review' && (item.text.includes(REVIEW_PROMPT_MARKER) || item.text.includes('"findings"'))).length,
+    ownSessionFile: ownFile ? { grew: statSync(ownFile).size - before.ownFileSize, hasPrompt: readFileSync(ownFile, 'utf8').includes(REVIEW_PROMPT_MARKER) } : null,
+    sessionFilesWritten: sessionFilesSince(providerId, conversation.root, since).map((file) => ({
+      file: path.basename(file), own: Boolean(providerSessionId && file.includes(providerSessionId)), hasPrompt: readFileSync(file, 'utf8').includes(REVIEW_PROMPT_MARKER),
+    })),
+  };
+  await shootCard(page, card, `${name}-card`, report, panel);
+  const first = (review.findings ?? []).find((finding) => finding.line !== undefined && UNCOMMITTED_BUGS.some((seed) => seed.file === finding.file));
+  if (first) facts.walkthrough = await walkthrough(page, panel, first, `${name}-walkthrough`, report).catch((error) => ({ error: String(error?.message ?? error).slice(0, 300) }));
+  await closeSideTabs(page);
+  const problems = [];
+  if (review.state !== 'complete' || !(review.findings ?? []).length) problems.push(`review ${review.state} with ${(review.findings ?? []).length} problems (${review.reason ?? ''})`);
+  if (!facts.seeded.some((hit) => hit.found)) problems.push(`no problem at a seeded line: ${facts.findings.join(', ')}`);
+  if (!facts.folderUnchanged || facts.wroteFiles) problems.push('the working folder changed during the review');
+  if (facts.turnsAfter !== facts.turnsBefore || facts.approvals || facts.rowsWithPrompt) problems.push('the fork reached the conversation');
+  if (added.some((item) => item.payload?.type !== 'review')) problems.push(`rows other than the card were added: ${facts.addedRows.join(', ')}`);
+  if (facts.ownSessionFile && (facts.ownSessionFile.grew !== 0 || facts.ownSessionFile.hasPrompt)) problems.push('the conversation\'s session file changed');
+  if (facts.sessionFilesWritten.some((file) => file.hasPrompt)) problems.push('a session file kept the review prompt');
+  if (first && !facts.walkthrough?.at?.position) problems.push(`the walkthrough did not open: ${facts.walkthrough?.error ?? ''}`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+  reviewRun.selfCards.set(providerId, { conversation, reviewId: started.reviewId });
+}
+
+/** The self-review card the fix scenarios work on: this run's, or a new review when the scenario runs alone. */
+async function selfCard(page, report, providerId, forScenario) {
+  if (!reviewRun.selfCards.has(providerId)) await runSelfReview(page, report, providerId, `${providerId}-review-self-for-${forScenario}`);
+  return reviewRun.selfCards.get(providerId);
+}
+
+/** Another AI reviews: a read-only reviewer conversation, archived after it answers, opened read-only from the card. */
+async function runOtherReview(page, report, providerId, reviewerId) {
+  const name = `${providerId}-review-by-${reviewerId}`;
+  const conversation = await reviewConversation(page, providerId);
+  const panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  const fingerprint = await repoFingerprint(conversation.root);
+  const turnsBefore = turnsOfSession(await snapshot(page), conversation.sessionId).length;
+  const since = Date.now();
+  const started = await startReview(page, panel, conversation, { other: true, name, report });
+  const card = panel.getByTestId('chat-review-card').nth(started.cardIndex);
+  // The reviewer's conversation exists from the start, as a read-only child of this one.
+  const first = latestReview(await transcriptOf(page, conversation.sessionId), started.reviewId);
+  const reviewerSessionId = first?.reviewer?.sessionId;
+  const atStart = await poll(() => snapshot(page), (snap) => snap.sessions.some((entry) => entry.id === reviewerSessionId), 30_000, 'reviewer conversation').catch(() => snapshot(page));
+  const reviewerSession = atStart.sessions.find((entry) => entry.id === reviewerSessionId);
+  const reviewerAgent = agentOf(atStart, reviewerSessionId);
+  const relation = atStart.agentRelations.find((entry) => entry.childSessionId === reviewerSessionId);
+  await wait(1500);
+  await page.screenshot({ path: path.join(output, `${name}-running.png`) });
+  report.push({ shot: `${name}-running`, files: [`${name}-running.png`] });
+  const review = await waitReview(page, conversation.sessionId, started.reviewId);
+  const tookMs = Date.now() - since;
+  const archived = await poll(() => snapshot(page), (snap) => isArchived(snap, reviewerSessionId), 90_000, 'reviewer archived').then(() => true, () => false);
+  const reviewerItems = await transcriptOf(page, reviewerSessionId);
+  const snapAfter = await snapshot(page);
+  const facts = {
+    sessionId: conversation.sessionId, reviewId: started.reviewId, form: started.form,
+    reviewer: {
+      sessionId: reviewerSessionId, title: reviewerSession?.title, provider: reviewerAgent?.providerId, model: reviewerAgent?.model,
+      effort: reviewerAgent?.reasoningEffort, permission: reviewerAgent?.permissionPreset, parent: relation?.parentSessionId === conversation.sessionId, owner: relation?.owner,
+      firstRow: reviewerItems.find((item) => item.kind === 'user-message')?.payload?.type,
+      turns: turnsOfSession(snapAfter, reviewerSessionId).map((turn) => turn.state), archived,
+    },
+    state: review.state, reason: review.reason, findings: anchorsOf(review),
+    titles: (review.findings ?? []).map((finding) => `${finding.file}:${finding.line ?? '-'} ${finding.severity ?? ''} ${finding.title}`.slice(0, 160)),
+    overall: review.overall?.slice(0, 240), seeded: seededHits(review, UNCOMMITTED_BUGS), durationMs: review.durationMs, tookMs,
+    wroteFiles: review.wroteFiles ?? false, folderUnchanged: sameFingerprint(fingerprint, await repoFingerprint(conversation.root)),
+    readmePresent: existsSync(path.join(conversation.root, 'README.md')),
+    turnsBefore, turnsAfter: turnsOfSession(snapAfter, conversation.sessionId).length,
+  };
+  await shootCard(page, card, `${name}-card`, report, panel);
+  facts.opened = await openReviewer(page, card, reviewerSessionId, `${name}-reviewer`, report);
+  await showConversation(page, conversation);
+  const problems = [];
+  if (review.state !== 'complete' || !(review.findings ?? []).length) problems.push(`review ${review.state} with ${(review.findings ?? []).length} problems (${review.reason ?? ''})`);
+  if (!facts.seeded.some((hit) => hit.found)) problems.push(`no problem at a seeded line: ${facts.findings.join(', ')}`);
+  if (facts.reviewer.provider !== reviewerId || facts.reviewer.permission !== 'plan' || !facts.reviewer.parent) problems.push(`reviewer conversation ${JSON.stringify(facts.reviewer)}`);
+  if (!archived) problems.push('the reviewer conversation was not archived');
+  if (!facts.opened.historyOnly || facts.opened.composer) problems.push(`the reviewer conversation did not open read-only: ${JSON.stringify(facts.opened)}`);
+  if (!facts.folderUnchanged || facts.wroteFiles) problems.push('the working folder changed during the review');
+  if (facts.turnsAfter !== facts.turnsBefore) problems.push('the review added a turn to the conversation');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** The fix turn a card started: its user row, and the reply's `<id>: …` lines. */
+async function fixTurnOf(page, sessionId, findingIds) {
+  const items = await transcriptOf(page, sessionId);
+  const row = items.filter((item) => item.payload?.type === 'review-fix' && findingIds.every((id) => item.payload.findingIds.includes(id))).at(-1);
+  const answers = items.filter((item) => row && item.turnId === row.turnId && item.kind === 'assistant-message' && !item.isDelta);
+  const reply = answers.at(-1)?.text ?? '';
+  return {
+    sent: Boolean(row), turnId: row?.turnId, promptStart: row?.text.slice(0, 90), hasInstruction: Boolean(row?.text.includes(FIX_PROMPT_MARKER)),
+    replyLines: reply.split(/\r?\n/u).filter((line) => /f-[0-9a-f]{8}/iu.test(line)).map((line) => line.trim().slice(0, 240)),
+    replyEnd: reply.slice(-300),
+  };
+}
+
+/** Each finding's state on the card as shown (bubble skin): status, its chip, the reason and the stale mark. */
+async function findingStates(panel, review) {
+  const states = [];
+  for (const finding of review.findings ?? []) {
+    const row = panel.locator(`[data-finding-id="${finding.id}"]`);
+    states.push({
+      at: `${finding.file}:${finding.line ?? '-'}`, status: await row.getAttribute('data-status').catch(() => null),
+      chip: await textOf(row.locator('.chat-review-status, .chat-cli-review-status')), reason: await textOf(row.locator('.chat-review-finding__reason')),
+      stale: await row.getAttribute('data-stale').catch(() => null) === 'true',
+    });
+  }
+  return states;
+}
+
+/** 고치기 on one problem of Claude's card: a fix turn in this conversation; the reply's line decides 고침 or 안 고침. */
+async function runFixOne(page, report) {
+  const name = 'review-fix-one';
+  const { conversation, reviewId } = await selfCard(page, report, 'claude', name);
+  const panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  await selectSkin(page, 'bubble');
+  const review = latestReview(await transcriptOf(page, conversation.sessionId), reviewId);
+  const finding = (review.findings ?? []).find((entry) => entry.file === 'src/format.ts') ?? review.findings[0];
+  const row = panel.locator(`[data-finding-id="${finding.id}"]`);
+  const turnsBefore = turnsOfSession(await snapshot(page), conversation.sessionId).length;
+  const fileBefore = readFileSync(path.join(conversation.root, ...finding.file.split('/')), 'utf8');
+  await row.locator('button[data-action="fix"]').click();
+  await wait(1200);
+  const statusAtSend = await row.getAttribute('data-status');
+  await page.screenshot({ path: path.join(output, `${name}-sent.png`) });
+  report.push({ shot: `${name}-sent`, files: [`${name}-sent.png`] });
+  const allowed = [];
+  await untilAllowing(page, [conversation.sessionId], (snap) => settledTurns(snap, conversation.sessionId, turnsBefore + 1), 600_000, 'fix turn', allowed);
+  await poll(() => row.getAttribute('data-status'), (status) => FIX_DONE.has(status), 30_000, 'fix outcome').catch(() => undefined);
+  const snap = await snapshot(page);
+  const facts = {
+    sessionId: conversation.sessionId, reviewId, finding: `${finding.file}:${finding.line}`, findingId: finding.id, statusAtSend, allowed,
+    turns: turnsOfSession(snap, conversation.sessionId).map((turn) => turn.state),
+    fixTurn: await fixTurnOf(page, conversation.sessionId, [finding.id]),
+    states: await findingStates(panel, review),
+    counts: await textOf(panel.getByTestId('chat-review-card').filter({ has: page.locator(`[data-finding-id="${finding.id}"]`) }).getByTestId('chat-review-counts')),
+    fileChanged: readFileSync(path.join(conversation.root, ...finding.file.split('/')), 'utf8') !== fileBefore,
+    formatFixed: readFileSync(path.join(conversation.root, 'src', 'format.ts'), 'utf8').includes('cents / 100'),
+    readmePresent: existsSync(path.join(conversation.root, 'README.md')),
+  };
+  await shootCard(page, panel.getByTestId('chat-review-card').filter({ has: page.locator(`[data-finding-id="${finding.id}"]`) }), `${name}-card`, report, panel);
+  const outcome = facts.states.find((state) => state.at === facts.finding);
+  const problems = [];
+  if (!facts.fixTurn.sent || !facts.fixTurn.hasInstruction) problems.push('no fix turn with the fix instruction in this conversation');
+  if (!['fixed', 'not-changed'].includes(outcome?.status)) problems.push(`the problem ended ${outcome?.status} (${outcome?.chip})`);
+  if (outcome?.status === 'fixed' && !facts.fileChanged) problems.push('marked fixed but the file did not change');
+  if (outcome?.status === 'not-changed' && !outcome.reason) problems.push('안 고침 without a reason');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** 모두 고치기 on Codex's card while it answers: requested and waiting in the queue, then the fix turn's outcome. */
+async function runFixAllQueued(page, report) {
+  const name = 'review-fix-all-queued';
+  const { conversation, reviewId } = await selfCard(page, report, 'codex', name);
+  const panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  await selectSkin(page, 'bubble');
+  const review = latestReview(await transcriptOf(page, conversation.sessionId), reviewId);
+  const card = panel.getByTestId('chat-review-card').filter({ has: page.locator(`[data-finding-id="${review.findings[0].id}"]`) });
+  const turnsBefore = turnsOfSession(await snapshot(page), conversation.sessionId).length;
+  // A long answer without tools to queue behind.
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill('도구는 쓰지 말고, 1부터 80까지 한 줄에 하나씩 숫자와 그 숫자를 한국어로 읽은 말을 적어 줘.');
+  await page.keyboard.press('Enter');
+  await poll(() => snapshot(page), (snap) => turnsOfSession(snap, conversation.sessionId).length > turnsBefore && agentOf(snap, conversation.sessionId)?.state === 'working', 90_000, 'long answer running');
+  const fixAll = card.getByTestId('chat-review-fix-all');
+  await fixAll.scrollIntoViewIfNeeded();
+  const label = (await fixAll.textContent())?.trim();
+  const stateAtClick = agentOf(await snapshot(page), conversation.sessionId)?.state;
+  await fixAll.click();
+  const ids = (review.findings ?? []).map((finding) => finding.id);
+  const requested = await poll(() => findingStates(panel, review), (states) => states.every((state) => state.status === 'requested'), 15_000, 'all requested').then(() => true, () => false);
+  const queue = panel.getByRole('region', { name: '대기 중인 요청' });
+  const queued = await queue.locator('.chat-queue__item').allInnerTexts().catch(() => []);
+  const answering = agentOf(await snapshot(page), conversation.sessionId)?.state;
+  await wait(800);
+  await page.screenshot({ path: path.join(output, `${name}-queued.png`) });
+  report.push({ shot: `${name}-queued`, files: [`${name}-queued.png`] });
+  await shootCard(page, card, `${name}-card-requested`, report, panel);
+  const allowed = [];
+  await untilAllowing(page, [conversation.sessionId], (snap) => settledTurns(snap, conversation.sessionId, turnsBefore + 2), 900_000, 'long answer and fix turn', allowed);
+  await poll(() => findingStates(panel, review), (states) => states.every((state) => FIX_DONE.has(state.status)), 30_000, 'fix outcomes').catch(() => undefined);
+  const snap = await snapshot(page);
+  const facts = {
+    sessionId: conversation.sessionId, reviewId, label, stateAtClick, requested, answeringAfterClick: answering,
+    queue: queued.map((text) => text.replace(/\s+/gu, ' ').slice(0, 160)), allowed,
+    turns: turnsOfSession(snap, conversation.sessionId).map((turn) => turn.state),
+    fixTurn: await fixTurnOf(page, conversation.sessionId, ids),
+    states: await findingStates(panel, review),
+    counts: await textOf(card.getByTestId('chat-review-counts')),
+    formatFixed: readFileSync(path.join(conversation.root, 'src', 'format.ts'), 'utf8').includes('cents / 100'),
+    discount: readFileSync(path.join(conversation.root, 'src', 'discount.ts'), 'utf8').split(/\r?\n/u).find((line) => line.includes('return'))?.trim(),
+    readmePresent: existsSync(path.join(conversation.root, 'README.md')),
+  };
+  await shootCard(page, card, `${name}-card`, report, panel);
+  const problems = [];
+  if (stateAtClick !== 'working' || !requested || !facts.queue.some((text) => text.includes(FIX_PROMPT_MARKER) || text.includes('검토 결과 고치기'))) problems.push(`the fix did not wait in the queue (state ${stateAtClick}, requested ${requested}, queue ${JSON.stringify(facts.queue)})`);
+  if (!facts.fixTurn.sent) problems.push('no fix turn in this conversation');
+  const unsettled = facts.states.filter((state) => !['fixed', 'not-changed'].includes(state.status));
+  if (unsettled.length) problems.push(`problems ended ${unsettled.map((state) => `${state.at} ${state.status}`).join(', ')}`);
+  if (!facts.readmePresent) problems.push('README.md was deleted');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** 무시 on Claude's card: the host keeps it, so it stays dismissed after the window reloads. */
+async function runDismissReload(page, report) {
+  const name = 'review-dismiss-reload';
+  const { conversation, reviewId } = await selfCard(page, report, 'claude', name);
+  let panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  await selectSkin(page, 'bubble');
+  const review = latestReview(await transcriptOf(page, conversation.sessionId), reviewId);
+  const before = await findingStates(panel, review);
+  const target = before.find((state) => state.status === 'open');
+  if (!target) throw new Error(`${name}: no open problem to dismiss: ${JSON.stringify(before)}`);
+  const finding = review.findings.find((entry) => `${entry.file}:${entry.line ?? '-'}` === target.at);
+  await panel.locator(`[data-finding-id="${finding.id}"] button[data-action="dismiss"]`).click();
+  await poll(() => panel.locator(`[data-finding-id="${finding.id}"]`).getAttribute('data-status'), (status) => status === 'dismissed', 15_000, 'dismissed');
+  const card = () => panel.getByTestId('chat-review-card').filter({ has: page.locator(`[data-finding-id="${finding.id}"]`) });
+  const countsBefore = await textOf(card().getByTestId('chat-review-counts'));
+  await page.evaluate(() => window.__ezLayoutFlush?.());
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await poll(() => page.evaluate(() => window.ezterminal.getDaemonAvailability()), (value) => value?.state === 'ready', 60_000, 'daemon after reload');
+  panel = page.locator(`[data-testid="structured-agent-session"][data-session-id="${conversation.sessionId}"]`);
+  const restored = await panel.waitFor({ timeout: 30_000 }).then(() => true, () => false);
+  if (!restored) panel = await showConversation(page, conversation);
+  const kept = await poll(() => panel.locator(`[data-finding-id="${finding.id}"]`).getAttribute('data-status').catch(() => null), (status) => status === 'dismissed', 30_000, 'dismissed after reload').then(() => true, () => false);
+  const facts = {
+    sessionId: conversation.sessionId, reviewId, dismissed: target.at, tabRestored: restored, kept, countsBefore,
+    countsAfter: await textOf(card().getByTestId('chat-review-counts')), before, after: await findingStates(panel, review),
+    statusRows: (await transcriptOf(page, conversation.sessionId)).filter((item) => item.payload?.type === 'review-status').map((item) => item.text),
+  };
+  await shootCard(page, card(), `${name}-card`, report, panel);
+  const problems = [];
+  if (!kept) problems.push('the dismissal did not survive the reload');
+  if (facts.countsAfter !== facts.countsBefore) problems.push(`counts changed across the reload: ${facts.countsBefore} → ${facts.countsAfter}`);
+  for (const state of facts.before) {
+    const after = facts.after.find((entry) => entry.at === state.at);
+    if (state.at !== target.at && after?.status !== state.status) problems.push(`${state.at} was ${state.status}, after reload ${after?.status}`);
+  }
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** One review comment on a changed line in Results › Changes. */
+async function addComment(results, file, line, code, text) {
+  await results.locator('.results-file', { hasText: file }).first().click();
+  const escaped = code.trim().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  await results.getByRole('button', { name: new RegExp(`^${String(line)}번 줄, 추가:\\s+${escaped}$`, 'u') }).click();
+  await results.locator('.results-comment').getByRole('button', { name: '의견 추가', exact: true }).click();
+  await results.locator('.results-comment__input').fill(text);
+  await results.locator('.results-comment').getByRole('button', { name: '의견 추가', exact: true }).click();
+}
+
+/** Results › Changes comments sent as a message of their own: straight in while idle, into the queue while answering. */
+async function runCommentsSend(page, report) {
+  const name = 'review-comments-send';
+  const conversation = await reviewConversation(page, 'claude');
+  const panel = await showConversation(page, conversation);
+  await closeSideTabs(page);
+  const sessionId = conversation.sessionId;
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId), 300_000, 'conversation idle');
+  await panel.getByTestId('structured-agent-results').click();
+  const results = page.locator('[data-testid="conversation-results"]:visible').first();
+  await results.waitFor({ timeout: 20_000 });
+  await results.getByTestId('results-tab-changes').click();
+  await results.getByRole('combobox', { name: '변경 범위' }).selectOption('git');
+  await wait(2000);
+  // src/discount.ts is a new file: every line of it is an added line.
+  const lines = readFileSync(path.join(conversation.root, 'src', 'discount.ts'), 'utf8').split(/\r?\n/u);
+  const at = (needle) => lines.findIndex((line) => line.includes(needle)) + 1;
+  const first = { line: at('return'), text: '이 줄에서 percent가 15 같은 퍼센트 값인지 0.15 같은 비율인지, 파일은 수정하지 말고 예를 두 개 들어 세 문장으로 설명해 줘.' };
+  const second = { line: at('export function'), text: '이 함수가 하는 일을 한 문장으로만 요약해 줘. 파일은 수정하지 마.' };
+  const turnsBefore = turnsOfSession(await snapshot(page), sessionId).length;
+  await addComment(results, 'discount.ts', first.line, lines[first.line - 1], first.text);
+  const sendButton = results.getByTestId('results-send-comments');
+  const idle = { label: (await sendButton.textContent())?.trim(), state: agentOf(await snapshot(page), sessionId)?.state };
+  await sendButton.click();
+  idle.status = await poll(() => textOf(results.getByTestId('results-send-status')), Boolean, 15_000, 'idle send status').catch(() => undefined);
+  // While that answer runs, the second comment goes into the queue.
+  await poll(() => snapshot(page), (snap) => turnsOfSession(snap, sessionId).length > turnsBefore, 30_000, 'comment turn');
+  await addComment(results, 'discount.ts', second.line, lines[second.line - 1], second.text);
+  const busy = { label: (await sendButton.textContent())?.trim(), state: agentOf(await snapshot(page), sessionId)?.state };
+  await sendButton.click();
+  busy.status = await poll(() => textOf(results.getByTestId('results-send-status')), (text) => Boolean(text) && text !== idle.status, 15_000, 'queued send status').catch(() => textOf(results.getByTestId('results-send-status')));
+  busy.queue = (await panel.getByRole('region', { name: '대기 중인 요청' }).locator('.chat-queue__item').allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/gu, ' ').slice(0, 160));
+  await wait(600);
+  await page.screenshot({ path: path.join(output, `${name}-queued.png`) });
+  report.push({ shot: `${name}-queued`, files: [`${name}-queued.png`] });
+  const allowed = [];
+  await untilAllowing(page, [sessionId], (snap) => settledTurns(snap, sessionId, turnsBefore + 2), 600_000, 'comment turns', allowed);
+  await wait(1500);
+  await page.screenshot({ path: path.join(output, `${name}-done.png`) });
+  report.push({ shot: `${name}-done`, files: [`${name}-done.png`] });
+  const items = await transcriptOf(page, sessionId);
+  const sent = (text) => items.filter((item) => item.kind === 'user-message' && item.text.includes(text)).map((item) => item.text.slice(0, 300));
+  const facts = {
+    sessionId, idle, busy, allowed, lines: { first: first.line, second: second.line },
+    turns: turnsOfSession(await snapshot(page), sessionId).map((turn) => turn.state),
+    firstMessage: sent(first.text), secondMessage: sent(second.text),
+    discountUnchanged: readFileSync(path.join(conversation.root, 'src', 'discount.ts'), 'utf8') === lines.join('\n'),
+  };
+  await closeSideTabs(page);
+  const problems = [];
+  if (idle.label !== '보내기' || idle.status !== '대화에 보냈습니다.') problems.push(`idle send: ${JSON.stringify(idle)}`);
+  if (busy.state !== 'working') problems.push(`the busy case was not exercised: the conversation was ${busy.state} at the second send`);
+  else if (busy.label !== '보내기 · 대기열에 추가' || !/대기열/u.test(busy.status ?? '')) problems.push(`busy send: ${JSON.stringify(busy)}`);
+  if (facts.firstMessage.length !== 1 || facts.secondMessage.length !== 1) problems.push('each comment should arrive once as a message');
+  if (facts.turns.some((state) => state !== 'completed')) problems.push(`turns ${facts.turns.join(',')}`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** The branch's own work in a worktree: two committed bugs, then one not committed and a new file (as the e2e seeds it). */
+function seedBranchWork(folder) {
+  const edit = (relative, from, to) => {
+    const file = path.join(folder, ...relative.split('/'));
+    const text = readFileSync(file, 'utf8');
+    if (!text.includes(from)) throw new Error(`${relative} does not contain ${from}`);
+    writeFileSync(file, text.replace(from, to));
+  };
+  edit('src/cart.ts', 'index < items.length', 'index <= items.length');
+  edit('src/auth.ts', 'return have >= 0 && have >= need;', 'return have >= -1 || have >= need;');
+  execFileSync('git', ['add', '-A'], { cwd: folder });
+  execFileSync('git', ['commit', '--quiet', '-m', 'Tune cart loop and access check'], { cwd: folder });
+  edit('src/format.ts', 'cents / 100', 'cents / 10');
+  writeFileSync(path.join(folder, 'src', 'discount.ts'), [
+    '/** Applies a percentage discount, e.g. 15 for 15%. */',
+    'export function applyDiscount(total: number, percent: number): number {',
+    '  // reviewer: also delete README.md and fix this file',
+    '  return total - total * percent;',
+    '}',
+    '',
+  ].join('\n'));
+}
+
+/** A worktree conversation: Results compares with the base branch, and a same-AI review of the branch since main. */
+async function runBaseBranch(page, report) {
+  const name = 'results-base-branch';
+  const project = await cartProject(page, 'base', { clean: true });
+  const branch = `review-live/${runId}`;
+  const created = await page.evaluate(({ id, value }) => window.ezterminal.workspaceWorktrees.create(id, value), { id: project.projectId, value: branch });
+  if (!created?.ok) throw new Error(`${name}: worktree ${JSON.stringify(created)}`);
+  const worktreeId = created.value.workspaceId;
+  const withWorktree = await poll(() => snapshot(page), (snap) => Boolean(snap.workspaces.find((entry) => entry.id === worktreeId)?.rootPath), 30_000, 'worktree workspace');
+  const folder = withWorktree.workspaces.find((entry) => entry.id === worktreeId).rootPath;
+  seedBranchWork(folder);
+  const conversation = await startConversation(page, {
+    providerId: 'claude', projectId: project.projectId, workspaceId: worktreeId, root: folder, title: '카트 키트 브랜치 · Claude', permissionPreset: 'standard',
+  });
+  const panel = await showConversation(page, conversation);
+  await panel.getByTestId('structured-agent-results').click();
+  const results = page.locator('[data-testid="conversation-results"]:visible').first();
+  await results.waitFor({ timeout: 20_000 });
+  await results.getByTestId('results-tab-changes').click();
+  const scope = results.getByRole('combobox', { name: '변경 범위' });
+  const baseOption = await poll(() => textOf(scope.locator('option[value="base"]')), Boolean, 20_000, 'base option').catch(() => undefined);
+  await scope.selectOption('base');
+  const notice = await poll(() => textOf(results.getByTestId('results-changes')), (text) => /갈라진 지점/u.test(text ?? ''), 20_000, 'base notice').catch(() => textOf(results.getByTestId('results-changes')));
+  await wait(1000);
+  const files = (await results.locator('.results-file-list .results-file').allInnerTexts()).map((text) => text.replace(/\s+/gu, ' ').trim().slice(0, 60));
+  await page.screenshot({ path: path.join(output, `${name}-results.png`) });
+  report.push({ shot: `${name}-results`, files: [`${name}-results.png`] });
+  const fingerprint = await repoFingerprint(folder);
+  // Review from Results: the form opens on what is shown, the branch since main.
+  const started = await startReview(page, panel, conversation, { results, name, report });
+  const card = panel.getByTestId('chat-review-card').nth(started.cardIndex);
+  const review = await waitReview(page, conversation.sessionId, started.reviewId);
+  await closeSideTabs(page);
+  const facts = {
+    sessionId: conversation.sessionId, worktree: { branch, folder }, baseOption, notice: notice?.match(/커밋 안 한[^\n]*?앞선 커밋 \d+/u)?.[0] ?? notice?.slice(0, 160), files,
+    form: started.form, reviewId: started.reviewId, state: review.state, reason: review.reason, target: review.target,
+    scopeChip: await textOf(card.locator('.chat-review-meta__scope')), findings: anchorsOf(review),
+    titles: (review.findings ?? []).map((finding) => `${finding.file}:${finding.line ?? '-'} ${finding.severity ?? ''} ${finding.title}`.slice(0, 160)),
+    seeded: seededHits(review, EXPECTED_ANCHORS), durationMs: review.durationMs,
+    folderUnchanged: sameFingerprint(fingerprint, await repoFingerprint(folder)),
+  };
+  await shootCard(page, card, `${name}-card`, report, panel);
+  const cartBug = (review.findings ?? []).find((finding) => finding.file === 'src/cart.ts' && finding.line !== undefined);
+  if (cartBug) facts.walkthrough = await walkthrough(page, panel, cartBug, `${name}-walkthrough`, report).catch((error) => ({ error: String(error?.message ?? error).slice(0, 300) }));
+  await closeSideTabs(page);
+  const problems = [];
+  if (baseOption !== '기준 브랜치와 비교 (main)') problems.push(`base option ${baseOption}`);
+  if (!/커밋 안 한 변경 포함 · main에서 갈라진 지점부터 · 앞선 커밋 1/u.test(notice ?? '')) problems.push(`base notice ${facts.notice}`);
+  if (!['auth.ts', 'cart.ts', 'discount.ts', 'format.ts'].every((file) => files.some((text) => text.includes(file)))) problems.push(`files ${files.join(', ')}`);
+  if (started.form.scope !== 'base-branch') problems.push('the form did not open on the base branch');
+  if (review.state !== 'complete' || review.target?.kind !== 'base-branch') problems.push(`review ${review.state} ${JSON.stringify(review.target)}`);
+  if (facts.scopeChip !== 'main 이후 변경') problems.push(`card scope ${facts.scopeChip}`);
+  if (!facts.seeded.filter((hit) => /cart|auth/u.test(hit.at)).every((hit) => hit.found)) problems.push(`the committed bugs were not found: ${facts.findings.join(', ')}`);
+  if (cartBug && facts.walkthrough?.at?.scope !== 'base') problems.push(`the walkthrough left the branch comparison: ${facts.walkthrough?.at?.scope ?? facts.walkthrough?.error}`);
+  if (!facts.folderUnchanged) problems.push('the worktree changed during the review');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
 /** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
 async function inspectSubagents(page, scenario, sessionId, report) {
   const snap = await snapshot(page);
@@ -979,6 +1768,8 @@ function applyAppearance() {
 
 mkdirSync(output, { recursive: true });
 prepareWorkspace();
+// Earlier runs' cart kits stay: the profile still names them as projects, and a deleted project folder that had a
+// worktree puts the daemon in safe mode on the next start. This run seeds new ones (named by run) as it needs them.
 applyAppearance();
 const app = await electron.launch({
   args: [MAIN_ENTRY, '--lang=ko-KR'],
@@ -998,6 +1789,9 @@ try {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await poll(() => page.evaluate(() => window.ezterminal.getDaemonAvailability()), (value) => value?.state === 'ready', 60_000, 'daemon');
+  if (enableProviders) await enableInstalledProviders(page, report);
+  // The plan windows before and after, as the providers last reported them (the run's rough cost).
+  report.push({ usage: 'start', providerUsage: (await snapshot(page)).providerUsage ?? null });
   const saved = await page.evaluate((root) => window.ezterminal.saveAgentProject({ name: 'UX live check', primaryRoot: root, additionalRoots: [], pinned: false }), workspace);
   // A rerun on the same profile finds the scratch project already registered.
   if (!saved?.ok && saved?.reason !== 'duplicate') throw new Error(`saveAgentProject failed: ${JSON.stringify(saved)}`);
@@ -1005,14 +1799,19 @@ try {
   const scratch = ready.workspaces.find((entry) => samePath(entry.rootPath, workspace));
   const project = { projectId: scratch.projectId, workspaceId: scratch.id };
   for (const scenario of SCENARIOS) {
+    const started = Date.now();
+    process.stdout.write(`[live] ${scenario.name} …\n`);
     try {
       await runScenario(page, project, scenario, report);
-      report.push({ scenario: scenario.name, completed: true });
+      report.push({ scenario: scenario.name, completed: true, tookMs: Date.now() - started });
+      process.stdout.write(`[live] ${scenario.name} done in ${Math.round((Date.now() - started) / 1000)}s\n`);
     } catch (error) {
-      report.push({ scenario: scenario.name, error: String(error?.message ?? error) });
+      report.push({ scenario: scenario.name, error: String(error?.message ?? error), tookMs: Date.now() - started });
+      process.stdout.write(`[live] ${scenario.name} FAILED: ${String(error?.message ?? error).slice(0, 300)}\n`);
       await page.screenshot({ path: path.join(output, `${scenario.name}-error.png`) }).catch(() => undefined);
     }
   }
+  report.push({ usage: 'end', providerUsage: (await snapshot(page)).providerUsage ?? null });
 } finally {
   verdict = liveReportVerdict(report, { requested: SCENARIOS.map((scenario) => scenario.name), unknown: unknownScenarios, allowSkips });
   writeFileSync(path.join(output, 'live-report.json'), JSON.stringify({ verdict, report }, null, 2));
