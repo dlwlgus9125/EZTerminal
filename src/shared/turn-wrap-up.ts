@@ -1,18 +1,62 @@
 /**
- * Turn wrap-up (Claude desktop features, bundle 2) — draft shapes for the 시안 (2026-10-30).
+ * Turn wrap-up's provider-neutral model (Claude desktop features, bundle 2).
  *
  * What a conversation shows when a turn ends: the AI's guess of the person's next message (ghost text in the
  * empty composer, a chip on the phone), a recap card for a turn nobody was watching (or one that stopped to
  * wait on the person), and the tasks the AI proposed outside its own work. The AI only proposes; nothing runs
- * until the person presses a button.
+ * until the person presses a button. Measured facts and decisions: docs/ux/overhaul/approvals.md ("턴 마무리").
  *
- * Draft only: no host writes these yet. The stories feed fixtures and every action is a callback. The
- * transcript payload schemas, daemon commands and the capability come after the draft is approved
- * (docs/ux/overhaul/approvals.md, "턴 마무리").
+ * The instructions below are the source of truth; scripts/wrap-up-probe-kit.mjs keeps a copy because scripts
+ * run as plain JavaScript, and the replay tests check recordings against these.
  */
 
-/** What the host will hold `suggest_task` calls to, and how many one turn may leave. */
+import type { ChatAgentSettings } from './chat-agent-profiles';
+
+export const TURN_WRAP_UP_CAPABILITY = 'turn-wrap-up-v1';
+
+/** What the host holds `suggest_task` calls to, and how many one turn may leave. */
 export const TASK_SUGGESTION_LIMITS = { perTurn: 8, title: 120, prompt: 4_000, rationale: 500 } as const;
+
+/** A recap is 3–4 lines; a longer answer is cut to this before it is stored. */
+export const TURN_RECAP_LIMITS = { text: 2_000 } as const;
+
+/** The AI is asked for 20 words at most; an answer past this is no next message. */
+export const NEXT_PROMPT_MAX_CHARS = 500;
+
+/** Host-composed; both AIs get the same text. Scoped because 3/6 Claude recaps wandered over the whole conversation (probe P5). */
+export const RECAP_INSTRUCTION = 'Recap for the person, who was not watching this conversation. Cover their latest request and the work '
+  + 'done for it, not the whole conversation. In 2-4 short lines: what you did, what is waiting on them, and what they should check. '
+  + 'State only what actually happened in this conversation; never claim an action, file change or test that did not happen. '
+  + 'Write in the language the person has been using. No preamble.';
+
+/** Host-composed: a fork of a stopped turn may show the open call as aborted, and without this Codex says it was (probe P5). */
+export const recapStoppedNote = (waiting: string): string => `Right now this turn is stopped, not finished: ${waiting} It is still open and waiting for the `
+  + 'person. If your history shows that call as aborted or interrupted, that is only how this side view shows it; nothing was aborted.';
+
+/** What a recap asks. `waiting`: what the stopped turn has open, as a sentence. */
+export function recapQuestion(waiting?: string): string {
+  return waiting ? `${recapStoppedNote(waiting)}\n\n${RECAP_INSTRUCTION}` : RECAP_INSTRUCTION;
+}
+
+/** Codex's next-message fork; Claude predicts on its own. */
+export const PREDICT_INSTRUCTION = "Predict the person's most likely next message to you in this conversation. Reply with "
+  + 'that message only, exactly as they would type it, in their language, at most 20 words, with no quotes or explanation. '
+  + 'If they are most likely done, reply with: (none)';
+
+/** Codex proposes tasks only when told to (0/2 from the tool description alone, 2/2 with this, probe P4). */
+export const SUGGEST_TASK_INSTRUCTIONS = 'When you notice work outside the current request (other bugs, missing tests, stale docs), '
+  + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
+
+export const SUGGEST_TASK_TOOL = 'suggest_task';
+/** The exact name Claude's `allowedTools` needs: a per-tool MCP policy still asks (probe P4). */
+export const SUGGEST_TASK_CLAUDE_TOOL = `mcp__ezterminal_orchestration__${SUGGEST_TASK_TOOL}`;
+
+/** The composer's one line from the AI's answer; `(none)`, nothing, or an answer too long for a next message is no suggestion. */
+export function nextPromptText(raw: string | null | undefined): string | undefined {
+  const line = raw?.split(/\r?\n/u).map((entry) => entry.trim()).find(Boolean);
+  if (!line || /^\(?none\)?\.?$/iu.test(line) || line.length > NEXT_PROMPT_MAX_CHARS) return undefined;
+  return line;
+}
 
 /** The AI's guess of the person's next message. One per turn; shown only while its turn is the newest one. */
 export interface NextPromptSuggestion {
@@ -21,22 +65,25 @@ export interface NextPromptSuggestion {
 }
 
 /** Why the host wrote a recap: the turn ended while no screen showed the conversation, or it stopped for the person. */
-export type TurnRecapTrigger = 'unattended' | 'waiting';
+export const TURN_RECAP_TRIGGERS = ['unattended', 'waiting'] as const;
+export type TurnRecapTrigger = (typeof TURN_RECAP_TRIGGERS)[number];
 
 /** What the AI waits on when it stopped for the person. */
-export type TurnRecapWaiting = 'approval' | 'question' | 'plan';
-
-import type { ChatAgentSettings } from './chat-agent-profiles';
+export const TURN_RECAP_WAITING = ['approval', 'question', 'plan'] as const;
+export type TurnRecapWaiting = (typeof TURN_RECAP_WAITING)[number];
 
 /** Why a recap could not be written, as a code the app words itself. */
-export type TurnRecapFailure = 'usage-limit' | 'disconnected' | 'no-response';
+export const TURN_RECAP_FAILURES = ['usage-limit', 'disconnected', 'no-response'] as const;
+export type TurnRecapFailure = (typeof TURN_RECAP_FAILURES)[number];
 
-/** A recap of one turn, written by the conversation's AI (the /btw path: no tools, nothing saved to the conversation). */
+export const TURN_RECAP_STATES = ['generating', 'complete', 'failed'] as const;
+
+/** A recap of one turn, written by the conversation's AI (the /btw path: no tools, nothing added to the AI's context). */
 export interface TurnRecap {
   readonly turnId: string;
   readonly providerId: string;
   readonly trigger: TurnRecapTrigger;
-  readonly state: 'generating' | 'complete' | 'failed';
+  readonly state: (typeof TURN_RECAP_STATES)[number];
   /** The AI's own lines (3–4; inline code allowed). */
   readonly text?: string;
   /** Still waiting on the person when the recap was written. */
@@ -68,6 +115,9 @@ export interface SuggestedTaskStart {
   readonly settings: string;
 }
 
+/** What a `task-suggestion-status` row records; the card's other outcomes come from the turn rows and the client. */
+export const TASK_SUGGESTION_OUTCOMES = ['started', 'dismissed', 'open', 'start-failed'] as const;
+
 /**
  * What came of a suggested task, as the host confirms it: nothing yet, a start or send in flight, a sub-conversation
  * started (in a new worktree when `branch` is set), sent to this conversation or queued behind its running turn
@@ -96,8 +146,13 @@ export interface TurnTaskSuggestions {
   readonly createdAt: string;
 }
 
-/** Where a started task works: this conversation's folder, or a new worktree on a new branch (desktop only). */
-export type SuggestedTaskWhere = { readonly kind: 'this-folder' } | { readonly kind: 'new-worktree'; readonly branch: string };
+/**
+ * Where a started task works: this conversation's folder, or a new worktree on a new branch (desktop only).
+ * `workspaceId`: the worktree a failed start already made, so a retry does not collide with its own branch.
+ */
+export type SuggestedTaskWhere =
+  | { readonly kind: 'this-folder' }
+  | { readonly kind: 'new-worktree'; readonly branch: string; readonly workspaceId?: string };
 
 const TRAILING_FILLER = new Set(['a', 'an', 'and', 'at', 'for', 'in', 'of', 'on', 'src', 'the', 'to']);
 const BRANCH_SLUG_LENGTH = 32;

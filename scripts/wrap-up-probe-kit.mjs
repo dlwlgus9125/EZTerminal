@@ -90,10 +90,14 @@ export const PROMPTS = {
     + 'test." Do not do the task yourself and use no other tool except to find suggest_task. Then reply with exactly: DONE',
 };
 
-/** Host-composed; the product would send the same text to both providers. */
-export const RECAP_INSTRUCTION = 'Recap for the person, who was not watching this conversation. In 2-4 short lines: what you '
-  + 'did, what is waiting on them, and what they should check. State only what actually happened in this conversation; '
-  + 'never claim an action, file change or test that did not happen. Write in the language the person has been using. No preamble.';
+/**
+ * Copies of src/shared/turn-wrap-up.ts, the source of truth: this script runs as plain JavaScript.
+ * The replay tests check recordings against the shared text, so change them there first.
+ */
+export const RECAP_INSTRUCTION = 'Recap for the person, who was not watching this conversation. Cover their latest request and the work '
+  + 'done for it, not the whole conversation. In 2-4 short lines: what you did, what is waiting on them, and what they should check. '
+  + 'State only what actually happened in this conversation; never claim an action, file change or test that did not happen. '
+  + 'Write in the language the person has been using. No preamble.';
 export const PREDICT_INSTRUCTION = "Predict the person's most likely next message to you in this conversation. Reply with "
   + 'that message only, exactly as they would type it, in their language, at most 20 words, with no quotes or explanation. '
   + 'If they are most likely done, reply with: (none)';
@@ -113,7 +117,10 @@ export const visibilityQuestion = (toolFact) => 'Answer from this conversation o
   + `3. ${toolFact}\n`
   + '4. pending: is a tool call or a question of yours waiting for my answer right now? If so, which tool, and which file or question.';
 
-/** What the host adds to a mid-turn recap: it knows what is open; the fork may show that call as aborted. */
+/**
+ * What the host adds to a mid-turn recap: it knows what is open; the fork may show that call as aborted.
+ * A copy of src/shared/turn-wrap-up.ts, the source of truth.
+ */
 export const recapStoppedNote = (waiting) => `Right now this turn is stopped, not finished: ${waiting} It is still open and waiting for the `
   + 'person. If your history shows that call as aborted or interrupted, that is only how this side view shows it; nothing was aborted.';
 

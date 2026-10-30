@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
+import { ChatAgentProfileSchema } from './chat-agent-profiles';
 import { REVIEW_LIMITS, REVIEW_SEVERITIES, REVIEW_STATES } from './review-findings';
+import {
+  TASK_SUGGESTION_LIMITS, TASK_SUGGESTION_OUTCOMES, TURN_RECAP_FAILURES, TURN_RECAP_LIMITS, TURN_RECAP_STATES, TURN_RECAP_TRIGGERS,
+  TURN_RECAP_WAITING,
+} from './turn-wrap-up';
 
 /**
  * Structured metadata that rides next to a transcript item's `text`.
@@ -186,6 +191,81 @@ const ReviewRequestPayloadSchema = z.object({
   focus: z.string().max(REVIEW_LIMITS.focus).optional(),
 }).strict();
 
+/**
+ * One recap card (turn wrap-up, `turn-wrap-up-v1`). The host appends rows for the same turn as it moves on
+ * (generating → complete/failed); clients show its latest row. The row's `text` reads on its own.
+ */
+const RecapPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('recap'),
+  turnId: ShortText,
+  providerId: ShortText,
+  trigger: z.enum(TURN_RECAP_TRIGGERS),
+  state: z.enum(TURN_RECAP_STATES),
+  text: z.string().max(TURN_RECAP_LIMITS.text).optional(),
+  waiting: z.enum(TURN_RECAP_WAITING).optional(),
+  /** The approval it stopped for: the card says the AI waits only while that one is pending. */
+  decisionId: ShortText.optional(),
+  failure: z.enum(TURN_RECAP_FAILURES).optional(),
+}).strict();
+
+/** One `suggest_task` call the host accepted; nothing runs until the person starts it. */
+const TaskSuggestionPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('task-suggestion'),
+  taskId: ShortText,
+  turnId: ShortText,
+  providerId: ShortText,
+  title: z.string().max(TASK_SUGGESTION_LIMITS.title),
+  rationale: z.string().max(TASK_SUGGESTION_LIMITS.rationale),
+  prompt: z.string().max(TASK_SUGGESTION_LIMITS.prompt),
+  worktree: z.boolean().optional(),
+}).strict();
+
+/** What a refused start asked for: 다시 시도 repeats exactly that. */
+const SuggestedTaskStartSchema = z.object({
+  where: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('this-folder') }).strict(),
+    z.object({ kind: z.literal('new-worktree'), branch: ShortText, workspaceId: ShortText.optional() }).strict(),
+  ]),
+  agent: ChatAgentProfileSchema.pick({ providerId: true, model: true, reasoningEffort: true, permissionPreset: true }).strict(),
+  /** The same in words, as the person saw it. */
+  settings: ShortText,
+}).strict();
+
+/** What became of a task; clients show its latest row. */
+const TaskSuggestionStatusPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('task-suggestion-status'),
+  taskId: ShortText,
+  turnId: ShortText,
+  outcome: z.enum(TASK_SUGGESTION_OUTCOMES),
+  /** `started`: the sub-conversation. */
+  sessionId: ShortText.optional(),
+  /** `started` in a new worktree. */
+  branch: ShortText.optional(),
+  /** `start-failed`: the host's words, what was asked for, and whether the branch name is taken. */
+  reason: ShortText.optional(),
+  start: SuggestedTaskStartSchema.optional(),
+  branchTaken: z.boolean().optional(),
+}).strict();
+
+/** Calls past TASK_SUGGESTION_LIMITS.perTurn, written once when the turn ends. */
+const TaskSuggestionsDroppedPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('task-suggestions-dropped'),
+  turnId: ShortText,
+  count: z.number().int().positive(),
+}).strict();
+
+/** The user row of a task sent to this conversation (여기서 하기); its state is that turn's. */
+const TaskSuggestionSendPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('task-suggestion-send'),
+  taskId: ShortText,
+  turnId: ShortText,
+}).strict();
+
 export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   ToolPayloadSchema,
   TodoPayloadSchema,
@@ -196,6 +276,11 @@ export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   ReviewStatusPayloadSchema,
   ReviewFixPayloadSchema,
   ReviewRequestPayloadSchema,
+  RecapPayloadSchema,
+  TaskSuggestionPayloadSchema,
+  TaskSuggestionStatusPayloadSchema,
+  TaskSuggestionsDroppedPayloadSchema,
+  TaskSuggestionSendPayloadSchema,
 ]);
 
 export type TranscriptPayload = z.infer<typeof TranscriptPayloadSchema>;
@@ -208,6 +293,11 @@ export type ReviewPayload = z.infer<typeof ReviewPayloadSchema>;
 export type ReviewStatusPayload = z.infer<typeof ReviewStatusPayloadSchema>;
 export type ReviewFixPayload = z.infer<typeof ReviewFixPayloadSchema>;
 export type ReviewRequestPayload = z.infer<typeof ReviewRequestPayloadSchema>;
+export type RecapPayload = z.infer<typeof RecapPayloadSchema>;
+export type TaskSuggestionPayload = z.infer<typeof TaskSuggestionPayloadSchema>;
+export type TaskSuggestionStatusPayload = z.infer<typeof TaskSuggestionStatusPayloadSchema>;
+export type TaskSuggestionsDroppedPayload = z.infer<typeof TaskSuggestionsDroppedPayloadSchema>;
+export type TaskSuggestionSendPayload = z.infer<typeof TaskSuggestionSendPayloadSchema>;
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
 /** Tolerant parse: unknown versions and malformed values become `undefined`. */

@@ -104,6 +104,7 @@ const SCHEDULES = {
 const forkPrompt = (kind) => (kind === 'predict' ? `Do not use any tools or run any commands. ${PREDICT_INSTRUCTION}`
   : kind === 'btw-predict' ? `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${PREDICT_INSTRUCTION}`
     : `${CODEX_SIDE_QUESTION_INSTRUCTION}\n\nQuestion: ${RECAP_INSTRUCTION}`);
+/** A copy of SUGGEST_TASK_INSTRUCTIONS in src/shared/turn-wrap-up.ts, the source of truth. */
 const SUGGEST_DEVELOPER_INSTRUCTIONS = 'When you notice work outside the current request (other bugs, missing tests, stale docs), '
   + 'do not do it; call the suggest_task tool with a self-contained prompt for each item instead.';
 const EDIT_RULES = 'Shell commands are not available in this conversation: every command you start is declined. The '
