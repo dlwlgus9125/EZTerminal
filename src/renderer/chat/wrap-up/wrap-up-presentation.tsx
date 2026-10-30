@@ -26,8 +26,8 @@ export function InlineCode({ text }: { readonly text: string }): JSX.Element {
   );
 }
 
-/** A suggested task's outcome in words; empty while it is still open. */
-export function outcomeText(outcome: SuggestedTaskOutcome, copy: ChatCopy): string {
+/** A suggested task's outcome in words; empty while it is still open. `folder`: this conversation's, by name. */
+export function outcomeText(outcome: SuggestedTaskOutcome, copy: ChatCopy, folder: string): string {
   switch (outcome.kind) {
     case 'open': return '';
     case 'starting': return copy.taskSuggestions.outcome.starting;
@@ -37,7 +37,7 @@ export function outcomeText(outcome: SuggestedTaskOutcome, copy: ChatCopy): stri
     case 'queued': return outcome.position === undefined ? copy.taskSuggestions.outcome.queued : copy.taskSuggestions.outcome.queuedAt(outcome.position);
     case 'dismissed': return copy.taskSuggestions.outcome.dismissed;
     case 'start-failed':
-      return outcome.start.where.kind === 'new-worktree' ? copy.taskSuggestions.outcome.startFailedIn(outcome.start.where.branch) : copy.taskSuggestions.outcome.startFailed;
+      return outcome.start.where.kind === 'new-worktree' ? copy.taskSuggestions.outcome.startFailedIn(outcome.start.where.branch) : copy.taskSuggestions.outcome.startFailedHere(folder);
   }
 }
 

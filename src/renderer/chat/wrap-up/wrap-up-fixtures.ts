@@ -1,3 +1,4 @@
+import type { ChatAgentSettings } from '../../../shared/chat-agent-profiles';
 import { encodeFileChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import {
@@ -383,6 +384,11 @@ const START_SETTINGS: Readonly<Record<WrapProvider, Readonly<Record<WrapLanguage
   codex: { ko: 'Codex · GPT-6-Astra · 높음 · 승인 후 실행', en: 'Codex · GPT-6-Astra · High · Ask before running' },
 };
 
+const START_AGENT: Readonly<Record<WrapProvider, ChatAgentSettings>> = {
+  claude: { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', permissionPreset: 'standard' },
+  codex: { providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'high', permissionPreset: 'standard' },
+};
+
 /**
  * The cart turn with its suggested-task card: the AI's probe suggestions (`probe`), Claude's single combined one with a
  * worktree recommendation (`combined`), the probe ones and one recommended for a worktree (`mixed`), what came of each
@@ -393,8 +399,8 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
   const probe = provider === 'claude' ? CLAUDE_TASKS : CODEX_TASKS;
   const drafts = set === 'combined' ? [CLAUDE_COMBINED_TASK] : set === 'cap' ? [...probe, ...DRAFTED_TASKS]
     : set === 'states' || set === 'mixed' ? [...probe, DRAFTED_TASKS[0]!] : set === 'retry' ? probe.slice(0, 2) : probe;
-  const settings = START_SETTINGS[provider][lang];
-  const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch(draft.title, index) }, settings });
+  const asked = { agent: START_AGENT[provider], settings: START_SETTINGS[provider][lang] };
+  const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch(draft.title, index) }, ...asked });
   const outcomes: readonly SuggestedTaskOutcome[] = set === 'states' ? [
     { kind: 'started', sessionId: 'wrap-up-child-auth' },
     { kind: 'queued', position: 2 },
@@ -402,7 +408,7 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
     { kind: 'start-failed', reason: TEXT[lang].branchExists, start: inWorktree(drafts[3]!, 3), branchTaken: true },
   ] : set === 'retry' ? [
     { kind: 'start-failed', reason: TEXT[lang].diskFull, start: inWorktree(drafts[0]!, 0) },
-    { kind: 'start-failed', reason: TEXT[lang].childLimit, start: { where: { kind: 'this-folder' }, settings } },
+    { kind: 'start-failed', reason: TEXT[lang].childLimit, start: { where: { kind: 'this-folder' }, ...asked } },
   ] : [];
   const { items, turns } = cartTurn(lang, provider, drafts);
   // States: the person's follow-up runs now and another message of theirs waits; 여기서 하기 put task 2 behind it (2nd).
@@ -446,7 +452,7 @@ export function longWordsStory(lang: WrapLanguage): WrapUpFixture {
     { title: 'Fix the tax cache', rationale: 'It keeps a stale total too.', prompt: 'Fix the tax cache.' },
   ];
   const { items, turns } = cartTurn(lang, 'claude', drafts);
-  const settings = START_SETTINGS.claude[lang];
+  const asked = { agent: START_AGENT.claude, settings: START_SETTINGS.claude[lang] };
   return {
     items, turns, state: 'idle',
     tasks: [{
@@ -455,7 +461,7 @@ export function longWordsStory(lang: WrapLanguage): WrapUpFixture {
         { kind: 'open' },
         { kind: 'open' },
         { kind: 'started', sessionId: 'wrap-up-child-long', branch: LONG_BRANCH },
-        { kind: 'start-failed', reason: `${LONG_PATH}: ${LONG_WORD}`, start: { where: { kind: 'new-worktree', branch: LONG_BRANCH }, settings } },
+        { kind: 'start-failed', reason: `${LONG_PATH}: ${LONG_WORD}`, start: { where: { kind: 'new-worktree', branch: LONG_BRANCH }, ...asked } },
       ]),
     }],
   };

@@ -26,6 +26,8 @@ export type TurnRecapTrigger = 'unattended' | 'waiting';
 /** What the AI waits on when it stopped for the person. */
 export type TurnRecapWaiting = 'approval' | 'question' | 'plan';
 
+import type { ChatAgentSettings } from './chat-agent-profiles';
+
 /** Why a recap could not be written, as a code the app words itself. */
 export type TurnRecapFailure = 'usage-limit' | 'disconnected' | 'no-response';
 
@@ -60,10 +62,10 @@ export interface SuggestedTask {
 /** What a start asked for. A failed start keeps it, so 다시 시도 repeats exactly that and never drifts to the defaults. */
 export interface SuggestedTaskStart {
   readonly where: SuggestedTaskWhere;
-  /** What it starts with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`). */
+  /** The AI, model, effort and permission it asked for. */
+  readonly agent: ChatAgentSettings;
+  /** The same in words, as the person saw it (`Claude · Opus 5.5 · 높음 · 승인 후 실행`). */
   readonly settings: string;
-  /** Started from the start form with this profile instead of the defaults. */
-  readonly profileId?: string;
 }
 
 /**

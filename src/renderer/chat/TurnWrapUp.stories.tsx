@@ -156,7 +156,8 @@ function TaskStartForm({ host, args }: { readonly host: StoryHost; readonly args
       title={copy.taskSuggestions.startForm}
       profiles={TASK_PROFILES} providerLabels={{ claude: 'Claude', codex: 'Codex' }} workspaces={[{ id: 'ws-cart', label: 'cart-kit', kind: 'local' }]}
       defaultWorkspaceId="ws-cart" initialInstruction={task?.prompt ?? ''} {...(branch ? { initialWorkspace: { kind: 'new-worktree' as const, branch } } : {})}
-      {...(failed?.profileId ? { initialProfileId: failed.profileId } : {})}
+      submitLabel={copy.taskSuggestions.startFormSubmit}
+      {...(failed ? { initialAgent: { ...failed.agent, label: failed.settings } } : {})}
       onSubmit={async (request) => {
         args.onDelegate(request);
         if (task) host.startedViaForm(task.id, request.workspace.kind === 'new-worktree' ? request.workspace.branch : undefined);
@@ -590,16 +591,17 @@ export const TasksRetryKeepsWhere: Story = {
   play: async ({ canvasElement, args }) => {
     const card = await showCard(canvasElement);
     const [first, second] = tasksOf(card);
-    const settings = 'Claude · Opus 5.5 · 높음 · 승인 후 실행';
+    const asked = { agent: { providerId: 'claude', model: 'claude-opus-5-5', reasoningEffort: 'high', permissionPreset: 'standard' }, settings: 'Claude · Opus 5.5 · 높음 · 승인 후 실행' };
     await expect(within(first!).getByTestId('chat-task-outcome')).toHaveTextContent('시작하지 못함 · 새 워크트리 suggest/fix-the-always-true-role-check');
+    await expect(within(second!).getByTestId('chat-task-outcome')).toHaveTextContent('시작하지 못함 · 이 폴더 (cart-kit)');
     await userEvent.click(within(first!).getByRole('button', { name: /^다시 시도: Fix the always-true/u }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({
-      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-1', start: { where: { kind: 'new-worktree', branch: 'suggest/fix-the-always-true-role-check' }, settings },
+      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-1', start: { where: { kind: 'new-worktree', branch: 'suggest/fix-the-always-true-role-check' }, ...asked },
     });
     await waitFor(() => expect(within(first!).getByTestId('chat-task-outcome')).toHaveTextContent('시작함 · 새 워크트리 suggest/fix-the-always-true-role-check'), { timeout: 4_000 });
     await userEvent.click(within(second!).getByRole('button', { name: /^다시 시도: Fix cents-to-dollars/u }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({
-      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-2', start: { where: { kind: 'this-folder' }, settings },
+      kind: 'task-retry', turnId: 'turn-cart', taskId: 'task-claude-2', start: { where: { kind: 'this-folder' }, ...asked },
     });
   },
 };
@@ -615,6 +617,61 @@ export const TasksRetryBranchTaken: Story = {
     const dialog = within(await startForm());
     await waitFor(() => expect(dialog.getByRole('heading', { name: '제안 작업 시작' })).toBeVisible());
     await expect(dialog.getByTestId('delegate-agent-branch')).toHaveValue('suggest/reject-negative-and-fractional');
+    // A saved profile says exactly what the failed start asked for: that one is chosen.
+    await expect(dialog.getByTestId('delegate-agent-profile')).toHaveValue('profile-claude');
+  },
+};
+/**
+ * The same with Codex at 높음, which no saved profile says (Codex 구현 is 보통): the form shows the settings as they are,
+ * never the first profile, and changing only the branch keeps them.
+ */
+export const TasksRetryBranchTakenCodex: Story = {
+  ...chat('tasks-branch-taken-codex', 'cart', (lang) => cartStory(lang, 'codex', 'states'), { provider: 'codex' }),
+  play: async ({ canvasElement, args }) => {
+    const card = await showCard(canvasElement);
+    const task = tasksOf(card)[3]!;
+    await userEvent.click(within(task).getByRole('button', { name: /^이름 바꿔 다시 시도…: Reject negative/u }));
+    const dialog = within(await startForm());
+    const profile = dialog.getByTestId('delegate-agent-profile') as HTMLSelectElement;
+    await expect(profile.selectedOptions[0]).toHaveTextContent('Codex · GPT-6-Astra · 높음 · 승인 후 실행');
+    await expect(await startForm()).toHaveTextContent('저장된 프로필이 아닙니다');
+    const branch = dialog.getByTestId('delegate-agent-branch');
+    await userEvent.clear(branch);
+    await userEvent.type(branch, 'suggest/reject-negative-quantities');
+    await expect(profile.selectedOptions[0]).toHaveTextContent('Codex · GPT-6-Astra · 높음 · 승인 후 실행');
+    await userEvent.click(dialog.getByRole('button', { name: '시작' }));
+    await waitFor(() => expect(args.onDelegate).toHaveBeenCalledWith(expect.objectContaining({
+      agent: { providerId: 'codex', model: 'gpt-6-astra', reasoningEffort: 'high', permissionPreset: 'standard' },
+      workspace: { kind: 'new-worktree', branch: 'suggest/reject-negative-quantities' },
+    })));
+    await expect(args.onDelegate).not.toHaveBeenCalledWith(expect.objectContaining({ profileId: expect.anything() as string }));
+  },
+};
+/** The form as it opens for that Codex start: its settings as they are, marked as not a saved profile. */
+export const TasksRetryAsAsked: Story = {
+  ...chat('tasks-as-asked', 'cart', (lang) => cartStory(lang, 'codex', 'states'), { provider: 'codex' }),
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    await userEvent.click(within(tasksOf(card)[3]!).getByRole('button', { name: /^이름 바꿔 다시 시도…/u }));
+    const profile = within(await startForm()).getByTestId('delegate-agent-profile') as HTMLSelectElement;
+    await expect(profile.selectedOptions[0]).toHaveTextContent('Codex · GPT-6-Astra · 높음 · 승인 후 실행');
+  },
+};
+/** Focus around the start form: cancelled it returns to the button; once the task started the button is gone, so the task's title takes it. */
+export const TasksFormFocus: Story = {
+  ...chat('tasks-form-focus', 'cart', (lang) => cartStory(lang, 'claude', 'combined')),
+  play: async ({ canvasElement }) => {
+    const card = await showCard(canvasElement);
+    const task = tasksOf(card)[0]!;
+    const main = within(task).getByRole('button', { name: /^새 하위 대화로 시작…: Fix logic bugs/u });
+    main.focus();
+    await userEvent.click(main);
+    await userEvent.click(within(await startForm()).getByRole('button', { name: '취소' }));
+    await waitFor(() => expect(document.activeElement).toBe(main));
+    await userEvent.click(main);
+    await userEvent.click(within(await startForm()).getByRole('button', { name: '시작' }));
+    await waitFor(() => expect(within(task).getByTestId('chat-task-outcome')).toHaveTextContent('시작함'));
+    await waitFor(() => expect(document.activeElement).toBe(task.querySelector('[data-task-title]')));
   },
 };
 /** The AI recommends a worktree (Claude's first run put the three bugs in one): no one click into this folder against that advice. */
@@ -639,6 +696,8 @@ export const TasksWorktreeStart: Story = {
     await waitFor(() => expect(dialog.getByRole('heading', { name: '제안 작업 시작' })).toBeVisible());
     await expect((dialog.getByTestId('delegate-agent-instruction') as HTMLTextAreaElement).value).toContain('Fix three bugs in src/:');
     await expect(dialog.getByTestId('delegate-agent-branch')).toHaveValue('suggest/fix-logic-bugs-in-auth-format');
+    await expect(dialog.getByRole('button', { name: '시작' })).toBeVisible();
+    await expect(dialog.queryByRole('button', { name: '맡기기' })).toBeNull();
   },
 };
 /**

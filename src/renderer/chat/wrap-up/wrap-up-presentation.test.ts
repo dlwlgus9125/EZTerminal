@@ -6,7 +6,10 @@ import { aiLines, outcomeText, taskCountText } from './wrap-up-presentation';
 
 const ko = chatCopy('ko');
 const en = chatCopy('en');
-const start = { where: { kind: 'new-worktree', branch: 'suggest/fix-auth' }, settings: 'Claude · Opus 5.5' } as const;
+const start = {
+  where: { kind: 'new-worktree', branch: 'suggest/fix-auth' }, settings: 'Claude · Opus 5.5',
+  agent: { providerId: 'claude', permissionPreset: 'standard' },
+} as const;
 
 function tasks(outcomes: readonly SuggestedTaskOutcome[]): SuggestedTaskState[] {
   return outcomes.map((outcome, index) => ({ id: String(index), title: 'Task', rationale: 'Why', prompt: 'Do it', outcome }));
@@ -32,9 +35,10 @@ describe('taskCountText', () => {
 });
 
 describe('outcomeText', () => {
-  it('says where a failed start tried', () => {
-    expect(outcomeText({ kind: 'start-failed', reason: 'No space', start }, ko)).toBe('시작하지 못함 · 새 워크트리 suggest/fix-auth');
-    expect(outcomeText({ kind: 'start-failed', reason: 'Limit', start: { ...start, where: { kind: 'this-folder' } } }, ko)).toBe('시작하지 못함');
+  it('says where a failed start tried, a new worktree or this folder by name, in the same way', () => {
+    expect(outcomeText({ kind: 'start-failed', reason: 'No space', start }, ko, 'cart-kit')).toBe('시작하지 못함 · 새 워크트리 suggest/fix-auth');
+    expect(outcomeText({ kind: 'start-failed', reason: 'Limit', start: { ...start, where: { kind: 'this-folder' } } }, ko, 'cart-kit')).toBe('시작하지 못함 · 이 폴더 (cart-kit)');
+    expect(outcomeText({ kind: 'start-failed', reason: 'Limit', start: { ...start, where: { kind: 'this-folder' } } }, en, 'cart-kit')).toBe('Couldn’t start · this folder (cart-kit)');
   });
 });
 

@@ -297,8 +297,9 @@ const EN = {
     reopen: 'Reopen',
     retry: 'Try again',
     retryRename: 'Rename and retry…',
-    /** The start form's title on this path. */
+    /** The start form's title and button on this path. */
     startForm: 'Start suggested task',
+    startFormSubmit: 'Start',
     openChild: 'Open the sub-conversation',
     startAll: (count: number): string => `Start all (${count})`,
     dropped: (count: number, limit: number): string => `${count} more ${count === 1 ? 'suggestion was' : 'suggestions were'} not accepted (${limit} per turn).`,
@@ -311,8 +312,8 @@ const EN = {
       queued: 'Queued',
       queuedAt: (position: number): string => `Queued · ${ordinal(position)}`,
       dismissed: 'Dismissed',
-      startFailed: 'Couldn’t start',
       startFailedIn: (branch: string): string => `Couldn’t start · new worktree ${branch}`,
+      startFailedHere: (name: string): string => `Couldn’t start · this folder (${name})`,
     },
     foundOutside: 'found outside its task',
     /** A task's button by name: the visible label first, then which task (several tasks share the label). */
@@ -631,6 +632,7 @@ const KO: typeof EN = {
     retry: '다시 시도',
     retryRename: '이름 바꿔 다시 시도…',
     startForm: '제안 작업 시작',
+    startFormSubmit: '시작',
     openChild: '하위 대화 열기',
     startAll: (count: number): string => `모두 시작 (${count})`,
     dropped: (count: number, limit: number): string => `그 밖의 제안 ${count}개는 받지 않았습니다 (한 턴에 ${limit}개까지).`,
@@ -643,8 +645,8 @@ const KO: typeof EN = {
       queued: '대기열에 넣음',
       queuedAt: (position: number): string => `대기열에 넣음 · ${position}번째`,
       dismissed: '무시함',
-      startFailed: '시작하지 못함',
       startFailedIn: (branch: string): string => `시작하지 못함 · 새 워크트리 ${branch}`,
+      startFailedHere: (name: string): string => `시작하지 못함 · 이 폴더 (${name})`,
     },
     foundOutside: '맡은 일 밖에서 찾음',
     named: (label: string, title: string): string => `${label}: ${title}`,

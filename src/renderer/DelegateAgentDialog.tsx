@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 
-import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { sameChatAgentSettings, type ChatAgentProfile, type ChatAgentSettings } from '../shared/chat-agent-profiles';
 import { permissionPresetLabel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
 import { Button, Dialog, Field, Input, Select } from './ui';
@@ -18,13 +18,13 @@ export type DelegateWorkspaceChoice =
   | { readonly kind: 'existing'; readonly workspaceId: string }
   | { readonly kind: 'new-worktree'; readonly branch: string };
 
-export interface DelegateAgentRequest {
-  readonly profileId: string;
+/** What starts: a saved profile, or (a start being repeated that no profile says) exactly these settings. */
+export type DelegateAgentRequest = {
   readonly workspace: DelegateWorkspaceChoice;
   readonly instruction: string;
   /** Send the child's final answer back to this conversation once. */
   readonly reportBack: boolean;
-}
+} & ({ readonly profileId: string; readonly agent?: undefined } | { readonly agent: ChatAgentSettings; readonly profileId?: undefined });
 
 export interface DelegateAgentDialogProps {
   readonly open: boolean;
@@ -43,13 +43,19 @@ export interface DelegateAgentDialogProps {
   readonly allowNewWorktree?: boolean;
   /** Where it starts when it opens, if not `defaultWorkspaceId` (a suggested task the AI recommends a worktree for). */
   readonly initialWorkspace?: DelegateWorkspaceChoice;
-  /** The profile chosen when it opens, if not the first (a failed start being tried again). */
-  readonly initialProfileId?: string;
+  /**
+   * A start being repeated: what it asked for, and that in words. A saved profile is chosen only if it says exactly the
+   * same; otherwise the form offers these settings as they are and never puts a profile in their place.
+   */
+  readonly initialAgent?: ChatAgentSettings & { readonly label: string };
   /** Instead of the title `mode` gives it. */
   readonly title?: string;
+  /** Instead of the button label `mode` gives it. */
+  readonly submitLabel?: string;
 }
 
 const NEW_WORKTREE = '__new-worktree__';
+const AS_ASKED = '__as-asked__';
 const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
 
 /**
@@ -59,7 +65,7 @@ const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
  */
 export function DelegateAgentDialog({
   open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles, allowNewWorktree = true,
-  initialWorkspace, initialProfileId, title,
+  initialWorkspace, initialAgent, title, submitLabel,
 }: DelegateAgentDialogProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
@@ -68,7 +74,8 @@ export function DelegateAgentDialog({
   const startWorkspace = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? NEW_WORKTREE
     : initialWorkspace?.kind === 'existing' ? initialWorkspace.workspaceId : defaultWorkspaceId;
   const startBranch = initialWorkspace?.kind === 'new-worktree' && allowNewWorktree ? initialWorkspace.branch : '';
-  const startProfile = profiles.some((entry) => entry.id === initialProfileId) ? initialProfileId! : profiles[0]?.id ?? '';
+  const askedProfile = initialAgent && profiles.find((entry) => sameChatAgentSettings(entry, initialAgent));
+  const startProfile = initialAgent && !askedProfile ? AS_ASKED : (askedProfile ?? profiles[0])?.id ?? '';
   const [profileId, setProfileId] = useState(startProfile);
   const [workspaceId, setWorkspaceId] = useState(startWorkspace);
   const [branch, setBranch] = useState(startBranch);
@@ -88,9 +95,10 @@ export function DelegateAgentDialog({
   }, [open, mode, startProfile, startWorkspace, startBranch, initialInstruction, profiles]);
 
   const profile = profiles.find((entry) => entry.id === profileId);
+  const asAsked = profileId === AS_ASKED ? initialAgent : undefined;
   const newWorktree = workspaceId === NEW_WORKTREE;
   const branchInvalid = newWorktree && !BRANCH.test(branch.trim());
-  const canSubmit = Boolean(profile) && instruction.trim().length > 0 && !branchInvalid && !busy;
+  const canSubmit = Boolean(profile ?? asAsked) && instruction.trim().length > 0 && !branchInvalid && !busy;
   const profileLine = (entry: ChatAgentProfile): string => [
     providerLabels[entry.providerId] ?? entry.providerId,
     entry.model ?? text('기본 모델', 'Default model'),
@@ -100,11 +108,14 @@ export function DelegateAgentDialog({
   ].filter(Boolean).join(' · ');
 
   const submit = async (): Promise<void> => {
-    if (!profile || !canSubmit) return;
+    const who = asAsked
+      ? { agent: { providerId: asAsked.providerId, ...(asAsked.model ? { model: asAsked.model } : {}), ...(asAsked.reasoningEffort ? { reasoningEffort: asAsked.reasoningEffort } : {}), permissionPreset: asAsked.permissionPreset } }
+      : profile ? { profileId: profile.id } : undefined;
+    if (!who || !canSubmit) return;
     setBusy(true);
     setError(undefined);
     const result = await onSubmit({
-      profileId: profile.id,
+      ...who,
       workspace: newWorktree ? { kind: 'new-worktree', branch: branch.trim() } : { kind: 'existing', workspaceId },
       instruction: instruction.trim(),
       reportBack,
@@ -132,20 +143,23 @@ export function DelegateAgentDialog({
         <>
           <Button variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>{text('취소', 'Cancel')}</Button>
           <Button variant="primary" loading={busy} disabled={!canSubmit} onClick={() => void submit()} data-testid="delegate-agent-submit">
-            {mode === 'review' ? text('검토 맡기기', 'Ask for review') : text('맡기기', 'Hand off')}
+            {submitLabel ?? (mode === 'review' ? text('검토 맡기기', 'Ask for review') : text('맡기기', 'Hand off'))}
           </Button>
         </>
       )}
     >
-      {profiles.length === 0 ? (
+      {profiles.length === 0 && !initialAgent ? (
         <div className="delegate-agent-dialog__empty">
           <p>{text('먼저 에이전트 프로필을 만드세요. 어떤 AI·모델·권한으로 시작할지 정해 둡니다.', 'Create an agent profile first: which AI, model and permission to start with.')}</p>
           {onManageProfiles && <Button variant="secondary" size="sm" onClick={onManageProfiles}>{text('프로필 관리', 'Manage profiles')}</Button>}
         </div>
       ) : (
         <div className="delegate-agent-dialog__form">
-          <Field label={text('에이전트 프로필', 'Agent profile')} description={profile ? profileLine(profile) : undefined}>
+          <Field label={text('에이전트 프로필', 'Agent profile')} description={asAsked
+            ? text('저장된 프로필이 아닙니다. 시작하려던 설정 그대로 씁니다.', 'Not a saved profile. It starts with these settings as they are.')
+            : profile ? profileLine(profile) : undefined}>
             <Select value={profileId} onChange={(event) => setProfileId(event.currentTarget.value)} data-testid="delegate-agent-profile">
+              {initialAgent && !askedProfile && <option value={AS_ASKED}>{initialAgent.label}</option>}
               {profiles.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
             </Select>
           </Field>

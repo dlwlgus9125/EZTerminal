@@ -102,6 +102,8 @@ export function Dialog({
       && typeof (activeElement as HTMLElement).focus === 'function'
       ? activeElement as HTMLElement
       : null;
+    // The opener can go with what this dialog starts: the area around it may name what takes focus then.
+    const focusArea = previousFocusRef.current?.closest<HTMLElement>('[data-focus-fallback]');
     const backdrop = panelRef.current?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
     const releaseLayer = backdrop
       ? registerModalLayer(backdrop, portalDocument)
@@ -150,7 +152,11 @@ export function Dialog({
       portalDocument.removeEventListener('keydown', handleKeyDown);
       releaseBackground();
       releaseLayer();
-      ownerWindow.requestAnimationFrame(() => previousFocusRef.current?.focus());
+      ownerWindow.requestAnimationFrame(() => {
+        const opener = previousFocusRef.current;
+        const selector = focusArea?.dataset.focusFallback;
+        (opener?.isConnected === false && selector ? focusArea?.querySelector<HTMLElement>(selector) : opener)?.focus();
+      });
     };
   }, [open, portalDocument]);
 

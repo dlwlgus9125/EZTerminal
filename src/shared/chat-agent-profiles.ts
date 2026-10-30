@@ -20,6 +20,15 @@ export const ChatAgentProfileSchema = z.object({
 
 export type ChatAgentProfile = z.infer<typeof ChatAgentProfileSchema>;
 
+/** What an agent starts with, without its name: the AI, model, effort and permission. */
+export type ChatAgentSettings = Pick<ChatAgentProfile, 'providerId' | 'model' | 'reasoningEffort' | 'permissionPreset'>;
+
+/** Whether two say exactly the same start: all four, where a setting left out is the AI's default. */
+export function sameChatAgentSettings(left: ChatAgentSettings, right: ChatAgentSettings): boolean {
+  return left.providerId === right.providerId && left.permissionPreset === right.permissionPreset
+    && (left.model ?? '') === (right.model ?? '') && (left.reasoningEffort ?? '') === (right.reasoningEffort ?? '');
+}
+
 export const ChatAgentProfileListSchema = z.object({
   version: z.literal(1),
   profiles: z.array(ChatAgentProfileSchema).max(50),

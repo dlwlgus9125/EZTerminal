@@ -29,7 +29,7 @@ const OUTCOME_GLYPH: Readonly<Record<Exclude<SuggestedTaskOutcome['kind'], 'open
 };
 
 /** Says once, politely, what came of a task whose outcome changed (`Fix the… · 시작함`); a card that just appeared says nothing. */
-function useOutcomeAnnouncement(tasks: readonly SuggestedTaskState[], copy: ChatCopy): string {
+function useOutcomeAnnouncement(tasks: readonly SuggestedTaskState[], copy: ChatCopy, folder: string): string {
   const previous = useRef<ReadonlyMap<string, SuggestedTaskOutcome['kind']> | undefined>(undefined);
   const [announcement, setAnnouncement] = useState('');
   const signature = tasks.map((task) => `${task.id}:${task.outcome.kind}`).join('|');
@@ -39,7 +39,7 @@ function useOutcomeAnnouncement(tasks: readonly SuggestedTaskState[], copy: Chat
     if (!before) return;
     const changed = tasks.filter((task) => before.has(task.id) && before.get(task.id) !== task.outcome.kind);
     if (!changed.length) return;
-    setAnnouncement(changed.map((task) => copy.taskSuggestions.announce(task.title, outcomeText(task.outcome, copy) || copy.taskSuggestions.reopen)).join(', '));
+    setAnnouncement(changed.map((task) => copy.taskSuggestions.announce(task.title, outcomeText(task.outcome, copy, folder) || copy.taskSuggestions.reopen)).join(', '));
     // The signature is the tasks' outcomes; the array itself is new on every update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
@@ -73,7 +73,7 @@ function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'inde
   const viaForm = !phone && (decisions.taskStart === 'dialog' || task.worktree === true);
   const act = (kind: PlainTaskAction) => (): void => {
     onAction?.({ kind, turnId: suggestions.turnId, taskId: task.id });
-    // The start form takes focus and hands it back to this button, which stays.
+    // The start form takes focus and hands it back to this button; once the task started, to its title (data-focus-fallback).
     if (kind !== 'task-start-custom') focusAfterAction(titleRef);
   };
   /** Exactly the start that failed: the same place, branch and settings, never the defaults. */
@@ -100,7 +100,7 @@ function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'inde
   ] : startedSession && context.onOpenRelated ? [
     { kind: 'open-child', label: copy.taskSuggestions.openChild, emphasis: 'link', run: () => context.onOpenRelated?.(startedSession) },
   ] : [];
-  const said = outcomeText(outcome, copy);
+  const said = outcomeText(outcome, copy, context.taskStart?.folder ?? '');
   const status = said && (
     <span className="chat-task__outcome" data-outcome={outcome.kind} data-testid="chat-task-outcome">
       {outcome.kind !== 'open' && <Glyph name={OUTCOME_GLYPH[outcome.kind]} className={outcome.kind === 'starting' || outcome.kind === 'sending' ? 'chat-spin' : undefined} />}
@@ -161,7 +161,7 @@ function BubbleTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.E
   const prompt = usePromptToggle(suggestions, task);
   const phone = context.taskStart?.phone === true;
   return (
-    <li className="chat-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-testid="chat-task">
+    <li className="chat-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-focus-fallback="[data-task-title]" data-testid="chat-task">
       <div className="chat-task__head">
         <span className="chat-task__index" aria-hidden="true">{index + 1}</span>
         <p ref={titleRef} className="chat-task__title" tabIndex={-1} data-task-title=""><InlineCode text={task.title} /></p>
@@ -192,7 +192,7 @@ function CliTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.Elem
   const prompt = usePromptToggle(suggestions, task);
   const phone = context.taskStart?.phone === true;
   return (
-    <li className="chat-cli-result chat-cli-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-testid="chat-task">
+    <li className="chat-cli-result chat-cli-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-focus-fallback="[data-task-title]" data-testid="chat-task">
       <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
       <div className="chat-cli-result__body">
         <span className="chat-cli-result__line">
@@ -233,12 +233,12 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
   const provider = providerName(suggestions.providerId);
   const cli = context.skin === 'cli';
   const phone = context.taskStart?.phone === true;
-  const announcement = useOutcomeAnnouncement(suggestions.tasks, copy);
+  const folder = context.taskStart?.folder ?? '';
+  const announcement = useOutcomeAnnouncement(suggestions.tasks, copy, folder);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const openTasks = suggestions.tasks.filter((task) => task.outcome.kind === 'open');
   const settings = context.taskStart?.settings;
-  const folder = context.taskStart?.folder ?? '';
   // D5: the line says exactly what one click starts; with the form (b) the form says it instead.
   const defaults = settings && (decisions.taskStart === 'one-click' || phone)
     ? copy.taskSuggestions.defaults(`${settings} · ${copy.taskSuggestions.thisFolder(folder)}`) : undefined;

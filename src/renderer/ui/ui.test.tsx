@@ -325,6 +325,20 @@ function RerenderingDialogHarness(): JSX.Element {
   );
 }
 
+function VanishingOpenerHarness(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [done, setDone] = useState(false);
+  return (
+    <div data-focus-fallback="[data-testid='vanishing-title']">
+      <p data-testid="vanishing-title" tabIndex={-1}>Task</p>
+      {!done && <button type="button" data-testid="vanishing-opener" onClick={() => setOpen(true)}>Start…</button>}
+      <Dialog open={open} onOpenChange={setOpen} title="Start">
+        <button type="button" data-testid="vanishing-confirm" onClick={() => { setDone(true); setOpen(false); }}>Start</button>
+      </Dialog>
+    </div>
+  );
+}
+
 describe('modal and feedback semantics', () => {
   it('focuses the safe dialog action, closes with Escape, and restores opener focus', () => {
     render(<DialogHarness />);
@@ -341,6 +355,22 @@ describe('modal and feedback semantics', () => {
     expect(container.hasAttribute('inert')).toBe(false);
     expect(container.hasAttribute('aria-hidden')).toBe(false);
     expect(document.activeElement).toBe(opener);
+  });
+
+  it('hands focus to what the opener declared when the opener went with the action it started', () => {
+    render(<VanishingOpenerHarness />);
+    const opener = (): HTMLButtonElement | null => container.querySelector<HTMLButtonElement>('[data-testid="vanishing-opener"]');
+    const title = container.querySelector<HTMLElement>('[data-testid="vanishing-title"]')!;
+    // Cancelled: the opener is still there and takes focus back.
+    opener()!.focus();
+    act(() => opener()!.click());
+    press(document, 'Escape');
+    expect(document.activeElement).toBe(opener());
+    // Done: the action replaced the opener, so the title the area named takes focus.
+    act(() => opener()!.click());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="vanishing-confirm"]')!.click());
+    expect(opener()).toBeNull();
+    expect(document.activeElement).toBe(title);
   });
 
   it('lets only the topmost nested dialog trap focus and consume Escape', () => {
