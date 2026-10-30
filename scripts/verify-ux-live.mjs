@@ -20,6 +20,11 @@
  * the review loop needs the versions installed now, not the copy's).
  *
  * Output: artifacts/ux-overhaul/<stage>-live/*.png and live-report.json, or --output (relative to the repository)
+ *
+ * --entry=<main.js> runs a private copy of the build, so a rebuild of .vite cannot break a long run.
+ * --tap watches the real providers from outside the product (scripts/live-provider-tap.cjs): Claude's api_request
+ * telemetry and Codex's JSON-RPC stream, in <output>/tap. The turn wrap-up scenarios need it.
+ * --no-pause starts with 한도 근처 멈춤 off; --force-pause writes a 95% reading and keeps real ones from replacing it.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -28,16 +33,19 @@ import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
 import { liveReportVerdict } from './live-report-verdict.mjs';
 import { createReviewRepo, EXPECTED_ANCHORS, repoFingerprint, sameFingerprint } from './review-probe-repo.mjs';
+import { claudeCalls, claudeRequests, claudeStream, claudeTurnStarts, codexForks, codexTurns, startTelemetry, tapRecords } from './wrap-up-live-measures.mjs';
 
 const { _electron: electron } = playwright;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAIN_ENTRY = path.join(ROOT, '.vite', 'build', 'main.js');
 const [stage, ...rest] = process.argv.slice(2);
+const entryArg = rest.find((arg) => arg.startsWith('--entry='))?.slice('--entry='.length);
+const MAIN_ENTRY = entryArg ? path.resolve(ROOT, entryArg) : path.join(ROOT, '.vite', 'build', 'main.js');
 const appearance = rest.find((arg) => arg.startsWith('--appearance='))?.slice('--appearance='.length) ?? 'dark';
 const only = rest.filter((arg) => !arg.startsWith('--'));
 /** Skipped scenarios (provider not ready, prerequisite missing) fail the run unless this is passed. */
 const allowSkips = rest.includes('--allow-skips');
 const enableProviders = rest.includes('--enable-providers');
+const tapProviders = rest.includes('--tap');
 if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: verify-ux-live.mjs <stage> [scenario...]');
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 if (!existsSync(profile)) throw new Error(`Run capture-ux-overhaul.mjs ${stage} first: ${profile} is missing.`);
@@ -217,6 +225,44 @@ const ALL_SCENARIOS = [
   { name: 'review-comments-send', run: (page, project, report) => runCommentsSend(page, report) },
   // A worktree conversation: Results compares with the base branch, and a review of the branch since main.
   { name: 'results-base-branch', run: (page, project, report) => runBaseBranch(page, report) },
+  // Turn wrap-up (turn-wrap-up-v1), watched from outside with --tap.
+  { name: 'claude-suggestion', run: (page, project, report) => runSuggestion(page, report, 'claude') },
+  { name: 'codex-suggestion', run: (page, project, report) => runSuggestion(page, report, 'codex') },
+  { name: 'claude-recap-unviewed', run: (page, project, report) => runRecapUnviewed(page, report, 'claude') },
+  { name: 'codex-recap-unviewed', run: (page, project, report) => runRecapUnviewed(page, report, 'codex') },
+  { name: 'recap-not-while-viewed', run: (page, project, report) => runRecapViewed(page, report) },
+  // The top item: a turn stopped on the person while no screen shows it, then answered, and the turn runs on.
+  { name: 'claude-recap-waiting', run: (page, project, report) => runRecapWaiting(page, report, 'claude-recap-waiting', 'claude', WAITING_TURNS.claudeApproval) },
+  { name: 'codex-recap-waiting', run: (page, project, report) => runRecapWaiting(page, report, 'codex-recap-waiting', 'codex', WAITING_TURNS.codexApproval) },
+  { name: 'claude-recap-waiting-question', run: (page, project, report) => runRecapWaiting(page, report, 'claude-recap-waiting-question', 'claude', WAITING_TURNS.claudeQuestion) },
+  { name: 'codex-recap-waiting-question', run: (page, project, report) => runRecapWaiting(page, report, 'codex-recap-waiting-question', 'codex', WAITING_TURNS.codexQuestion) },
+  { name: 'claude-recap-waiting-plan', run: (page, project, report) => runRecapWaiting(page, report, 'claude-recap-waiting-plan', 'claude', WAITING_TURNS.claudePlan) },
+  { name: 'codex-recap-waiting-plan', run: (page, project, report) => runRecapWaiting(page, report, 'codex-recap-waiting-plan', 'codex', WAITING_TURNS.codexPlan) },
+  // The AI proposes on its own: nothing in the prompt names the tool.
+  { name: 'claude-suggest-task-start', run: (page, project, report) => runSuggestTaskStart(page, report, 'claude') },
+  { name: 'codex-suggest-task-start', run: (page, project, report) => runSuggestTaskStart(page, report, 'codex') },
+  { name: 'task-here-queued', run: (page, project, report) => runTaskHereQueued(page, report) },
+  { name: 'task-start-all-worktree', run: (page, project, report) => runTaskStartAllWorktree(page, report) },
+  // Ten calls asked for outright: the cap as real AIs meet it, then 모두 시작 on the eight it kept.
+  { name: 'claude-task-cap-eight', run: (page, project, report) => runTaskCapEight(page, report, 'claude') },
+  { name: 'codex-task-cap-eight', run: (page, project, report) => runTaskCapEight(page, report, 'codex') },
+  // Turns no person sent: nothing automatic follows, and the next person turn keeps its cache.
+  { name: 'claude-heartbeat', run: (page, project, report) => runHeartbeat(page, report, 'claude') },
+  { name: 'codex-heartbeat', run: (page, project, report) => runHeartbeat(page, report, 'codex') },
+  { name: 'claude-report-back', run: (page, project, report) => runReportBack(page, report, 'claude') },
+  { name: 'codex-report-back', run: (page, project, report) => runReportBack(page, report, 'codex') },
+  { name: 'eligibility-reviewer', run: (page, project, report) => runEligibilityReviewer(page, report) },
+  { name: 'eligibility-advisor', run: (page, project, report) => runEligibilityAdvisor(page, report) },
+  { name: 'claude-settings-switches', run: (page, project, report) => runSettingsSwitches(page, report, 'claude') },
+  { name: 'codex-settings-switches', run: (page, project, report) => runSettingsSwitches(page, report, 'codex') },
+  // Needs --force-pause, which writes a danger-level usage reading into the profile before the launch.
+  { name: 'settings-paused', run: (page, project, report) => runPaused(page, report) },
+  { name: 'viewing-matrix', run: (page, project, report) => runViewingMatrix(page, report, project) },
+  // Run last: it closes the window.
+  { name: 'keep-running-close', run: (page, project, report) => runKeepRunningClose(page, report) },
+  // Upgrade: seeded by the build before this feature (--entry), continued by this one, twice with a restart between.
+  { name: 'existing-seed', run: (page, project, report) => runExistingSeed(page, report) },
+  { name: 'existing-continue', run: (page, project, report) => runExistingContinue(page, report) },
 ];
 const SCENARIOS = ALL_SCENARIOS.filter((scenario) => only.length === 0 || only.includes(scenario.name));
 const unknownScenarios = only.filter((name) => !ALL_SCENARIOS.some((scenario) => scenario.name === name));
@@ -1131,14 +1177,14 @@ async function closeSideTabs(page) {
 }
 
 /** A conversation that has answered once (a same-AI review forks its provider session). */
-async function startConversation(page, { providerId, projectId, workspaceId, root, title, permissionPreset }) {
+async function startConversation(page, { providerId, projectId, workspaceId, root, title, permissionPreset, initialPrompt }) {
   const ready = await poll(() => snapshot(page), (snap) => snap.providers.some((entry) => entry.id === providerId && entry.enabled && entry.health === 'ready'), 90_000, `${providerId} ready`).then(() => true, () => false);
   if (!ready) throw new Error(`${providerId} is not enabled and ready`);
   const sessionId = `ux-live-review-${providerId}-${Date.now().toString(36)}`;
   const created = await command(page, 'agent.create', {
     sessionId, workspaceId, title, providerId, permissionPreset,
     // No tools in the first turn: this PC's Codex shell commands hang under the workspace-write sandbox.
-    initialPrompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
+    initialPrompt: initialPrompt ?? '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
   });
   if (!created?.ok) throw new Error(`agent.create failed ${JSON.stringify(created)}`);
   const conversation = { providerId, sessionId, panelId: `agent-session-${SESSION_PREFIX}${sessionId}`, title, projectId, workspaceId, root };
@@ -1726,6 +1772,1236 @@ async function runBaseBranch(page, report) {
   if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
 }
 
+// ── Turn wrap-up (turn-wrap-up-v1) ───────────────────────────────────────────
+// What only real providers show. A scenario's facts come from outside the product where they can (the tap's
+// telemetry and JSON-RPC stream, the transcript, the repository); what the screen shows comes from the window.
+
+const WRAP_UP_DONE = new Set(['complete', 'failed']);
+const recapRows = (items) => items.filter((item) => item.payload?.type === 'recap');
+const taskRows = (items) => items.filter((item) => item.payload?.type === 'task-suggestion');
+const tapNow = () => tapRecords(tapDir);
+const sessionPanel = (page, sessionId) => page.locator(`[data-testid="structured-agent-session"][data-session-id="${sessionId}"]`);
+
+function requireTap() {
+  if (!telemetry) throw new Error('This scenario needs --tap.');
+}
+
+/** Earlier scenarios' conversations and Results tabs leave the dock, so "the tab behind" and "the visible chat" mean this scenario's. */
+async function clearDock(page) {
+  await page.evaluate(() => {
+    for (const panel of [...(window.__ezDock?.panels ?? [])]) {
+      if (panel.id.startsWith('agent-results-') || panel.id.startsWith('agent-session-')) panel.api.close();
+    }
+  });
+  await wait(600);
+}
+
+/** A conversation on its own cart kit, answered once. A kit key is one folder per scenario, so repositories stay readable afterwards. */
+async function wrapUpConversation(page, providerId, key, { preset = 'standard', prompt, title, clean = false } = {}) {
+  await clearDock(page);
+  const project = await cartProject(page, key, { clean });
+  return startConversation(page, {
+    providerId, projectId: project.projectId, workspaceId: project.workspaceId, root: project.root,
+    title: title ?? `${key} · ${providerLabel(providerId)}`, permissionPreset: preset, ...(prompt ? { initialPrompt: prompt } : {}),
+  });
+}
+
+async function ensureOnScreen(page, conversation) {
+  const panel = await showConversation(page, conversation);
+  await poll(() => page.evaluate(() => document.documentElement.getAttribute('data-runtime-tier')), (tier) => tier === 'active', 10_000, 'window focused').catch(async () => {
+    await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window?.show(); window?.focus(); });
+    await poll(() => page.evaluate(() => document.documentElement.getAttribute('data-runtime-tier')), (tier) => tier === 'active', 10_000, 'window focused after focus()');
+  });
+  return panel;
+}
+
+/** A message as a person sends it, and its turn under way. */
+async function say(page, panel, sessionId, text) {
+  const before = turnsOfSession(await snapshot(page), sessionId).length;
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill(text);
+  await poll(() => panel.getByTestId('structured-agent-send').isEnabled().catch(() => false), Boolean, 30_000, 'send enabled');
+  await input.press('Enter');
+  await poll(() => snapshot(page), (snap) => turnsOfSession(snap, sessionId).length > before, 30_000, 'turn started');
+  return before + 1;
+}
+
+const finishedAt = (snap, sessionId) => Date.parse(turnsOfSession(snap, sessionId).at(-1)?.finishedAt ?? '');
+
+/** The next-message guess of the last turn: when it reached the snapshot and the window, or nothing within `timeoutMs`. */
+async function awaitSuggestion(page, panel, sessionId, timeoutMs) {
+  const settled = await snapshot(page);
+  const endedAt = finishedAt(settled, sessionId);
+  const ghost = panel.getByTestId('structured-agent-suggestion').locator('.chat-composer__ghost-text');
+  const deadline = Date.now() + timeoutMs;
+  const seen = {};
+  while (Date.now() < deadline) {
+    const snap = await snapshot(page);
+    const suggestion = snap.nextPromptSuggestions?.[sessionId];
+    if (suggestion && !seen.snapshot) { seen.snapshot = Date.now(); seen.text = suggestion.text; seen.turnId = suggestion.turnId; }
+    if (!seen.ghost && await ghost.count()) { seen.ghost = Date.now(); seen.ghostText = (await ghost.first().textContent())?.trim(); }
+    if (seen.snapshot && seen.ghost) break;
+    await wait(200);
+  }
+  return {
+    text: seen.text, ghostText: seen.ghostText, turnId: seen.turnId,
+    toSnapshotMs: seen.snapshot ? seen.snapshot - endedAt : null, toGhostMs: seen.ghost ? seen.ghost - endedAt : null,
+  };
+}
+
+const CLAUDE_SUGGESTION_TURNS = [
+  'src/format.ts를 읽고 formatPrice가 무엇을 하는지 두 문장으로 설명해 줘. 파일은 수정하지 마.',
+  '도구는 쓰지 말고: 그 함수에서 음수 금액은 어떻게 표시될지 한 문장으로 말해 줘.',
+  '도구는 쓰지 말고: 고칠 곳이 있다면 어디인지 한 줄로만 알려 줘. 아직 고치지는 마.',
+];
+const CODEX_SUGGESTION_TURNS = [
+  '도구는 쓰지 말고 파일도 읽지 말고: 금액을 센트로 저장할 때 흔한 실수 두 가지를 한 문장씩 말해 줘.',
+  '도구는 쓰지 말고: 그중 음수 금액과 관련된 실수는 뭐야? 한 문장으로.',
+  '좋아, 고마워. 그 정도면 충분해. 도구는 쓰지 말고 "알겠습니다"라고만 답해 줘.',
+  '도구는 쓰지 말고: 고마워, 이 주제는 여기서 끝. "네"라고만 답해 줘.',
+];
+
+/** Ghost text after a real turn, Tab fills and sends nothing, a `(none)` shows nothing; timed from the turn's end. */
+async function runSuggestion(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-suggestion`;
+  const conversation = await wrapUpConversation(page, providerId, name, {
+    prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 금액 표시 코드를 살펴볼 거야.',
+  });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const turns = [];
+  const problems = [];
+  let filled = false;
+  for (const text of providerId === 'claude' ? CLAUDE_SUGGESTION_TURNS : CODEX_SUGGESTION_TURNS) {
+    const count = await say(page, panel, sessionId, text);
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 240_000, `${name} turn ${count}`);
+    const seen = await awaitSuggestion(page, panel, sessionId, providerId === 'claude' ? 20_000 : 50_000);
+    const turnFacts = { turn: count, ...seen };
+    if (seen.text && seen.text !== seen.ghostText) problems.push(`turn ${count}: the window shows "${seen.ghostText}", the host holds "${seen.text}"`);
+    if (seen.text && !filled) {
+      filled = true;
+      await shootSurface(page, panel, `${name}-ghost`, report);
+      const input = panel.getByTestId('structured-agent-composer-input');
+      const before = turnsOfSession(await snapshot(page), sessionId).length;
+      await input.click();
+      await input.press('Tab');
+      await wait(400);
+      turnFacts.afterTab = { value: await input.inputValue(), focused: await input.evaluate((node) => document.activeElement === node) };
+      await shootSurface(page, panel, `${name}-filled`, report);
+      await wait(1500);
+      turnFacts.afterTab.sentSomething = turnsOfSession(await snapshot(page), sessionId).length !== before;
+      if (turnFacts.afterTab.value !== seen.text) problems.push(`Tab filled "${turnFacts.afterTab.value}", not the guess`);
+      if (turnFacts.afterTab.sentSomething) problems.push('Tab sent a message');
+      await input.fill('');
+    }
+    turns.push(turnFacts);
+  }
+  await wait(2500);
+  const facts = { sessionId, turns, providerSessionId: agentOf(await snapshot(page), sessionId)?.providerSessionId };
+  if (providerId === 'claude') {
+    const requests = claudeRequests(telemetry, facts.providerSessionId);
+    facts.requests = requests.length;
+    facts.suggestionCalls = claudeCalls(requests, 'prompt_suggestion').map(({ at, source, model, ...rest }) => rest);
+    facts.messages = claudeStream(tapNow(), facts.providerSessionId).filter((record) => record.data?.type === 'prompt_suggestion').map((record) => record.data.suggestion);
+    if (!facts.suggestionCalls.length) problems.push('no prompt_suggestion request reached the telemetry');
+  } else {
+    facts.forks = codexForks(tapNow()).filter((fork) => fork.sourceThreadId === facts.providerSessionId);
+    const predict = facts.forks.filter((fork) => fork.purpose === 'predict');
+    if (!predict.length) problems.push('no predict fork reached the app-server');
+    if (predict.some((fork) => fork.effort !== 'low' || fork.sandbox !== 'read-only' || fork.ephemeral !== true || fork.approvalPolicy !== 'never')) problems.push('a predict fork ran with other settings');
+    facts.none = predict.filter((fork) => /^\(?none\)?\.?$/iu.test(fork.answer.trim())).length;
+    // Each (none) must leave a turn with nothing in the box.
+    if (turns.filter((entry) => entry.toSnapshotMs === null).length !== facts.none) problems.push(`${facts.none} (none) forks, turns ${JSON.stringify(turns)}`);
+    if (turnsOfSession(await snapshot(page), sessionId).some((turn) => turn.state !== 'completed')) problems.push('a turn did not complete');
+  }
+  if (!turns.some((turn) => turn.text)) problems.push('no suggestion in any turn');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const viewingReports = () => tapNow().filter((record) => record.viewing);
+const lastViewing = () => viewingReports().at(-1)?.viewing ?? [];
+
+/** No screen shows the conversation: its tab goes behind another, and the window's own report says so. */
+async function park(page, conversation) {
+  const moved = await page.evaluate((id) => {
+    const dock = window.__ezDock;
+    const own = dock?.getPanel(id);
+    const other = dock?.panels.find((panel) => panel.id !== id && panel.group === own?.group);
+    other?.api.setActive();
+    return Boolean(other);
+  }, conversation.panelId);
+  if (!moved) throw new Error('No other tab to put in front of the conversation.');
+  await poll(async () => lastViewing(), (viewing) => !viewing.includes(conversation.sessionId), 10_000, 'the window reporting the conversation off screen');
+}
+
+/** The recap of a turn, once it ended either way; undefined if none came. */
+async function awaitRecap(page, sessionId, turnId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = recapRows(await transcriptOf(page, sessionId)).filter((item) => !turnId || item.payload.turnId === turnId);
+    const done = rows.filter((item) => WRAP_UP_DONE.has(item.payload.state));
+    if (done.length) return { rows, recap: done.at(-1).payload, doneAt: Date.parse(done.at(-1).createdAt), startAt: Date.parse(rows[0].createdAt) };
+    if (Date.now() > deadline) return { rows };
+    await wait(700);
+  }
+}
+
+const rowFacts = (rows) => rows.map((item) => ({ state: item.payload.state, trigger: item.payload.trigger, waiting: item.payload.waiting, failure: item.payload.failure }));
+
+/** What Claude's telemetry or Codex's stream say about the recap calls of this conversation. */
+function recapCallFacts(conversation, providerSessionId) {
+  if (conversation.providerId === 'claude') {
+    const requests = claudeRequests(telemetry, providerSessionId);
+    return { calls: claudeCalls(requests, 'side_question').map(({ at, source, model, ...rest }) => rest) };
+  }
+  const forks = codexForks(tapNow()).filter((fork) => fork.sourceThreadId === providerSessionId);
+  return { calls: forks.filter((fork) => fork.purpose === 'recap').map(({ at, threadId, sourceThreadId, ...rest }) => rest), predictForks: forks.filter((fork) => fork.purpose === 'predict').map((fork) => ({ tookMs: fork.tookMs, answer: fork.answer, ratio: fork.ratio, status: fork.status, interrupted: fork.interrupted })) };
+}
+
+function gitChanged(root) {
+  return execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).split(/\r?\n/u).filter(Boolean).map((line) => line.slice(3));
+}
+
+const finalMessage = (items) => items.filter((item) => item.kind === 'assistant-message' && !item.isDelta).map((item) => item.text).at(-1) ?? '';
+
+/** One real edit with no screen on it: one recap, faithful to what happened. */
+async function runRecapUnviewed(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-recap-unviewed`;
+  // Full access in the scratch kit: an unattended turn with nothing to answer; Codex cannot edit under Standard on this PC.
+  const conversation = await wrapUpConversation(page, providerId, name, { preset: 'full-access', prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 금액 표시를 고칠 거야.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const before = gitChanged(conversation.root);
+  // Codex reads files with commands, which full access lets it run; Claude has its own tools.
+  const count = await say(page, panel, sessionId, `src/format.ts의 formatPrice가 금액을 10배로 보여 줘. 그 파일만 고쳐 줘. ${providerId === 'claude' ? '명령은 실행하지 말고, ' : '테스트는 실행하지 말고, '}질문 없이 끝까지 한 뒤 고친 내용을 한 문장으로 말해 줘.`);
+  await park(page, conversation);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 300_000, `${name} turn`);
+  const turn = turnsOfSession(settled, sessionId).at(-1);
+  const endedAt = Date.parse(turn.finishedAt);
+  if (providerId === 'codex') {
+    await poll(async () => recapRows(await transcriptOf(page, sessionId)).filter((item) => item.payload.turnId === turn.id).length, (rows) => rows > 0, 20_000, `${name} generating row`);
+    const writing = sessionPanel(page, sessionId).getByTestId('chat-recap-line');
+    await showConversation(page, conversation);
+    await wait(300);
+    await page.screenshot({ path: path.join(output, `${name}-generating-matrix.png`) });
+    report.push({ shot: `${name}-generating`, files: [`${name}-generating-matrix.png`], line: await textOf(writing) });
+    await park(page, conversation);
+  }
+  const seen = await awaitRecap(page, sessionId, turn.id, 150_000);
+  const items = await transcriptOf(page, sessionId);
+  await wait(12_000);
+  const again = recapRows(await transcriptOf(page, sessionId)).filter((item) => item.payload.turnId === turn.id);
+  await ensureOnScreen(page, conversation);
+  await wait(1000);
+  const card = sessionPanel(page, sessionId).getByTestId('chat-recap-card');
+  await shootSurface(page, panel, `${name}-card`, report, card);
+  const snap = await snapshot(page);
+  const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+  const facts = {
+    sessionId, turnState: turn.state, trigger: seen.recap?.trigger, state: seen.recap?.state, failure: seen.recap?.failure, recapText: seen.recap?.text,
+    rows: rowFacts(again), startAfterEndMs: seen.startAt ? seen.startAt - endedAt : null, doneAfterEndMs: seen.doneAt ? seen.doneAt - endedAt : null,
+    cardText: await textOf(card), final: finalMessage(items), changedBefore: before, changedAfter: gitChanged(conversation.root),
+    fixed: readFileSync(path.join(conversation.root, 'src', 'format.ts'), 'utf8').includes('cents / 100'),
+    suggestion: snap.nextPromptSuggestions?.[sessionId]?.text, ...recapCallFacts(conversation, providerSessionId),
+  };
+  const problems = [];
+  if (!facts.fixed) problems.push('the AI did not make the fix, so the recap was not tested against real work');
+  if (seen.recap?.state !== 'complete') problems.push(`recap ${seen.recap?.state ?? 'never came'} ${seen.recap?.failure ?? ''}`);
+  if (seen.recap?.trigger !== 'unattended') problems.push(`trigger ${seen.recap?.trigger}`);
+  if (again.length !== 2) problems.push(`${again.length} recap rows for the turn`);
+  if (facts.calls.length !== 1) problems.push(`${facts.calls.length} recap calls`);
+  if (!/format/u.test(seen.recap?.text ?? '')) problems.push('the recap does not name the file it changed');
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** The window keeps the conversation on screen through the turn's end and past the settling: no recap call, on either AI. */
+async function runRecapViewed(page, report) {
+  requireTap();
+  const name = 'recap-not-while-viewed';
+  const problems = [];
+  const results = [];
+  for (const providerId of ['claude', 'codex']) {
+    const conversation = await wrapUpConversation(page, providerId, `${name}-${providerId}`, { prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 금액 표시를 살펴볼 거야.' });
+    const { sessionId } = conversation;
+    const panel = await ensureOnScreen(page, conversation);
+    await wait(600);
+    const from = Date.now();
+    const count = await say(page, panel, sessionId, '도구는 쓰지 말고: 금액을 센트로 다룰 때 좋은 점을 두 문장으로 말해 줘.');
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 180_000, `${name} ${providerId} turn`);
+    await wait(9_000);
+    const reports = viewingReports().filter((record) => record.at >= from);
+    const held = lastViewing().includes(sessionId) && reports.every((record) => record.viewing.includes(sessionId));
+    const rows = recapRows(await transcriptOf(page, sessionId));
+    const providerSessionId = agentOf(await snapshot(page), sessionId)?.providerSessionId;
+    const facts = { providerId, sessionId, windowHeldIt: held, reports: reports.length, recapRows: rows.length, ...recapCallFacts(conversation, providerSessionId) };
+    if (!held) problems.push(`${providerId}: the window lost the conversation during the turn, so this run proved nothing`);
+    if (rows.length || facts.calls.length) problems.push(`${providerId}: ${rows.length} recap rows, ${facts.calls.length} calls while viewed`);
+    results.push(facts);
+  }
+  report.push({ scenario: name, results, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const ON_THE_WAY = '그다음 도구는 쓰지 말고 1부터 40까지 숫자를 한 줄에 하나씩 적고, 마지막 줄에 "끝"이라고 적어 줘.';
+const WAITING_TURNS = {
+  claudeApproval: {
+    kind: 'approval',
+    prompt: `src/format.ts의 formatPrice가 금액을 10배로 보여 줘. Edit 도구로 고쳐 줘. 고친 뒤 notes.md를 Write 도구로 만들어 바꾼 내용을 한 줄 적어 줘. ${ON_THE_WAY}`,
+  },
+  codexApproval: {
+    // Standard on this PC: a command run in the sandbox hangs, so the command asks for escalation first and only runs once allowed.
+    kind: 'approval',
+    prompt: `셸 명령 하나를 실행해 줘: node -e "console.log(40+2)". 이 PC의 샌드박스에서는 명령이 멈추니, 처음부터 sandbox_permissions를 require_escalated로 해서 내 승인을 요청하고, 사유는 "샌드박스에서 멈춤"이라고 적어 줘. 샌드박스 안에서는 실행하지 마. 파일은 읽지도 고치지도 마. 승인받아 실행되면 결과를 한 줄로 알려 주고, ${ON_THE_WAY}`,
+  },
+  claudeQuestion: {
+    kind: 'question',
+    prompt: `AskUserQuestion 도구로 formatPrice의 음수 표시를 "-$1.23"으로 할지 "($1.23)"로 할지 나에게 물어봐(선택지 두 개). 파일은 수정하지 마. 답을 받으면 ${ON_THE_WAY}`,
+  },
+  codexQuestion: {
+    kind: 'question',
+    preset: 'plan',
+    prompt: 'src/format.ts의 formatPrice 음수 표시를 정하려고 해. 먼저 request_user_input 도구로 "-$1.23"과 "($1.23)" 중 무엇으로 할지 나에게 물어봐. 답을 받으면 세 줄짜리 계획을 제안해.',
+  },
+  claudePlan: {
+    kind: 'plan',
+    preset: 'plan',
+    prompt: `src/format.ts의 formatPrice가 금액을 10배로 보여 줘. 고칠 계획을 세 줄로 세우고 ExitPlanMode로 제시해. 승인되면 그대로 고치고, ${ON_THE_WAY}`,
+  },
+  codexPlan: {
+    kind: 'plan',
+    preset: 'plan',
+    prompt: 'src/format.ts의 formatPrice가 금액을 10배로 보여 줘. 질문하지 말고 고칠 계획을 세 줄로 제안해. 아직 고치지는 마.',
+  },
+};
+
+/** Stops on the person with no screen on it; the recap; then the person answers and the turn runs to its end. */
+async function runRecapWaiting(page, report, name, providerId, { kind, preset = 'standard', prompt }) {
+  requireTap();
+  const conversation = await wrapUpConversation(page, providerId, name, { preset, prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 금액 표시를 살펴볼 거야.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const before = gitChanged(conversation.root);
+  const count = await say(page, panel, sessionId, prompt);
+  await park(page, conversation);
+  const stopped = await poll(() => snapshot(page), (snap) => snap.approvals.some((entry) => entry.sessionId === sessionId && entry.state === 'pending'), 240_000, `${name} stop`);
+  const stoppedAt = Date.now();
+  const approval = stopped.approvals.find((entry) => entry.sessionId === sessionId && entry.state === 'pending');
+  const providerSessionId = agentOf(stopped, sessionId)?.providerSessionId;
+  // A plan Codex proposes has no turn of its own: it stops the turn that just ended.
+  const stoppedTurn = approval.turnId ?? turnsOfSession(stopped, sessionId).at(-1)?.id;
+  const seen = await awaitRecap(page, sessionId, stoppedTurn, 150_000);
+  const agentAtRecap = agentOf(await snapshot(page), sessionId);
+  const whileWaiting = { recapText: seen.recap?.text, state: seen.recap?.state, failure: seen.recap?.failure, trigger: seen.recap?.trigger, waiting: seen.recap?.waiting, decisionMatches: seen.recap?.decisionId === approval.id };
+  await ensureOnScreen(page, conversation);
+  await wait(1000);
+  const card = panel.getByTestId('chat-recap-card').last();
+  await shootSurface(page, panel, `${name}-stopped`, report, card);
+  whileWaiting.cardText = await textOf(card);
+  whileWaiting.answerButton = await card.getByTestId('chat-recap-answer').count();
+  const recapCalls = recapCallFacts(conversation, providerSessionId);
+  const answeredAt = Date.now();
+  // Everything after the first request is the turn running on; the person keeps answering, as they would.
+  if (await card.getByTestId('chat-recap-answer').count()) await card.getByTestId('chat-recap-answer').click();
+  await wait(600);
+  await resolvePending(page, approval, panel);
+  const allowed = [];
+  const settledSnap = await untilAllowing(page, [sessionId], (snap) => settledTurns(snap, sessionId, count) && !snap.approvals.some((entry) => entry.sessionId === sessionId && entry.state === 'pending'), 420_000, `${name} end`, allowed);
+  await wait(6_000);
+  const items = await transcriptOf(page, sessionId);
+  const turns = turnsOfSession(settledSnap, sessionId);
+  const turn = turns.find((entry) => entry.id === seen.recap?.turnId) ?? turns.at(-1);
+  const rows = recapRows(items);
+  await shootSurface(page, panel, `${name}-answered`, report, card);
+  const facts = {
+    sessionId, earlierRecaps: rows.filter((item) => item.payload.turnId !== stoppedTurn).length, stoppedKind: approval.request?.kind, title: approval.title?.slice(0, 120), whileWaiting, recapAfterStopMs: seen.doneAt ? seen.doneAt - stoppedAt : null,
+    stateAtRecap: agentAtRecap?.state, ranOnMs: Date.parse(turn.finishedAt ?? '') - answeredAt, turnStates: turns.map((entry) => entry.state), laterApprovals: allowed.length,
+    cardAfterAnswer: await textOf(card), recapRows: rowFacts(rows), final: finalMessage(items).slice(-300), changedBefore: before, changedAfter: gitChanged(conversation.root),
+    ...recapCalls,
+  };
+  const problems = [];
+  if (seen.recap?.state !== 'complete') problems.push(`recap ${seen.recap?.state ?? 'never came'} ${seen.recap?.failure ?? ''}`);
+  if (seen.recap?.trigger !== 'waiting' || seen.recap?.waiting !== kind) problems.push(`trigger ${seen.recap?.trigger} waiting ${seen.recap?.waiting}, expected ${kind}`);
+  if (!whileWaiting.decisionMatches) problems.push('the recap does not name the decision it stopped for');
+  const perTurn = rows.filter((item) => item.payload.turnId === seen.recap?.turnId);
+  if (perTurn.length !== 2) problems.push(`${perTurn.length} recap rows for the turn`);
+  if (/중단|interrupted|aborted/iu.test(seen.recap?.text ?? '') && !/기다|대기|승인|답|waiting/iu.test(seen.recap?.text ?? '')) problems.push('the recap says the turn was interrupted and not that it waits');
+  if (facts.calls.length !== 1) problems.push(`${facts.calls.length} recap calls`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const taskCard = (panel) => panel.getByTestId('chat-task-card').last();
+const taskRowsOn = (panel) => panel.getByTestId('chat-task');
+const childIdOf = (taskId) => `suggested-${taskId}`;
+const suggestCalls = (items) => items.filter((item) => item.kind === 'tool-call' && item.payload?.type === 'tool' && /suggest_task/u.test(item.payload.name ?? ''));
+
+/** What Codex reports for a `suggest_task` call the host refused (an MCP `isError`), from its own stream. */
+function refusedCodexCalls(providerSessionId) {
+  return tapNow().filter((record) => record.provider === 'codex' && record.data?.method === 'item/completed' && record.data.params?.threadId === providerSessionId
+    && record.data.params?.item?.type === 'mcpToolCall' && record.data.params.item.tool === 'suggest_task' && record.data.params.item.status !== 'completed')
+    .map((record) => { const { id, server, tool, arguments: args, ...rest } = record.data.params.item; return rest; });
+}
+
+/** Stops a child that was only started to look at it. Answers nothing: a child that asks is the point. */
+async function stopChild(page, childId) {
+  const snap = await snapshot(page);
+  for (const approval of snap.approvals.filter((entry) => entry.sessionId === childId && entry.state === 'pending')) {
+    await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'deny' }).catch(() => undefined);
+  }
+  if (agentOf(snap, childId)?.currentTurnId) await command(page, 'agent.interrupt', { sessionId: childId }).catch(() => undefined);
+}
+
+/** A real fix, a repository with other bugs, no word about tools: the cards, their calls folded, one click, nested, asking first. */
+async function runSuggestTaskStart(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-suggest-task-start`;
+  const conversation = await wrapUpConversation(page, providerId, name, { preset: 'full-access', prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 카트 코드를 고칠 거야.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const count = await say(page, panel, sessionId, 'src/cart.ts의 cartTotal이 배열 끝을 넘어 읽어. 그 버그만 고치고 src/cart.ts만 바꿔 줘. 코드 스타일을 맞추도록 먼저 src/의 다른 파일들을 훑어봐.');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 300_000, `${name} turn`);
+  await wait(2000);
+  let items = await transcriptOf(page, sessionId);
+  const tasks = taskRows(items).map((item) => item.payload);
+  const calls = suggestCalls(items);
+  const problems = [];
+  const facts = { sessionId, tasks: tasks.map((task) => ({ title: task.title, rationale: task.rationale, prompt: task.prompt.slice(0, 240), worktree: task.worktree })), calls: calls.length, changed: gitChanged(conversation.root) };
+  if (!tasks.length) problems.push('the AI proposed nothing on its own');
+  else {
+    const card = taskCard(panel);
+    await card.waitFor({ timeout: 15_000 });
+    await card.scrollIntoViewIfNeeded();
+    await wait(500);
+    await shootSurface(page, panel, `${name}-card`, report, card);
+    facts.visibleToolRows = await panel.locator('.chat-tool').filter({ hasText: 'suggest_task' }).count();
+    facts.defaults = await textOf(card.getByTestId('chat-task-defaults'));
+    const offered = taskRowsOn(panel).filter({ has: page.locator('[data-action="task-start"]') }).first();
+    if (!await offered.count()) problems.push('no task offers one click');
+    else {
+      const taskId = await offered.getAttribute('data-task-id');
+      // By its id: the button that found it goes away once it starts.
+      const row = panel.locator(`[data-testid="chat-task"][data-task-id="${taskId}"]`);
+      const childId = childIdOf(taskId);
+      const startedAt = Date.now();
+      await row.locator('[data-action="task-start"]').click();
+      await poll(() => row.getAttribute('data-outcome'), (outcome) => outcome === 'started', 30_000, `${name} started`);
+      facts.startTookMs = Date.now() - startedAt;
+      await poll(() => snapshot(page), (snap) => Boolean(agentOf(snap, childId)), 15_000, `${name} child`);
+      // Long enough for it to ask or to get stuck; Codex's Standard hangs on commands on this PC, which is not this feature.
+      await poll(() => snapshot(page), (snap) => snap.approvals.some((entry) => entry.sessionId === childId && entry.state === 'pending') || settledTurns(snap, childId), 60_000, `${name} child asks`).catch(() => undefined);
+      await wait(800);
+      await shootSurface(page, panel, `${name}-started`, report, card);
+      const snap = await snapshot(page);
+      const relation = snap.agentRelations.find((entry) => entry.childSessionId === childId);
+      const pending = snap.approvals.filter((entry) => entry.sessionId === childId && entry.state === 'pending');
+      facts.child = {
+        id: childId, parentPreset: agentOf(snap, sessionId)?.permissionPreset, preset: agentOf(snap, childId)?.permissionPreset,
+        relation: relation && { parent: relation.parentSessionId === sessionId, owner: relation.owner }, nestedInList: await page.locator('.ez-shell-row[data-child="true"]').count(),
+        aboveComposer: await panel.getByTestId('structured-agent-child').count(), state: agentOf(snap, childId)?.state, asked: pending.map((entry) => entry.request?.kind ?? entry.title),
+        turns: turnsOfSession(snap, childId).map((turn) => turn.state),
+      };
+      const childItems = await transcriptOf(page, childId);
+      const firstMessage = childItems.find((item) => item.kind === 'user-message')?.text ?? '';
+      facts.child.promptIsTheTask = firstMessage.includes(tasks.find((task) => task.taskId === taskId)?.prompt ?? 'absent');
+      if (providerId === 'codex') {
+        const thread = agentOf(snap, childId)?.providerSessionId;
+        const start = tapNow().find((record) => record.provider === 'codex' && record.direction === 'in' && record.data?.method === 'thread/start' && tapNow().some((reply) => reply.pid === record.pid && reply.data?.id === record.data.id && reply.data?.result?.thread?.id === thread));
+        facts.child.threadStart = start ? { sandbox: start.data.params?.sandbox, approvalPolicy: start.data.params?.approvalPolicy, developerInstructions: Boolean(start.data.params?.developerInstructions) } : null;
+      }
+      await stopChild(page, childId);
+      if (facts.child.preset !== 'standard') problems.push(`the child runs at ${facts.child.preset}`);
+      if (facts.child.parentPreset !== 'full-access') problems.push(`the parent was at ${facts.child.parentPreset}`);
+      if (!facts.child.relation?.parent) problems.push('the child is not under its parent');
+      if (!facts.child.promptIsTheTask) problems.push('the child was not given the task as written');
+      if (facts.child.threadStart?.sandbox === 'danger-full-access') problems.push('the child runs without a sandbox');
+    }
+    if (facts.visibleToolRows) problems.push(`${facts.visibleToolRows} suggest_task rows stayed visible`);
+    if (calls.length !== tasks.length) problems.push(`${calls.length} calls, ${tasks.length} cards`);
+  }
+  items = await transcriptOf(page, sessionId);
+  facts.statusRows = items.filter((item) => item.payload?.type === 'task-suggestion-status').map((item) => item.payload.outcome);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const TINY_TASK = (label) => `도구는 쓰지 말고 "${label} 완료"라고만 답해 줘.`;
+const askedSuggestions = (lines) => `suggest_task 도구만 써서 아래 작업을 차례로 제안해. 도구가 거절해도 멈추지 말고 끝까지 불러. 다른 도구는 쓰지 말고, 끝나면 "제안 끝"이라고만 답해.\n${lines.join('\n')}`;
+const taskLine = (index, label, extra = '') => `${index}. title "${label}", rationale "실검증용", prompt "${TINY_TASK(label)}"${extra}`;
+
+/** A conversation whose last turn left these cards, asked for outright: these scenarios are about what happens after. */
+async function conversationWithTasks(page, providerId, name, lines, expected, { preset = 'standard', clean = false } = {}) {
+  const conversation = await wrapUpConversation(page, providerId, name, { preset, clean, prompt: '도구는 쓰지 말고 "네"라고만 답해 줘.' });
+  const panel = await ensureOnScreen(page, conversation);
+  const count = await say(page, panel, conversation.sessionId, askedSuggestions(lines));
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, conversation.sessionId, count), 240_000, `${name} proposal turn`);
+  await wait(1500);
+  const items = await transcriptOf(page, conversation.sessionId);
+  if (taskRows(items).length < expected) throw new Error(`${name}: ${taskRows(items).length} cards, expected ${expected}`);
+  return { conversation, panel, items, count };
+}
+
+/** 여기서 하기 while the AI answers: it waits in the queue, then runs as this conversation's next turn. */
+async function runTaskHereQueued(page, report) {
+  requireTap();
+  const name = 'task-here-queued';
+  const { conversation, panel, count } = await conversationWithTasks(page, 'claude', name, [taskLine(1, '여기서 할 일')], 1);
+  const { sessionId } = conversation;
+  await say(page, panel, sessionId, '도구는 쓰지 말고 1부터 80까지 숫자를 한 줄에 하나씩 적어 줘.');
+  const row = taskRowsOn(panel).first();
+  await poll(() => snapshot(page), (snap) => agentOf(snap, sessionId)?.state === 'working', 30_000, `${name} working`);
+  const stateAtClick = agentOf(await snapshot(page), sessionId)?.state;
+  await row.locator('[data-action="task-here"]').click();
+  await poll(() => row.getAttribute('data-outcome'), (outcome) => outcome === 'queued', 15_000, `${name} queued`);
+  const queue = await panel.getByRole('region', { name: '대기 중인 요청' }).locator('.chat-queue__item').allInnerTexts().catch(() => []);
+  const outcomeText = await textOf(row.getByTestId('chat-task-outcome'));
+  await wait(400);
+  await shootSurface(page, panel, `${name}-queued`, report, row);
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count + 2), 240_000, `${name} queued turn`);
+  await wait(1500);
+  const items = await transcriptOf(page, sessionId);
+  const send = items.find((item) => item.kind === 'user-message' && item.payload?.type === 'task-suggestion-send');
+  const facts = {
+    sessionId, stateAtClick, queue: queue.map((text) => text.replace(/\s+/gu, ' ').slice(0, 160)), outcomeText, finalOutcome: await row.getAttribute('data-outcome'), finalText: await textOf(row.getByTestId('chat-task-outcome')),
+    turns: turnsOfSession(await snapshot(page), sessionId).map((turn) => turn.state), sentTurn: send?.turnId, answer: finalMessage(items).slice(0, 120),
+  };
+  await shootSurface(page, panel, `${name}-done`, report, row);
+  const problems = [];
+  if (stateAtClick !== 'working') problems.push(`the conversation was ${stateAtClick} at the click`);
+  if (!queue.length) problems.push('nothing in the queue');
+  if (!send) problems.push('no send row');
+  if (!/여기서 할 일 완료/u.test(facts.answer)) problems.push(`answer: ${facts.answer}`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** Children that got a tiny instruction finish on their own; anything still running is stopped. */
+async function settleChildren(page, childIds, timeoutMs, label) {
+  const done = await poll(() => snapshot(page), (snap) => childIds.every((id) => settledTurns(snap, id)), timeoutMs, label).then(() => true, () => false);
+  if (!done) for (const id of childIds) await stopChild(page, id);
+  return done;
+}
+
+/** 모두 시작 with the first task in a new worktree. The worktree it made is removed again; the kit stays, as the daemon expects. */
+async function runTaskStartAllWorktree(page, report) {
+  requireTap();
+  const name = 'task-start-all-worktree';
+  const { conversation, panel } = await conversationWithTasks(page, 'claude', name, [
+    taskLine(1, '워크트리 작업', ', worktree true'), taskLine(2, '같은 폴더 작업 하나'), taskLine(3, '같은 폴더 작업 둘'),
+  // A clean kit is on main: a worktree with no commits of its own counts as merged, so the product can remove it.
+  ], 3, { clean: true });
+  const { sessionId } = conversation;
+  const card = taskCard(panel);
+  await card.getByTestId('chat-task-start-all').click();
+  const sheet = page.getByTestId('task-start-all-dialog');
+  await sheet.waitFor({ timeout: 10_000 });
+  const rows = sheet.getByTestId('task-start-all-task');
+  const offered = [];
+  for (let index = 0; index < await rows.count(); index += 1) {
+    offered.push({ text: (await rows.nth(index).innerText()).replace(/\s+/gu, ' ').slice(0, 160), worktree: await rows.nth(index).getByTestId('task-start-all-worktree').isChecked().catch(() => null) });
+  }
+  await wait(400);
+  await shootDialog(page, `${name}-sheet`, report);
+  const startedAt = Date.now();
+  await sheet.getByTestId('task-start-all-submit').click();
+  await sheet.waitFor({ state: 'hidden', timeout: 15_000 });
+  const startedRows = () => panel.locator('[data-testid="chat-task"][data-outcome="started"]').count();
+  await poll(startedRows, (value) => value === 3, 60_000, `${name} three started`).catch(() => undefined);
+  const tookMs = Date.now() - startedAt;
+  const snap = await snapshot(page);
+  const items = await transcriptOf(page, sessionId);
+  const statuses = items.filter((item) => item.payload?.type === 'task-suggestion-status').map((item) => item.payload);
+  const children = snap.agentRelations.filter((relation) => relation.parentSessionId === sessionId).map((relation) => relation.childSessionId);
+  const places = children.map((id) => {
+    const session = snap.sessions.find((entry) => entry.id === id);
+    const place = snap.workspaces.find((entry) => entry.id === session?.workspaceId);
+    return { id, kind: place?.kind, branch: place?.branch ?? place?.name, rootPath: place?.rootPath, workspaceId: place?.id, sameFolder: session?.workspaceId === conversation.workspaceId, title: session?.title };
+  });
+  await shootSurface(page, panel, `${name}-done`, report, card);
+  const worktrees = places.filter((entry) => !entry.sameFolder);
+  const allSettled = await settleChildren(page, children, 180_000, `${name} children`);
+  const after = await snapshot(page);
+  const facts = {
+    sessionId, offered, tookMs, statuses: statuses.map((entry) => ({ outcome: entry.outcome, branch: entry.branch, reason: entry.reason?.slice(0, 120) })), places: places.map(({ rootPath, workspaceId, ...rest }) => rest),
+    allSettled, childTurns: children.map((id) => turnsOfSession(after, id).map((turn) => turn.state).join(',')), childPresets: children.map((id) => agentOf(after, id)?.permissionPreset),
+    gitWorktrees: execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: conversation.root, encoding: 'utf8' }).split(/\r?\n/u).filter((line) => line.startsWith('branch ')),
+  };
+  // What it made goes again, the product's way: the child's conversation archived, then its worktree and branch removed.
+  const cleanup = [];
+  for (const place of worktrees) {
+    if (!place.rootPath) continue;
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: place.rootPath, encoding: 'utf8' }).trim();
+    const archived = await command(page, 'agent.archive', { sessionId: place.id });
+    await wait(1500);
+    const first = await page.evaluate((id) => window.ezterminal.workspaceWorktrees.remove(id), place.workspaceId).catch((error) => ({ ok: false, reason: String(error?.message ?? error).slice(0, 200) }));
+    // The app removes only merged work, and a merge commit is its proof: an untouched branch has none. Git removes this
+    // scratch worktree, and the app then finishes off what git already forgot.
+    let removed = first;
+    if (!first?.ok) {
+      execFileSync('git', ['worktree', 'remove', '--force', place.rootPath], { cwd: conversation.root });
+      execFileSync('git', ['branch', '-D', branch], { cwd: conversation.root });
+      removed = await page.evaluate((id) => window.ezterminal.workspaceWorktrees.remove(id), place.workspaceId).catch((error) => ({ ok: false, reason: String(error?.message ?? error).slice(0, 200) }));
+    }
+    cleanup.push({ branch, archived: Boolean(archived?.ok), firstRefusal: first?.ok ? undefined : first?.reason, removed: removed?.ok ?? removed });
+  }
+  facts.cleanup = cleanup;
+  facts.gitAfterCleanup = {
+    worktrees: execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: conversation.root, encoding: 'utf8' }).split(/\r?\n/u).filter((line) => line.startsWith('worktree ')).length,
+    branches: execFileSync('git', ['branch', '--list', '--format=%(refname:short)'], { cwd: conversation.root, encoding: 'utf8' }).trim().split(/\r?\n/u),
+  };
+  const problems = [];
+  if (statuses.filter((entry) => entry.outcome === 'started').length !== 3) problems.push(`${statuses.filter((entry) => entry.outcome === 'started').length} started of 3`);
+  if (worktrees.length !== 1) problems.push(`${worktrees.length} children in a new worktree`);
+  if (worktrees[0]?.branch && !/^suggest\//u.test(worktrees[0].branch)) problems.push(`branch ${worktrees[0].branch}`);
+  if (facts.childPresets.some((preset) => preset !== 'standard')) problems.push(`child presets ${facts.childPresets.join(',')}`);
+  if (facts.gitAfterCleanup.worktrees !== 1) problems.push(`${facts.gitAfterCleanup.worktrees} worktrees left in the kit`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** Ten `suggest_task` calls: eight cards, two refused beside the note; 모두 시작 on the eight, at real speed; none of them gets an automatic call. */
+async function runTaskCapEight(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-task-cap-eight`;
+  const labels = Array.from({ length: 10 }, (_, index) => `점검 ${index + 1}`);
+  const { conversation, panel, items } = await conversationWithTasks(page, providerId, name, labels.map((label, index) => taskLine(index + 1, label)), 8);
+  const { sessionId } = conversation;
+  const card = taskCard(panel);
+  await card.scrollIntoViewIfNeeded();
+  await wait(600);
+  const providerSessionId = agentOf(await snapshot(page), sessionId)?.providerSessionId;
+  const calls = suggestCalls(items);
+  const dropped = items.filter((item) => item.payload?.type === 'task-suggestions-dropped').map((item) => item.payload.count);
+  await shootSurface(page, panel, `${name}-cap`, report, card);
+  const failedRun = panel.locator('.chat-run').filter({ has: page.locator('.chat-tool[data-status="failed"]') });
+  const runHeader = panel.locator('.chat-run__header').last();
+  const collapsed = { runs: await panel.locator('.chat-run').count(), headerText: (await textOf(runHeader))?.slice(0, 160) };
+  if (await runHeader.count()) await runHeader.click().catch(() => undefined);
+  await wait(500);
+  const refusedRows = panel.locator('.chat-tool[data-status="failed"]');
+  const facts = {
+    sessionId, tasks: taskRows(items).length, calls: calls.length, dropped, note: (await textOf(card))?.match(/그 밖의 제안[^.]*받지 않았[^.]*/u)?.[0],
+    collapsed, refusedRowsOnScreen: await refusedRows.count(), refusedRowText: (await refusedRows.allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/gu, ' ').slice(0, 200)).slice(0, 3), failedRuns: await failedRun.count(),
+    ...(providerId === 'codex' ? { reported: refusedCodexCalls(providerSessionId) } : {}),
+  };
+  await failedRun.first().scrollIntoViewIfNeeded().catch(() => undefined);
+  await wait(400);
+  await page.screenshot({ path: path.join(output, `${name}-refused-open.png`) });
+  await failedRun.first().screenshot({ path: path.join(output, `${name}-refused-open-card.png`) }).catch(() => undefined);
+  report.push({ shot: `${name}-refused-open`, files: [`${name}-refused-open.png`, `${name}-refused-open-card.png`] });
+  await card.getByTestId('chat-task-start-all').click();
+  const sheet = page.getByTestId('task-start-all-dialog');
+  await sheet.waitFor({ timeout: 10_000 });
+  const startedAt = Date.now();
+  await sheet.getByTestId('task-start-all-submit').click();
+  await sheet.waitFor({ state: 'hidden', timeout: 15_000 });
+  const startedRows = () => panel.locator('[data-testid="chat-task"][data-outcome="started"]').count();
+  const reached = await poll(startedRows, (value) => value === 8, 90_000, `${name} eight started`).then(() => true, () => false);
+  facts.startAll = {
+    reached, tookMs: Date.now() - startedAt, started: await startedRows(), failed: await panel.locator('[data-testid="chat-task"][data-outcome="start-failed"]').count(),
+    error: await textOf(panel.getByTestId('structured-agent-wrap-up-error')), reasons: (await transcriptOf(page, sessionId)).filter((item) => item.payload?.type === 'task-suggestion-status' && item.payload.outcome === 'start-failed').map((item) => item.payload.reason?.slice(0, 160)),
+  };
+  await shootSurface(page, panel, `${name}-started`, report, card);
+  const snap = await snapshot(page);
+  const children = snap.agentRelations.filter((relation) => relation.parentSessionId === sessionId).map((relation) => relation.childSessionId);
+  facts.startAll.childrenSettled = await settleChildren(page, children, 300_000, `${name} children`);
+  await wait(9_000);
+  const after = await snapshot(page);
+  const threads = children.map((id) => agentOf(after, id)?.providerSessionId).filter(Boolean);
+  const childRecaps = [];
+  for (const id of children) childRecaps.push(recapRows(await transcriptOf(page, id)).length);
+  facts.children = {
+    count: children.length, turns: children.map((id) => turnsOfSession(after, id).map((turn) => turn.state).join(',')), presets: [...new Set(children.map((id) => agentOf(after, id)?.permissionPreset))],
+    recapRows: childRecaps.reduce((sum, value) => sum + value, 0), suggestions: children.filter((id) => after.nextPromptSuggestions?.[id]).length,
+    forks: codexForks(tapNow()).filter((fork) => threads.includes(fork.sourceThreadId)).length,
+    suggestionRequests: threads.reduce((sum, thread) => sum + claudeCalls(claudeRequests(telemetry, thread), 'prompt_suggestion').length, 0),
+    sideQuestions: threads.reduce((sum, thread) => sum + claudeCalls(claudeRequests(telemetry, thread), 'side_question').length, 0),
+  };
+  const problems = [];
+  if (facts.tasks !== 8) problems.push(`${facts.tasks} cards`);
+  if (!dropped.length) problems.push('no 받지 않았습니다 note: the AI stopped at the cap or the row is missing');
+  if (!reached) problems.push(`${facts.startAll.started} of 8 started: ${JSON.stringify(facts.startAll.reasons)}`);
+  if (facts.children.recapRows || facts.children.forks || facts.children.suggestionRequests || facts.children.sideQuestions || facts.children.suggestions) problems.push(`a delegated child got an automatic call: ${JSON.stringify(facts.children)}`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** What the host spent on a session after `since`, from outside: Claude's requests or Codex's forks. */
+function automaticCallsSince(providerId, providerSessionId, since) {
+  if (providerId === 'claude') {
+    const requests = claudeRequests(telemetry, providerSessionId).filter((request) => request.at >= since);
+    const stream = claudeStream(tapNow(), providerSessionId).filter((record) => record.at >= since);
+    return {
+      suggestionRequests: requests.filter((request) => request.source === 'prompt_suggestion').length, sideQuestions: requests.filter((request) => request.source === 'side_question').length,
+      suggestionMessages: stream.filter((record) => record.data?.type === 'prompt_suggestion').length,
+    };
+  }
+  const forks = codexForks(tapNow()).filter((fork) => fork.sourceThreadId === providerSessionId && fork.at >= since);
+  return { predictForks: forks.filter((fork) => fork.purpose === 'predict').length, recapForks: forks.filter((fork) => fork.purpose === 'recap').length };
+}
+
+const noCalls = (calls) => Object.values(calls).every((value) => value === 0);
+const claudeFlagWrites = (records, providerSessionId) => claudeStream(records, providerSessionId).filter((record) => record.direction === 'in' && record.data?.request?.subtype === 'apply_flag_settings')
+  .map((record) => ({ at: record.at, env: record.data.request.settings?.env }));
+
+/** Each person turn's first call against the conversation before it, from outside. */
+function turnCacheFacts(providerId, providerSessionId, snap, sessionId) {
+  if (providerId === 'claude') return claudeTurnStarts(claudeRequests(telemetry, providerSessionId), turnsOfSession(snap, sessionId)).map(({ at, source, model, turnId, ...rest }) => rest);
+  return codexTurns(tapNow(), providerSessionId).map(({ at, ...rest }) => ({ ...rest, additionalContext: rest.additionalContext ? 'sent' : null }));
+}
+
+/** Two heartbeats with no screen on the conversation, between person turns. */
+async function runHeartbeat(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-heartbeat`;
+  const conversation = await wrapUpConversation(page, providerId, name, { prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화는 하트비트를 살펴보는 대화야.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const count = await say(page, panel, sessionId, '도구는 쓰지 말고: 하트비트가 뭔지 한 문장으로 말해 줘.');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 180_000, `${name} person turn`);
+  const baseline = await awaitSuggestion(page, panel, sessionId, providerId === 'claude' ? 20_000 : 50_000);
+  // Automation needs both switches; the tap keeps "start at login" away from Windows.
+  const automation = await command(page, 'runtime.set-settings', { keepRunning: true, startAtLogin: true });
+  if (!automation?.ok) throw new Error(`${name}: automation switches ${JSON.stringify(automation)}`);
+  const configured = await command(page, 'heartbeat.configure', { sessionId, prompt: '도구는 쓰지 말고 "하트비트 확인"이라고만 답해 줘.', cron: '0 0 1 1 *', timezone: 'Asia/Seoul', enabled: true });
+  if (!configured?.ok) throw new Error(`${name}: heartbeat.configure ${JSON.stringify(configured)}`);
+  await park(page, conversation);
+  const beats = [];
+  const beatTurns = [];
+  let turns = count;
+  for (let index = 0; index < 2; index += 1) {
+    const from = Date.now();
+    const triggered = await command(page, 'heartbeat.trigger', { sessionId });
+    if (!triggered?.ok) throw new Error(`${name}: heartbeat.trigger ${JSON.stringify(triggered)}`);
+    turns += 1;
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, turns), 180_000, `${name} heartbeat ${index + 1}`);
+    await wait(9_000);
+    const snap = await snapshot(page);
+    beatTurns.push(turnsOfSession(snap, sessionId).at(-1).id);
+    const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+    beats.push({ state: turnsOfSession(snap, sessionId).at(-1)?.state, ...automaticCallsSince(providerId, providerSessionId, from), suggestion: snap.nextPromptSuggestions?.[sessionId]?.text });
+  }
+  const recapsAfterBeats = recapRows(await transcriptOf(page, sessionId)).filter((item) => beatTurns.includes(item.payload.turnId)).length;
+  await command(page, 'heartbeat.configure', { sessionId, prompt: '도구는 쓰지 말고 "하트비트 확인"이라고만 답해 줘.', cron: '0 0 1 1 *', timezone: 'Asia/Seoul', enabled: false });
+  await command(page, 'runtime.set-settings', { keepRunning: false, startAtLogin: false });
+  await ensureOnScreen(page, conversation);
+  const nextFrom = Date.now();
+  const next = await say(page, panel, sessionId, '도구는 쓰지 말고: 하트비트를 언제 쓰면 좋은지 한 문장으로 말해 줘.');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, next), 180_000, `${name} next person turn`);
+  const after = await awaitSuggestion(page, panel, sessionId, providerId === 'claude' ? 20_000 : 50_000);
+  await wait(2500);
+  const snap = await snapshot(page);
+  const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+  const facts = {
+    sessionId, baseline: baseline.text, beats, recapsAfterBeats, nextSuggestion: after.text, nextCalls: automaticCallsSince(providerId, providerSessionId, nextFrom),
+    suggestionRequests: providerId === 'claude' ? claudeCalls(claudeRequests(telemetry, providerSessionId), 'prompt_suggestion').map(({ at, source, model, ...rest }) => rest) : undefined,
+    turnStarts: turnCacheFacts(providerId, providerSessionId, snap, sessionId), flagWrites: providerId === 'claude' ? claudeFlagWrites(tapNow(), providerSessionId).map((entry) => entry.env) : undefined,
+  };
+  const problems = [];
+  for (const [index, beat] of beats.entries()) {
+    const { state, suggestion, ...calls } = beat;
+    if (!noCalls(calls)) problems.push(`heartbeat ${index + 1} was followed by ${JSON.stringify(calls)}`);
+    if (suggestion) problems.push(`heartbeat ${index + 1} left a suggestion`);
+  }
+  if (recapsAfterBeats) problems.push(`${recapsAfterBeats} recap rows on a heartbeat's turn`);
+  const low = facts.turnStarts.at(-1);
+  if (low?.ratio !== null && low?.ratio !== undefined && low.ratio < 0.9) problems.push(`the next person turn read ${low.ratio} from cache`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const REPORT_BACK_PROMPT = 'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: plan, reportBack: true, 지시: "README.md의 첫 줄 제목을 알려 줘"). 기다리지 말고 "맡겼습니다"라고만 답하고 턴을 끝내. 나중에 결과가 오면 그 제목을 한 문장으로 알려 줘.';
+
+/** A child reports back with no screen on the parent: the report's turn gets no suggestion and no recap; the child none either. */
+async function runReportBack(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-report-back`;
+  const before = (await snapshot(page)).runtime.orchestrationToolsEnabled;
+  if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: true });
+  try {
+    const conversation = await wrapUpConversation(page, providerId, name, { prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화는 서브에이전트를 맡기는 대화야.' });
+    const { sessionId } = conversation;
+    const panel = await ensureOnScreen(page, conversation);
+    const count = await say(page, panel, sessionId, REPORT_BACK_PROMPT);
+    const inTree = (snap) => [sessionId, ...snap.agentRelations.filter((relation) => relation.parentSessionId === sessionId).map((relation) => relation.childSessionId)];
+    const allowTree = async () => {
+      const snap = await snapshot(page);
+      for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && inTree(snap).includes(entry.sessionId))) await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' }).catch(() => undefined);
+      return snap;
+    };
+    await poll(allowTree, (snap) => settledTurns(snap, sessionId, count), 240_000, `${name} person turn`);
+    await wait(3_800);
+    await park(page, conversation);
+    const from = Date.now();
+    const settled = await poll(allowTree, (snap) => settledTurns(snap, sessionId, count + 1), 300_000, `${name} report turn`);
+    await wait(9_000);
+    const snap = await snapshot(page);
+    const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+    const items = await transcriptOf(page, sessionId);
+    const reportTurn = turnsOfSession(settled, sessionId).at(-1);
+    const children = snap.agentRelations.filter((relation) => relation.parentSessionId === sessionId).map((relation) => relation.childSessionId);
+    const childThreads = children.map((id) => agentOf(snap, id)?.providerSessionId).filter(Boolean);
+    const facts = {
+      sessionId, turns: turnsOfSession(snap, sessionId).map((turn) => turn.state), reports: items.filter((item) => item.kind === 'user-message' && item.payload?.type === 'subagent').length,
+      afterReport: automaticCallsSince(providerId, providerSessionId, from), beforeReport: automaticCallsSince(providerId, providerSessionId, 0), recapsOnReportTurn: recapRows(items).filter((item) => item.payload.turnId === reportTurn.id).length, suggestion: snap.nextPromptSuggestions?.[sessionId]?.text,
+      children: children.length, childCalls: childThreads.map((thread) => automaticCallsSince('claude', thread, 0)), answer: finalMessage(items).slice(0, 160),
+    };
+    const problems = [];
+    if (!facts.reports) problems.push('no report arrived');
+    if (!noCalls(facts.afterReport)) problems.push(`the report's turn was followed by ${JSON.stringify(facts.afterReport)}`);
+    if (facts.recapsOnReportTurn) problems.push(`${facts.recapsOnReportTurn} recap rows on the report's turn`);
+    if (facts.suggestion) problems.push('the report left a suggestion');
+    if (facts.childCalls.some((calls) => !noCalls(calls))) problems.push(`a child got calls: ${JSON.stringify(facts.childCalls)}`);
+    report.push({ scenario: name, ...facts, problems });
+    if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+  } finally {
+    if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: false }).catch(() => undefined);
+  }
+}
+
+/** The other AI's read-only reviewer, both ways: finished with no screen on it, it gets nothing automatic. */
+async function runEligibilityReviewer(page, report) {
+  requireTap();
+  const name = 'eligibility-reviewer';
+  await runOtherReview(page, report, 'claude', 'codex');
+  await runOtherReview(page, report, 'codex', 'claude');
+  await wait(8_000);
+  const snap = await snapshot(page);
+  const reviewers = snap.agents.filter((agent) => agent.sessionId.startsWith('review-'));
+  const results = [];
+  for (const agent of reviewers) {
+    results.push({ sessionId: agent.sessionId, providerId: agent.providerId, recapRows: recapRows(await transcriptOf(page, agent.sessionId)).length, ...automaticCallsSince(agent.providerId, agent.providerSessionId, 0) });
+  }
+  const problems = [];
+  if (reviewers.length < 2) problems.push(`${reviewers.length} reviewers ran`);
+  for (const { sessionId, providerId, ...calls } of results) if (!noCalls(calls)) problems.push(`${sessionId} (${providerId}): ${JSON.stringify(calls)}`);
+  report.push({ scenario: name, results, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** ask_advisor, answered by each AI: the advisor conversation gets nothing automatic. */
+async function runEligibilityAdvisor(page, report) {
+  requireTap();
+  const name = 'eligibility-advisor';
+  const results = [];
+  const problems = [];
+  for (const providerId of ['claude', 'codex']) {
+    const profile = { id: `wrap-up-advisor-${providerId}`, name: `자문 ${providerLabel(providerId)}`, providerId, permissionPreset: 'plan' };
+    const saved = await page.evaluate((value) => window.ezterminal.chatAgentProfiles.save(value), profile);
+    if (!saved?.ok && !saved?.profiles) throw new Error(`${name}: profile ${JSON.stringify(saved)}`);
+    await page.evaluate(async (id) => { const phases = await window.ezterminal.chatAgentProfiles.phases(); await window.ezterminal.chatAgentProfiles.savePhases({ ...phases, review: { profileId: id } }); }, profile.id);
+    const conversation = await wrapUpConversation(page, 'claude', `${name}-${providerId}`, { prompt: '도구는 쓰지 말고 "네"라고만 답해 줘.' });
+    const { sessionId } = conversation;
+    const panel = await ensureOnScreen(page, conversation);
+    const count = await say(page, panel, sessionId, 'ask_advisor 도구로 "두 수의 합을 구하는 함수 이름으로 무엇이 좋아? 한 단어로."라고 한 번만 물어보고, 받은 답을 한 문장으로 알려 줘. 다른 도구는 쓰지 마.');
+    await untilAllowing(page, [sessionId], (snap) => settledTurns(snap, sessionId, count), 300_000, `${name} ${providerId}`);
+    await wait(9_000);
+    const snap = await snapshot(page);
+    const advisors = snap.agents.filter((agent) => agent.sessionId.startsWith('advisor-') && agent.providerId === providerId && !results.some((entry) => entry.sessionId === agent.sessionId));
+    const items = await transcriptOf(page, sessionId);
+    if (!advisors.length) problems.push(`${providerId}: no advisor ran: ${finalMessage(items).slice(0, 200)}`);
+    for (const agent of advisors) {
+      const calls = automaticCallsSince(providerId, agent.providerSessionId, 0);
+      results.push({ sessionId: agent.sessionId, providerId, recapRows: recapRows(await transcriptOf(page, agent.sessionId)).length, ...calls });
+      if (!noCalls(calls)) problems.push(`${agent.sessionId}: ${JSON.stringify(calls)}`);
+    }
+  }
+  await page.evaluate(async () => { const phases = await window.ezterminal.chatAgentProfiles.phases(); await window.ezterminal.chatAgentProfiles.savePhases({ ...phases, review: undefined }); });
+  report.push({ scenario: name, results, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+async function openWrapUpSettings(page) {
+  await page.getByTestId('btn-toggle-settings').click();
+  await page.getByTestId('settings-category-agents').click();
+  const section = page.getByTestId('turn-wrap-up-settings');
+  await section.waitFor({ timeout: 10_000 });
+  await section.scrollIntoViewIfNeeded();
+  return section;
+}
+
+async function closeWrapUpSettings(page) {
+  await page.getByTestId('btn-toggle-settings').click();
+  await page.getByTestId('turn-wrap-up-settings').waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function flipWrapUpSwitch(page, testId, on) {
+  const section = await openWrapUpSettings(page);
+  await section.getByTestId(testId).setChecked(on);
+  await wait(500);
+  await closeWrapUpSettings(page);
+}
+
+/** 다음 입력 제안 off in a running conversation stops the provider calls, not just the ghost; on brings them back; recaps and tasks, likewise. */
+async function runSettingsSwitches(page, report, providerId) {
+  requireTap();
+  const name = `${providerId}-settings-switches`;
+  const conversation = await wrapUpConversation(page, providerId, name, { prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화는 설정을 살펴보는 대화야.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const providerSessionId = () => snapshot(page).then((snap) => agentOf(snap, sessionId)?.providerSessionId);
+  const turn = async (text) => {
+    const count = await say(page, panel, sessionId, text);
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 240_000, `${name} turn ${count}`);
+  };
+  const patience = providerId === 'claude' ? 15_000 : 50_000;
+  const problems = [];
+  const section = await openWrapUpSettings(page);
+  await shootDialog(page, `${name}-section`, report, section);
+  await closeWrapUpSettings(page);
+  await turn('도구는 쓰지 말고: 다음 입력 제안이 뭔지 한 문장으로 말해 줘.');
+  const baseline = await awaitSuggestion(page, panel, sessionId, patience);
+  // Off while a turn runs: that turn's end is the first one that must stay quiet.
+  const running = await say(page, panel, sessionId, '도구는 쓰지 말고 1부터 40까지 숫자를 한 줄에 하나씩 적어 줘.');
+  const offAt = Date.now();
+  await flipWrapUpSwitch(page, `turn-wrap-up-suggestions-${providerId}`, false);
+  const offWhile = agentOf(await snapshot(page), sessionId)?.state;
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, running), 240_000, `${name} running turn`);
+  const quietOne = await awaitSuggestion(page, panel, sessionId, patience);
+  await turn('도구는 쓰지 말고: 설정을 끄면 무엇이 멈추는지 한 문장으로 말해 줘.');
+  const quietTwo = await awaitSuggestion(page, panel, sessionId, patience);
+  await wait(2500);
+  const offCalls = automaticCallsSince(providerId, await providerSessionId(), offAt);
+  const onAt = Date.now();
+  await flipWrapUpSwitch(page, `turn-wrap-up-suggestions-${providerId}`, true);
+  await turn('도구는 쓰지 말고: 설정을 다시 켜면 무엇이 돌아오는지 한 문장으로 말해 줘.');
+  const back = await awaitSuggestion(page, panel, sessionId, patience);
+  await wait(2500);
+  const onCalls = automaticCallsSince(providerId, await providerSessionId(), onAt);
+  if (!noCalls(offCalls)) problems.push(`calls with the switch off: ${JSON.stringify(offCalls)}`);
+  if (quietOne.text || quietTwo.text) problems.push('a suggestion showed with the switch off');
+  const callsBack = providerId === 'claude' ? onCalls.suggestionRequests : onCalls.predictForks;
+  if (!callsBack) problems.push('no suggestion call after turning it back on');
+
+  // Recaps off, then on.
+  await flipWrapUpSwitch(page, 'turn-wrap-up-recaps', false);
+  const recapOffAt = Date.now();
+  const rowsBeforeOff = recapRows(await transcriptOf(page, sessionId)).length;
+  const offTurn = await say(page, panel, sessionId, '도구는 쓰지 말고: 요약 카드가 뭔지 한 문장으로 말해 줘.');
+  await park(page, conversation);
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, offTurn), 180_000, `${name} recap-off turn`);
+  await wait(8_000);
+  const recapOff = { rows: recapRows(await transcriptOf(page, sessionId)).length - rowsBeforeOff, calls: automaticCallsSince(providerId, await providerSessionId(), recapOffAt) };
+  await ensureOnScreen(page, conversation);
+  await flipWrapUpSwitch(page, 'turn-wrap-up-recaps', true);
+  const onTurn = await say(page, panel, sessionId, '도구는 쓰지 말고: 요약 카드가 언제 만들어지는지 한 문장으로 말해 줘.');
+  await park(page, conversation);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, onTurn), 180_000, `${name} recap-on turn`);
+  const recapBack = await awaitRecap(page, sessionId, turnsOfSession(settled, sessionId).at(-1).id, 120_000);
+  await ensureOnScreen(page, conversation);
+  if (recapOff.rows || recapOff.calls.sideQuestions || recapOff.calls.recapForks) problems.push(`recaps off: ${JSON.stringify(recapOff)}`);
+  if (recapBack.recap?.state !== 'complete') problems.push(`recaps on: ${JSON.stringify(rowFacts(recapBack.rows ?? []))}`);
+
+  // Tasks off: the tool stays listed and refuses; the turn keeps its cache.
+  await flipWrapUpSwitch(page, 'turn-wrap-up-tasks', false);
+  const beforeTasks = taskRows(await transcriptOf(page, sessionId)).length;
+  await turn(askedSuggestions([taskLine(1, '꺼진 스위치 확인')]));
+  const refusedItems = await transcriptOf(page, sessionId);
+  const tasksOff = { cards: taskRows(refusedItems).length - beforeTasks, calls: suggestCalls(refusedItems).length, callText: suggestCalls(refusedItems).map((item) => String(item.payload?.error ?? item.payload?.status ?? '').slice(0, 160)), reply: finalMessage(refusedItems).slice(0, 160) };
+  await flipWrapUpSwitch(page, 'turn-wrap-up-tasks', true);
+  if (tasksOff.cards) problems.push(`${tasksOff.cards} cards with tasks off`);
+  await wait(1500);
+  const snap = await snapshot(page);
+  const facts = {
+    sessionId, baseline: baseline.text, offWhile, quiet: [quietOne.text ?? null, quietTwo.text ?? null], offCalls, back: back.text, onCalls, recapOff, recapBack: recapBack.recap?.state, tasksOff,
+    turnStarts: turnCacheFacts(providerId, await providerSessionId(), snap, sessionId), flagWrites: providerId === 'claude' ? claudeFlagWrites(tapNow(), await providerSessionId()).map((entry) => entry.env) : undefined,
+  };
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** Only as far as it can be forced: the reading written before the launch stands until a provider reports a real one. */
+async function runPaused(page, report) {
+  requireTap();
+  const name = 'settings-paused';
+  if (!rest.includes('--force-pause')) { report.push({ scenario: name, skipped: 'needs --force-pause' }); return; }
+  const problems = [];
+  const results = [];
+  for (const providerId of ['claude', 'codex']) {
+    const conversation = await wrapUpConversation(page, providerId, `${name}-${providerId}`, { prompt: '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화는 한도 근처를 살펴보는 대화야.' });
+    const { sessionId } = conversation;
+    const panel = await ensureOnScreen(page, conversation);
+    const section = await openWrapUpSettings(page);
+    const paused = await section.getByTestId('turn-wrap-up-paused').allInnerTexts();
+    await page.screenshot({ path: path.join(output, `${name}-${providerId}-settings.png`) });
+    await closeWrapUpSettings(page);
+    const usage = (await snapshot(page)).providerUsage?.[providerId];
+    const from = Date.now();
+    const count = await say(page, panel, sessionId, '도구는 쓰지 말고: 사용량 한도가 뭔지 한 문장으로 말해 줘.');
+    await park(page, conversation);
+    const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 180_000, `${name} ${providerId} turn`);
+    await wait(9_000);
+    const snap = await snapshot(page);
+    const turnId = turnsOfSession(settled, sessionId).at(-1).id;
+    const rows = recapRows(await transcriptOf(page, sessionId)).filter((item) => item.payload.turnId === turnId);
+    const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+    const after = snap.providerUsage?.[providerId];
+    await ensureOnScreen(page, conversation);
+    await wait(800);
+    await shootSurface(page, panel, `${name}-${providerId}-line`, report, panel.getByTestId('chat-recap-line'));
+    const facts = {
+      providerId, sessionId, paused, usageBefore: usage, usageAfter: after, readingSurvived: after?.fiveHour?.usedPercent === 95,
+      rows: rowFacts(rows), calls: automaticCallsSince(providerId, providerSessionId, from), flagWrites: providerId === 'claude' ? claudeFlagWrites(tapNow(), providerSessionId).map((entry) => entry.env) : undefined,
+    };
+    if (!facts.readingSurvived) problems.push(`${providerId}: a real reading replaced the forced one, so this run proved nothing`);
+    if (!paused.length) problems.push(`${providerId}: Settings says nothing about a pause`);
+    if (rows.at(-1)?.payload.failure !== 'usage-limit' || !noCalls(facts.calls)) problems.push(`${providerId}: paused, yet ${JSON.stringify(facts.rows)} ${JSON.stringify(facts.calls)}`);
+    results.push(facts);
+  }
+  report.push({ scenario: name, results, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const windowState = () => app.evaluate(({ BrowserWindow }) => {
+  const window = BrowserWindow.getAllWindows()[0];
+  return window ? { focused: window.isFocused(), minimized: window.isMinimized(), visible: window.isVisible() } : null;
+});
+
+/**
+ * What each way of not looking really tells the host, from the window's own reports (no AI call), then what a real
+ * turn does in the states where the answer matters.
+ */
+async function runViewingMatrix(page, report, project) {
+  requireTap();
+  const name = 'viewing-matrix';
+  const conversation = await wrapUpConversation(page, 'claude', name, { prompt: '도구는 쓰지 말고 "네"라고만 답해 줘.' });
+  const { sessionId } = conversation;
+  let panel = await ensureOnScreen(page, conversation);
+  const other = await startConversation(page, { providerId: 'claude', projectId: conversation.projectId, workspaceId: conversation.workspaceId, root: conversation.root, title: `${name} 옆 대화`, permissionPreset: 'standard', initialPrompt: '도구는 쓰지 말고 "네"라고만 답해 줘.' });
+  await ensureOnScreen(page, conversation);
+  const focusWindow = async () => {
+    await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; if (window.isMinimized()) window.restore(); window.show(); window.focus(); });
+    await poll(() => page.evaluate(() => document.documentElement.getAttribute('data-runtime-tier')), (tier) => tier === 'active', 15_000, 'focus back').catch(() => undefined);
+  };
+  const dimmer = async () => {
+    // A real second window takes the focus away, as another application would.
+    await app.evaluate(({ BrowserWindow }) => {
+      const blocker = new BrowserWindow({ width: 320, height: 240, x: 900, y: 500, title: 'viewing-matrix-blocker', show: true });
+      void blocker.loadURL('about:blank');
+      blocker.focus();
+      globalThis.__viewingBlocker = blocker;
+    });
+  };
+  const undim = async () => {
+    await app.evaluate(() => { globalThis.__viewingBlocker?.destroy(); globalThis.__viewingBlocker = undefined; });
+    await focusWindow();
+  };
+  // Back from the board: a tab of the main grid coming forward shows the desk again.
+  const leaveBoard = async () => {
+    await page.evaluate((id) => {
+      const dock = window.__ezDock;
+      const own = dock.getPanel(id);
+      dock.panels.find((panel) => panel.id !== id && panel.group === own.group)?.api.setActive();
+      own.api.setActive();
+    }, conversation.panelId);
+    await wait(500);
+    await ensureOnScreen(page, conversation);
+  };
+  const states = [
+    { label: 'on screen, window focused', apply: async () => {}, undo: async () => {} },
+    { label: 'window unfocused (another window in front)', apply: dimmer, undo: undim },
+    { label: 'minimized', apply: () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize()), undo: focusWindow },
+    { label: 'tab in the background', apply: () => park(page, conversation), undo: () => ensureOnScreen(page, conversation) },
+    { label: 'board covers it', apply: () => openProjectBoard(page, conversation), undo: leaveBoard },
+    { label: 'split pane, focus in the other pane', apply: async () => {
+      await page.evaluate(({ moved, target }) => { const dock = window.__ezDock; dock.getPanel(moved).api.moveTo({ group: dock.getPanel(target).group, position: 'right' }); dock.getPanel(moved).api.setActive(); }, { moved: other.panelId, target: conversation.panelId });
+      await page.evaluate((id) => window.__ezDock.getPanel(id).api.setActive(), other.panelId);
+    }, undo: async () => {} },
+  ];
+  const results = [];
+  for (const state of states) {
+    await state.apply();
+    await wait(1700);
+    results.push({ state: state.label, reported: lastViewing().includes(sessionId), reportedOther: lastViewing().includes(other.sessionId), tier: await page.evaluate(() => document.documentElement.getAttribute('data-runtime-tier')).catch(() => null), window: await windowState(), shellMode: await page.evaluate(() => document.querySelector('main.app')?.getAttribute('data-shell-mode')).catch(() => null) });
+    await state.undo();
+    await wait(800);
+  }
+  // Real turns: a recap is the proof. The split stays as the last state left it, the conversation visible beside the focused pane.
+  const turnIn = async (label, apply, undo) => {
+    panel = sessionPanel(page, sessionId);
+    const count = await say(page, panel, sessionId, '도구는 쓰지 말고 1부터 20까지 숫자를 한 줄에 하나씩 적어 줘.');
+    await apply();
+    const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 180_000, `${name} ${label}`);
+    const turnId = turnsOfSession(settled, sessionId).at(-1).id;
+    const seen = await awaitRecap(page, sessionId, turnId, 25_000);
+    const facts = { state: label, reports: lastViewing().includes(sessionId), recap: seen.recap?.state ?? 'none', trigger: seen.recap?.trigger };
+    await undo();
+    await wait(800);
+    return facts;
+  };
+  const turns = [];
+  turns.push(await turnIn('split pane, focus in the other pane', async () => { await page.evaluate((id) => window.__ezDock.getPanel(id).api.setActive(), other.panelId); }, async () => {}));
+  turns.push(await turnIn('window unfocused (another window in front)', dimmer, undim));
+  turns.push(await turnIn('minimized', () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize()), focusWindow));
+  turns.push(await turnIn('board covers it', () => openProjectBoard(page, conversation), leaveBoard));
+  const problems = [];
+  const expected = { 'on screen, window focused': true, 'window unfocused (another window in front)': false, minimized: false, 'tab in the background': false, 'board covers it': false, 'split pane, focus in the other pane': true };
+  for (const entry of results) if (entry.reported !== expected[entry.state]) problems.push(`${entry.state}: the window reported ${entry.reported}`);
+  for (const entry of turns) {
+    const shouldRecap = !expected[entry.state];
+    if ((entry.recap === 'complete') !== shouldRecap) problems.push(`${entry.state}: recap ${entry.recap}`);
+  }
+  report.push({ scenario: name, results, turns, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** The window closes with keep-running on while a turn runs: no window means no viewer. Reopened, the recap is there. */
+async function runKeepRunningClose(page, report) {
+  requireTap();
+  const name = 'keep-running-close';
+  const before = (await snapshot(page)).runtime.keepRunning;
+  const set = await command(page, 'runtime.set-settings', { keepRunning: true });
+  if (!set?.ok) throw new Error(`${name}: keepRunning ${JSON.stringify(set)}`);
+  const conversation = await wrapUpConversation(page, 'claude', name, { prompt: '도구는 쓰지 말고 "네"라고만 답해 줘.' });
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const count = await say(page, panel, sessionId, '도구는 쓰지 말고 1부터 60까지 숫자를 한 줄에 하나씩 적고, 마지막에 "끝"이라고 적어 줘.');
+  const closedAt = Date.now();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  await wait(1500);
+  // Keep-running hides the window instead of destroying it: the renderer stays alive and has to say it shows nothing.
+  const windowsAfterClose = await windowState();
+  const reportedAfterClose = lastViewing();
+  const hasResult = (records) => records.some((record) => record.at > closedAt && record.provider === 'claude' && record.data?.type === 'result');
+  await poll(async () => tapNow(), hasResult, 180_000, `${name} turn end with no window`).catch(() => undefined);
+  const resultAt = tapNow().find((record) => record.at > closedAt && record.provider === 'claude' && record.data?.type === 'result')?.at ?? null;
+  await wait(30_000);
+  const sideQuestion = tapNow().some((record) => record.at > closedAt && record.provider === 'claude' && record.direction === 'in' && record.data?.request?.subtype === 'side_question');
+  await app.evaluate(({ app: electronApp }) => { electronApp.emit('activate'); });
+  await wait(2500);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 120_000, `${name} turn`);
+  const turn = turnsOfSession(settled, sessionId).at(-1);
+  const rows = recapRows(await transcriptOf(page, sessionId)).filter((item) => item.payload.turnId === turn.id);
+  await showConversation(page, conversation);
+  await wait(1200);
+  await page.screenshot({ path: path.join(output, `${name}-reopened.png`) });
+  report.push({ shot: `${name}-reopened`, files: [`${name}-reopened.png`] });
+  const facts = { sessionId, windowsAfterClose, reportedAfterClose, resultAfterCloseMs: resultAt ? resultAt - closedAt : null, sideQuestion, turnState: turn.state, rows: rowFacts(rows), text: rows.at(-1)?.payload.text };
+  await command(page, 'runtime.set-settings', { keepRunning: before }).catch(() => undefined);
+  const problems = [];
+  if (windowsAfterClose?.visible) problems.push('the window stayed visible after closing');
+  if (reportedAfterClose.includes(sessionId)) problems.push('the hidden window still reports the conversation');
+  if (rows.at(-1)?.payload.state !== 'complete' || rows.at(-1)?.payload.trigger !== 'unattended') problems.push(`recap ${JSON.stringify(facts.rows)}`);
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+const SEED_FILE = path.join(profile, 'existing-seed.json');
+
+/** Run on the build before this feature: one conversation per AI with a context worth caching. */
+async function runExistingSeed(page, report) {
+  const seed = [];
+  const notes = Array.from({ length: 300 }, (_, index) => `모듈 ${index + 1}: 담당 팀 ${index % 7}, 상태 ${index % 3 ? 'beta' : 'stable'}, 비고 ${(index * 13) % 97}번 문서를 참조한다.`).join('\n');
+  // A control per AI: the old build resumes it after a restart, so what a resume costs by itself is known.
+  for (const { providerId, control } of [{ providerId: 'claude' }, { providerId: 'codex' }, { providerId: 'claude', control: true }, { providerId: 'codex', control: true }]) {
+    const key = `existing-${providerId}${control ? '-control' : ''}`;
+    const project = await cartProject(page, key);
+    const conversation = await startConversation(page, {
+      providerId, projectId: project.projectId, workspaceId: project.workspaceId, root: project.root, title: `기존 대화 · ${key}`, permissionPreset: 'standard',
+      initialPrompt: `${notes}\n\n위 목록은 나중에 물어볼 참고 자료야. 도구는 쓰지 말고 "OK"라고만 답해 줘.`,
+    });
+    const panel = await showConversation(page, conversation);
+    const count = await say(page, panel, conversation.sessionId, '도구는 쓰지 말고: 모듈 12의 담당 팀만 답해 줘.');
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, conversation.sessionId, count), 180_000, `${providerId} second turn`);
+    seed.push({ ...conversation, control: control === true });
+  }
+  writeFileSync(SEED_FILE, JSON.stringify(seed, null, 2));
+  report.push({ scenario: 'existing-seed', conversations: seed.map((entry) => entry.sessionId), hasWrapUp: (await snapshot(page)).capabilities?.includes('turn-wrap-up-v1') ?? false });
+}
+
+/** Run on this build, twice, restarting between: what the first turns after the feature arrives pay, and that nothing is told twice. */
+async function runExistingContinue(page, report) {
+  requireTap();
+  const name = 'existing-continue';
+  const hasFeature = (await snapshot(page)).capabilities?.includes('turn-wrap-up-v1') === true;
+  // The old build resumes only the controls; this build everything else.
+  const seed = JSON.parse(readFileSync(SEED_FILE, 'utf8')).filter((entry) => entry.control !== hasFeature);
+  const results = [];
+  const problems = [];
+  await clearDock(page);
+  for (const conversation of seed) {
+    const { sessionId, providerId } = conversation;
+    const panel = await ensureOnScreen(page, conversation);
+    const from = Date.now();
+    const count = await say(page, panel, sessionId, '도구는 쓰지 말고: 모듈 34의 상태만 답해 줘.');
+    await untilAllowing(page, [sessionId], (snap) => settledTurns(snap, sessionId, count), 240_000, `${providerId} first turn here`);
+    const first = await awaitSuggestion(page, panel, sessionId, providerId === 'claude' ? 20_000 : 50_000);
+    const next = await say(page, panel, sessionId, '도구는 쓰지 말고: 모듈 56의 비고 번호만 답해 줘.');
+    await untilAllowing(page, [sessionId], (snap) => settledTurns(snap, sessionId, next), 240_000, `${providerId} second turn here`);
+    await wait(3000);
+    const snap = await snapshot(page);
+    const providerSessionId = agentOf(snap, sessionId)?.providerSessionId;
+    const rollout = providerId === 'codex' ? ownSessionFile('codex', providerSessionId) : undefined;
+    const told = rollout ? readFileSync(rollout, 'utf8').split('\n').filter((line) => line.includes('call the suggest_task tool') && line.includes('"developer"')).length : undefined;
+    const requests = providerId === 'claude' ? claudeRequests(telemetry, providerSessionId).filter((request) => request.at >= from) : undefined;
+    results.push({
+      providerId, control: conversation.control, hasFeature, sessionId, from, suggestion: first.text, developerMessagesInRollout: told,
+      turnStarts: turnCacheFacts(providerId, providerSessionId, snap, sessionId).slice(-3),
+      requests: requests?.map(({ at, model, ...rest }) => rest).slice(0, 8), resumed: tapNow().filter((record) => record.provider === 'claude' && record.spawn).length,
+    });
+  }
+  const file = path.join(output, '..', 'existing-continue-history.json');
+  const history = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+  history.push(results);
+  writeFileSync(file, JSON.stringify(history, null, 2));
+  report.push({ scenario: name, run: history.length, results, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+/** A dialog or Settings: no chat skin to change (the menu is behind it), both themes. */
+async function shootDialog(page, name, report, crop) {
+  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  const applyTheme = (value) => page.evaluate((next) => { document.documentElement.setAttribute('data-theme', next); window.dispatchEvent(new Event('ez:theme')); }, value);
+  const shots = [];
+  try {
+    for (const value of ['matrix', 'dark']) {
+      await applyTheme(value);
+      await wait(700);
+      await page.screenshot({ path: path.join(output, `${name}-${value}.png`) });
+      shots.push(`${name}-${value}.png`);
+      if (crop && await crop.count()) {
+        await crop.first().screenshot({ path: path.join(output, `${name}-${value}-card.png`) });
+        shots.push(`${name}-${value}-card.png`);
+      }
+    }
+  } finally {
+    await applyTheme(theme);
+  }
+  report.push({ shot: name, files: shots });
+}
+
+/** The surface as it stands, in both skins and both themes (a theme change costs no AI call). `crop`: the element to cut out too. */
+async function shootSurface(page, panel, name, report, crop) {
+  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  const applyTheme = (value) => page.evaluate((next) => { document.documentElement.setAttribute('data-theme', next); window.dispatchEvent(new Event('ez:theme')); }, value);
+  const shots = [];
+  try {
+    for (const value of ['matrix', 'dark']) {
+      await applyTheme(value);
+      await wait(700);
+      for (const skin of ['cli', 'bubble']) {
+        await selectSkin(page, skin, panel);
+        await wait(350);
+        const file = `${name}-${skin}-${value}.png`;
+        await page.screenshot({ path: path.join(output, file) });
+        shots.push(file);
+        if (crop && await crop.count()) {
+          const cropped = `${name}-${skin}-${value}-card.png`;
+          await crop.first().screenshot({ path: path.join(output, cropped) });
+          shots.push(cropped);
+        }
+      }
+    }
+  } finally {
+    await applyTheme(theme);
+  }
+  report.push({ shot: name, files: shots });
+}
+
 /** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
 async function inspectSubagents(page, scenario, sessionId, report) {
   const snap = await snapshot(page);
@@ -1771,10 +3047,25 @@ prepareWorkspace();
 // Earlier runs' cart kits stay: the profile still names them as projects, and a deleted project folder that had a
 // worktree puts the daemon in safe mode on the next start. This run seeds new ones (named by run) as it needs them.
 applyAppearance();
+// A person's switches this run depends on, written before the launch reads them.
+if (SCENARIOS.some((scenario) => scenario.name === 'eligibility-advisor')) writeFileSync(path.join(profile, 'agent-advisor.json'), JSON.stringify({ version: 1, enabled: true }));
+// --no-pause: 한도 근처 멈춤 off, the real near-limit state's other half. Otherwise the profile keeps the defaults.
+const wrapUpFile = path.join(profile, 'turn-wrap-up.json');
+if (rest.includes('--no-pause')) writeFileSync(wrapUpFile, JSON.stringify({ version: 1, suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: false }));
+else rmSync(wrapUpFile, { force: true });
+if (rest.includes('--force-pause')) {
+  const resetsAt = Date.now() + 4 * 3_600_000;
+  const reading = { fiveHour: { usedPercent: 95, resetsAt }, observedAt: Date.now() };
+  writeFileSync(path.join(profile, 'agent-usage.json'), JSON.stringify({ version: 1, providers: { claude: reading, codex: reading }, contexts: {} }));
+}
+const tapDir = path.join(output, 'tap');
+const telemetry = tapProviders ? (mkdirSync(tapDir, { recursive: true }), await startTelemetry(path.join(tapDir, 'telemetry.jsonl'))) : undefined;
 const app = await electron.launch({
-  args: [MAIN_ENTRY, '--lang=ko-KR'],
+  args: [...(tapProviders ? ['-r', path.join(ROOT, 'scripts', 'live-provider-tap.cjs')] : []), MAIN_ENTRY, '--lang=ko-KR'],
   env: {
     ...process.env,
+    ...(tapProviders ? { EZ_LIVE_TAP_DIR: tapDir, EZ_LIVE_TAP_OTLP: `http://127.0.0.1:${telemetry.port}` } : {}),
+    ...(rest.includes('--force-pause') ? { EZ_LIVE_TAP_HIDE_LIMITS: '1' } : {}),
     EZTERMINAL_USER_DATA_DIR: profile,
     EZTERMINAL_ALLOW_MULTIPLE_INSTANCES: '1',
     EZTERMINAL_DISABLE_UPDATE_CHECK: '1',
@@ -1816,6 +3107,7 @@ try {
   verdict = liveReportVerdict(report, { requested: SCENARIOS.map((scenario) => scenario.name), unknown: unknownScenarios, allowSkips });
   writeFileSync(path.join(output, 'live-report.json'), JSON.stringify({ verdict, report }, null, 2));
   await app.close();
+  telemetry?.close();
 }
 process.stdout.write(`${JSON.stringify({ stage, output, verdict, report }, null, 1)}\n`);
 if (!verdict.ok) {
