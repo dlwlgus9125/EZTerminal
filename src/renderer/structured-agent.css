@@ -1715,7 +1715,8 @@
 /* Review loop: an AI review's problems one at a time in the review sheet (Android, and desktop without a
    Results tab), and comments sent from it. Margins, not flex gap (WebView 74). */
 .conversation-review__findings-bar { display: flex; align-items: center; }
-.conversation-review__findings-bar > * + * { margin-left: var(--ui-space-2); }
+/* Scoped like `.conversation-review p { margin: 0 }`, which would otherwise take the place's margin. */
+.conversation-review .conversation-review__findings-bar > * + * { margin-left: var(--ui-space-2); }
 .conversation-review__position { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
 .conversation-review .conversation-review__position strong { color: var(--ui-text-primary); font: 600 var(--ui-font-size-md) / 1.3 var(--ui-font-label); }
 .conversation-review__position code { overflow: hidden; color: var(--ui-text-secondary); font: var(--ui-font-size-xs) / 1.4 var(--ui-font-mono); text-overflow: ellipsis; white-space: nowrap; }
