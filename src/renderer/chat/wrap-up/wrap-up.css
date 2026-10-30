@@ -290,7 +290,7 @@
 /* Beside its glyph also when a long branch name wraps; a reason takes the next line. */
 .chat-task__outcome > strong {
   min-width: 0;
-  max-width: calc(100% - 1.25rem);
+  max-width: calc(100% - 0.875rem - var(--ui-space-1));
   color: var(--ui-text-primary);
   font-weight: 600;
   overflow-wrap: break-word;

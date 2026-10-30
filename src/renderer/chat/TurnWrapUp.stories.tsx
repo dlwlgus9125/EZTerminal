@@ -274,6 +274,13 @@ async function showCard(canvasElement: HTMLElement, selector = '[data-testid="ch
   return card;
 }
 const tasksOf = (card: HTMLElement): HTMLElement[] => within(card).getAllByTestId('chat-task');
+/** Whether the text runs onto a second line. Rects, not height: Hangul and Latin runs on one line can differ a little. */
+function breaksInside(element: Element): boolean {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const rects = [...range.getClientRects()];
+  return rects.some((rect) => rect.top >= rects[0]!.bottom - 1);
+}
 const startForm = (): Promise<HTMLElement> => waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="delegate-agent-dialog"]'); expect(element).not.toBeNull(); return element!; });
 
 function chat(id: string, topic: Topic, make: (lang: WrapLanguage) => WrapUpFixture, options: ChatOptions = {}): Story {
@@ -574,6 +581,8 @@ export const TasksStates: Story = {
     const queued = canvasElement.querySelectorAll('.chat-queue__item');
     await expect(queued).toHaveLength(2);
     await expect(queued[1]).toHaveTextContent('In src/format.ts, formatPrice divides cents by 10');
+    // A short outcome stays whole on its line: 시작함, not 시작 / 함.
+    for (const task of tasks.slice(0, 3)) await expect(breaksInside(within(task).getByTestId('chat-task-outcome').querySelector('strong')!)).toBe(false);
   },
 };
 /** Two starts the host refused: each says where it tried and why, and offers 다시 시도 · 무시. */
