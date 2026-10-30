@@ -1549,6 +1549,8 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** The conversations on screen now (turn wrap-up); fire-and-forget, in memory only on the host. */
+  reportConversationViewing?: (sessionIds: readonly string[]) => void;
   /**
    * Results tab: an isolated `ezartifact:` URL for one AI-made HTML page (with its folder's
    * assets) or PDF. Optional so older bridges and stories simply show the source instead.

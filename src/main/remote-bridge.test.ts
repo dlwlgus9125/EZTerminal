@@ -31,6 +31,7 @@ import {
   type RemoteWs,
 } from './remote-bridge';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
+import { isDispatchableClientMessage } from './remote-message-validation';
 import { RemoteRunInitiatorRegistry } from './remote-run-initiator';
 import { RemoteRunLeaseRegistry } from './remote-run-lease';
 import { SessionWorktreeGuard } from './session-worktree-guard';
@@ -5039,6 +5040,62 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     expect(agentHostExtensionsSource.manage).toHaveBeenCalledTimes(1);
     expect(agentHostExtensionsSource.browse).toHaveBeenCalledTimes(1);
     expect(ws.sent.some((message) => 'requestId' in message && (message.requestId === 'h-4' || message.requestId === 'h-5'))).toBe(false);
+  });
+
+  describe('conversation viewing', () => {
+    const viewers = () => ({ report: vi.fn(), drop: vi.fn() });
+
+    it('advertises itself and records what this connection reports, in memory only, until it closes', async () => {
+      const conversationViewers = viewers();
+      const ws = new FakeWs();
+      const { options } = makeOptions({ conversationViewers });
+      await authed(ws, options);
+      expect(ws.sent.find((message) => message.kind === 'auth-ok')).toMatchObject({ capabilities: ['conversation-viewing-v1'] });
+      ws.clientSend({ kind: 'conversation-viewing', sessionIds: ['session-1'] });
+      await flush();
+      expect(conversationViewers.report).toHaveBeenCalledWith(expect.stringMatching(/^remote:/u), ['session-1']);
+      const [clientKey] = conversationViewers.report.mock.calls[0]!;
+      ws.close();
+      await flush();
+      expect(conversationViewers.drop).toHaveBeenCalledWith(clientKey);
+    });
+
+    it('keeps each connection apart', async () => {
+      const conversationViewers = viewers();
+      const first = new FakeWs();
+      const second = new FakeWs();
+      const { options } = makeOptions({ conversationViewers });
+      await authed(first, options);
+      await authed(second, options);
+      first.clientSend({ kind: 'conversation-viewing', sessionIds: ['session-1'] });
+      second.clientSend({ kind: 'conversation-viewing', sessionIds: [] });
+      await flush();
+      const [[firstKey], [secondKey]] = conversationViewers.report.mock.calls;
+      expect(firstKey).not.toBe(secondKey);
+    });
+
+    it('stays quiet on a host without it', async () => {
+      const ws = new FakeWs();
+      await authed(ws, makeOptions().options);
+      expect(ws.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+      const before = ws.sent.length;
+      ws.clientSend({ kind: 'conversation-viewing', sessionIds: ['session-1'] });
+      await flush();
+      expect(ws.sent).toHaveLength(before);
+      expect(ws.readyState).toBe(1);
+    });
+
+    it('refuses a malformed report', () => {
+      const valid = (sessionIds: unknown) => isDispatchableClientMessage({ kind: 'conversation-viewing', sessionIds });
+      expect(valid([])).toBe(true);
+      expect(valid(['session-1'])).toBe(true);
+      expect(valid(Array.from({ length: 8 }, (_, index) => `session-${String(index)}`))).toBe(true);
+      expect(valid(Array.from({ length: 9 }, (_, index) => `session-${String(index)}`))).toBe(false);
+      expect(valid('session-1')).toBe(false);
+      expect(valid([1])).toBe(false);
+      expect(valid([''])).toBe(false);
+      expect(valid(['x'.repeat(257)])).toBe(false);
+    });
   });
 
   describe('side questions (/btw)', () => {

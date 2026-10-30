@@ -196,6 +196,7 @@ import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordin
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
+import { useConversationPanelOnScreen, useConversationViewingReporter } from './conversation-viewing';
 import { DesktopRuntimeLifecycleProvider, usePanelRuntimeLifecycle } from './desktop-runtime-lifecycle';
 
 /** Renderer storage key for the Board + Desk place (board or work, selected project). */
@@ -282,6 +283,8 @@ interface StructuredAgentNavigationContextValue {
   readonly clearConversation?: (panelId: string, request: StructuredAgentClearRequest) => boolean;
   /** Opens the project editor (its folders) from a conversation's folder setting. */
   readonly editProject?: (projectId: string) => void;
+  /** The board does not cover the main window's grid; Dockview cannot tell a panel it does. */
+  readonly mainGridOnScreen: boolean;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 interface StructuredAgentCreateRecoveryContextValue {
@@ -520,6 +523,7 @@ function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
   const navigation = useContext(StructuredAgentNavigationContext);
   const createRecovery = useContext(StructuredAgentCreateRecoveryContext);
   const reviewNavigation = useContext(ProjectReviewNavigationContext);
+  const conversationOnScreen = useConversationPanelOnScreen(props.api, navigation?.mainGridOnScreen ?? true);
   const clearConversation = navigation?.clearConversation
     ? (request: StructuredAgentClearRequest) => navigation.clearConversation!(props.api.id, request)
     : undefined;
@@ -542,7 +546,7 @@ function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
       }
       reviewNavigation.openHistoryReview(projectId, rootId, workspaceId, entry.historyId, turnId, changedPath);
     } : undefined}
-    renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props}
+    renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props} conversationOnScreen={conversationOnScreen}
       params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
       onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings}
       onNewConversation={navigation?.newConversation} onClearConversation={clearConversation} onEditProject={navigation?.editProject} />} />;
@@ -550,6 +554,7 @@ function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
   return (
         <StructuredAgentDockPanel
           {...props}
+          conversationOnScreen={conversationOnScreen}
           createRecoveryRegistry={createRecovery?.registry}
           persistCreateRecovery={createRecovery?.persistBeforeSend}
           onOpenSession={navigation?.openSession}
@@ -1562,6 +1567,7 @@ export function App(): JSX.Element {
   const activeConversationSessionId = activePanelOnScreen && activePanelId
     ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined
     : undefined;
+  useConversationViewingReporter();
   // App conversations: approvals waiting on the person and turns that ended unseen.
   const appChatInbox = useAppChatInbox(activeConversationSessionId);
   // CLI agents running in terminals that wait on the person (their pane approvals); app conversations count in the shell.
@@ -1930,7 +1936,8 @@ export function App(): JSX.Element {
       const opened = workbenchCoordinator.openTerminal({ cwd: bootstrap.cwd, title: bootstrap.name, agentBootstrap: bootstrap });
       if (!opened) throw new Error(t('agentHub.projects.launchFailed'));
     },
-  }), [openStructuredAgentSession, addStructuredAgentDraft, workbenchCoordinator, openProjectEditor, t]);
+    mainGridOnScreen: shellNav.mode === 'work',
+  }), [openStructuredAgentSession, addStructuredAgentDraft, workbenchCoordinator, openProjectEditor, shellNav.mode, t]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,

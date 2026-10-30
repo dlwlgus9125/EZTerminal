@@ -125,12 +125,15 @@ export const REMOTE_CAPABILITY_SIDE_QUESTIONS = 'side-questions-v1' as const;
  * servers and skills (Settings › AI). The program update is never part of the remote protocol.
  */
 export const REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS = 'agent-host-extensions-v1' as const;
+/** The host takes `conversation-viewing`; an older host would close a connection that sends it. */
+export const REMOTE_CAPABILITY_CONVERSATION_VIEWING = 'conversation-viewing-v1' as const;
 export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL
   | typeof REMOTE_CAPABILITY_PROVIDER_MODELS_READ
   | typeof REMOTE_CAPABILITY_SIDE_QUESTIONS
-  | typeof REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS;
+  | typeof REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS
+  | typeof REMOTE_CAPABILITY_CONVERSATION_VIEWING;
 
 /**
  * Version markers document when capabilities entered the protocol. v12 is the
@@ -465,6 +468,12 @@ export interface ReleaseRunsMessage {
 export interface StatsVisibleMessage {
   readonly kind: 'stats-visible';
   readonly visible: boolean;
+}
+
+/** The conversations this connection has on screen now (gated by {@link REMOTE_CAPABILITY_CONVERSATION_VIEWING}). */
+export interface ConversationViewingMessage {
+  readonly kind: 'conversation-viewing';
+  readonly sessionIds: readonly string[];
 }
 
 /** Ask for the last up-to-60 stats snapshots (FIFO reply, no correlation id — same precedent as `list-sessions`). */
@@ -1012,6 +1021,7 @@ export type ClientToServerMessage =
   | ResumeRunRequest
   | ReleaseRunsMessage
   | StatsVisibleMessage
+  | ConversationViewingMessage
   | StatsHistoryRequest
   | PacketsSubscribeMessage
   | PacketsUnsubscribeMessage

@@ -56,6 +56,7 @@ import {
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_CAPABILITY_SIDE_QUESTIONS,
   REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS,
+  REMOTE_CAPABILITY_CONVERSATION_VIEWING,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
@@ -608,6 +609,8 @@ export interface RemoteBridgeOptions {
   readonly agentHostExtensionsSource?: Pick<AgentHostExtensionsClient, 'list' | 'browse' | 'manage'>;
   /** /btw for phones (advertised as `side-questions-v1`); never a daemon command, nothing stored. */
   readonly sideQuestionSource?: import('./agent-side-question-service').AgentSideQuestionHost;
+  /** What each connection has on screen, in memory only: reports never become daemon commands. */
+  readonly conversationViewers?: Pick<import('./conversation-viewers').ConversationViewers, 'report' | 'drop'>;
   /** Read-only provider model catalogs for phones (advertised as `provider-models-read`). */
   readonly providerModelsSource?: { list(providerId: string): Promise<import('../shared/daemon-provider').DaemonProviderManagementResult<readonly import('../shared/daemon-provider').ProviderModel[]>> };
   readonly planningRunSource?: Pick<PlanningRunAuthority, 'read' | 'execute' | 'readResult'>;
@@ -713,6 +716,7 @@ export function attachConnection(
   let connectionClosed = false;
   let daemonEventsSubscribed = false;
   const connectionId = randomUUID();
+  const viewingClientKey = `remote:${connectionId}`;
   const sessionSurfaces = sessionSurfacesFor(options);
   const runLeases = leasesFor(options);
   const runInitiators = initiatorsFor(options);
@@ -1097,6 +1101,7 @@ export function attachConnection(
       contain(() => unsubscribe?.());
       contain(() => options.statsSource?.release());
     }
+    contain(() => options.conversationViewers?.drop(viewingClientKey));
     contain(stopPacketsSubscription);
     // File explorer (M3): a dropped connection is the only owner of its open
     // reads/uploads — close every stream and abort every upload rather than
@@ -1230,6 +1235,7 @@ export function attachConnection(
             ...(options.providerModelsSource ? [REMOTE_CAPABILITY_PROVIDER_MODELS_READ] : []),
             ...(options.sideQuestionSource && clientIdentity ? [REMOTE_CAPABILITY_SIDE_QUESTIONS] : []),
             ...(options.agentHostExtensionsSource && clientIdentity ? [REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS] : []),
+            ...(options.conversationViewers ? [REMOTE_CAPABILITY_CONVERSATION_VIEWING] : []),
             ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
               && clientIdentity
               && options.desktopSource
@@ -1608,6 +1614,10 @@ export function attachConnection(
         }
         break;
       }
+
+      case 'conversation-viewing':
+        options.conversationViewers?.report(viewingClientKey, msg.sessionIds);
+        break;
 
       case 'stats-history':
         send({ kind: 'stats-history', snapshots: options.statsSource?.getHistory() ?? [] });

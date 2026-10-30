@@ -3170,6 +3170,54 @@ function makeSnapshot(at: number): SystemStatsSnapshot {
   };
 }
 
+describe('WsEzTerminalTransport — conversation viewing', () => {
+  const VIEWING = 'conversation-viewing-v1';
+  const reports = (socket: { readonly sent: string[] }) => socket.sent.map((text) => JSON.parse(text) as { kind: string }).filter((message) => message.kind === 'conversation-viewing');
+
+  it('reports once authed on a host that takes it', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok', capabilities: [VIEWING] });
+    transport.reportConversationViewing(['session-1']);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'conversation-viewing', sessionIds: ['session-1'] });
+  });
+
+  it('sends nothing to an older host, which would close the connection', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    transport.reportConversationViewing(['session-1']);
+    expect(reports(sockets[0])).toEqual([]);
+  });
+
+  it('holds a report made before auth-ok and replays the latest on each connection', () => {
+    vi.useFakeTimers();
+    try {
+      const { createSocket, sockets } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, initialBackoffMs: 100, maxBackoffMs: 1000 });
+      transport.reportConversationViewing(['session-1']);
+      expect(reports(sockets[0])).toEqual([]);
+      sockets[0].triggerMessage({ kind: 'auth-ok', capabilities: [VIEWING] });
+      expect(reports(sockets[0])).toEqual([{ kind: 'conversation-viewing', sessionIds: ['session-1'] }]);
+      sockets[0].triggerClose();
+      vi.advanceTimersByTime(100);
+      expect(sockets).toHaveLength(2);
+      sockets[1].triggerMessage({ kind: 'auth-ok', capabilities: [VIEWING] });
+      expect(reports(sockets[1])).toEqual([{ kind: 'conversation-viewing', sessionIds: ['session-1'] }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replays nothing when nothing is open', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    transport.reportConversationViewing([]);
+    sockets[0].triggerMessage({ kind: 'auth-ok', capabilities: [VIEWING] });
+    expect(reports(sockets[0])).toEqual([]);
+  });
+});
+
 describe('WsEzTerminalTransport — stats', () => {
   it('setStatsPanelVisible(true) sends a stats-visible envelope once authed; repeats do not crash', () => {
     const { createSocket, sockets } = makeCreateSocket();

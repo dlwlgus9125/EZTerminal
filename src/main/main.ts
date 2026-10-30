@@ -137,6 +137,7 @@ import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { ReviewCoordinator } from './review-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
+import { ConversationViewers, desktopViewingClient, installConversationViewingIpc } from './conversation-viewers';
 import { TurnWrapUpToldThreads } from './turn-wrap-up-told-threads';
 import { BUILTIN_THEME_IDS } from '../shared/layout-schema';
 import { createDaemonCommand, type DaemonPrincipal, type DaemonSnapshot } from '../shared/daemon-protocol';
@@ -437,7 +438,7 @@ function prepareDesktopRendererRecovery(webContentsId: number): void {
 }
 
 function resolveDesktopSessionPrincipal(
-  event: IpcMainInvokeEvent,
+  event: Pick<IpcMainInvokeEvent, 'sender'>,
   clientInstanceId: unknown,
 ): string | null {
   if (!isSessionSurfaceId(clientInstanceId) || !sessionSurfaceAuthority) return null;
@@ -932,6 +933,10 @@ app.on('ready', async () => {
   });
   const claudeProviderAdapter = new ClaudeProviderAdapter({
     enablementStore: claudeEnablementStore,
+  });
+  const conversationViewers = new ConversationViewers({
+    // Popouts report through the main window's renderer, so it is the one window that answers.
+    windows: () => (mainWindowRef && !mainWindowRef.isDestroyed() ? [desktopViewingClient(mainWindowRef.webContents.id)] : []),
   });
   const turnWrapUpToldThreads = new TurnWrapUpToldThreads(app.getPath('userData'));
   void turnWrapUpToldThreads.init().catch((error) => {
@@ -2570,6 +2575,7 @@ app.on('ready', async () => {
   featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady, authorized: desktopWindowSender }));
   featureIpcDisposers.push(installWorkflowTemplateIpc({ ipc: ipcMain, store: workflowTemplateStore, ready: workflowTemplatesReady, authorized: desktopWindowSender }));
   featureIpcDisposers.push(installSettingsChangesIpc({ ipc: ipcMain, authority: settingsAuthority, ready: settingsAuthorityReady, principal: resolveDesktopSessionPrincipal }));
+  featureIpcDisposers.push(installConversationViewingIpc({ ipc: ipcMain, viewers: conversationViewers, principal: resolveDesktopSessionPrincipal }));
   featureIpcDisposers.push(installWorkflowCheckIpc({
     ipc: ipcMain,
     authorized: (event, clientId) => resolveDesktopSessionPrincipal(event, clientId) !== null,
@@ -4905,6 +4911,7 @@ app.on('ready', async () => {
       agentHostExtensionsSource: agentHostExtensions,
       providerModelsSource: remoteProviderModels,
       sideQuestionSource: sideQuestionHost,
+      conversationViewers,
       planningRunSource: planningRunAuthority,
         projectArchiveSource: { request: (value, principalId) => projectArchiveAuthority.execute(value, principalId) },
       gitSource: gitStatusService,

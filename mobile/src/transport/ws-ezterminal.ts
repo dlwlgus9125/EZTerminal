@@ -159,6 +159,7 @@ import {
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_CAPABILITY_SIDE_QUESTIONS,
   REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS,
+  REMOTE_CAPABILITY_CONVERSATION_VIEWING,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
@@ -500,6 +501,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
   private statsVisible = false;
+  /** The conversations on screen, remembered across reconnects like `statsVisible`. */
+  private viewedSessionIds: readonly string[] = [];
   private readonly statsListeners = new Set<(snapshot: SystemStatsSnapshot) => void>();
   /** `stats-history` has no correlation id on the wire (same precedent as
    * `list-sessions`) — concurrent callers are served FIFO as replies arrive. */
@@ -1768,6 +1771,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   setStatsPanelVisible(visible: boolean): void {
     this.statsVisible = visible;
     if (this.authed) this.send({ kind: 'stats-visible', visible });
+  }
+
+  /** Same shape as `setStatsPanelVisible`, and only to a host that takes it: an older one would close the connection. */
+  reportConversationViewing(sessionIds: readonly string[]): void {
+    this.viewedSessionIds = sessionIds;
+    if (this.authed && this.remoteCapabilities.has(REMOTE_CAPABILITY_CONVERSATION_VIEWING)) this.send({ kind: 'conversation-viewing', sessionIds });
   }
 
   // ── Out of scope for mobile (layout/presets/theme persistence) — inert
@@ -3182,6 +3191,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
                   || capability === REMOTE_CAPABILITY_PROVIDER_MODELS_READ
                   || capability === REMOTE_CAPABILITY_SIDE_QUESTIONS
                   || capability === REMOTE_CAPABILITY_AGENT_HOST_EXTENSIONS
+                  || capability === REMOTE_CAPABILITY_CONVERSATION_VIEWING
                 ),
               )
             : [],
@@ -3239,6 +3249,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // `statsVisible` is per-connection state that does NOT survive a new
         // socket (see `setStatsPanelVisible`'s doc comment).
         if (this.statsVisible) this.send({ kind: 'stats-visible', visible: true });
+        if (this.viewedSessionIds.length) this.reportConversationViewing(this.viewedSessionIds);
         // Same replay for packets — NO second `_ezPacketPort` handoff: the
         // existing `packetPort` (if any) is reused, and the server's
         // `PacketMirror` replays the current status on its own.

@@ -100,6 +100,8 @@ import type { ChatMessageContext } from '../../src/shared/chat-message';
 import { sessionViewKey } from '../../src/renderer/session-view-state';
 import { useLiveTerminalSessions, withLiveTerminalSessions } from '../../src/renderer/use-live-terminal-sessions';
 import { useMobileToast } from './MobileToast';
+import { useConversationViewing } from './use-conversation-viewing';
+import { usePageVisible } from './use-page-visible';
 import { createSideQuestionClient } from '../../src/renderer/side-question/side-question-client';
 import type {
   DaemonRuntimeViewState,
@@ -416,6 +418,7 @@ export function MobileAgentView({
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(initialSessionId ?? null);
   useEffect(() => { onActiveSessionChange?.(selectedDaemonSessionId); }, [onActiveSessionChange, selectedDaemonSessionId]);
+  useConversationViewing(transport, selectedDaemonSessionId, usePageVisible());
   const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
   const [conversationEntry, setConversationEntry] = useState<ConversationEntry>();
   const draftIdentity = useRef(`structured-draft-${conversationOperationId()}`);

@@ -3,6 +3,7 @@ import type { ApprovalResponse } from '../shared/approval-request';
 import type { ConversationFolders } from '../shared/conversation-folders';
 import type { AccessLevel } from './agent-permission-copy';
 import { readPlanAccess } from './agent-plan-access';
+import { useConversationViewing } from './conversation-viewing';
 import { releaseProviderAfterClear } from './structured-agent-release';
 import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
 import { AgentResultsContext, AgentResultsOwnerContext, type AgentResultsOwner } from './agent-results/AgentResultsContext';
@@ -274,6 +275,8 @@ export function StructuredAgentDockPanel(
       readonly title?: string;
       readonly providerLabel?: string;
     }) => void;
+    /** A person is reading this panel now (useConversationPanelOnScreen). */
+    readonly conversationOnScreen?: boolean;
   },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
@@ -295,6 +298,7 @@ export function StructuredAgentDockPanel(
     : undefined;
   const restoredSessionId = structuredAgentSessionId(historyId);
   const [sessionId, setSessionId] = useState<string | null>(restoredSessionId);
+  useConversationViewing(props.api.id, sessionId, props.conversationOnScreen === true);
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
   const [availability, setAvailability] = useState<DaemonAuthorityAvailability | null>();
   const [loading, setLoading] = useState(true);

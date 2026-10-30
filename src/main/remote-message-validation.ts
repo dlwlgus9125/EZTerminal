@@ -1,4 +1,5 @@
 import { isAgentLaunchModel } from '../shared/agent-history';
+import { isViewedSessionIds, MAX_REMOTE_VIEWED_CONVERSATIONS } from '../shared/conversation-viewing';
 import { ConversationRefSchema, ConversationQuerySchema, HistoryResumePreparationRequestSchema, HistoryResumeRequestSchema } from '../shared/conversation-history';
 
 import { MAX_GUARDED_DESTROY_RUN_IDS, type RendererControl } from '../shared/ipc';
@@ -291,6 +292,8 @@ export function isDispatchableClientMessage(value: unknown): value is Dispatchab
       );
     case 'stats-visible':
       return typeof value.visible === 'boolean';
+    case 'conversation-viewing':
+      return isViewedSessionIds(value.sessionIds, MAX_REMOTE_VIEWED_CONVERSATIONS);
     case 'agent-snapshot-get':
       return (
         typeof value.requestId === 'string'
