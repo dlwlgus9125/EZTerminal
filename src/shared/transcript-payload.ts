@@ -223,7 +223,7 @@ const TaskSuggestionPayloadSchema = z.object({
 }).strict();
 
 /** What a refused start asked for: 다시 시도 repeats exactly that. */
-const SuggestedTaskStartSchema = z.object({
+export const SuggestedTaskStartSchema = z.object({
   where: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('this-folder') }).strict(),
     z.object({ kind: z.literal('new-worktree'), branch: ShortText, workspaceId: ShortText.optional() }).strict(),

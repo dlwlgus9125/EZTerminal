@@ -12,6 +12,7 @@ import {
   type DaemonPrincipal,
   type DaemonSession,
   type DaemonSnapshot,
+  type PermissionPreset,
 } from '../shared/daemon-protocol';
 import type { ApprovalRequest } from '../shared/approval-request';
 import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
@@ -1342,5 +1343,282 @@ describe('the pause, for the Settings screen', () => {
       await h.runtime.whenIdle();
       expect(h.coordinator.paused(h.router.getSnapshot())).toEqual([{ providerId: 'claude', window: 'five-hour', usedPercent: 95, resetsAt: NOW_MS + 60_000 }]);
     } finally { await dispose(h); }
+  });
+});
+
+describe('a suggested task', () => {
+  const TASK = 'task-1';
+  const CHILD = suggestedTaskChildSessionId(TASK);
+  /** A card in `chat` from its finished turn; step by step the MCP tool writes these. */
+  const withCard = async (h: Harness, permissionPreset: PermissionPreset = 'full-access') => {
+    await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset, initialPrompt: 'Fix.' });
+    const turnId = await h.finishTurn(h.claude, 'chat');
+    await h.router.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [{
+      id: `card-${TASK}`, sessionId: 'chat', turnId, kind: 'notice', text: 'Suggested task: Add a test', isDelta: false, isSensitive: true, createdAt: '2026-10-30T10:00:00.000Z',
+      payload: { v: 1, type: 'task-suggestion', taskId: TASK, turnId, providerId: 'claude', title: 'Add a test', rationale: 'No test.', prompt: 'Write the test.' },
+    }] }] });
+    return turnId;
+  };
+  const start = (h: Harness, turnId: string, patch: Record<string, unknown> = {}, principal?: DaemonPrincipal) => h.execute('agent.create', {
+    sessionId: CHILD, workspaceId: 'workspace-1', title: 'Add a test', providerId: 'claude', permissionPreset: 'full-access', initialPrompt: 'Write the test.',
+    parentSessionId: 'chat', wrapUpTask: { turnId, taskId: TASK, oneClick: true }, ...patch,
+  } as never, principal);
+  const send = (h: Harness, turnId: string, taskId = TASK) => h.execute('agent.submit', { sessionId: 'chat', prompt: 'Write the test.', wrapUpTask: { turnId, taskId } });
+  const statuses = (h: Harness) => h.router.readTranscript('chat', 0, 2_000).filter((item) => item.payload?.type === 'task-suggestion-status');
+  const childAgent = (h: Harness) => h.router.getSnapshot().agents.find((agent) => agent.sessionId === CHILD);
+
+  describe('started as a sub-conversation', () => {
+    it('commits the conversation and the started row together', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        const receipt = await start(h, turnId, { wrapUpTask: { turnId, taskId: TASK, oneClick: true, branch: 'suggest/add-a-test' } });
+        expect(receipt.ok).toBe(true);
+        expect(childAgent(h)).toBeDefined();
+        expect(h.router.getSnapshot().agentRelations).toEqual([expect.objectContaining({ parentSessionId: 'chat', childSessionId: CHILD, owner: 'managed' })]);
+        expect(statuses(h)).toHaveLength(1);
+        expect(statuses(h)[0]).toMatchObject({
+          sessionId: 'chat', turnId, kind: 'notice', isSensitive: false,
+          payload: { type: 'task-suggestion-status', taskId: TASK, turnId, outcome: 'started', sessionId: CHILD, branch: 'suggest/add-a-test' },
+        });
+      } finally { await dispose(h); }
+    });
+
+    it('runs one click at 승인 후 실행, even from a full-access conversation', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h, 'full-access');
+        await start(h, turnId);
+        expect(childAgent(h)?.permissionPreset).toBe('standard');
+      } finally { await dispose(h); }
+    });
+
+    it('runs a phone\'s start at 승인 후 실행, whatever it asks for', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await start(h, turnId, { wrapUpTask: { turnId, taskId: TASK } }, { kind: 'android', id: 'phone' });
+        expect(childAgent(h)?.permissionPreset).toBe('standard');
+      } finally { await dispose(h); }
+    });
+
+    it('keeps a person\'s choice in the start form', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await start(h, turnId, { wrapUpTask: { turnId, taskId: TASK } });
+        expect(childAgent(h)?.permissionPreset).toBe('full-access');
+      } finally { await dispose(h); }
+    });
+
+    it('leaves nothing behind when the start is refused', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        const refused = await start(h, turnId, { workspaceId: 'workspace-elsewhere' });
+        expect(refused.ok).toBe(false);
+        expect(statuses(h)).toEqual([]);
+        expect(childAgent(h)).toBeUndefined();
+      } finally { await dispose(h); }
+    });
+
+    it('answers a second press with the conversation that exists, and no second row', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await start(h, turnId);
+        const again = await start(h, turnId);
+        expect(again).toMatchObject({ ok: false, error: { code: 'invalid-state', message: 'Session already exists.' } });
+        expect(statuses(h)).toHaveLength(1);
+      } finally { await dispose(h); }
+    });
+
+    it('starts again after a failed start, keeping the same conversation id', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'start-failed', reason: 'Too many.', start: { where: { kind: 'this-folder' }, agent: { providerId: 'claude', permissionPreset: 'standard' }, settings: 'Claude' } });
+        expect((await start(h, turnId)).ok).toBe(true);
+        expect(statuses(h).at(-1)?.payload).toMatchObject({ outcome: 'started' });
+      } finally { await dispose(h); }
+    });
+
+    it.each<[string, (h: Harness, turnId: string) => Promise<unknown>]>([
+      ['a card that was dismissed', (h, turnId) => h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'dismissed' })],
+      ['a card already sent here', (h, turnId) => send(h, turnId)],
+    ])('refuses %s', async (_name, before) => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await before(h, turnId);
+        const count = statuses(h).length;
+        expect((await start(h, turnId)).ok).toBe(false);
+        expect(childAgent(h)).toBeUndefined();
+        expect(statuses(h)).toHaveLength(count);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a card this conversation does not hold', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect((await h.execute('agent.create', {
+          sessionId: suggestedTaskChildSessionId('task-other'), workspaceId: 'workspace-1', title: 'Other', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Other.',
+          parentSessionId: 'chat', wrapUpTask: { turnId, taskId: 'task-other' },
+        })).ok).toBe(false);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a card named with another turn', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect((await start(h, turnId, { wrapUpTask: { turnId: 'turn-other', taskId: TASK } })).ok).toBe(false);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a child that is not the card\'s, which would start the task twice', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect(await start(h, turnId, { sessionId: 'agent-other' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a start with no parent or no prompt', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect(await start(h, turnId, { parentSessionId: undefined })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+        expect(await start(h, turnId, { initialPrompt: undefined })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      } finally { await dispose(h); }
+    });
+  });
+
+  describe('sent to this conversation', () => {
+    it('becomes a person\'s message that names the card', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect((await send(h, turnId)).ok).toBe(true);
+        const row = h.router.readTranscript('chat', 0, 2_000).filter((item) => item.kind === 'user-message').at(-1)!;
+        expect(row).toMatchObject({ text: 'Write the test.', payload: { v: 1, type: 'task-suggestion-send', taskId: TASK, turnId } });
+        expect(row.turnId).not.toBe(turnId);
+      } finally { await dispose(h); }
+    });
+
+    it('queues behind a running turn like any message', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+        expect((await send(h, turnId)).ok).toBe(true);
+        expect(h.router.getSnapshot().turns.filter((turn) => turn.state === 'queued')).toHaveLength(1);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a second press while the first stands', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await send(h, turnId);
+        expect(await send(h, turnId)).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+        await h.finishTurn(h.claude, 'chat');
+        expect(await send(h, turnId)).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      } finally { await dispose(h); }
+    });
+
+    it('can be sent again once that message was taken back', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+        await send(h, turnId);
+        const queued = h.router.getSnapshot().turns.find((turn) => turn.state === 'queued')!;
+        await h.execute('agent.queue', { sessionId: 'chat', turnId: queued.id, turnRevision: queued.revision, action: 'remove' });
+        expect((await send(h, turnId)).ok).toBe(true);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a card this conversation does not hold', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect(await send(h, turnId, 'task-other')).toMatchObject({ ok: false, error: { code: 'not-found' } });
+      } finally { await dispose(h); }
+    });
+
+    it('refuses to interrupt for it: the field exists only on a plain send', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        const receipt = await h.execute('agent.interrupt-and-submit', { sessionId: 'chat', prompt: 'Write the test.', wrapUpTask: { turnId, taskId: TASK } } as never);
+        expect(receipt).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      } finally { await dispose(h); }
+    });
+  });
+
+  describe('wrap-up.task-outcome', () => {
+    it('dismisses and reopens, in rows that carry no one\'s words', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect((await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'dismissed' })).ok).toBe(true);
+        expect((await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'open' })).ok).toBe(true);
+        expect(statuses(h).map((row) => row.payload)).toEqual([
+          { v: 1, type: 'task-suggestion-status', taskId: TASK, turnId, outcome: 'dismissed' },
+          { v: 1, type: 'task-suggestion-status', taskId: TASK, turnId, outcome: 'open' },
+        ]);
+        expect(statuses(h).every((row) => !row.isSensitive)).toBe(true);
+      } finally { await dispose(h); }
+    });
+
+    it('records a failed start with what was asked, as sensitive', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        const asked = { where: { kind: 'new-worktree', branch: 'suggest/add-a-test' }, agent: { providerId: 'claude', permissionPreset: 'standard' }, settings: 'Claude · 승인 후 실행' } as const;
+        expect((await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'start-failed', reason: 'The branch exists.', start: asked, branchTaken: true })).ok).toBe(true);
+        expect(statuses(h)).toEqual([expect.objectContaining({
+          isSensitive: true,
+          payload: { v: 1, type: 'task-suggestion-status', taskId: TASK, turnId, outcome: 'start-failed', reason: 'The branch exists.', start: asked, branchTaken: true },
+        })]);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a failed start with no reason or no record of what was asked', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect((await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'start-failed' })).ok).toBe(false);
+        expect(statuses(h)).toEqual([]);
+      } finally { await dispose(h); }
+    });
+
+    it('never records `started`: only the start itself does, in its own commit', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect(await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'started' } as never)).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      } finally { await dispose(h); }
+    });
+
+    it('cannot undo a task that started', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        await start(h, turnId);
+        expect(await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: TASK, outcome: 'dismissed' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+        expect(statuses(h)).toHaveLength(1);
+      } finally { await dispose(h); }
+    });
+
+    it('refuses a card this conversation does not hold', async () => {
+      const h = await harness();
+      try {
+        const turnId = await withCard(h);
+        expect(await h.execute('wrap-up.task-outcome', { sessionId: 'chat', turnId, taskId: 'task-other', outcome: 'dismissed' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+      } finally { await dispose(h); }
+    });
   });
 });

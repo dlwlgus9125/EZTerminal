@@ -3,7 +3,8 @@ import { ApprovalResponseSchema, type ApprovalRequest, type ApprovalResponse } f
 import { ChatMessageContextSchema, type ChatMessageContext } from './chat-message';
 import { isSafeRef } from './git-status';
 import { REVIEW_LIMITS, type ReviewFailureReason } from './review-findings';
-import type { TranscriptPayload } from './transcript-payload';
+import { SuggestedTaskStartSchema, type TranscriptPayload } from './transcript-payload';
+import type { SuggestedTaskStart } from './turn-wrap-up';
 
 export const DAEMON_PROTOCOL_VERSION = 12 as const;
 
@@ -307,6 +308,12 @@ export type DaemonReviewTarget =
 /** Reviewer conversations are host-owned and read-only; their ids carry this prefix. */
 export const REVIEWER_SESSION_PREFIX = 'review-';
 
+/** A card of turn wrap-up: the task `suggest_task` left in that turn. */
+export interface DaemonWrapUpTaskRef {
+  readonly turnId: string;
+  readonly taskId: string;
+}
+
 /** Hosts that queue a person's settings changes for the next request and take one-request efforts. */
 export const AGENT_SETTINGS_CAPABILITY = 'agent-settings-v2';
 
@@ -352,6 +359,7 @@ export const DAEMON_COMMAND_TYPES = [
   'review.resolve',
   'review.cancel',
   'wrap-up.recap-retry',
+  'wrap-up.task-outcome',
   'permission.resolve',
   'provider.enable',
   'provider.disable',
@@ -420,6 +428,13 @@ export interface DaemonCommandPayloads {
     readonly reasoningEffort?: string;
     /** A managed child sends its first finished result back to the parent as a new message. */
     readonly reportBack?: boolean;
+    /** Turn wrap-up: this child carries out a card of `parentSessionId`; a person's start only. */
+    readonly wrapUpTask?: DaemonWrapUpTaskRef & {
+      /** Started by one press: it runs at 승인 후 실행 whatever the conversation or this command asks. */
+      readonly oneClick?: boolean;
+      /** The new worktree's branch, for the card. */
+      readonly branch?: string;
+    };
   };
   readonly 'agent.resume': {
     readonly sessionId: string;
@@ -439,6 +454,8 @@ export interface DaemonCommandPayloads {
     readonly context?: ChatMessageContext;
     /** The host sends a delegated child's result to its parent (`report-back-runtime` only). */
     readonly reportOf?: string;
+    /** Turn wrap-up: this message carries out a card of this conversation (여기서 하기); a person's send only. */
+    readonly wrapUpTask?: DaemonWrapUpTaskRef;
   };
   readonly 'agent.interrupt-and-submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
   readonly 'agent.interrupt': { readonly sessionId: string };
@@ -497,6 +514,16 @@ export interface DaemonCommandPayloads {
   readonly 'review.cancel': { readonly sessionId: string; readonly reviewId: string };
   /** Turn wrap-up: a person asks again for a turn's failed recap (다시 만들기). */
   readonly 'wrap-up.recap-retry': { readonly sessionId: string; readonly turnId: string };
+  /** What became of a card. `started` is not here: the start itself records that, in its own commit. */
+  readonly 'wrap-up.task-outcome': DaemonWrapUpTaskRef & {
+    readonly sessionId: string;
+    readonly outcome: 'dismissed' | 'open' | 'start-failed';
+    /** `start-failed`: the host's words, and what was asked for, so 다시 시도 repeats exactly that. */
+    readonly reason?: string;
+    readonly start?: SuggestedTaskStart;
+    /** `start-failed`: the branch name exists, so a retry needs another. */
+    readonly branchTaken?: boolean;
+  };
   readonly 'permission.resolve': {
     readonly approvalId: string;
     readonly decision: 'allow' | 'deny';
@@ -677,13 +704,16 @@ export function classifyDaemonEvent(
 const NonEmptyStringSchema = z.string().trim().min(1);
 const IdentifierSchema = NonEmptyStringSchema.max(256);
 const NonNegativeIntegerSchema = z.number().int().nonnegative();
-const AgentMessagePayloadSchema = z.object({
+const AgentMessageFields = z.object({
   sessionId: IdentifierSchema,
   prompt: NonEmptyStringSchema.max(100_000),
   context: ChatMessageContextSchema.optional(),
   reportOf: IdentifierSchema.optional(),
-}).strict().refine((value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 900 * 1024,
-  'The complete message must fit within 900 KiB.');
+});
+const messageFits = (value: unknown): boolean => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 900 * 1024;
+const MESSAGE_TOO_LARGE = 'The complete message must fit within 900 KiB.';
+const AgentMessagePayloadSchema = AgentMessageFields.strict().refine(messageFits, MESSAGE_TOO_LARGE);
+const WrapUpTaskRefFields = { turnId: IdentifierSchema, taskId: IdentifierSchema };
 const PositiveIntegerSchema = z.number().int().positive();
 const StringArraySchema = z.array(z.string());
 const PermissionPresetSchema = z.enum(['plan', 'standard', 'full-access']);
@@ -768,6 +798,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     parentSessionId: IdentifierSchema.optional(),
     reasoningEffort: z.string().min(1).max(32).optional(),
     reportBack: z.boolean().optional(),
+    wrapUpTask: z.object({ ...WrapUpTaskRefFields, oneClick: z.boolean().optional(), branch: IdentifierSchema.optional() }).strict().optional(),
   }).strict(),
   'agent.resume': z.object({
     sessionId: IdentifierSchema,
@@ -781,7 +812,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     reasoningEffort: z.string().min(1).max(32).optional(),
     parentSessionId: IdentifierSchema.optional(),
   }).strict(),
-  'agent.submit': AgentMessagePayloadSchema,
+  'agent.submit': AgentMessageFields.extend({ wrapUpTask: z.object(WrapUpTaskRefFields).strict().optional() }).strict().refine(messageFits, MESSAGE_TOO_LARGE),
   'agent.interrupt-and-submit': AgentMessagePayloadSchema,
   'agent.interrupt': SessionIdSchema,
   'agent.queue': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, turnRevision: z.number().int().nonnegative(), action: z.enum(['remove', 'take', 'run-next']) }).strict(),
@@ -811,6 +842,15 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   }).strict(),
   'review.cancel': z.object({ sessionId: IdentifierSchema, reviewId: IdentifierSchema }).strict(),
   'wrap-up.recap-retry': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema }).strict(),
+  'wrap-up.task-outcome': z.object({
+    sessionId: IdentifierSchema,
+    ...WrapUpTaskRefFields,
+    outcome: z.enum(['dismissed', 'open', 'start-failed']),
+    reason: z.string().min(1).max(2_000).optional(),
+    start: SuggestedTaskStartSchema.optional(),
+    branchTaken: z.boolean().optional(),
+  }).strict().refine((value) => (value.outcome === 'start-failed') === (value.reason !== undefined && value.start !== undefined),
+    'A failed start says why and what was asked for; nothing else does.'),
   'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']), response: ApprovalResponseSchema.optional() }).strict(),
   'provider.enable': ProviderEnableSchema,
   'provider.disable': z.object({ providerId: IdentifierSchema }).strict(),

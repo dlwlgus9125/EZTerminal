@@ -35,6 +35,25 @@ describe('turn wrap-up commands', () => {
     expect(retry({ kind: 'android', id: 'phone' }).allowed).toBe(true);
   });
 
+  it('lets a person start or send a card, and say what became of it', () => {
+    const task = { turnId: 'turn-1', taskId: 'task-1' };
+    const person: DaemonPrincipal = { kind: 'android', id: 'phone' };
+    expect(authorizeDaemonCommand(command('agent.create', { sessionId: 'suggested-task-1', parentSessionId: 'chat', wrapUpTask: task }, person), noDescendants).allowed).toBe(true);
+    expect(authorizeDaemonCommand(command('agent.submit', { sessionId: 'chat', prompt: 'Go.', wrapUpTask: task }, person), noDescendants).allowed).toBe(true);
+    expect(authorizeDaemonCommand(command('wrap-up.task-outcome', { sessionId: 'chat', ...task, outcome: 'dismissed' }, person), noDescendants).allowed).toBe(true);
+  });
+
+  it('denies an AI either field, though it may create and message its own children', () => {
+    const task = { turnId: 'turn-1', taskId: 'task-1' };
+    const agent: DaemonPrincipal = { kind: 'mcp', id: 'session-parent', sessionId: 'parent' };
+    const descendant = { isManagedDescendant: () => true };
+    expect(authorizeDaemonCommand(command('agent.create', { sessionId: 'agent-1', parentSessionId: 'parent' }, agent), descendant).allowed).toBe(true);
+    expect(authorizeDaemonCommand(command('agent.create', { sessionId: 'suggested-task-1', parentSessionId: 'parent', wrapUpTask: task }, agent), descendant).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('agent.submit', { sessionId: 'child', prompt: 'Go.' }, agent), descendant).allowed).toBe(true);
+    expect(authorizeDaemonCommand(command('agent.submit', { sessionId: 'child', prompt: 'Go.', wrapUpTask: task }, agent), descendant).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('wrap-up.task-outcome', { sessionId: 'child', ...task, outcome: 'dismissed' }, agent), descendant).allowed).toBe(false);
+  });
+
   it('keeps it from an AI: a recap is the person\'s to ask for', () => {
     const decision = authorizeDaemonCommand(command('wrap-up.recap-retry', { sessionId: 'child', turnId: 'turn-1' }, { kind: 'mcp', id: 'session-parent', sessionId: 'parent' }), { isManagedDescendant: () => true });
     expect(decision.allowed).toBe(false);

@@ -17,7 +17,12 @@ import {
 } from '../shared/daemon-protocol';
 import { isStructuredDaemonAgentSession } from '../shared/daemon-session-visibility';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
-import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
+import {
+  parseTranscriptPayload,
+  type RecapPayload,
+  type TaskSuggestionPayload,
+  type TaskSuggestionStatusPayload,
+} from '../shared/transcript-payload';
 import {
   isSuggestedTaskChildSession,
   recapQuestion,
@@ -167,6 +172,56 @@ export function readRecapHistory(read: TranscriptReader, sessionId: string, turn
     if (payload?.type === 'recap' && payload.turnId === turnId) recap = payload;
   });
   return recap;
+}
+
+const TASK_OUTCOME_TEXT: Readonly<Record<TaskSuggestionStatusPayload['outcome'], string>> = {
+  started: 'Suggested task started as a sub-conversation.',
+  dismissed: 'Suggested task dismissed.',
+  open: 'Suggested task reopened.',
+  'start-failed': 'Suggested task could not start.',
+};
+
+/** A `task-suggestion-status` row in the conversation that holds the card. A failed start repeats what was asked for: sensitive. */
+export function taskStatusRowItem(input: {
+  readonly id: string;
+  /** The conversation that holds the card. */
+  readonly sessionId: string;
+  readonly status: Omit<TaskSuggestionStatusPayload, 'v' | 'type'>;
+}): DaemonTranscriptItemInput {
+  return {
+    id: input.id,
+    sessionId: input.sessionId,
+    turnId: input.status.turnId,
+    kind: 'notice',
+    text: TASK_OUTCOME_TEXT[input.status.outcome],
+    isDelta: false,
+    isSensitive: input.status.outcome === 'start-failed',
+    payload: { v: 1, type: 'task-suggestion-status', ...input.status },
+  };
+}
+
+/** A card as clients read it: the latest status wins, and the send row's turn says what became of a send. */
+export interface TaskCardHistory {
+  readonly task: TaskSuggestionPayload;
+  readonly status?: TaskSuggestionStatusPayload;
+  /** The turn of the last 여기서 하기. */
+  readonly sendTurnId?: string;
+}
+
+export function readTaskCard(read: TranscriptReader, sessionId: string, taskId: string): TaskCardHistory | undefined {
+  let task: TaskSuggestionPayload | undefined;
+  let status: TaskSuggestionStatusPayload | undefined;
+  let sendTurnId: string | undefined;
+  readPages(read, sessionId, (item) => {
+    const raw = item.payload;
+    if (raw?.type !== 'task-suggestion' && raw?.type !== 'task-suggestion-status' && raw?.type !== 'task-suggestion-send') return;
+    const payload = parseTranscriptPayload(raw);
+    if (!payload || !('taskId' in payload) || payload.taskId !== taskId) return;
+    if (payload.type === 'task-suggestion') task = payload;
+    else if (payload.type === 'task-suggestion-status') status = payload;
+    else if (payload.type === 'task-suggestion-send' && item.kind === 'user-message') sendTurnId = item.turnId;
+  });
+  return task ? { task, ...(status ? { status } : {}), ...(sendTurnId ? { sendTurnId } : {}) } : undefined;
 }
 
 /** A pending request that stops a conversation on the person. A settings proposal stops nothing; a subagent's stops only the subagent. */

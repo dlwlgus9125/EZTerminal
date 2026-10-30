@@ -58,7 +58,8 @@ import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
 import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
-import type { DaemonWrapUpHost } from './turn-wrap-up-coordinator';
+import { readTaskCard, taskStatusRowItem, type DaemonWrapUpHost } from './turn-wrap-up-coordinator';
+import { suggestedTaskChildSessionId } from '../shared/turn-wrap-up';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -77,6 +78,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'review.resolve'
   | 'review.cancel'
   | 'wrap-up.recap-retry'
+  | 'wrap-up.task-outcome'
   | 'permission.resolve'
   | 'provider.enable'
   | 'provider.disable'
@@ -475,6 +477,7 @@ export class DaemonAgentRuntime {
       'review.resolve': (command, context) => this.runCommand(() => this.resolveReview(command, context)),
       'review.cancel': (command, context) => this.runCommand(() => this.cancelReview(command, context)),
       'wrap-up.recap-retry': (command, context) => this.runCommand(() => this.retryRecap(command, context)),
+      'wrap-up.task-outcome': (command, context) => this.runCommand(() => this.taskOutcome(command, context)),
       'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
       'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
@@ -874,9 +877,19 @@ export class DaemonAgentRuntime {
       ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId, command.principal)
       : undefined;
     if (relation && !relation.ok) return relation.result;
+    const wrapUpTask = command.payload.wrapUpTask;
+    if (wrapUpTask) {
+      if (!command.payload.parentSessionId || !command.payload.initialPrompt || command.payload.sessionId !== suggestedTaskChildSessionId(wrapUpTask.taskId)) {
+        return commandError('invalid-command', 'A suggested task starts as its own sub-conversation of the conversation that holds it.');
+      }
+      const refused = this.taskCardRefusal(snapshot, command.payload.parentSessionId, wrapUpTask);
+      if (refused) return refused;
+    }
 
     const turnId = stableId('turn', command.commandId);
     const now = this.isoNow();
+    // 승인 후 실행 whatever the conversation runs at: one press, or a phone, cannot review a start form.
+    const permissionPreset = wrapUpTask && (wrapUpTask.oneClick || command.principal.kind === 'android') ? 'standard' : command.payload.permissionPreset;
     const mutations: DaemonStoreMutation[] = [
       { kind: 'session.upsert', value: {
         id: command.payload.sessionId,
@@ -892,7 +905,7 @@ export class DaemonAgentRuntime {
         providerId: command.payload.providerId,
         ...(command.payload.model ? { model: command.payload.model } : {}),
         ...(command.payload.reasoningEffort ? { reasoningEffort: command.payload.reasoningEffort } : {}),
-        permissionPreset: command.payload.permissionPreset,
+        permissionPreset,
         state: command.payload.initialPrompt ? 'queued' : 'idle',
         queuedTurnCount: command.payload.initialPrompt ? 1 : 0,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled && !this.options.preparedSessionSettings?.(command.payload.sessionId),
@@ -939,6 +952,17 @@ export class DaemonAgentRuntime {
         owner: 'managed',
         depth: relation.value.depth,
       } });
+    }
+    if (wrapUpTask) {
+      // In this commit: a client that loses the receipt still finds the card started.
+      mutations.push(...this.transcriptMutations([{ ...taskStatusRowItem({
+        id: stableId('task-status', wrapUpTask.taskId, command.commandId),
+        sessionId: command.payload.parentSessionId!,
+        status: {
+          taskId: wrapUpTask.taskId, turnId: wrapUpTask.turnId, outcome: 'started', sessionId: command.payload.sessionId,
+          ...(wrapUpTask.branch ? { branch: wrapUpTask.branch } : {}),
+        },
+      }), createdAt: now }]));
     }
     return { ok: true, commit: { mutations }, ...(command.payload.initialPrompt ? { afterCommit: () => this.queuePump() } : {}) };
   }
@@ -1083,13 +1107,33 @@ export class DaemonAgentRuntime {
       && command.principal.id !== 'planning-runtime' && command.principal.id !== 'planning-result-runtime' && command.principal.id !== 'planning-ai-runtime') {
       return commandError('invalid-state', 'This conversation belongs to a frozen execution attempt. Use a new task or the execution retry controls for additional instructions.');
     }
+    const wrapUpTask = command.type === 'agent.submit' ? command.payload.wrapUpTask : undefined;
+    if (wrapUpTask) {
+      const refused = this.taskCardRefusal(context.snapshot, command.payload.sessionId, wrapUpTask);
+      if (refused) return refused;
+    }
     return this.queueTurn(command, context, {
       sessionId: command.payload.sessionId,
       prompt: command.payload.prompt,
       ...(command.payload.context ? { context: command.payload.context } : {}),
       ...(command.type === 'agent.submit' && command.payload.reportOf ? { reportOf: command.payload.reportOf } : {}),
+      ...(wrapUpTask ? { payload: { v: 1, type: 'task-suggestion-send', ...wrapUpTask } } : {}),
       interruptFirst,
     });
+  }
+
+  /**
+   * Why this card cannot start or be sent now: it must be one this conversation holds, open or after a failed start.
+   * A send that was taken back or failed no longer stands, so the person can send it again.
+   */
+  private taskCardRefusal(snapshot: DaemonSnapshot, sessionId: string, task: { readonly turnId: string; readonly taskId: string }): DaemonCommandExecutionResult | undefined {
+    const card = readTaskCard(this.options.readTranscript, sessionId, task.taskId);
+    if (card?.task.turnId !== task.turnId) return commandError('not-found', 'This suggested task is not in this conversation.');
+    const send = card.sendTurnId ? snapshot.turns.find((turn) => turn.id === card.sendTurnId) : undefined;
+    if (card.status?.outcome === 'started' || (send && send.state !== 'failed' && send.state !== 'interrupted')) {
+      return commandError('invalid-state', 'This suggested task already started.');
+    }
+    return card.status?.outcome === 'dismissed' ? commandError('invalid-state', 'This suggested task was dismissed.') : undefined;
   }
 
   /**
@@ -1884,6 +1928,21 @@ export class DaemonAgentRuntime {
     const retry = this.options.wrapUp.retryRecap(context.snapshot, { ...command.payload, attempt: command.commandId });
     if ('refused' in retry) return commandError('invalid-state', retry.refused);
     return { ok: true, commit: { mutations: this.transcriptMutations([{ ...retry.row, createdAt: this.isoNow() }]) }, afterCommit: retry.begin };
+  }
+
+  /** `wrap-up.task-outcome`: dismiss, reopen, or a failed start the client reports (a refused start commits nothing). */
+  private taskOutcome(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {
+    if (command.type !== 'wrap-up.task-outcome') return commandError('invalid-command', 'Unexpected task outcome command.');
+    const { sessionId, turnId, taskId, outcome, reason, start, branchTaken } = command.payload;
+    const card = readTaskCard(this.options.readTranscript, sessionId, taskId);
+    if (card?.task.turnId !== turnId) return commandError('not-found', 'This suggested task is not in this conversation.');
+    if (card.status?.outcome === 'started') return commandError('invalid-state', 'This suggested task already started.');
+    if (!context.snapshot.sessions.some((entry) => entry.id === sessionId && !entry.archivedAt)) return commandError('not-found', 'Agent Session was not found.');
+    return { ok: true, commit: { mutations: this.transcriptMutations([{ ...taskStatusRowItem({
+      id: stableId('task-status', taskId, command.commandId),
+      sessionId,
+      status: { taskId, turnId, outcome, ...(reason ? { reason } : {}), ...(start ? { start } : {}), ...(branchTaken ? { branchTaken } : {}) },
+    }), createdAt: this.isoNow() }]) } };
   }
 
   private resolveReview(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {

@@ -39,6 +39,7 @@ const ANDROID_COMMANDS = new Set<DaemonCommandType>([
   'review.resolve',
   'review.cancel',
   'wrap-up.recap-retry',
+  'wrap-up.task-outcome',
   'permission.resolve',
 ]);
 
@@ -87,6 +88,7 @@ function getTargetSessionId(command: DaemonCommand): string | undefined {
     case 'review.resolve':
     case 'review.cancel':
     case 'wrap-up.recap-retry':
+    case 'wrap-up.task-outcome':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
     case 'browser.open':
@@ -135,6 +137,10 @@ export function authorizeDaemonCommand(
         command.type === 'agent.resume' ? command.payload.sourceSessionId : undefined];
       if (named.some((sessionId) => typeof sessionId === 'string' && sessionId.startsWith(REVIEWER_SESSION_PREFIX))) {
         return denied(command, 'A review conversation is not an agent’s to direct.');
+      }
+      // Both commands are an agent's for its own children: the card is not. The AI proposes; a person starts.
+      if ((command.type === 'agent.create' || command.type === 'agent.submit') && command.payload.wrapUpTask) {
+        return denied(command, 'Only a person starts a suggested task.');
       }
 
       if (command.type === 'agent.create') {
