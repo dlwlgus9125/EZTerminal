@@ -1,6 +1,6 @@
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import {
-  RESUME_TEXT, type AppSentReason, type SteeredMessage, type SteerFallback, type SteerLanding, type TurnUsageLimit, type UsageLimitPhase, type UsageLimitWindow,
+  RESUME_TEXT, turnAutoResumeOff, type AppSentReason, type SteeredMessage, type SteerFallback, type SteerLanding, type TurnUsageLimit, type UsageLimitPhase, type UsageLimitWindow,
 } from '../../../shared/long-run';
 import type { LiveConversation, WaitingItem } from '../../shell/shell-model';
 import type { ChatLongRunAction } from '../ChatContext';
@@ -346,7 +346,7 @@ export function applyLongRunAction(fixture: LongRunFixture, action: ChatLongRunA
   const phase = (next: UsageLimitPhase): LongRunFixture => withLimit({ ...limit, phase: next });
   const sequence = Math.max(...fixture.items.map((entry) => entry.sequence)) + 1;
   switch (action.kind) {
-    case 'limit-auto-off': return phase('off');
+    case 'limit-auto-off': return withLimit({ ...limit, phase: 'off', offBy: 'card' });
     case 'limit-auto-on': return phase('waiting');
     case 'limit-schedule': return phase('scheduled');
     case 'limit-unschedule': return phase('ask-reset');
@@ -368,6 +368,40 @@ export function applyLongRunAction(fixture: LongRunFixture, action: ChatLongRunA
       });
     }
   }
+}
+
+const limitOf = (fixture: LongRunFixture): TurnUsageLimit | undefined => [...(fixture.rows.limits?.values() ?? [])][0];
+const onClock = (limit: TurnUsageLimit | undefined): boolean => limit?.phase === 'waiting' || limit?.phase === 'scheduled' || limit?.phase === 'retrying';
+
+/** The clock reached a schedule that was still standing: what the app sends by itself. */
+export function clockSends(fixture: LongRunFixture): LongRunFixture {
+  const limit = limitOf(fixture);
+  if (!limit) return fixture;
+  const sequence = Math.max(...fixture.items.map((entry) => entry.sequence)) + 1;
+  const sent = continueRow(sequence, 'turn-resume', limit.resumeAt ?? RESUME_AT, 'completed', sessionOf(fixture));
+  return {
+    ...fixture, items: [...fixture.items, sent.row], turns: [...fixture.turns, sent.turn],
+    rows: { ...fixture.rows, appSent: new Map([...(fixture.rows.appSent ?? []), [sent.row.id, 'scheduled-time' as const]]), limits: new Map([[limit.turnId, { ...limit, phase: 'resumed' as const }]]) },
+  };
+}
+
+/** The person sent first, while a clock ran: its schedule is gone. */
+export function personSends(fixture: LongRunFixture, message: string): LongRunFixture {
+  const limit = limitOf(fixture);
+  if (!limit || !onClock(limit)) return fixture;
+  const sessionId = sessionOf(fixture);
+  const sequence = Math.max(...fixture.items.map((entry) => entry.sequence)) + 1;
+  return {
+    ...fixture, state: 'working', items: [...fixture.items, item(sequence, 'user-message', message, { turnId: 'turn-person', sessionId, createdAt: PERSON_AT })],
+    turns: [...fixture.turns, { ...turn('turn-person', 'working', PERSON_AT), sessionId }],
+    rows: { ...fixture.rows, limits: new Map([[limit.turnId, { ...limit, phase: 'cancelled' as const }]]) },
+  };
+}
+
+/** The setting went off: every schedule not yet sent is cancelled. */
+export function settingOff(fixture: LongRunFixture): LongRunFixture {
+  const limit = limitOf(fixture);
+  return limit ? { ...fixture, rows: { ...fixture.rows, limits: new Map([[limit.turnId, turnAutoResumeOff(limit)]]) } } : fixture;
 }
 
 /** Every session id in the fixture moved, so stories do not share draft storage. */

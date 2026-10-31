@@ -132,9 +132,12 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
         notes: [note('why', copy.reopenedWhy, 'lead'), note('then', copy.reopenedSends)], actions: [resume, leave],
       };
     case 'off':
-      return { ...base, message: { text: resets }, notes: [note('off', copy.off)], actions: [{ id: 'limit-auto-on' }] };
+      // In Settings the way back is the switch, and it brings back nothing already cancelled.
+      return limit.offBy === 'setting'
+        ? { ...base, message: { text: resets }, notes: [note('off', copy.offBySetting), note('now', copy.resumeNow)], actions: [{ id: 'limit-resume' }] }
+        : { ...base, message: { text: resets }, notes: [note('off', copy.off), note('now', copy.resumeNow)], actions: [{ id: 'limit-resume' }, { id: 'limit-auto-on' }] };
     case 'left':
-      return { ...base, message: { text: resets }, notes: [note('left', copy.left)], actions: [] };
+      return { ...base, message: { text: resets }, notes: [note('left', copy.left), note('now', copy.resumeNow)], actions: [{ id: 'limit-resume' }] };
     case 'cancelled':
       return { ...base, message: { text: copy.cancelled }, notes: [note('none', copy.cancelledNote)], actions: [] };
     case 'skipped':
@@ -146,7 +149,7 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'child':
       return {
         ...base, message: { text: resets },
-        notes: [note('why', copy.child, 'lead'), note('parent', copy.childParent), note('now', copy.childNow)], actions: [resume],
+        notes: [note('why', copy.child, 'lead'), note('parent', copy.childParent), note('now', copy.resumeNow)], actions: [resume],
       };
     case 'failed':
       return {

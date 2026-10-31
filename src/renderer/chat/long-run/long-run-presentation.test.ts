@@ -39,7 +39,23 @@ describe('the usage limit card', () => {
   });
 
   it('offers nothing where nothing can be done', () => {
-    for (const phase of ['resuming', 'resumed', 'left', 'cancelled', 'not-included'] as const) expect(limitView(limit(phase), ko, 'ko').actions, phase).toEqual([]);
+    for (const phase of ['resuming', 'resumed', 'cancelled', 'not-included'] as const) expect(limitView(limit(phase), ko, 'ko').actions, phase).toEqual([]);
+  });
+
+  it('turned off, on the card or in Settings, leaves a manual 이어서 하기 that says what an early press costs', () => {
+    for (const offBy of ['card', 'setting'] as const) {
+      const view = limitView(limit('off', { offBy }), ko, 'ko');
+      expect(view.actions.map((action) => action.id), offBy).toContain('limit-resume');
+      expect(view.notes.map((note) => note.text), offBy).toContain(ko.resumeNow);
+    }
+    expect(limitView(limit('off', { offBy: 'card' }), ko, 'ko').actions.map((action) => action.id)).toContain('limit-auto-on');
+    // The setting's switch is where that comes back.
+    expect(limitView(limit('off', { offBy: 'setting' }), ko, 'ko').actions.map((action) => action.id)).not.toContain('limit-auto-on');
+    expect(limitView(limit('off', { offBy: 'setting' }), ko, 'ko').notes.map((note) => note.text)).toContain(ko.offBySetting);
+  });
+
+  it('left as it is, it can still be continued by hand', () => {
+    expect(limitView(limit('left'), ko, 'ko').actions.map((action) => action.id)).toEqual(['limit-resume']);
   });
 
   it('asks first for a reset days away, and offers the choice as its main action', () => {

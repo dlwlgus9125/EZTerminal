@@ -27,7 +27,7 @@ export type UsageLimitPhase =
   | 'ask-unknown'
   /** The reset passed while the app was closed (D5). */
   | 'ask-reopened'
-  /** They turned automatic resume off on this card, for this conversation only. */
+  /** Automatic resume went off, on this card (this conversation only) or in Settings (`offBy`). */
   | 'off'
   /** They left it (그대로 두기). */
   | 'left'
@@ -57,12 +57,31 @@ export interface TurnUsageLimit {
   readonly retryAt?: string;
   /** `retrying`, `gave-up`: when the last try was refused. */
   readonly refusedAt?: string;
+  /** `off`: where it was turned off; Settings has its own way back. */
+  readonly offBy?: 'card' | 'setting';
   /** `waiting`: when 지금 시도 was refused; that refused turn stays in the conversation. */
   readonly triedAt?: string;
   /** D6: several conversations resume one at a time. */
   readonly line?: { readonly position: number; readonly total: number };
   /** `failed`: why nothing went out, in the app's words. */
   readonly failure?: 'disconnected' | 'session-gone';
+}
+
+/**
+ * The decided timing (D2, D4, D6). Proposed values, not measured: only Claude's whole 10 minutes is, and that no signal
+ * comes when a limit lifts. So `afterResetMs` is a try after the expected time, never a promise that it worked.
+ */
+export const RESUME_TIMING = { afterResetMs: 2 * 60_000, retryAfterRefusalMs: 10 * 60_000, lineGapMs: 60_000 } as const;
+
+/** Whether the app may send "Continue." by itself now: only a state that waits on a clock, once that time has come. */
+export function resumeDue(limit: TurnUsageLimit, now: number): boolean {
+  const clock = limit.phase === 'retrying' ? limit.retryAt : limit.phase === 'waiting' || limit.phase === 'scheduled' ? limit.resumeAt : undefined;
+  return clock !== undefined && Date.parse(clock) <= now;
+}
+
+/** The setting turned off: a schedule that has not gone out is cancelled and the card is left to the person. */
+export function turnAutoResumeOff(limit: TurnUsageLimit): TurnUsageLimit {
+  return limit.phase === 'waiting' || limit.phase === 'scheduled' || limit.phase === 'retrying' ? { ...limit, phase: 'off', offBy: 'setting' } : limit;
 }
 
 /** The one thing the app sends by itself. Measured: it is read once and the stopped prompt is not read twice. */

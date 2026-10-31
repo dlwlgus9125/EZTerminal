@@ -8,7 +8,7 @@ import { MobileConversationReviewProvider } from '../../../mobile/src/MobileConv
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
-import type { LongRunSettings } from '../../shared/long-run';
+import { resumeDue, type LongRunSettings } from '../../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY, type TurnWrapUpSettings } from '../../shared/turn-wrap-up';
 import type { CapabilityAccess, LongRunAccess, TurnWrapUpAccess } from '../capability-access';
 import type { ChatSkin } from '../chat-view-state';
@@ -24,7 +24,7 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
 import {
-  acceptSteer, applyLongRunAction, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, steerStory,
+  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, personSends, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
   type LongLanguage, type LongProvider, type LongRunFixture,
 } from './long-run/long-run-fixtures';
 import { limitStatus } from './long-run/long-run-presentation';
@@ -50,6 +50,8 @@ import '../shell/shell.css';
 
 interface Args {
   readonly onLongRunAction: (action: ChatLongRunAction) => void;
+  /** The app sent "Continue." by itself: what the virtual clock checks never happens after a cancel. */
+  readonly onResumeSent: (turnId: string) => void;
   readonly onSteer: (prompt: string) => void;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly onInterruptAndSend: (prompt: string) => Promise<StructuredAgentUiResult>;
@@ -61,6 +63,7 @@ const meta = {
   parameters: { layout: 'fullscreen', a11y: { test: 'error' } },
   args: {
     onLongRunAction: fn(),
+    onResumeSent: fn(),
     onSteer: fn(),
     onSend: fn(async (): Promise<StructuredAgentUiResult> => ({ ok: true })),
     onInterruptAndSend: fn(async (): Promise<StructuredAgentUiResult> => ({ ok: true })),
@@ -103,18 +106,37 @@ function Phone({ children, width, height }: { readonly children: ReactNode; read
 
 // ── The story host: answers the way the real one will ─────────────────────────────────────────────────
 const SETTLING: ReadonlySet<ChatLongRunAction['kind']> = new Set(['limit-try-now', 'limit-resume']);
+/** A play moves time with this: the host checks its schedule, as the app will when its timer fires. */
+const CLOCK = 'long-run-story-clock';
+const passTime = (iso: string): void => { window.dispatchEvent(new CustomEvent<number>(CLOCK, { detail: Date.parse(iso) })); };
 
 interface StoryHost {
   readonly state: LongRunFixture;
   readonly onAction: (action: ChatLongRunAction) => void;
+  readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly steer: NonNullable<NonNullable<StructuredAgentSessionPanelProps['longRun']>['steer']>;
+  readonly settingOff: () => void;
 }
 
 function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Args, landAfter?: number): StoryHost {
   const [state, setState] = useState(fixture);
   const timers = useRef<number[]>([]);
   const next = useRef(1);
+  const latest = useRef(state);
+  latest.current = state;
   useEffect(() => () => { timers.current.forEach((timer) => window.clearTimeout(timer)); }, []);
+  useEffect(() => {
+    const tick = (event: Event): void => {
+      const limit = [...(latest.current.rows.limits?.values() ?? [])][0];
+      if (!limit || !resumeDue(limit, (event as CustomEvent<number>).detail)) return;
+      args.onResumeSent(limit.turnId);
+      // Twice in one tick would be a double send: the state a send leaves must not be due.
+      latest.current = clockSends(latest.current);
+      setState(latest.current);
+    };
+    window.addEventListener(CLOCK, tick);
+    return () => window.removeEventListener(CLOCK, tick);
+  }, [args]);
   const onAction = useCallback((action: ChatLongRunAction) => {
     args.onLongRunAction(action);
     setState((current) => applyLongRunAction(current, action, false));
@@ -128,6 +150,12 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
     if (landAfter !== undefined) timers.current.push(window.setTimeout(() => setState((current) => landSteer(current, id, provider)), landAfter));
     return { ok: true };
   }, [args, landAfter, provider]);
+  const onSend = useCallback(async (prompt: string): Promise<StructuredAgentUiResult> => {
+    const result = await args.onSend(prompt);
+    setState((current) => personSends(current, prompt));
+    return result;
+  }, [args]);
+  const turnOff = useCallback(() => setState((current) => settingOff(current)), []);
   const steer = useMemo(() => ({
     onSteer,
     ...(state.steered ? { messages: state.steered } : {}),
@@ -135,7 +163,7 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
     onToQueue: (message: { readonly id: string }): void => setState((current) => queueSteer(current, message.id)),
     onToBox: (message: { readonly id: string }): void => setState((current) => dropSteer(current, message.id)),
   }), [onSteer, state.fellBack, state.steered]);
-  return { state, onAction, steer };
+  return { state, onAction, onSend, steer, settingOff: turnOff };
 }
 
 const MODELS: Readonly<Record<LongProvider, { readonly id: string; readonly label: string }>> = {
@@ -160,7 +188,7 @@ function panelProps(sessionId: string, host: StoryHost, provider: LongProvider, 
     permissionPreset: 'standard', state: state.state, items: state.items, turns: state.turns, approvals: state.approvals ?? [], queueSettings: true,
     approvalResponses: true, effortSupported: true, reasoningEffort: 'high',
     usage: limit ? { fiveHour: { usedPercent: 100 }, weekly: { usedPercent: limit.window === 'weekly' ? 100 : 38 }, contextPercent: 41 } : { fiveHour: { usedPercent: 61 }, weekly: { usedPercent: 24 }, contextPercent: 41 },
-    onSend: args.onSend, onInterruptAndSend: args.onInterruptAndSend,
+    onSend: host.onSend, onInterruptAndSend: args.onInterruptAndSend,
     onChangeSettings: fn(async () => ({ ok: true as const })), onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
     ...(status ? { statusLabel: status.text } : {}),
@@ -457,6 +485,47 @@ export const LimitAutoOff: Story = chat('limit-auto-off', (lang) => limitStory(l
   await waitFor(() => expect(card).toHaveTextContent('자동으로 재개를 시도합니다'));
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-auto-off"]'));
 });
+/**
+ * The control for the three below: with the schedule standing, the virtual clock sends once, at the scheduled time and not
+ * at the expected reset, and passing that time again sends nothing more.
+ */
+export const ClockSends: Story = chat('clock-sends', (lang) => limitStory(lang, 'waiting'), {}, async ({ canvasElement, args }) => {
+  await findIn(canvasElement, CARD);
+  passTime(RESET_AT);
+  await expect(args.onResumeSent).not.toHaveBeenCalled();
+  passTime(RESUME_AT);
+  await expect(args.onResumeSent).toHaveBeenCalledTimes(1);
+  await expect(args.onResumeSent).toHaveBeenCalledWith('turn-limit');
+  await expect(await findIn(canvasElement, '[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 예약 시각이 되어');
+  passTime(RESUME_AT);
+  await expect(args.onResumeSent).toHaveBeenCalledTimes(1);
+});
+/** 자동 재개 끄기, then the time passes: nothing goes out. */
+export const ClockAutoOff: Story = chat('clock-auto-off', (lang) => limitStory(lang, 'waiting'), {}, async ({ canvasElement, args }) => {
+  await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-auto-off"]'));
+  await waitFor(() => expect(canvasElement.querySelector(CARD)).toHaveTextContent('이 대화는 자동으로 이어서 하지 않습니다.'));
+  passTime(RESUME_AT);
+  await expect(args.onResumeSent).not.toHaveBeenCalled();
+  await expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toBeNull();
+  scrollToTop(await findIn(canvasElement, CARD));
+});
+/** 그때 이어서 하기 stands until 취소, and then the time passes with nothing sent. */
+export const ClockUnscheduled: Story = chat('clock-unscheduled', (lang) => limitStory(lang, 'ask-reset', { window: 'weekly' }), {}, async ({ canvasElement, args }) => {
+  await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-schedule"]'));
+  await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-unschedule"]'));
+  await findIn(canvasElement, '[data-testid="chat-limit-limit-schedule"]');
+  passTime(WEEKLY_RESUME_AT);
+  await expect(args.onResumeSent).not.toHaveBeenCalled();
+  scrollToTop(await findIn(canvasElement, CARD));
+});
+/** The person sends first: the card says so, and the time passes with nothing sent. */
+export const ClockPersonFirst: Story = chat('clock-person-first', (lang) => limitStory(lang, 'waiting'), {}, async ({ canvasElement, args }) => {
+  await userEvent.type(await composer(canvasElement), '내가 먼저 보낼게.{Enter}');
+  await expect(args.onSend).toHaveBeenCalledWith('내가 먼저 보낼게.');
+  await waitFor(() => expect(canvasElement.querySelector(CARD)).toHaveTextContent('직접 보낸 메시지가 있어 이 턴을 이어서 하지 않습니다.'));
+  passTime(RESUME_AT);
+  await expect(args.onResumeSent).not.toHaveBeenCalled();
+});
 /** Being sent now: nothing says it arrived. */
 export const LimitResuming: Story = chat('limit-resuming', (lang) => limitStory(lang, 'resuming'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
@@ -637,15 +706,16 @@ export const ListDesktopEnglish: Story = { render: (args) => <StoryLocale.Provid
 // ── D. Settings › 에이전트 ─────────────────────────────────────────────────────────────────────────────
 const WRAP_ON: TurnWrapUpSettings = { suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: true };
 
-function SettingsScreen({ autoResume = true }: { readonly autoResume?: boolean }): JSX.Element {
+function SettingsScreen({ autoResume = true, args = meta.args }: { readonly autoResume?: boolean; readonly args?: Args }): JSX.Element {
   const locale = useContext(StoryLocale);
+  const [on, setOn] = useState(autoResume);
   const capabilities = useMemo((): CapabilityAccess => {
     const base = storyCapabilities(locale);
     const snapshot = shellSnapshot();
     let wrap = WRAP_ON;
     let long: LongRunSettings = { autoResume };
     const turnWrapUp: TurnWrapUpAccess = { load: async () => ({ settings: wrap, paused: [] }), save: async (next) => { wrap = next; return wrap; } };
-    const longRun: LongRunAccess = { load: async () => long, save: async (next) => { long = next; return long; } };
+    const longRun: LongRunAccess = { load: async () => long, save: async (next) => { long = next; setOn(next.autoResume); return long; } };
     return { ...base, daemon: { ...base.daemon, getSnapshot: async () => ({ ...snapshot, capabilities: [...(snapshot.capabilities ?? []), TURN_WRAP_UP_CAPABILITY] }) }, turnWrapUp, longRun };
   }, [autoResume, locale]);
   return (
@@ -656,19 +726,22 @@ function SettingsScreen({ autoResume = true }: { readonly autoResume?: boolean }
             <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
           </SidebarShell>
           <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
-            <ChatBeside />
+            <ChatBeside autoResume={on} args={args} />
           </div>
         </div>
       </DesktopUiPreferencesProvider>
     </Desk>
   );
 }
-function ChatBeside(): JSX.Element {
+/** The conversation beside Settings: the switch reaches it, as it must reach every card with a schedule. */
+function ChatBeside({ autoResume, args = meta.args }: { readonly autoResume: boolean; readonly args?: Args }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = 'long-run-story-settings-chat';
   const [fixture] = useState(() => inLongSession(limitStory(locale, 'waiting'), sessionId));
-  const host = useStoryHost(fixture, 'claude', meta.args, undefined);
-  return <StructuredAgentSessionPanel {...panelProps(sessionId, host, 'claude', locale, meta.args)} />;
+  const host = useStoryHost(fixture, 'claude', args, undefined);
+  const { settingOff: turnOff } = host;
+  useEffect(() => { if (!autoResume) turnOff(); }, [autoResume, turnOff]);
+  return <StructuredAgentSessionPanel {...panelProps(sessionId, host, 'claude', locale, args)} />;
 }
 async function showSwitch(canvasElement: HTMLElement): Promise<HTMLElement> {
   // The test id sits on the switch's input, which is drawn by its label.
@@ -695,12 +768,36 @@ export const SettingsLongRun: Story = {
     toggle.scrollIntoView({ block: 'center' });
   },
 };
-/** Off: every card asks first. */
+/** Off: nothing waits on a clock. The card beside it has no schedule, says why, and can be continued by hand. */
 export const SettingsOff: Story = {
   render: () => <SettingsScreen autoResume={false} />,
   play: async ({ canvasElement }) => {
     await showSwitch(canvasElement);
     await expect(within(within(canvasElement).getByTestId('long-run-settings')).getByRole('switch')).not.toBeChecked();
+    const card = await findIn(canvasElement, CARD);
+    await waitFor(() => expect(card).toHaveTextContent('설정에서 자동 재개를 꺼서 이 예약을 취소했습니다.'));
+    await expect(card).not.toHaveTextContent('자동으로 재개를 시도합니다');
+    await expect(within(card).getByRole('button', { name: '이어서 하기' })).toBeVisible();
+    await expect(header(canvasElement)).toHaveTextContent('한도로 멈춤');
+  },
+};
+/** Turning it off cancels a schedule that stands: the card changes, turning it back on does not bring that one back, and the time passes with nothing sent. */
+export const SettingsTurnOff: Story = {
+  render: (args) => <SettingsScreen args={args} />,
+  play: async ({ canvasElement, args }) => {
+    await showSwitch(canvasElement);
+    const card = await findIn(canvasElement, CARD);
+    await expect(card).toHaveTextContent('자동으로 재개를 시도합니다');
+    const control = within(within(canvasElement).getByTestId('long-run-settings')).getByRole('switch');
+    await userEvent.click(control);
+    await waitFor(() => expect(card).toHaveTextContent('설정에서 자동 재개를 꺼서 이 예약을 취소했습니다.'));
+    passTime(RESUME_AT);
+    await expect(args.onResumeSent).not.toHaveBeenCalled();
+    await userEvent.click(control);
+    await expect(control).toBeChecked();
+    await expect(card).toHaveTextContent('설정에서 자동 재개를 꺼서 이 예약을 취소했습니다.');
+    passTime(RESUME_AT);
+    await expect(args.onResumeSent).not.toHaveBeenCalled();
   },
 };
 export const SettingsEnglish: Story = {
