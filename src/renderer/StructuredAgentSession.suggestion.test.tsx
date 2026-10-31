@@ -208,6 +208,49 @@ describe('next-prompt suggestion', () => {
     expect(container.querySelector('[data-testid="structured-agent-suggestion-chip"]')).toBeNull();
   });
 
+  describe('on the phone, seconds after the turn', () => {
+    const chip = (): HTMLElement | null => container.querySelector<HTMLElement>('[data-testid="structured-agent-suggestion-chip"]');
+    const room = (): Element | null => container.querySelector('.chat-viewport__room');
+
+    it('floats over the foot of the transcript, no part of the composer’s layout', () => {
+      render(panel({ variant: 'mobile' }));
+      expect(chip()?.closest('.chat-composer')).toBeNull();
+      expect(chip()?.closest('.chat-viewport__scroll')).toBeNull();
+      expect(chip()?.closest('.chat-viewport')).not.toBeNull();
+    });
+
+    it('still fills the box from there and sends nothing', () => {
+      const onSend = vi.fn(async () => ({ ok: true as const }));
+      render(panel({ variant: 'mobile', onSend }));
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-suggestion-fill"]')!.click());
+      expect(input().value).toBe(SUGGESTION);
+      expect(document.activeElement).toBe(input());
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('opens scroll room with the suggestion and keeps it past ×: closing it then could pull the transcript down', () => {
+      render(panel({ variant: 'mobile' }));
+      expect(room()).not.toBeNull();
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-suggestion-dismiss"]')!.click());
+      expect(chip()).toBeNull();
+      expect(room(), 'the × takes the chip, not the room').not.toBeNull();
+      render(panel({ variant: 'mobile', state: 'working', turns: [turn('turn-1', 'completed', AT), turn('turn-2', 'working', LATER)] }));
+      expect(room(), 'the next turn moves the transcript anyway').toBeNull();
+    });
+
+    it('opens nothing when no suggestion came: about half of Codex turns have none', () => {
+      render(panel({ variant: 'mobile', wrapUp: {} }));
+      expect(room()).toBeNull();
+      expect(container.querySelector('.chat-viewport')?.hasAttribute('data-tail-room')).toBe(false);
+    });
+
+    it('leaves the desktop as it was', () => {
+      render(panel());
+      expect(room()).toBeNull();
+      expect(container.querySelector('.chat-viewport__dock')).toBeNull();
+    });
+  });
+
   it('says how to send for the device: Enter on the desktop, the send button on the phone (Enter is a new line there)', () => {
     const announcement = (): string | null | undefined => container.querySelector('[data-testid="structured-agent-plan-announcement"]')?.textContent;
     render(panel());

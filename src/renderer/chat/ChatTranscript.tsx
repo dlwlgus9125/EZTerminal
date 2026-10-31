@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../ui';
 import { useChatContext } from './ChatContext';
 import { ChatRowView } from './ChatRowView';
-import { ChatViewport } from './ChatViewport';
+import { ChatViewport, type ChatTailDock } from './ChatViewport';
 import { useChatCopy } from './copy';
 import { FindBar } from './FindBar';
 import { findRows } from './model/find';
@@ -25,11 +25,12 @@ export interface ChatTranscriptProps {
   readonly onReachTop?: () => void;
   /** Older rows exist above; loads on the button or when the reader nears the top. */
   readonly earlier?: { readonly loading: boolean; readonly onLoad: () => void };
+  readonly tailDock?: ChatTailDock;
 }
 
 /** Conversation rows for one session in the active skin. Must render inside ChatProvider. */
 export function ChatTranscript({
-  model, providerLabel, stateKey, loading = false, error = null, onRetry, before, emptyLabel, loadingLabel, retryLabel, onReachTop, earlier,
+  model, providerLabel, stateKey, loading = false, error = null, onRetry, before, emptyLabel, loadingLabel, retryLabel, onReachTop, earlier, tailDock,
 }: ChatTranscriptProps): JSX.Element {
   const copy = useChatCopy();
   const { skin } = useChatContext();
@@ -106,6 +107,7 @@ export function ChatTranscript({
         onReachTop={earlier ? () => { if (!earlier.loading) earlier.onLoad(); } : onReachTop}
         {...(find ? { highlight: find.query } : {})}
         {...(focusRow ? { focusRow } : {})}
+        {...(tailDock ? { tailDock } : {})}
         renderRow={(row) => <ChatRowView row={row} providerLabel={providerLabel} />}
       />
       {find && (

@@ -2,6 +2,7 @@ import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
 import { ChatProvider, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
+import type { ChatTailDock } from './chat/ChatViewport';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest, type ReviewStartTarget } from './chat/review/ReviewStartMenu';
 import type { NextPromptSuggestion } from '../shared/turn-wrap-up';
 import { latestReviewPayload } from './review-commands';
@@ -31,6 +32,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { insertCompletion, type AppCommand } from './agent-completion';
 import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
 import { discoverCapabilities } from './capability-discovery-cache';
@@ -977,6 +979,8 @@ export interface StructuredAgentTranscriptProps {
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
   readonly onFocusDecision?: () => boolean;
+  /** The phone: where its next-prompt chip floats, and the scroll room for it. */
+  readonly tailDock?: ChatTailDock;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -1020,6 +1024,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onReviewAction,
   wrapUp,
   onFocusDecision,
+  tailDock,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
@@ -1081,6 +1086,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
         loadingLabel={copy.transcriptLoading}
         retryLabel={copy.retry}
         {...(hasEarlier && onLoadEarlier ? { earlier: { loading: loadingEarlier, onLoad: onLoadEarlier } } : {})}
+        {...(tailDock ? { tailDock } : {})}
       />
       {unfinishedTodo && <TaskDock items={unfinishedTodo} />}
       {model.pending && onResolveApproval && (
@@ -1261,6 +1267,8 @@ export interface StructuredAgentComposerProps {
   readonly suggestion?: { readonly id: string; readonly text: string };
   /** The conversation's newest turn: typing sets that turn's suggestion aside, also one that has not arrived yet. */
   readonly latestTurnId?: string;
+  /** The phone: where the chip floats over the foot of the transcript, so its coming and going moves nothing. */
+  readonly suggestionChipAnchor?: HTMLElement | null;
 }
 
 /** A message box holding `/btw …` is a side question being typed: its text never reaches draft storage. */
@@ -1310,6 +1318,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   plan,
   suggestion,
   latestTurnId,
+  suggestionChipAnchor,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1645,20 +1654,26 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         }}>{ko ? '초안 전환' : 'Switch draft'}</Button>
       </div>}
       {completion.menu}
-      {/* The phone: the suggestion as a chip above the box; a tap fills the box, never sends. */}
-      {suggestionShown && variant === 'mobile' && suggestion && (
-        <div className="chat-suggestion-chip" data-testid="structured-agent-suggestion-chip">
-          <button type="button" className="chat-suggestion-chip__fill" aria-label={nextCopy.fillChip(suggestion.text)} onClick={fillSuggestion}
-            data-testid="structured-agent-suggestion-fill">
-            <Glyph name="spark" />
-            <span className="chat-suggestion-chip__label">{nextCopy.label}</span>
-            <span className="chat-suggestion-chip__text">{suggestion.text}</span>
-          </button>
-          <button type="button" className="chat-suggestion-chip__dismiss" aria-label={nextCopy.dismiss} onClick={() => setSetAside(suggestion.id)}
-            data-testid="structured-agent-suggestion-dismiss">
-            <Glyph name="x" />
-          </button>
-        </div>
+      {/*
+        * The phone: the suggestion as a chip above the box; a tap fills the box, never sends. It comes seconds after the
+        * turn, so it floats over the foot of the transcript: in the layout it would move the rows under a thumb.
+        */}
+      {suggestionShown && variant === 'mobile' && suggestion && suggestionChipAnchor && createPortal(
+        <div className="chat-suggestion-dock">
+          <div className="chat-suggestion-chip" data-testid="structured-agent-suggestion-chip">
+            <button type="button" className="chat-suggestion-chip__fill" aria-label={nextCopy.fillChip(suggestion.text)} onClick={fillSuggestion}
+              data-testid="structured-agent-suggestion-fill">
+              <Glyph name="spark" />
+              <span className="chat-suggestion-chip__label">{nextCopy.label}</span>
+              <span className="chat-suggestion-chip__text">{suggestion.text}</span>
+            </button>
+            <button type="button" className="chat-suggestion-chip__dismiss" aria-label={nextCopy.dismiss} onClick={() => setSetAside(suggestion.id)}
+              data-testid="structured-agent-suggestion-dismiss">
+              <Glyph name="x" />
+            </button>
+          </div>
+        </div>,
+        suggestionChipAnchor,
       )}
       <div className="chat-composer__box" data-dragging={dragging || undefined} data-disabled={disabled || undefined}>
         {value.replyTo && <div className="structured-agent-composer__reply">
@@ -2654,6 +2669,11 @@ export function StructuredAgentSessionPanel({
     () => (suggestionOpen && offeredTurnId && offeredText ? { id: offeredTurnId, text: offeredText } : undefined),
     [offeredText, offeredTurnId, suggestionOpen],
   );
+  // The room follows the suggestion, not the chip: closing it on × could pull the transcript down under a thumb. The next
+  // turn takes it, when rows move anyway.
+  const [suggestionChipAnchor, setSuggestionChipAnchor] = useState<HTMLDivElement | null>(null);
+  const suggestionRoom = composerSuggestion !== undefined;
+  const tailDock = useMemo(() => (variant === 'mobile' ? { anchorRef: setSuggestionChipAnchor, room: suggestionRoom } : undefined), [suggestionRoom, variant]);
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged
@@ -3066,6 +3086,7 @@ export function StructuredAgentSessionPanel({
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
         wrapUp={transcriptWrapUp}
         onFocusDecision={focusDecision}
+        {...(tailDock ? { tailDock } : {})}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -3150,6 +3171,7 @@ export function StructuredAgentSessionPanel({
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}
           {...(composerSuggestion ? { suggestion: composerSuggestion } : {})}
           {...(newestTurnId ? { latestTurnId: newestTurnId } : {})}
+          suggestionChipAnchor={suggestionChipAnchor}
         />
       )}
     </section>

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppI18nProvider } from '../i18n';
 import { clearSessionViewStates, saveSessionViewState } from '../session-view-state';
-import { ChatViewport } from './ChatViewport';
+import { ChatViewport, type ChatTailDock } from './ChatViewport';
 import type { ChatRow } from './model/types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,10 +18,10 @@ const notice = (id: string, createdAt = OLD): ChatRow => ({ kind: 'notice', id, 
 let container: HTMLDivElement;
 let root: Root;
 
-function render(rows: readonly ChatRow[]): void {
+function render(rows: readonly ChatRow[], tailDock?: ChatTailDock): void {
   act(() => root.render(
     <AppI18nProvider locale="en" languages={['en']}>
-      <ChatViewport rows={rows} stateKey="viewport-test" label="Conversation" renderRow={(row) => <p>{row.id}</p>} />
+      <ChatViewport rows={rows} stateKey="viewport-test" label="Conversation" renderRow={(row) => <p>{row.id}</p>} {...(tailDock ? { tailDock } : {})} />
     </AppI18nProvider>,
   ));
 }
@@ -101,6 +101,62 @@ describe('ChatViewport follow', () => {
     scrollTo(scroller, 600);
     scrollTo(scroller, 300);
     expect(pill()).toBe(true);
+  });
+});
+
+describe('ChatViewport tail dock', () => {
+  const metrics = (element: HTMLElement, scrollHeight: number): void => {
+    Object.defineProperty(element, 'scrollHeight', { configurable: true, value: scrollHeight });
+    Object.defineProperty(element, 'clientHeight', { configurable: true, value: 400 });
+  };
+  const dock = (room: boolean): ChatTailDock => ({ anchorRef: () => undefined, room });
+  const rows = (): ChatRow[] => [notice('a'), notice('b')];
+  /** A reader at the tail of a long conversation. */
+  const atTail = (tailDock?: ChatTailDock): HTMLElement => {
+    clearSessionViewStates();
+    render(rows(), tailDock);
+    const scroller = container.querySelector<HTMLElement>('.chat-viewport__scroll')!;
+    metrics(scroller, 1000);
+    act(() => { scroller.scrollTop = 600; scroller.dispatchEvent(new Event('scroll')); });
+    return scroller;
+  };
+
+  it('holds the room below the rows, outside what is watched for growth, only while it is open', () => {
+    const scroller = atTail(dock(false));
+    expect(scroller.querySelector('.chat-viewport__room')).toBeNull();
+    render(rows(), dock(true));
+    expect(scroller.firstElementChild?.className).toBe('chat-viewport__content');
+    expect(scroller.querySelector('.chat-viewport__room')?.parentElement).toBe(scroller);
+    expect(container.querySelector('.chat-viewport')?.getAttribute('data-tail-room')).toBe('true');
+  });
+
+  it('leaves the tail where it is when the room opens and rows are only rebuilt: every snapshot rebuilds them', () => {
+    const scroller = atTail(dock(false));
+    render(rows(), dock(true));
+    metrics(scroller, 1054);
+    render(rows(), dock(true));
+    expect(scroller.scrollTop, 'the room is the reader’s to scroll into, not the app’s').toBe(600);
+  });
+
+  it('follows a row that really arrives, past the room, so it clears what floats there', () => {
+    const scroller = atTail(dock(true));
+    metrics(scroller, 1200);
+    render([...rows(), notice('c')], dock(true));
+    expect(scroller.scrollTop).toBe(1200);
+  });
+
+  it('follows rebuilt rows as before where nothing floats', () => {
+    const scroller = atTail();
+    metrics(scroller, 1040);
+    render(rows());
+    expect(scroller.scrollTop).toBe(1040);
+  });
+
+  it('gives what floats there a place of its own, with or without room', () => {
+    let anchor: HTMLElement | null = null;
+    render(rows(), { anchorRef: (element) => { anchor = element; }, room: false });
+    expect((anchor as HTMLElement | null)?.parentElement).toBe(container.querySelector('.chat-viewport'));
+    expect((anchor as HTMLElement | null)?.closest('.chat-viewport__scroll')).toBeNull();
   });
 });
 

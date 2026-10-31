@@ -230,7 +230,10 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   );
 }
 
-function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height, folder, repository = 'yes' }: {
+/** Sent by a play function: the guess a `late` phone was holding back has come. */
+const GUESS_ARRIVES = 'wrap-up-story-guess-arrives';
+
+function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height, folder, repository = 'yes', late = false }: {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -242,14 +245,23 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   readonly folder?: string;
   /** What the host said about the folder. */
   readonly repository?: 'yes' | 'no' | 'unknown';
+  /** The guess comes after the screen opens, as it does seconds after a turn (`GUESS_ARRIVES`). */
+  readonly late?: boolean;
 }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = `wrap-up-story-${id}`;
   const [fixture] = useState(() => inSession(make(locale), sessionId));
   const host = useStoryHost(fixture, args.onWrapUpAction);
+  const [waiting, setWaiting] = useState(late);
+  useEffect(() => {
+    const arrive = (): void => setWaiting(false);
+    window.addEventListener(GUESS_ARRIVES, arrive);
+    return () => window.removeEventListener(GUESS_ARRIVES, arrive);
+  }, []);
+  const props = panelProps(sessionId, host, provider, topic, locale, args, false, repository === 'unknown' ? undefined : repository === 'yes');
   return (
     <Phone width={width} height={height}>
-      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args, false, repository === 'unknown' ? undefined : repository === 'yes')} folders={undefined} onBack={fn()}
+      <MobileStructuredAgentSession {...props} {...(waiting ? { wrapUp: { ...props.wrapUp, suggestion: undefined } } : {})} folders={undefined} onBack={fn()}
         {...(folder ? { workspace: { id: 'ws-long', label: folder, kind: 'local' as const, path: WRAP_ROOT } } : {})} />
     </Phone>
   );
@@ -824,6 +836,46 @@ export const PhoneSuggestion360: Story = {
     await expect(await composer(canvasElement)).toHaveValue('괄호 표시로 바꿔 주세요, 0원은 $0.00으로요');
     await expect(args.onSend).not.toHaveBeenCalled();
     await expect(canvasElement.querySelector('[data-testid="structured-agent-suggestion-chip"]')).toBeNull();
+  },
+};
+/**
+ * Phone 360×800: the guess comes seconds after the turn, over the foot of the transcript. Nothing moves when it comes or
+ * when × takes it away; the reader can still scroll the last line clear of it, and 최신으로 이동 stays reachable above it.
+ */
+export const PhoneSuggestionArrives: Story = {
+  render: (args) => <PhoneScreen id="phone-chip-arrives" topic="format" make={(lang) => formatStory(lang, 'claude')} args={args} width={360} height={800} late />,
+  play: async ({ canvasElement }) => {
+    const frames = (): Promise<void> => new Promise((resolve) => { requestAnimationFrame(() => requestAnimationFrame(() => resolve())); });
+    const topOf = (element: Element): number => element.getBoundingClientRect().top;
+    const card = await findIn(canvasElement, '[data-testid="chat-recap-card"]');
+    const box = await findIn(canvasElement, '.chat-composer__box');
+    const scroller = await findIn(canvasElement, '.chat-viewport__scroll');
+    await waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight));
+    await frames();
+    const before = { card: topOf(card), box: topOf(box), height: scroller.clientHeight };
+    window.dispatchEvent(new Event(GUESS_ARRIVES));
+    const chip = await findIn(canvasElement, '[data-testid="structured-agent-suggestion-chip"]');
+    await frames();
+    await expect(Math.abs(topOf(card) - before.card)).toBeLessThanOrEqual(1);
+    await expect(topOf(box)).toBe(before.box);
+    await expect(scroller.clientHeight).toBe(before.height);
+    // The very end: the last row stands clear of the chip.
+    scroller.scrollTop = scroller.scrollHeight;
+    await frames();
+    const rows = scroller.querySelectorAll('.chat-row');
+    await expect(rows[rows.length - 1]!.getBoundingClientRect().bottom).toBeLessThanOrEqual(topOf(chip));
+    const atEnd = topOf(card);
+    // Scrolled up, the way back stays reachable above the chip.
+    scroller.scrollTop = 0;
+    const jump = await findIn(canvasElement, '.chat-jump');
+    await expect(jump.getBoundingClientRect().bottom).toBeLessThanOrEqual(topOf(chip));
+    scroller.scrollTop = scroller.scrollHeight;
+    await frames();
+    await userEvent.click(canvasElement.querySelector<HTMLElement>('[data-testid="structured-agent-suggestion-dismiss"]')!);
+    await waitFor(() => expect(canvasElement.querySelector('[data-testid="structured-agent-suggestion-chip"]')).toBeNull());
+    await frames();
+    await expect(Math.abs(topOf(card) - atEnd)).toBeLessThanOrEqual(1);
+    await expect(topOf(box)).toBe(before.box);
   },
 };
 /** Phone 412×915: Codex's longer guess ends in an ellipsis; × puts it away. */

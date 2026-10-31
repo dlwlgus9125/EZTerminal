@@ -89,6 +89,8 @@
 }
 
 .chat-viewport {
+  /* What the phone's next-prompt chip covers: its height and the band above it. */
+  --chat-tail-room: calc(2.75rem + 2px + var(--ui-space-2));
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
@@ -111,6 +113,31 @@
   margin: 0 auto;
   padding: var(--ui-space-6) var(--ui-space-4) var(--ui-space-4);
   box-sizing: border-box;
+}
+
+/* Scroll room below the rows while something floats over their foot. */
+.chat-viewport__room {
+  height: var(--chat-tail-room);
+}
+
+/* Chromium's scroll anchoring would answer the room opening by scrolling the transcript (25 to 54 px on Android). */
+.chat-viewport[data-tail-room] .chat-viewport__scroll {
+  overflow-anchor: none;
+}
+
+/* Floats over the transcript's foot in the message box's column, out of the layout: nothing moves when it comes or goes. */
+.chat-viewport__dock {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--ui-z-sticky);
+  width: min(calc(100% - 2rem), var(--ui-chat-max-width));
+  margin: 0 auto;
+}
+
+.structured-agent[data-compact='true'] .chat-viewport__dock {
+  width: calc(100% - 1rem);
 }
 
 .chat-rows {
@@ -160,6 +187,10 @@
   box-shadow: var(--ui-shadow-raised);
   cursor: pointer;
   animation: chat-fade-in var(--ui-motion-normal) var(--ui-ease-standard);
+}
+
+.chat-viewport[data-tail-room] .chat-jump {
+  bottom: calc(var(--chat-tail-room) + var(--ui-space-3));
 }
 
 .chat-jump > svg {
@@ -1570,11 +1601,20 @@
   text-align: center;
 }
 
+/* The message box's own face and side padding, so the chip reads as sitting on top of it. */
+.chat-suggestion-dock {
+  padding: var(--ui-space-2) var(--ui-space-3) 0;
+  background: var(--ui-surface);
+}
+
+.structured-agent[data-compact='true'] .chat-suggestion-dock {
+  padding: var(--ui-space-2) var(--ui-space-2) 0;
+}
+
 .chat-suggestion-chip {
   display: flex;
   align-items: stretch;
   min-width: 0;
-  margin: 0 0 var(--ui-space-2);
   border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface-raised);

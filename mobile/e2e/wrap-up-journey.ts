@@ -7,7 +7,9 @@
  * failure line and 다시 만들기, and 답하러 가기 when the AI waits. The task card: 새 하위 대화로 시작 in this folder at
  * 승인 후 실행 under a full-access parent, 여기서 하기, 무시 and 다시 열기, the 모두 시작 sheet, the worktree note, and no
  * 다시 시도 for a start that failed in a new worktree. Unbroken paths at 360 px, spacing and colours on the WebView in use.
- * Every control used is measured as a 44px touch target; a screenshot is taken at each step.
+ * The chip's arrival and removal measured on the screen: transcript elements stay within 1 px, at the tail and scrolled up,
+ * and the last line clears the chip at the very end. A folder that is no repository: no claim about the desktop. A refused
+ * call opened. Every control used is measured as a 44px touch target; a screenshot is taken at each step.
  *
  * `--old-host=<built checkout>` instead runs this app against a desktop from before the feature: the conversation
  * works, nothing of wrap-up shows, and the phone never sends what that host would close the connection for.
@@ -120,6 +122,8 @@ const targets: { readonly label: string; readonly width: number; readonly height
 const checks: string[] = [];
 const spacing: Record<string, number | null> = {};
 const colours: Record<string, Record<string, string>> = {};
+const chipPositions: Record<string, unknown>[] = [];
+const lastLines: Record<string, unknown>[] = [];
 
 async function capture(name: string): Promise<void> {
   await writeFile(path.join(artifacts, `${name}.png`), runAdbBinary(['exec-out', 'screencap', '-p']));
@@ -215,7 +219,7 @@ async function tapOnce(selector: string, label: string): Promise<void> {
     const geometry = await evaluateWebView<TapGeometry | null>(probe);
     const signature = JSON.stringify(geometry);
     unmoved = signature === previous ? unmoved + 1 : 0;
-    // A second of stillness: the composer's draft line and the chip change the screen's layout seconds after it opens.
+    // A second of stillness: the composer's draft line changes the screen's layout seconds after it opens.
     if (geometry && geometry.onTop && !geometry.disabled && unmoved >= 4) {
       const bounds = parseWebViewDeviceBounds(runAdb(['shell', 'dumpsys', 'activity', APP_ID]), geometry);
       if (bounds) { await shortPressOnce(mapWebViewPointToDevice(geometry, bounds, geometry)); return; }
@@ -296,6 +300,63 @@ async function assertChipEllipsis(): Promise<void> {
   })()`);
   assert.ok(ellipsis.clipped && ellipsis.overflow === 'ellipsis', `the long suggestion does not end in an ellipsis: ${JSON.stringify(ellipsis)}`);
   assert.ok(ellipsis.right <= ellipsis.viewport, `the chip leaves the screen: ${JSON.stringify(ellipsis)}`);
+}
+/** What a chip's arrival or removal may move a transcript element by, in CSS px: nothing, past rounding. */
+const CHIP_DRIFT_PX = 1;
+const screenTop = (selector: string): Promise<number> => evaluateWebView<number>(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().top`);
+/**
+ * Holds the next guess back so the screen can be measured without it, watches `selector` frame by frame (a jump put right
+ * a frame later would pass a before and after), lets the guess come, and measures again. On the way out the watch says the
+ * most it ever moved. `dismiss` adds × and the same measure after it.
+ */
+async function measureChip(label: string, selector: string, composerSelector: string, release: () => void, dismiss: boolean): Promise<void> {
+  const boxBefore = await screenTop(composerSelector);
+  const before = await screenTop(selector);
+  await evaluateWebView(`(function () {
+    var node = document.querySelector(${JSON.stringify(selector)}); var from = node.getBoundingClientRect().top;
+    window.__chipWatch = { min: from, max: from };
+    var tick = function () {
+      var watch = window.__chipWatch; if (!watch) return;
+      var top = node.getBoundingClientRect().top; if (top < watch.min) watch.min = top; if (top > watch.max) watch.max = top;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return true;
+  })()`);
+  release();
+  await waitFor(exists(CHIP), `the chip (${label})`);
+  await sleep(600);
+  const withChip = await screenTop(selector);
+  const boxWithChip = await screenTop(composerSelector);
+  let afterDismiss: number | undefined;
+  if (dismiss) {
+    await tapOnce(CHIP_DISMISS, `× (${label})`);
+    await waitFor(`!(${exists(CHIP)})`, `the chip dismissed (${label})`);
+    await sleep(600);
+    afterDismiss = await screenTop(selector);
+  }
+  const watched = await evaluateWebView<{ readonly min: number; readonly max: number }>(`(function () { var watch = window.__chipWatch; window.__chipWatch = null; return watch; })()`);
+  const entry = { label, target: selector, before, withChip, ...(afterDismiss === undefined ? {} : { afterDismiss }), mostMovedPx: Math.round((watched.max - watched.min) * 100) / 100, composerBefore: boxBefore, composerWithChip: boxWithChip };
+  chipPositions.push(entry);
+  console.log(`[chip] ${JSON.stringify(entry)}`);
+  assert.ok(Math.abs(withChip - before) <= CHIP_DRIFT_PX, `${label}: the chip's arrival moved the transcript: ${JSON.stringify(entry)}`);
+  if (afterDismiss !== undefined) assert.ok(Math.abs(afterDismiss - withChip) <= CHIP_DRIFT_PX, `${label}: dismissing the chip moved the transcript: ${JSON.stringify(entry)}`);
+  assert.ok(entry.mostMovedPx <= CHIP_DRIFT_PX, `${label}: the transcript jumped while the chip came: ${JSON.stringify(entry)}`);
+  assert.ok(Math.abs(boxWithChip - boxBefore) <= CHIP_DRIFT_PX, `${label}: the chip moved the message box: ${JSON.stringify(entry)}`);
+}
+/** At the very end of the transcript with the chip up, the last row stands clear of it. */
+async function assertLastLineClear(label: string): Promise<void> {
+  const seen = await evaluateWebView<{ readonly bottom: number; readonly chipTop: number; readonly covered: boolean; readonly scrolled: number; readonly room: number }>(`(function () {
+    var scroller = document.querySelector('.chat-viewport__scroll');
+    scroller.scrollTop = scroller.scrollHeight;
+    var rows = document.querySelectorAll('.chat-row'); var last = rows[rows.length - 1].getBoundingClientRect();
+    var chip = document.querySelector(${JSON.stringify(CHIP)}).getBoundingClientRect();
+    var top = document.elementFromPoint(last.left + 24, last.bottom - 4);
+    return { bottom: last.bottom, chipTop: chip.top, covered: !top || !!top.closest(${JSON.stringify(CHIP)}), scrolled: scroller.scrollTop, room: scroller.scrollHeight - scroller.clientHeight };
+  })()`);
+  console.log(`[chip] last line: ${JSON.stringify(seen)}`);
+  assert.ok(seen.bottom <= seen.chipTop && !seen.covered, `${label}: scrolled to the end, the chip hides the last line: ${JSON.stringify(seen)}`);
+  lastLines.push({ label, ...seen });
 }
 /** The smallest space between what `selector` shows side by side, text measured as text: a lost flex gap reads 0. */
 async function recordSpacing(label: string, selector: string): Promise<void> {
@@ -579,11 +640,21 @@ async function main(): Promise<void> {
     assert.equal(await evaluateWebView(exists(CHIP)), false, 'clearing the box brought the chip back');
     checks.push(`a snapshot suggestion shows as a chip, a long one in an ellipsis; a tap fills the box, raises the keyboard (window ${heightBefore} → ${heightWithKeyboard}px), announces the send button and sends nothing`);
 
-    await sendFromPhone('두 번째 질문입니다.');
+    // A transcript taller than the screen, the reader following its tail: where a chip in the layout pushed everything up.
+    const holdGuess = (): void => writeFileSync(controlFile('hold-predict'), '');
+    const letGuessCome = (): void => rmSync(controlFile('hold-predict'));
+    const guessHeld = (count: number, label: string): Promise<boolean> => until(label, async () => forks('predict').length === count, 20_000);
+    holdGuess();
+    const guessesAtTheTail = forks('predict').length;
+    await sendFromPhone(Array.from({ length: 40 }, (_, index) => `${String(index + 1)}. 두 번째 질문입니다.`).join('\n'));
     await waitForTurns(sessionId, 2, 'the second turn');
-    await waitFor(exists(CHIP), 'the next chip');
-    await tapOnce(CHIP_DISMISS, '×');
-    await waitFor(`!(${exists(CHIP)})`, 'the chip dismissed');
+    await guessHeld(guessesAtTheTail + 1, 'the second guess running');
+    await waitFor(`document.querySelectorAll('.chat-assistant').length >= 2`, 'the second answer on screen');
+    await sleep(1_000);
+    const lastAnswer = '[data-e2e-mark="last-answer"]';
+    await evaluateWebView(`(function () { var all = document.querySelectorAll('.chat-assistant'); all[all.length - 1].setAttribute('data-e2e-mark', 'last-answer'); return true; })()`);
+    await capture('02b-before-chip');
+    await measureChip('a tall transcript, the reader at the tail', lastAnswer, '.chat-composer__box', letGuessCome, true);
     assert.equal(await evaluateWebView(`document.querySelector(${JSON.stringify(COMPOSER)}).value`), '');
     assert.equal(keyboardUp(), false, '× raised the keyboard');
     assert.deepEqual(await turnsOf(sessionId), { count: 2, done: true });
@@ -621,7 +692,7 @@ async function main(): Promise<void> {
     await recordColours('요약 인용', '[data-testid="chat-recap-text"]');
     await capture('05-recap-card');
     await waitFor(exists(CHIP), 'the chip under the recap');
-    await scrollIntoView(RECAP_CARD, 'end');
+    await assertLastLineClear('the recap card');
     await capture('05b-recap-and-chip');
     const backInFront = (await viewingReports()).at(-1);
     assert.deepEqual(backInFront?.sessionIds, [sessionId], 'back in front, the phone did not say so');
@@ -731,13 +802,28 @@ async function main(): Promise<void> {
     await until('the parent at full access', async () => (await snapshot())?.agents.find((agent) => agent.sessionId === sessionId)?.permissionPreset === 'full-access', 10_000);
     writeTasks('four', CART_TASKS);
     const turnsBeforeTasks = (await turnsOf(sessionId)).count;
+    holdGuess();
+    const guessesBeforeTasks = forks('predict').length;
     await sendFromPhone('EZTERMINAL_E2E_SUGGEST:four 둘러보면서 다른 문제도 알려 주세요.');
     await waitForTurns(sessionId, turnsBeforeTasks + 1, 'the turn that suggests four tasks');
     await waitFor(exists(TASK_CARD), 'the task card');
-    // The guess comes 3 s after a turn and takes room above the box: until then a card can move under a tap.
-    await waitFor(exists(CHIP), 'the guess for this turn');
+    await guessHeld(guessesBeforeTasks + 1, 'the guess for the task card running');
     const four = await taskIds(sessionId, 'four', 4);
     const [first, second, third, fourth] = four.ids as [string, string, string, string];
+    // The bug as a person met it: the card has just come, the thumb is on its way to a button, and the guess arrives.
+    await sleep(1_000);
+    await capture('08c-before-chip-card');
+    await measureChip('the task card, the reader at the tail', taskAction(fourth, 'task-start'), '.chat-composer__box', letGuessCome, false);
+    await capture('08d-chip-over-card');
+    await assertLastLineClear('the task card');
+    await capture('08e-end-above-chip');
+    const atTheEnd = await screenTop(taskAction(fourth, 'task-start'));
+    await tapOnce(CHIP_DISMISS, '× at the very end');
+    await waitFor(`!(${exists(CHIP)})`, 'the chip dismissed at the very end');
+    await sleep(600);
+    const afterDismissAtEnd = await screenTop(taskAction(fourth, 'task-start'));
+    chipPositions.push({ label: 'the task card, scrolled to the very end, ×', target: taskAction(fourth, 'task-start'), withChip: atTheEnd, afterDismiss: afterDismissAtEnd });
+    assert.ok(Math.abs(afterDismissAtEnd - atTheEnd) <= CHIP_DRIFT_PX, `× at the very end moved the transcript: ${String(atTheEnd)} → ${String(afterDismissAtEnd)}`);
     assert.equal(await evaluateWebView(`document.querySelectorAll(${JSON.stringify(`${TASK_CARD} [data-testid="chat-task"]`)}).length`), 4);
     assert.match(await textOf('[data-testid="chat-task-defaults"]'), /승인 후 실행 · 이 폴더 \(cart-kit\)/u, 'the line above the tasks does not say what one tap starts');
     await scrollIntoView(TASK_CARD);
@@ -826,11 +912,16 @@ async function main(): Promise<void> {
     checks.push('새 하위 대화로 시작 from the phone: a managed child in this folder at 승인 후 실행 under a full-access parent; the card says so and opens it');
 
     // 여기서 하기
+    holdGuess();
+    const guessesBeforeHere = forks('predict').length;
     await tapOnce(taskAction(second, 'task-here'), '여기서 하기');
     await waitFor(`${attributeOf(taskRow(second), 'data-outcome')} === 'sent'`, 'the task sent here');
     await assertNoWrapUpError('여기서 하기');
     await waitForTurns(sessionId, turnsBeforeTasks + 2, 'the turn it sent');
-    await waitFor(exists(CHIP), 'the guess for this turn');
+    await guessHeld(guessesBeforeHere + 1, 'the guess after 여기서 하기 running');
+    // Scrolled up, reading: the guess that comes now moves nothing either.
+    await scrollIntoView(taskRow(third), 'center');
+    await measureChip('the task card, the reader scrolled up', taskAction(third, 'task-dismiss'), '.chat-composer__box', letGuessCome, false);
     const here = readJsonLines('ezterminal-e2e-codex-turns.jsonl').filter((entry) => entry.threadId === thread).at(-1)!;
     assert.ok(String(here.input).includes('Change `cents / 10` to `cents / 100`'), 'the conversation did not get the instruction');
     await scrollIntoView(taskRow(second));
@@ -993,7 +1084,44 @@ async function main(): Promise<void> {
     await recordColours('받지 않은 제안', refusedRow);
     await scrollIntoView(refusedRow);
     await capture('21-suggestion-refused');
-    checks.push('past the cap the ninth suggestion reads 제안 받지 않음 with its title and reason, a quiet count on the folded run, and fits at 360 px');
+    // Opened, the app's reason stays first and the raw answer says whose it is.
+    await tapOnce(`${refusedRow} .chat-tool__line`, '받지 않은 제안 열기');
+    await waitFor(exists(`${refusedRow} .chat-output__caption`), 'the refused call opened');
+    assert.equal(await textOf(`${refusedRow} .chat-output__caption`), 'AI에게 보낸 답');
+    const opened = await textOf(refusedRow);
+    assert.match(opened, /Stop suggesting; this one was not kept\./u, 'the raw answer is not kept');
+    assert.ok(opened.indexOf('한 턴에 8개까지만 받습니다') < opened.indexOf('AI에게 보낸 답') && opened.indexOf('AI에게 보낸 답') < opened.indexOf('Stop suggesting'), `the reason does not come first: ${opened}`);
+    await assertFits('받지 않은 제안 상세', refusedRow);
+    await scrollIntoView(`${refusedRow} .chat-output__caption`, 'center');
+    await capture('21b-suggestion-refused-open');
+    checks.push('past the cap the ninth suggestion reads 제안 받지 않음 with its title and reason, a quiet count on the folded run, and fits at 360 px; opened, the host\'s answer stays word for word under AI에게 보낸 답');
+
+    // ── A folder that is no repository: the phone claims nothing about the desktop ───────────────────────────────────
+    const plainRoot = path.join(fixture, 'plain-folder');
+    mkdirSync(plainRoot, { recursive: true });
+    writeFileSync(path.join(plainRoot, 'README.md'), '# Not a repository\n');
+    const plain = await addProject(host, plainRoot, 'plain-folder');
+    await tapTestId('mobile-structured-agent-back');
+    await openFeed();
+    await tapTestId('mobile-feed-new');
+    writeTasks('plain', CART_TASKS.slice(2));
+    await draftIn(plain.id, '이 폴더도 살펴봐 주세요. EZTERMINAL_E2E_SUGGEST:plain');
+    const plainSession = await until('the conversation in the plain folder', async () => (await snapshot())?.sessions.find((entry) => entry.workspaceId === plain.id)?.id);
+    await waitForTurns(plainSession, 1, 'the turn in the plain folder');
+    await waitFor(exists(TASK_CARD), 'the card in the plain folder');
+    const plainTasks = await taskIds(plainSession, 'plain', 2);
+    await waitFor(exists(taskRow(plainTasks.ids[1]!)), 'the tasks in the plain folder');
+    assert.equal(await evaluateWebView(exists(`${taskRow(plainTasks.ids[1]!)} [data-testid="chat-task-worktree"]`)), true, 'the AI advised a worktree here');
+    assert.equal(await evaluateWebView(exists('[data-testid="chat-task-worktree-desktop"]')), false, 'the card says the desktop can pick a worktree in a folder with none');
+    await scrollIntoView(taskRow(plainTasks.ids[1]!));
+    await capture('22-no-repository-card');
+    await tapOnce('[data-testid="chat-task-start-all"]', '모두 시작');
+    await waitFor(exists(SHEET), 'the sheet in the plain folder');
+    assert.equal(await textOf('[data-testid="task-start-all-phone"]'), '이 폴더 (plain-folder)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    await capture('23-no-repository-sheet');
+    await tapOnce(await markButton(SHEET, '취소', 'plain-cancel'), '취소');
+    await waitFor(`!(${exists(SHEET)})`, 'the plain sheet closed');
+    checks.push('in a folder that is no repository a worktree-advised task and the 모두 시작 sheet say nothing about the desktop; in the cart kit the host says yes and both do');
 
     const environment = await evaluateWebView<{ readonly userAgent: string; readonly flexGap: string | null; readonly lang: string; readonly theme: string | undefined; readonly viewport: string; readonly colorMix: boolean }>(`({
       userAgent: navigator.userAgent, flexGap: document.documentElement.getAttribute('data-ui-flex-gap'), lang: document.documentElement.lang, theme: document.documentElement.dataset.theme,
@@ -1004,7 +1132,7 @@ async function main(): Promise<void> {
     const invisible = Object.entries(colours).filter(([, value]) => value.color === 'rgba(0, 0, 0, 0)' || !value.color);
     await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({
       ok: small.length === 0 && lostGaps.length === 0 && invisible.length === 0, androidApi, provider: 'deterministic Codex fixture', environment, desktop: desktopAtStart,
-      claimedAfterTurnStartMs, forks: { predict: forks('predict').length, recap: forks('recap').length }, checks, spacing, colours, touchTargets: targets, screenshots: shots,
+      claimedAfterTurnStartMs, forks: { predict: forks('predict').length, recap: forks('recap').length }, chipPositions, lastLines, checks, spacing, colours, touchTargets: targets, screenshots: shots,
     }, null, 2));
     assert.deepEqual(small, [], `touch targets under 44px: ${JSON.stringify(small)}`);
     assert.deepEqual(lostGaps, [], `spacing lost: ${JSON.stringify(lostGaps)}`);

@@ -84,13 +84,23 @@ function liveStatus(row: ChatRow): '' | undefined {
 }
 
 /**
+ * What floats over the foot of the transcript: the phone's next-prompt chip. It takes no part in the layout, so nothing
+ * moves when it comes or goes. `room` is scroll room below the rows, so the last line can still clear it. Opening it moves
+ * nothing and it is the reader's to scroll into; only a row that arrives follows past it.
+ */
+export interface ChatTailDock {
+  readonly anchorRef: (element: HTMLDivElement | null) => void;
+  readonly room: boolean;
+}
+
+/**
  * Scroll container for chat rows: follows the tail while the reader is at the
  * bottom (also when rows grow after async highlighting or expansion), offers a
  * jump-to-latest pill and a "New" divider when content arrives while scrolled
  * up, and restores the reader's position by row id after remounts.
  */
 export function ChatViewport({
-  rows, renderRow, stateKey, before, after, onReachTop, testId = 'structured-agent-transcript', label, highlight, focusRow,
+  rows, renderRow, stateKey, before, after, onReachTop, testId = 'structured-agent-transcript', label, highlight, focusRow, tailDock,
 }: {
   readonly rows: readonly ChatRow[];
   readonly renderRow: (row: ChatRow) => ReactNode;
@@ -105,8 +115,10 @@ export function ChatViewport({
   readonly highlight?: string;
   /** Row to bring into view and mark as the current find match; `seq` re-triggers the same row. */
   readonly focusRow?: { readonly id: string; readonly seq: number };
+  readonly tailDock?: ChatTailDock;
 }): JSX.Element {
   const copy = useChatCopy();
+  const room = tailDock?.room === true;
   const scrollRef = useRef<HTMLDivElement>(null);
   const anchorKey = stateKey ? `${stateKey}:chat-anchor` : undefined;
   const saved = useRef<SavedAnchor | undefined>(anchorKey ? readSessionViewState<SavedAnchor>(anchorKey) : undefined);
@@ -166,15 +178,17 @@ export function ChatViewport({
   useEffect(() => {
     const seen = seenIds.current;
     if (following.current || seen.size === 0) {
+      const arrived = rows.some((row) => !seen.has(row.id));
       for (const row of rows) seen.add(row.id);
-      if (following.current) scrollToEnd();
+      // Every snapshot rebuilds the rows: with room open that alone must not carry the reader into it.
+      if (following.current && (arrived || !room)) scrollToEnd();
       return;
     }
     if (newFrom) return;
     const firstSeen = rows.findIndex((row) => seen.has(row.id));
     const unseen = rows.find((row, index) => index > firstSeen && !seen.has(row.id) && row.createdAt >= mountedAt.current);
     if (firstSeen >= 0 && unseen) setNewFrom(unseen.id);
-  }, [rows, newFrom, scrollToEnd]);
+  }, [rows, newFrom, room, scrollToEnd]);
 
   // Content that grows after layout (highlighting, expansion, streaming) keeps the tail pinned,
   // and so does a panel that gets shorter (an approval dock or child track opening below).
@@ -316,7 +330,7 @@ export function ChatViewport({
   );
 
   return (
-    <div className="chat-viewport" data-testid={testId}>
+    <div className="chat-viewport" data-testid={testId} data-tail-room={room || undefined}>
       <div ref={scrollRef} className="chat-viewport__scroll" onScroll={onScroll} tabIndex={-1}>
         {virtual ? (
           <div className="chat-viewport__content">
@@ -345,7 +359,10 @@ export function ChatViewport({
             {after}
           </div>
         )}
+        {/* Beside the content, which is watched for growth: the room opening is not the transcript growing. */}
+        {room && <div className="chat-viewport__room" aria-hidden="true" />}
       </div>
+      {tailDock && <div ref={tailDock.anchorRef} className="chat-viewport__dock" />}
       {!atBottom && (
         <button type="button" className="chat-jump" onClick={() => { following.current = true; setNewFrom(undefined); scrollToEnd(); }}>
           <Glyph name="down" />
