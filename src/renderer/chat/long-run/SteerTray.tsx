@@ -8,10 +8,13 @@ import './long-run.css';
 
 type SteerCopy = ChatCopy['longRun']['steer'];
 
-/** What the host has confirmed about a message, in words. Nothing here says it arrived: a landed one is a transcript row. */
+/**
+ * What the host has confirmed about a message, in words. Nothing here says it arrived: a landed one is a transcript row.
+ * Only text being written is dropped, and only on Codex: a tool holds a message on either AI and is not cut.
+ */
 export function steerStateText(message: SteeredMessage, copy: SteerCopy, codex: boolean): string {
   switch (message.state) {
-    case 'on-its-way': return `${copy.onItsWay} · ${codex ? copy.behind.codex : copy.behind[message.behind ?? 'tool']}`;
+    case 'on-its-way': return `${copy.onItsWay} · ${codex && message.behind === 'text' ? copy.behind.codex : copy.behind[message.behind ?? 'tool']}`;
     case 'behind-approval': return copy.behindApproval;
     case 'failed': return message.failure ? `${copy.failed} · ${copy.failure[message.failure]}` : copy.failed;
     case 'unconfirmed': return copy.unconfirmed;

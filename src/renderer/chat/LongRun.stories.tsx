@@ -265,9 +265,9 @@ export const BusyClaude: Story = chat('busy-claude', (lang) => steerStory(lang, 
   await expect(await composer(canvasElement)).toHaveAttribute('placeholder', '이 턴에 끼워넣을 지시를 입력하세요 (Esc로 중단)');
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('Enter 끼워넣기 · 하던 도구나 글이 끝나면 들어갑니다 · Esc 멈춤');
 });
-/** Codex: what is being written is dropped and redone; the hint says so rather than promising otherwise. */
+/** Codex: text being written is dropped and redone, tools are not cut; the hint says so rather than promising otherwise. */
 export const BusyCodex: Story = chat('busy-codex', (lang) => steerStory(lang, 'busy'), { provider: 'codex' }, async ({ canvasElement }) => {
-  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('쓰던 글은 버리고 다시 쓰고 도구는 끊지 않습니다');
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('글을 쓰는 중이면 버리고 다시 쓰고, 도구는 끊지 않습니다');
 });
 /** With a draft: 끊고 보내기 and the round button are two different things, and each says which. */
 export const BusyDraft: Story = chat('busy-draft', (lang) => steerStory(lang, 'busy'), {}, async ({ canvasElement }) => {
@@ -304,18 +304,30 @@ export const InterruptSend: Story = chat('interrupt-send', (lang) => steerStory(
 export const SteerOnItsWay: Story = chat('steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), {}, showTray);
 /** Claude while it writes: the message waits for that text to end. */
 export const SteerOnItsWayText: Story = chat('steer-on-its-way-text', (lang) => steerStory(lang, 'on-its-way-text'), {}, showTray);
-/** Codex: the promise it can keep. */
-export const SteerOnItsWayCodex: Story = chat('steer-on-its-way-codex', (lang) => steerStory(lang, 'on-its-way'), { provider: 'codex' }, async ({ canvasElement }) => {
+/** Codex while it writes: the promise it can keep. */
+export const SteerOnItsWayCodex: Story = chat('steer-on-its-way-codex', (lang) => steerStory(lang, 'on-its-way-text'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('곧 들어갑니다 · 쓰던 글은 버리고 다시 씁니다');
+});
+/** Codex behind a tool: it does not cut tools, so nothing is dropped and the tray does not say so. */
+export const SteerOnItsWayCodexTool: Story = chat('steer-on-its-way-codex-tool', (lang) => steerStory(lang, 'on-its-way'), { provider: 'codex' }, async ({ canvasElement }) => {
+  const tray = await findIn(canvasElement, TRAY);
+  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면');
+  await expect(tray).not.toHaveTextContent('버리고');
 });
 /** Landed: an ordinary message of the person's, where it arrived, between the tool before it and the work it changed. */
 export const SteerLanded: Story = chat('steer-landed', (lang) => steerStory(lang, 'landed'), {}, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 끼워넣음');
   await expect(canvasElement.querySelector(TRAY)).toBeNull();
 });
-/** Landed on Codex, which had been writing: the mark says that text was dropped. */
-export const SteerLandedCodex: Story = chat('steer-landed-codex', (lang) => steerStory(lang, 'landed', 'codex'), { provider: 'codex' }, async ({ canvasElement }) => {
+/** Landed on Codex, which had been writing: the text is gone, and the mark says so. */
+export const SteerLandedCodex: Story = chat('steer-landed-codex', (lang) => steerStory(lang, 'landed-rewritten'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('쓰던 글은 버리고 다시 씀');
+});
+/** Landed on Codex at a tool's end: nothing was dropped, so the mark says nothing of the kind. */
+export const SteerLandedCodexTool: Story = chat('steer-landed-codex-tool', (lang) => steerStory(lang, 'landed'), { provider: 'codex' }, async ({ canvasElement }) => {
+  const mark = await findIn(canvasElement, '[data-testid="chat-steer-landed"]');
+  await expect(mark).toHaveTextContent('실행 중에 끼워넣음');
+  await expect(mark).not.toHaveTextContent('버리고');
 });
 /** An approval is open: it stays open, the message goes in after the answer. The amber stays on the decision. */
 export const SteerBehindApproval: Story = chat('steer-behind-approval', (lang) => steerStory(lang, 'behind-approval'), {}, async ({ canvasElement }) => {
@@ -332,14 +344,14 @@ export const SteerBehindApprovalComposer: Story = chat('steer-behind-approval-co
   await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('승인 뒤에 전달됩니다');
 });
 /** A review turn takes nothing in (measured on Codex): it waits in the queue, which says why. */
-export const SteerFellBackReview: Story = chat('steer-fell-back-review', (lang) => steerStory(lang, 'review-turn', 'codex'), { provider: 'codex' }, async ({ canvasElement }) => {
+export const SteerFellBackReview: Story = chat('steer-fell-back-review', (lang) => steerStory(lang, 'review-turn'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-queue-fallback"]')).toHaveTextContent('검토 턴에는 끼워넣을 수 없어 대기열에 넣었습니다.');
 });
-export const SteerFellBackCompact: Story = chat('steer-fell-back-compact', (lang) => steerStory(lang, 'compact-turn', 'codex'), { provider: 'codex' }, async ({ canvasElement }) => {
+export const SteerFellBackCompact: Story = chat('steer-fell-back-compact', (lang) => steerStory(lang, 'compact-turn'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-queue-fallback"]')).toHaveTextContent('압축 중에는 끼워넣을 수 없어 대기열에 넣었습니다.');
 });
 /** The race with the end of the turn: the message is not lost, it is the next turn. */
-export const SteerFellBackEnded: Story = chat('steer-fell-back-ended', (lang) => steerStory(lang, 'turn-ended', 'codex'), { provider: 'codex' }, async ({ canvasElement }) => {
+export const SteerFellBackEnded: Story = chat('steer-fell-back-ended', (lang) => steerStory(lang, 'turn-ended'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-queue-fallback"]')).toHaveTextContent('턴이 막 끝나 대기열에 넣었습니다.');
 });
 /** Refused: it can go to the queue or back to the box. No 다시 시도: neither AI drops a repeat for us. */
@@ -400,16 +412,16 @@ export const SteerNarrow: Story = chat('steer-narrow', (lang) => steerStory(lang
   await expect(send.getBoundingClientRect().right).toBeLessThanOrEqual(box.getBoundingClientRect().right);
 });
 export const BusyEnglish: Story = english('busy-en', (lang) => steerStory(lang, 'on-its-way'), {}, showTray);
-export const BusyEnglishCodex: Story = english('busy-en-codex', (lang) => steerStory(lang, 'landed', 'codex'), { provider: 'codex' });
+export const BusyEnglishCodex: Story = english('busy-en-codex', (lang) => steerStory(lang, 'landed-rewritten'), { provider: 'codex' });
 /** CLI skin: the same words after the `›` prompt, the tray in the same place. */
 export const CliBusy: Story = chat('cli-busy', (lang) => steerStory(lang, 'busy'), { skin: 'cli' });
 export const CliSteerOnItsWay: Story = chat('cli-steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), { skin: 'cli' }, showTray);
 /** CLI skin: the person's `›` line and a `⎿` mark under it. */
-export const CliSteerLanded: Story = chat('cli-steer-landed', (lang) => steerStory(lang, 'landed', 'codex'), { skin: 'cli', provider: 'codex' }, async ({ canvasElement }) => {
+export const CliSteerLanded: Story = chat('cli-steer-landed', (lang) => steerStory(lang, 'landed-rewritten'), { skin: 'cli', provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 끼워넣음 · 쓰던 글은 버리고 다시 씀');
 });
 export const CliSteerBehindApproval: Story = chat('cli-steer-behind-approval', (lang) => steerStory(lang, 'behind-approval'), { skin: 'cli' }, showTray);
-export const CliSteerFellBack: Story = chat('cli-steer-fell-back', (lang) => steerStory(lang, 'review-turn', 'codex'), { skin: 'cli', provider: 'codex' });
+export const CliSteerFellBack: Story = chat('cli-steer-fell-back', (lang) => steerStory(lang, 'review-turn'), { skin: 'cli', provider: 'codex' });
 export const CliSteerFailed: Story = chat('cli-steer-failed', (lang) => steerStory(lang, 'failed'), { skin: 'cli' }, showTray);
 
 // ── B. The usage limit card ────────────────────────────────────────────────────────────────────────────
@@ -464,6 +476,8 @@ export const LimitResumed: Story = chat('limit-resumed', (lang) => limitStory(la
   await expect(row).toHaveTextContent('Continue.');
   await expect(row).toHaveTextContent('앱이 보냄 · 한도가 풀림');
   await expect(row).toHaveAccessibleName('사람이 아니라 앱이 보낸 메시지');
+  // The conversation has moved on: the header is its own again, not the limit's.
+  await expect(header(canvasElement)).not.toHaveTextContent('한도');
   scrollToTop(await findIn(canvasElement, CARD));
 });
 /** D3, the other option: a description instead of the words sent. */
@@ -755,14 +769,14 @@ export const PhoneBusyDraft412: Story = phone('phone-busy-412', (lang) => steerS
   await thumbTargets([await findIn(canvasElement, '[data-testid="structured-agent-send"]'), await findIn(canvasElement, '[data-testid="structured-agent-interrupt-send"]')]);
 });
 export const PhoneSteerOnItsWay360: Story = phone('phone-steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), 360, 800, {}, showTray);
-export const PhoneSteerLanded360: Story = phone('phone-steer-landed', (lang) => steerStory(lang, 'landed', 'codex'), 360, 800, { provider: 'codex' });
+export const PhoneSteerLanded360: Story = phone('phone-steer-landed', (lang) => steerStory(lang, 'landed-rewritten'), 360, 800, { provider: 'codex' });
 export const PhoneSteerBehindApproval360: Story = phone('phone-steer-behind', (lang) => steerStory(lang, 'behind-approval'), 360, 800, {}, async ({ canvasElement }) => {
   await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));
 });
 export const PhoneSteerFailed360: Story = phone('phone-steer-failed', (lang) => steerStory(lang, 'failed'), 360, 800, {}, async ({ canvasElement }) => {
   await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));
 });
-export const PhoneSteerFellBack360: Story = phone('phone-steer-fell-back', (lang) => steerStory(lang, 'review-turn', 'codex'), 360, 800, { provider: 'codex' }, async ({ canvasElement }) => {
+export const PhoneSteerFellBack360: Story = phone('phone-steer-fell-back', (lang) => steerStory(lang, 'review-turn'), 360, 800, { provider: 'codex' }, async ({ canvasElement }) => {
   await findIn(canvasElement, '[data-testid="chat-queue-fallback"]');
 });
 const phoneCard = (selector = CARD): Story['play'] => async ({ canvasElement }) => {

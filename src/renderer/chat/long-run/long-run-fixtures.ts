@@ -117,7 +117,7 @@ function opening(lang: LongLanguage, turnId: string): DaemonTranscriptItem[] {
 // ── A. Into a running turn ─────────────────────────────────────────────────────
 
 export type SteerVariant =
-  | 'busy' | 'on-its-way' | 'on-its-way-text' | 'landed' | 'behind-approval' | 'review-turn' | 'compact-turn' | 'turn-ended' | 'failed' | 'failed-disconnected' | 'unconfirmed';
+  | 'busy' | 'on-its-way' | 'on-its-way-text' | 'landed' | 'landed-rewritten' | 'behind-approval' | 'review-turn' | 'compact-turn' | 'turn-ended' | 'failed' | 'failed-disconnected' | 'unconfirmed';
 
 const FULL_SUITE = 'pnpm test';
 const ONE_FILE = 'pnpm vitest run src/cart.test.ts';
@@ -140,7 +140,7 @@ function queuedFallback(lang: LongLanguage, base: LongRunFixture, reason: SteerF
   return { ...base, items: [...base.items, queued], turns: [...base.turns, turn('turn-queued', 'queued', at(9))], fellBack: new Map([['turn-queued', reason]]) };
 }
 
-export function steerStory(lang: LongLanguage, variant: SteerVariant, provider: LongProvider = 'claude'): LongRunFixture {
+export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFixture {
   const text = TEXT[lang];
   const work = [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, false)];
   const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', started)], state: 'working', rows: {} };
@@ -153,12 +153,21 @@ export function steerStory(lang: LongLanguage, variant: SteerVariant, provider: 
       steered: [steered(lang, 'on-its-way', { behind: 'text' })],
     };
     case 'landed': {
+      // At a tool boundary: the tool ended and nothing was being written, on either AI.
       const landed = item(8, 'user-message', text.steer, { turnId: 'turn-run' });
-      const landing: SteerLanding = provider === 'codex' ? { rewritten: true } : {};
       return {
         ...running,
         items: [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, true), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(10, 'turn-run', ONE_FILE, false)],
-        rows: { landed: new Map([[landed.id, landing]]) },
+        rows: { landed: new Map<string, SteerLanding>([[landed.id, {}]]) },
+      };
+    }
+    case 'landed-rewritten': {
+      // Codex was writing: that text is gone from the transcript, and the mark says so.
+      const landed = item(8, 'user-message', text.steer, { turnId: 'turn-run' });
+      return {
+        ...running,
+        items: [...opening(lang, 'turn-run'), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(10, 'turn-run', ONE_FILE, false)],
+        rows: { landed: new Map<string, SteerLanding>([[landed.id, { rewritten: true }]]) },
       };
     }
     case 'behind-approval': {
@@ -189,7 +198,7 @@ export function acceptSteer(fixture: LongRunFixture, text: string, id: string): 
   return { ...fixture, steered: [...(fixture.steered ?? []), message] };
 }
 
-/** It got there: out of the tray, into the transcript at the place it landed. */
+/** It got there: out of the tray, into the transcript at the place it landed. Only Codex drops, and only text it was writing. */
 export function landSteer(fixture: LongRunFixture, id: string, provider: LongProvider): LongRunFixture {
   const message = fixture.steered?.find((entry) => entry.id === id);
   if (!message) return fixture;
@@ -201,7 +210,7 @@ export function landSteer(fixture: LongRunFixture, id: string, provider: LongPro
     ? [item(sequence, 'tool-result', 'ok', { turnId: 'turn-run', sessionId, payload: { ...last.payload, phase: 'result', status: 'completed' } })] : [];
   const row = item(sequence + 1, 'user-message', message.text, { turnId: 'turn-run', sessionId });
   const landed = new Map(fixture.rows.landed);
-  landed.set(row.id, provider === 'codex' ? { rewritten: true } : {});
+  landed.set(row.id, provider === 'codex' && message.behind === 'text' ? { rewritten: true } : {});
   return { ...fixture, items: [...fixture.items, ...ended, row], rows: { ...fixture.rows, landed }, steered: fixture.steered?.filter((entry) => entry.id !== id) };
 }
 

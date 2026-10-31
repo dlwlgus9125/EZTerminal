@@ -161,6 +161,17 @@ describe('the busy message box', () => {
     expect(running.onSteer).not.toHaveBeenCalled();
   });
 
+  it('promises Codex drops text only when it is writing: a tool holds a message on either AI', () => {
+    const on = (behind: 'tool' | 'text'): void => {
+      box({ providerId: 'codex', steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'on-its-way', sentAt: '2026-11-01T05:50:00.000Z', behind }] }) });
+    };
+    on('tool');
+    expect(byId('chat-steer-tray')?.textContent).toContain('지금 도구가 끝나면');
+    expect(byId('chat-steer-tray')?.textContent).not.toContain('버리고');
+    on('text');
+    expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 다시 씁니다');
+  });
+
   it('never says a held message arrived', () => {
     box({ steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'behind-approval', sentAt: '2026-11-01T05:50:00.000Z' }] }) });
     const tray = byId('chat-steer-tray');

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildChatModel } from './build-chat-model';
-import { LONG_SESSION, limitStory, steerStory, type LongRunFixture } from '../long-run/long-run-fixtures';
+import { landSteer, LONG_SESSION, limitStory, steerStory, type LongRunFixture } from '../long-run/long-run-fixtures';
 
 const model = ({ items, turns, approvals, rows }: LongRunFixture): ReturnType<typeof buildChatModel> => buildChatModel({ items, turns, ...(approvals ? { approvals } : {}), longRun: rows });
 
@@ -45,10 +45,20 @@ describe('long-run rows in the chat model', () => {
     expect(rows[index + 1]?.kind).toBe('assistant');
   });
 
-  it('says on a landed Codex message that its text was dropped, and only there', () => {
-    const steer = (provider: 'claude' | 'codex'): unknown => model(steerStory('ko', 'landed', provider)).rows.flatMap((row) => (row.kind === 'user' && row.steer ? [row.steer] : []))[0];
-    expect(steer('codex')).toEqual({ rewritten: true });
-    expect(steer('claude')).toEqual({});
+  it('says a landed message dropped text only when text was being written', () => {
+    const steer = (variant: 'landed' | 'landed-rewritten'): unknown => model(steerStory('ko', variant)).rows.flatMap((row) => (row.kind === 'user' && row.steer ? [row.steer] : []))[0];
+    expect(steer('landed')).toEqual({});
+    expect(steer('landed-rewritten')).toEqual({ rewritten: true });
+  });
+
+  it('keeps the promise of what was holding a message when it lands', () => {
+    const held = (behind: 'tool' | 'text', provider: 'claude' | 'codex'): unknown => {
+      const fixture: LongRunFixture = { ...steerStory('ko', 'busy'), steered: [{ id: 'm', text: '그 파일만', state: 'on-its-way', sentAt: '2026-11-01T05:50:00.000Z', behind }] };
+      return [...(landSteer(fixture, 'm', provider).rows.landed?.values() ?? [])][0];
+    };
+    expect(held('text', 'codex')).toEqual({ rewritten: true });
+    expect(held('tool', 'codex')).toEqual({});
+    expect(held('text', 'claude')).toEqual({});
   });
 
   it('holds a message that has not landed out of the transcript', () => {
