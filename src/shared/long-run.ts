@@ -9,7 +9,7 @@
 export type UsageLimitWindow = 'five-hour' | 'weekly' | 'unknown';
 
 export type UsageLimitPhase =
-  /** The reset is known and within hours: the app sends "Continue." at `resumeAt` by itself. */
+  /** The reset is known and within hours: the app tries by sending "Continue." at `resumeAt`. */
   | 'waiting'
   /** It is being sent now. */
   | 'resuming'
@@ -68,8 +68,8 @@ export interface TurnUsageLimit {
 /** The one thing the app sends by itself. Measured: it is read once and the stopped prompt is not read twice. */
 export const RESUME_TEXT = 'Continue.';
 
-/** Why a "Continue." went out: the clock came, or the person pressed 지금 시도 or 이어서 하기. */
-export type AppSentReason = 'limit-lifted' | 'try-now' | 'resume-pressed';
+/** Why a "Continue." went out: its scheduled time came (nothing says the limit has lifted), or the person pressed 지금 시도 or 이어서 하기. */
+export type AppSentReason = 'scheduled-time' | 'try-now' | 'resume-pressed';
 
 export type SteerDelivery =
   /** The host took it; the turn has not. A long tool holds it. */
@@ -102,6 +102,6 @@ export interface SteerLanding {
 export type SteerFallback = 'review-turn' | 'compact-turn' | 'turn-ended';
 
 export interface LongRunSettings {
-  /** 한도가 풀리면 자동으로 이어서 하기. */
+  /** 해제 예정 시각이 되면 자동으로 이어서 하기. */
   readonly autoResume: boolean;
 }

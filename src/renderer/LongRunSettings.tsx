@@ -30,7 +30,7 @@ function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Elem
         <Switch
           checked={settings.autoResume}
           onChange={(event) => save({ ...settings, autoResume: event.target.checked })}
-          label={text('한도가 풀리면 자동으로 이어서 하기', 'Continue by itself when a limit lifts')}
+          label={text('해제 예정 시각이 되면 자동으로 이어서 하기', 'Try to continue at the expected reset')}
           description={text(
             '앱이 그 대화에 "Continue."를 보냅니다. 멈춘 요청은 다시 보내지 않습니다. 사람이 보낸 최상위 대화에만, 리셋 시각을 아는 몇 시간 안의 한도에만 적용합니다. 주간 한도와 시각을 모르는 한도는 먼저 묻고, 하위 대화는 카드에서 이어서 합니다',
             'The app sends “Continue.” to that conversation. Your stopped request is not sent again. This applies only to top-level conversations a person sent, and only to limits that reset within hours at a known time. A weekly limit or an unknown reset asks first, and a sub-conversation continues from its card',

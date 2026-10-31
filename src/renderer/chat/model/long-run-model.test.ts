@@ -34,7 +34,7 @@ describe('long-run rows in the chat model', () => {
   it('marks what the app sent, why, and leaves the person\'s own rows alone', () => {
     const rows = model(limitStory('ko', 'resumed')).rows.filter((row) => row.kind === 'user');
     expect(rows.map((row) => (row.kind === 'user' ? row.origin : undefined))).toEqual([undefined, 'app-resume']);
-    expect(rows[1]).toMatchObject({ text: 'Continue.', appSent: 'limit-lifted' });
+    expect(rows[1]).toMatchObject({ text: 'Continue.', appSent: 'scheduled-time' });
   });
 
   it('marks a landed message at its real place, between the tool before it and the work after', () => {

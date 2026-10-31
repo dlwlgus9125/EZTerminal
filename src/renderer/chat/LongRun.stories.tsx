@@ -411,13 +411,13 @@ export const CliSteerFailed: Story = chat('cli-steer-failed', (lang) => steerSto
 export const LimitWaiting: Story = chat('limit-waiting', (lang) => limitStory(lang, 'waiting'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   scrollToTop(card);
-  await expect(card).toHaveTextContent(`5시간 한도 · ${clockOf(RESET_AT)}에 풀립니다`);
-  await expect(card).toHaveTextContent(`${clockOf(RESUME_AT)}에 자동으로 이어서 합니다`);
+  await expect(card).toHaveTextContent(`5시간 한도 · ${clockOf(RESET_AT)} 해제 예정`);
+  await expect(card).toHaveTextContent(`${clockOf(RESUME_AT)}에 자동으로 재개를 시도합니다`);
   await expect(card).toHaveTextContent('지금 시도가 거절되면 거절된 턴이 대화에 그대로 남습니다.');
   await expect(within(card).getByRole('button', { name: '지금 시도. 거절되면 거절된 턴이 대화에 그대로 남습니다.' })).toBeVisible();
   await expect(header(canvasElement)).toHaveTextContent(`한도 대기 · ${clockOf(RESUME_AT)}`);
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
-  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('풀리기 전에 보낸 메시지는 거절되어 대화에 남고');
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('해제 예정 시각 전에 보낸 메시지는 거절되어 대화에 남고');
 });
 export const LimitWaitingCodex: Story = chat('limit-waiting-codex', (lang) => limitStory(lang, 'waiting', { provider: 'codex' }), { provider: 'codex' }, showCard);
 /** 지금 시도 before the reset: refused, so the refused turn stays, and the card still waits for its clock. */
@@ -427,7 +427,7 @@ export const LimitTryNow: Story = chat('limit-try-now', (lang) => limitStory(lan
   await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 지금 시도를 누름'), { timeout: 4_000 });
   const card = await findIn(canvasElement, CARD);
   await waitFor(() => expect(card).toHaveTextContent('지금 시도가 거절됐습니다. 거절된 턴이 대화에 남아 있습니다.'));
-  await expect(card).toHaveTextContent(`${clockOf(RESUME_AT)}에 자동으로 이어서 합니다`);
+  await expect(card).toHaveTextContent(`${clockOf(RESUME_AT)}에 자동으로 재개를 시도합니다`);
   scrollToTop(card);
 });
 /** 자동 재개 끄기: for this conversation only, says so, and can be undone; focus goes to the card's title. */
@@ -436,24 +436,24 @@ export const LimitAutoOff: Story = chat('limit-auto-off', (lang) => limitStory(l
   const card = await findIn(canvasElement, CARD);
   await waitFor(() => expect(card).toHaveTextContent('이 대화는 자동으로 이어서 하지 않습니다. 설정은 그대로입니다.'));
   await waitFor(() => expect(document.activeElement).toBe(card.querySelector('[data-card-heading]')));
-  await expect(card).not.toHaveTextContent('자동으로 이어서 합니다');
+  await expect(card).not.toHaveTextContent('자동으로 재개를 시도합니다');
   await expect(canvasElement.querySelector('[data-testid="chat-limit-announce"]')).toHaveTextContent('자동 재개 끔');
   await expect(header(canvasElement)).toHaveTextContent('한도로 멈춤');
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-auto-on"]'));
-  await waitFor(() => expect(card).toHaveTextContent('자동으로 이어서 합니다'));
+  await waitFor(() => expect(card).toHaveTextContent('자동으로 재개를 시도합니다'));
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-auto-off"]'));
 });
 /** Being sent now: nothing says it arrived. */
 export const LimitResuming: Story = chat('limit-resuming', (lang) => limitStory(lang, 'resuming'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('한도가 풀려 "Continue."를 보내는 중입니다.');
+  await expect(card).toHaveTextContent('예약 시각이 되어 "Continue."를 보내는 중입니다.');
   await expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toBeNull();
 });
 /** Resumed: the row after the card is exactly what went out, and it says it was the app (D3). */
 export const LimitResumed: Story = chat('limit-resumed', (lang) => limitStory(lang, 'resumed'), {}, async ({ canvasElement }) => {
   const row = await findIn(canvasElement, '[data-testid="chat-app-sent"]');
   await expect(row).toHaveTextContent('Continue.');
-  await expect(row).toHaveTextContent('앱이 보냄 · 한도가 풀림');
+  await expect(row).toHaveTextContent('앱이 보냄 · 예약 시각이 되어');
   await expect(row).toHaveAccessibleName('사람이 아니라 앱이 보낸 메시지');
   // The conversation has moved on: the header is its own again, not the limit's.
   await expect(header(canvasElement)).not.toHaveTextContent('한도');
@@ -462,7 +462,9 @@ export const LimitResumed: Story = chat('limit-resumed', (lang) => limitStory(la
 /** D4: refused although the reset had passed: one later try, ten minutes on. */
 export const LimitRetrying: Story = chat('limit-retrying', (lang) => limitStory(lang, 'retrying'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent(`${clockOf(RETRY_AT)}에 한 번 더 시도하고, 그래도 거절되면 멈추고 묻습니다.`);
+  await expect(card).toHaveTextContent(`${clockOf(RETRY_AT)}에 한 번 더 시도합니다. 그래도 거절되면 멈추고 묻습니다.`);
+  // The refused row above must not claim the limit lifted.
+  await expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 예약 시각이 되어');
   await expect(header(canvasElement)).toHaveTextContent(`한도 대기 · ${clockOf(RETRY_AT)}`);
   scrollToTop(card);
 });
@@ -489,7 +491,7 @@ export const LimitWeeklyScheduled: Story = chat('limit-weekly-scheduled', (lang)
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-schedule"]'));
   await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-schedule', turnId: 'turn-limit' });
   const card = await findIn(canvasElement, CARD);
-  await waitFor(() => expect(card).toHaveTextContent('앱이 "Continue."를 보냅니다.'));
+  await waitFor(() => expect(card).toHaveTextContent('앱이 "Continue."를 보내 재개를 시도합니다.'));
   await expect(await findIn(canvasElement, '[data-testid="chat-limit-limit-unschedule"]')).toBeVisible();
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
@@ -497,7 +499,7 @@ export const LimitWeeklyScheduled: Story = chat('limit-weekly-scheduled', (lang)
 /** No reset time known: nothing to wait for, and 이어서 하기 says what an early try costs. */
 export const LimitUnknown: Story = chat('limit-unknown', (lang) => limitStory(lang, 'ask-unknown', { window: 'unknown' }), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('언제 풀릴지 알 수 없습니다.');
+  await expect(card).toHaveTextContent('해제 예정 시각을 알 수 없습니다.');
   await expect(card).toHaveTextContent('아직 한도면 거절된 턴이 대화에 그대로 남습니다.');
   await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
@@ -519,7 +521,7 @@ export const LimitSkipped: Story = chat('limit-skipped', (lang) => limitStory(la
 /** D5: the reset passed while the app was closed: it asks on reopen and sends nothing by itself. */
 export const LimitReopened: Story = chat('limit-reopened', (lang) => limitStory(lang, 'ask-reopened'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('앱을 열었다고 저절로 보내지 않습니다.');
+  await expect(card).toHaveTextContent('PC 앱을 열었다고 저절로 보내지 않습니다.');
   await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
@@ -527,7 +529,7 @@ export const LimitReopened: Story = chat('limit-reopened', (lang) => limitStory(
 export const LimitLine: Story = chat('limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('대화 3개가 차례로 이어집니다 · 이 대화는 2번째');
-  await expect(card).toHaveTextContent(`${clockOf(LINE_AT)}에 자동으로 이어서 합니다`);
+  await expect(card).toHaveTextContent(`${clockOf(LINE_AT)}에 자동으로 재개를 시도합니다`);
   scrollToTop(card);
 });
 /** `usage_not_included`: nothing resets, so nothing is offered. */
@@ -543,7 +545,7 @@ export const LimitNotIncluded: Story = chat('limit-not-included', (lang) => limi
 export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 'child'), { child: true }, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('하위 대화는 자동으로 이어서 하지 않습니다.');
-  await expect(card).not.toHaveTextContent('자동으로 이어서 합니다');
+  await expect(card).not.toHaveTextContent('자동으로 재개를 시도합니다');
   await expect(within(card).getByRole('button', { name: '이어서 하기' })).toBeVisible();
   scrollToTop(card);
 });

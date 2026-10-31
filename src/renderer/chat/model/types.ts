@@ -155,7 +155,7 @@ export type ChatRow =
        * as a message (`subagent-report`, from `from`). The review loop writes the
        * person's fix turns (`review-fix`) and an other-AI reviewer's request
        * (`review-request`); both show as a compact chip with the full text on demand.
-       * 시안: the app sent it by itself when a usage limit lifted (`app-resume`).
+       * 시안: the app sent it to continue a turn stopped at a usage limit (`app-resume`).
        */
       readonly origin?: 'parent-agent' | 'subagent-report' | 'review-fix' | 'review-request' | 'app-resume';
       /** 시안: why the app sent it (`app-resume`). */

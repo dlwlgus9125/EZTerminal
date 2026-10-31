@@ -34,7 +34,7 @@ describe('the usage limit card', () => {
   it('only sends by itself from the states that say a time', () => {
     for (const phase of ['ask-reset', 'ask-unknown', 'ask-reopened', 'gave-up', 'off', 'left', 'cancelled', 'not-included', 'child'] as const) {
       const text = limitView(limit(phase), ko, 'ko').notes.map((note) => note.text).join(' ');
-      expect(text, phase).not.toContain('자동으로 이어서 합니다');
+      expect(text, phase).not.toContain('자동으로 재개');
     }
   });
 

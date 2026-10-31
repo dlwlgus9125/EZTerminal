@@ -279,14 +279,14 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
       const sent = continueRow(9, 'turn-resume', RESUME_AT, 'completed');
       return fixture({
         items: [...items, sent.row, item(10, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: RESUME_AT })], turns: [...turns, sent.turn],
-        rows: { appSent: new Map([[sent.row.id, options.reason ?? 'limit-lifted']]) },
+        rows: { appSent: new Map([[sent.row.id, options.reason ?? 'scheduled-time']]) },
       });
     }
     case 'retrying': {
       const sent = continueRow(9, 'turn-try-1', RESUME_AT, 'failed');
       return fixture({
         items: [...items, sent.row], turns: [...turns, sent.turn],
-        rows: { appSent: new Map([[sent.row.id, 'limit-lifted']]), limited: new Map([[LIMIT_TURN, 'stopped'], ['turn-try-1', 'refused']]) },
+        rows: { appSent: new Map([[sent.row.id, 'scheduled-time']]), limited: new Map([[LIMIT_TURN, 'stopped'], ['turn-try-1', 'refused']]) },
       }, { ...limit, turnId: 'turn-try-1', refusedAt: RESUME_AT, retryAt: RETRY_AT });
     }
     case 'gave-up': {
@@ -294,7 +294,7 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
       const second = continueRow(10, 'turn-try-2', RETRY_AT, 'failed');
       return fixture({
         items: [...items, first.row, second.row], turns: [...turns, first.turn, second.turn],
-        rows: { appSent: new Map([[first.row.id, 'limit-lifted'], [second.row.id, 'limit-lifted']]), limited: new Map([[LIMIT_TURN, 'stopped'], ['turn-try-1', 'refused'], ['turn-try-2', 'refused']]) },
+        rows: { appSent: new Map([[first.row.id, 'scheduled-time'], [second.row.id, 'scheduled-time']]), limited: new Map([[LIMIT_TURN, 'stopped'], ['turn-try-1', 'refused'], ['turn-try-2', 'refused']]) },
       }, { ...limit, turnId: 'turn-try-2', refusedAt: RETRY_AT });
     }
     case 'cancelled': {

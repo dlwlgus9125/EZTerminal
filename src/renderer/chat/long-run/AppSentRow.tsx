@@ -7,14 +7,14 @@ import './long-run.css';
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
 /**
- * 시안: what the app sent when a limit lifted. The transcript keeps it as what it is: not the person's words, shown as
- * sent (D3), and never with the person's actions (reuse, reply).
+ * 시안: what the app sent to continue a stopped turn. The transcript keeps it as what it is: not the person's words, shown
+ * as sent (D3), and never with the person's actions (reuse, reply).
  */
 export function AppSentRow({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy().longRun.appSent;
   const context = useChatContext();
   const clock = formatClock(row.createdAt, context.locale);
-  const why = copy.why[row.appSent ?? 'limit-lifted'];
+  const why = copy.why[row.appSent ?? 'scheduled-time'];
   if (context.skin === 'cli') {
     return (
       <article className="chat-cli-line chat-cli-app-sent" aria-label={copy.label} data-message-id={row.anchorId} data-testid="chat-app-sent">
