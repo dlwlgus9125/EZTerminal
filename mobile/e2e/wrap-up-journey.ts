@@ -712,7 +712,19 @@ async function main(): Promise<void> {
     await until('the turn after the answer', async () => (await turnsOf(sessionId)).done, 30_000);
     await sleep(4_000);
     assert.equal(forks('recap').length, recapsBeforeStop + 1, 'a second recap of one turn');
-    checks.push('a turn stopped on an approval while the app was behind others gets one recap saying so; 답하러 가기 moves focus to the decision; answered, the card stops saying it waits and no second recap comes');
+    // It stays where the AI stopped: what the turn did after the answer reads below it.
+    const answeredCard = `${RECAP_CARD}[aria-label*="답을 기다렸던 턴"]`;
+    await waitFor(`(function () {
+      var card = document.querySelector(${JSON.stringify(answeredCard)});
+      var messages = document.querySelectorAll('[data-message-id]');
+      for (var index = 0; index < messages.length; index += 1) {
+        if (messages[index].textContent.indexOf('Approval answered') >= 0) return !!card && Boolean(card.compareDocumentPosition(messages[index]) & 4);
+      }
+      return false;
+    })()`, 'the card above what the turn said after the answer', 10_000);
+    await scrollIntoView(answeredCard);
+    await capture('08b-recap-answered');
+    checks.push('a turn stopped on an approval while the app was behind others gets one recap saying so; 답하러 가기 moves focus to the decision; answered, the card stops saying it waits, stays where the AI stopped with the turn\'s last message below it, and no second recap comes');
 
     // ── The task card under a full-access parent ─────────────────────────────────────────────────────────────────────
     await hostCommand(host, 'agent.set-settings', { sessionId, permissionPreset: 'full-access' });
@@ -758,7 +770,7 @@ async function main(): Promise<void> {
     await waitFor(exists(SHEET), 'the 모두 시작 sheet');
     assert.equal(await evaluateWebView(`document.querySelectorAll(${JSON.stringify(`${SHEET} [data-testid="task-start-all-task"]`)}).length`), 4);
     assert.equal(await evaluateWebView(`document.querySelectorAll(${JSON.stringify(`${SHEET} input[type="radio"]`)}).length`), 0, 'the phone offers a place to choose');
-    assert.match(await textOf('[data-testid="task-start-all-phone"]'), /이 폴더 \(cart-kit\)에서 시작합니다/u);
+    assert.match(await textOf('[data-testid="task-start-all-phone"]'), /이 폴더 \(cart-kit\)에서 시작합니다\. 함께 시작하면 같은 폴더를 씁니다\. 새 워크트리는 데스크톱에서 고를 수 있습니다\./u);
     await measure('모두 시작: 시작', '[data-testid="task-start-all-submit"]');
     const cancel = await markButton(SHEET, '취소', 'start-all-cancel');
     await measure('모두 시작: 취소', cancel);
@@ -956,6 +968,31 @@ async function main(): Promise<void> {
     await scrollIntoView(RECAP_CARD);
     await capture('20-long-recap');
     checks.push(`at ${String(card.viewport)} px with overflow-wrap ${card.wrap} (anywhere ${card.anywhere ? 'supported' : 'unsupported'}): an unbroken path, identifier, instruction, folder, branch and failure reason wrap inside the card, the sheet and the recap, and the chip ends in an ellipsis`);
+
+    // ── A suggestion the host does not take ──────────────────────────────────────────────────────────────────────────
+    writeTasks('nine', Array.from({ length: 9 }, (_, index) => ({ title: `점검 ${String(index + 1)}`, rationale: '한도 확인', prompt: `점검 ${String(index + 1)}을 해 주세요.` })));
+    const turnsBeforeCap = (await turnsOf(other.sessionId)).count;
+    await sendFromPhone('EZTERMINAL_E2E_SUGGEST:nine 더 둘러봐 주세요.');
+    await waitForTurns(other.sessionId, turnsBeforeCap + 1, 'the turn past the cap');
+    await waitFor(exists('.chat-run__note'), 'the quiet count on the folded run');
+    await scrollIntoView('.chat-run__note');
+    await tapOnce('.chat-run__note', '받지 않은 제안 펼치기');
+    const refusedRow = '.chat-tool[data-status="refused"]';
+    await waitFor(exists(refusedRow), 'the refused row');
+    const refusedText = await textOf(refusedRow);
+    assert.match(refusedText, /제안 받지 않음/u);
+    assert.match(refusedText, /점검 9/u);
+    assert.match(refusedText, /A turn can suggest 8 tasks/u, 'the reason is not on the row');
+    assert.doesNotMatch(refusedText, /도구 실패/u);
+    await assertFits('받지 않은 제안', refusedRow);
+    // One line, then the reason. WebView 74 does not lay a <button> out as a grid, so without its own rule the parts stack.
+    const middle = `function (selector) { var box = document.querySelector(selector).getBoundingClientRect(); return box.top + box.height / 2; }`;
+    const offLine = await evaluateWebView<number>(`Math.abs((${middle})(${JSON.stringify(`${refusedRow} .chat-tool__verb`)}) - (${middle})(${JSON.stringify(`${refusedRow} .chat-tool__target`)}))`);
+    assert.ok(offLine < 8, `the verb and the title are ${String(offLine)} px apart: the row stacks`);
+    await recordColours('받지 않은 제안', refusedRow);
+    await scrollIntoView(refusedRow);
+    await capture('21-suggestion-refused');
+    checks.push('past the cap the ninth suggestion reads 제안 받지 않음 with its title and reason, a quiet count on the folded run, and fits at 360 px');
 
     const environment = await evaluateWebView<{ readonly userAgent: string; readonly flexGap: string | null; readonly lang: string; readonly theme: string | undefined; readonly viewport: string; readonly colorMix: boolean }>(`({
       userAgent: navigator.userAgent, flexGap: document.documentElement.getAttribute('data-ui-flex-gap'), lang: document.documentElement.lang, theme: document.documentElement.dataset.theme,

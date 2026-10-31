@@ -578,6 +578,20 @@
   white-space: normal;
 }
 
+/* WebView 74 does not lay a <button> out as a grid, so the line's parts would stack: they run inline there. */
+[data-ui-flex-gap='unsupported'] .chat-tool__line {
+  display: block;
+}
+
+[data-ui-flex-gap='unsupported'] .chat-tool__line::before,
+[data-ui-flex-gap='unsupported'] .chat-tool__verb {
+  margin-right: var(--ui-space-2);
+}
+
+[data-ui-flex-gap='unsupported'] .chat-tool__refused {
+  display: block;
+}
+
 .chat-tool__meta {
   display: inline-flex;
   align-items: center;
