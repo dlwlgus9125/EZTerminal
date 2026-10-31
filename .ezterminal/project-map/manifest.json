@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:94a8d83d3747b24c025708792fa8c0f38c801ac90b861a9855b33133b9bdacb2",
+        "inputDigest": "sha256:e6254db598c22faa5adf98c9391941d4fa32f11889463922ce6cc4317040da7f",
         "decision": "map-updated",
-        "reason": "Review loop: main builds a review coordinator, hands it to the provider runtime and starts it between the Agent and automation runtimes; claims now name the review handlers, both adapters' reviewer options, submit's review-conversation refusal and the dock panel's review wiring."
+        "reason": "Turn wrap-up: main builds a wrap-up coordinator, hands it to the provider runtime and the MCP tier, and starts it after the review coordinator; launches carry suggest_task and wrap-up context; the runtime adds handlers and card checks. Claims name them."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f228196e4497ae1b36783b5fe6ae83306a4051d340e9fc3887bc49e32d4ed28d",
+        "inputDigest": "sha256:ffb65f13701bcd887aa3b465c29d34c6376acde775d73c182b9b515886114dca",
         "decision": "map-updated",
-        "reason": "Review loop: ordered authority startup now starts the review coordinator after the Agent runtime and disposes it on failure and at Agent shutdown; the startup claim names it. The store and other runtime blocks only moved."
+        "reason": "Turn wrap-up: ordered authority startup now starts the wrap-up coordinator after the review coordinator and disposes it on failure; the startup claim says so, and the sibling claim on the same block is unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6ed4f7cb44a661608a6652ff9f9a30280ed5061d06a34dea9e55ac5399316391",
+        "inputDigest": "sha256:58185cd78365c92a26c40651eb271addabc0c542a0f12cb57b1b3330f459b5e9",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (review loop): the protocol adds review.* commands and a host-memory reviewSupport snapshot field the router projects, and history opens reviewer conversations read-only; the anchored command, outbox, event and history paths only moved."
+        "reason": "Reviewed (turn wrap-up): the bridge adds a conversation-viewing capability and an in-memory message, and the protocol adds wrap-up commands and a host-memory suggestion field. The auth, session and transport flows the map claims are unchanged."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:63d973958cb2ef6b9cbe92df1d32f60ac2b6e1d85db73314ce8587a9f24d4bd5",
+        "inputDigest": "sha256:d8886d6a2b2b9128bc352802b1c01b31e60090a63634d85f1ee8805e7deb8d9d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-9): the flow screen stopped embedding the old planning panel and the run result dialog dropped the device-evidence form; the anchored approval and session blocks are unchanged."
+        "reason": "Reviewed (turn wrap-up): a suggested task adds a person-started child through the existing agent.create path; the roles, approvals and report flows the map claims are unchanged and its anchors only moved."
       }
     },
     {
@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f938a24a4d6ae169aa4e5f35e2f2c88a94ac098f0bcb5bb61de457a0f3da1366",
-        "decision": "map-updated",
-        "reason": "Review loop: the change review collects line comments that enter the draft or go as their own message and walks an AI review problem by problem; its claim says so and now anchors the whole component. The Session surface blocks only moved."
+        "inputDigest": "sha256:46bf00dcb1773b4a7d9f475227c844389751aa02e7134dfcc2fac8b2aaf340af",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (turn wrap-up): the conversation surface adds wrap-up cards; planning runs, delivery and the change review the map claims are unchanged and its anchors only moved."
       }
     },
     {
@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:14010241bc8e511d0886fc10013ff8719be64f1e5d24c6465ea217e8df04022b",
+        "inputDigest": "sha256:f307666d2a52f954f65543131cd69e8dc6706f22ad5de2440b79ddb4df25c6d2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (review loop): the Codex and Claude adapters add read-only reviewer sessions and review forks; the anchored metadata and discovery blocks are unchanged and only moved."
+        "reason": "Reviewed (turn wrap-up): the MCP server adds the suggest_task tier beside the workflow tools and one dispatch line in the anchored block; workflow tools, previews and runs read the same through the same host service."
       }
     }
   ]

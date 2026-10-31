@@ -221,9 +221,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 453,
-          "endLine": 482,
-          "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
+          "startLine": 507,
+          "endLine": 537,
+          "lineDigest": "sha256:81dd17fa641709797482a3f1a29e4a67bb9368cc0da526ed6cdae7f1182e3b33",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         },
         {
@@ -324,16 +324,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1106,
-          "endLine": 1201,
+          "startLine": 1135,
+          "endLine": 1230,
           "lineDigest": "sha256:68f52ed35fd65c2c0321c6b82f4b695f2b660c7d8a3ea1daba5bd711d7372ddf",
           "claim": "Codex metadata uses model, skill, installed-plugin (plus local marketplaces PC-wide), MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1428,
-          "endLine": 1539,
+          "startLine": 1445,
+          "endLine": 1556,
           "lineDigest": "sha256:ef2cd5a1c4f429872f5b7fdd79bf4e329545eda4ce5ec819685130ae1b47db2a",
           "claim": "Claude discovery runs an ephemeral empty-input SDK query (user settings only PC-wide), reads models/commands/MCP, CLI plugins and marketplaces, then closes it without a prompt; callers for one folder share that launch."
         }
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1106,
-          "endLine": 1201,
+          "startLine": 1135,
+          "endLine": 1230,
           "lineDigest": "sha256:68f52ed35fd65c2c0321c6b82f4b695f2b660c7d8a3ea1daba5bd711d7372ddf",
           "claim": "Codex metadata uses model, skill, installed-plugin (plus local marketplaces PC-wide), MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }
@@ -565,9 +565,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 453,
-          "endLine": 482,
-          "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
+          "startLine": 507,
+          "endLine": 537,
+          "lineDigest": "sha256:81dd17fa641709797482a3f1a29e4a67bb9368cc0da526ed6cdae7f1182e3b33",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         }
       ]
