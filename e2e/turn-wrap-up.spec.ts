@@ -570,6 +570,11 @@ test('a turn stopped on the person while no screen shows it gets its recap; answ
     await expect(card.getByTestId('chat-recap-answer')).toHaveCount(0);
     await expect.poll(() => turnsOf(page, sessionId), { timeout: 30_000 }).toEqual({ count: 2, done: true });
 
+    // It stays where the AI stopped: what the turn did after the answer reads below it.
+    const afterAnswer = session.locator('[data-message-id]').filter({ hasText: 'Approval answered' });
+    await expect(afterAnswer).toHaveCount(1);
+    expect(await card.evaluate((node, later) => Boolean(node.compareDocumentPosition(later!) & Node.DOCUMENT_POSITION_FOLLOWING), await afterAnswer.elementHandle())).toBe(true);
+
     // Once per turn: the stopped recap stands for the turn's end. The guess is the same pass reaching this turn.
     await expect.poll(() => forks(profile, 'predict').length, { timeout: 15_000 }).toBe(2);
     expect(forks(profile, 'recap')).toHaveLength(1);
