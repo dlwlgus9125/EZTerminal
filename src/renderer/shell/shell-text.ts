@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { useAppTranslation } from '../i18n';
-import type { ConversationState, LiveFlow, WaitingItem } from './shell-model';
+import type { ConversationState, LiveConversation, LiveFlow, WaitingItem } from './shell-model';
 
 export type ShellText = (ko: string, en: string) => string;
 
@@ -28,7 +28,16 @@ export function conversationStateText(state: ConversationState, text: ShellText)
     case 'stopped': return text('멈춤', 'Stopped');
     case 'done': return text('끝남', 'Finished');
     case 'new': return text('새 대화', 'New');
+    case 'limit-wait': return text('한도 대기', 'Waiting for the limit');
+    case 'limit-ask': return text('한도 · 답 기다림', 'Limit · waiting for you');
+    case 'limit-stop': return text('한도로 멈춤', 'Stopped at the limit');
   }
+}
+
+/** A conversation's state on a list; 시안: a clock's time follows its state (`한도 대기 · 15:12`). */
+export function conversationLineText(item: Pick<LiveConversation, 'state' | 'limitClock'>, text: ShellText): string {
+  const state = conversationStateText(item.state, text);
+  return item.limitClock ? `${state} · ${item.limitClock}` : state;
 }
 
 export function flowPhaseText(phase: LiveFlow['phase'], text: ShellText): string {
@@ -55,5 +64,6 @@ export function waitingKindText(kind: WaitingItem['kind'], text: ShellText, asks
     case 'other': return text('승인', 'Approval');
     case 'flow-approval': return text('워크플로 승인', 'Workflow approval');
     case 'terminal-agent': return text('터미널 에이전트', 'Terminal agent');
+    case 'usage-limit': return text('사용량 한도', 'Usage limit');
   }
 }

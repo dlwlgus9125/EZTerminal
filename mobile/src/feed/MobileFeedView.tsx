@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import type { AgentUsage } from '../../../src/shared/agent-usage';
 import { StageChain } from '../../../src/renderer/shell/StageChain';
 import {
-  conversationStateText,
+  conversationLineText,
   flowPhaseText,
   providerName,
   useShellText,
@@ -40,8 +40,8 @@ export interface MobileFeedViewProps {
   readonly onOpenProjectScreen?: (projectId: string | null) => void;
 }
 
-const GLYPH: Record<FeedWaitingItem['kind'], 'ok' | 'q' | 'flow' | 'term'> = {
-  approval: 'ok', question: 'q', plan: 'ok', 'flow-approval': 'flow', 'terminal-agent': 'term',
+const GLYPH: Record<FeedWaitingItem['kind'], 'ok' | 'q' | 'flow' | 'term' | 'clock'> = {
+  approval: 'ok', question: 'q', plan: 'ok', 'flow-approval': 'flow', 'terminal-agent': 'term', 'usage-limit': 'clock',
 };
 
 function waitingKicker(item: FeedWaitingItem, text: ShellText): string {
@@ -197,7 +197,7 @@ export function MobileFeedView(props: MobileFeedViewProps): JSX.Element {
               data-testid="mobile-feed-conversation" data-session={item.sessionId}>
               <span className="mob-feed__k">
                 <Led tone={item.lamp} />
-                <span className="mob-feed__k-text">{providerName(item.providerId)} · {conversationStateText(item.state, text)}</span>
+                <span className="mob-feed__k-text">{providerName(item.providerId)} · {conversationLineText(item, text)}</span>
                 {allProjects && <span className="mob-feed__project">{item.projectName}</span>}
               </span>
               <span className="mob-feed__t">{item.title}</span>

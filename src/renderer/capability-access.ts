@@ -5,6 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
+import type { LongRunSettings } from '../shared/long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
 import type { AgentCliClient } from '../shared/agent-cli';
@@ -298,6 +299,14 @@ export interface CapabilityAccess {
   readonly agentManagement?: AgentManagementAccess;
   /** Settings › 에이전트 › 턴 마무리, on a host with `turn-wrap-up-v1`. Optional so test doubles need not supply it. */
   readonly turnWrapUp?: TurnWrapUpAccess;
+  /** 시안: Settings › 에이전트 › 이어서 하기. Only the long-run stories supply it; no host does yet. */
+  readonly longRun?: LongRunAccess;
+}
+
+/** 시안: the one long-run setting. */
+export interface LongRunAccess {
+  readonly load: () => Promise<LongRunSettings>;
+  readonly save: (settings: LongRunSettings) => Promise<LongRunSettings>;
 }
 
 /** The turn wrap-up settings and any pause near a usage limit in force now. */

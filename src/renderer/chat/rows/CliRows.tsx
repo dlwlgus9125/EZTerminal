@@ -2,6 +2,7 @@ import { Glyph } from '../../ui/Glyph';
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
+import { AppSentRow } from '../long-run/AppSentRow';
 import { formatDuration, toolDisplayTarget, toolVerb } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -19,6 +20,7 @@ export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const context = useChatContext();
   const fold = useFold(row.id, row.text);
   if (row.origin === 'review-fix' || row.origin === 'review-request') return <ReviewTurnChip row={row} />;
+  if (row.origin === 'app-resume') return <AppSentRow row={row} />;
   if (row.origin === 'subagent-report' && row.from) {
     const from = row.from;
     return (
@@ -68,6 +70,14 @@ export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
           <p className="chat-cli-user__text">{row.text}</p>
         </div>
       </div>
+      {row.steer && (
+        <div className="chat-cli-result chat-cli-steer" data-tone="muted" data-testid="chat-steer-landed">
+          <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
+          <div className="chat-cli-result__body">
+            <span className="chat-cli-result__line">{row.steer.rewritten ? `${copy.longRun.steer.landed} · ${copy.longRun.steer.rewritten}` : copy.longRun.steer.landed}</span>
+          </div>
+        </div>
+      )}
       {fold.foldable && (
         <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
           {fold.folded ? copy.showMore : copy.showLess}
@@ -211,7 +221,7 @@ export function CliTurnStatus({ row }: { readonly row: RowOf<'turn-status'> }): 
   const text = turnStatusText(row, now, copy, context.locale);
   if (!text) return null;
   return (
-    <p className="chat-cli-line chat-cli-status" data-state={row.state} role={live ? 'status' : undefined}>
+    <p className="chat-cli-line chat-cli-status" data-state={row.limited ? 'limited' : row.state} role={live ? 'status' : undefined}>
       <span className="chat-cli-glyph" data-tone={live ? 'live' : 'muted'} aria-hidden="true">✻</span>
       <span className="chat-cli-dim">{text}</span>
     </p>

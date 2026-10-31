@@ -12,6 +12,7 @@ import {
 import { RecapCard } from './rows/RecapCard';
 import { ReviewCard } from './rows/ReviewCard';
 import { TaskSuggestionsCard } from './rows/TaskSuggestionsCard';
+import { UsageLimitCard } from './rows/UsageLimitCard';
 
 /** One transcript row in the active skin. Both skins render the same rows and offer the same actions. */
 export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
@@ -32,6 +33,7 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
       case 'review': return <ReviewCard row={row} />;
       case 'task-suggestions': return <TaskSuggestionsCard row={row} />;
       case 'recap': return <RecapCard row={row} />;
+      case 'usage-limit': return <UsageLimitCard row={row} />;
       case 'notice':
       case 'child':
       case 'error': return <CliNotice row={row} />;
@@ -49,6 +51,7 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
     case 'review': return <ReviewCard row={row} />;
     case 'task-suggestions': return <TaskSuggestionsCard row={row} />;
     case 'recap': return <RecapCard row={row} />;
+    case 'usage-limit': return <UsageLimitCard row={row} />;
     case 'notice':
     case 'child': return <BubbleNotice row={row} />;
     case 'error': return <BubbleError row={row} />;

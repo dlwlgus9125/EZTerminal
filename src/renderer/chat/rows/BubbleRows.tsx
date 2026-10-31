@@ -2,6 +2,7 @@ import { Glyph } from '../../ui/Glyph';
 
 import { formatClock, useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
+import { AppSentRow } from '../long-run/AppSentRow';
 import { formatDuration, summarizeActivity, toolDisplayTarget, toolVerb, workspacePath } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -13,11 +14,22 @@ import { MessageActions, toolMeta, turnStatusText, useFold } from './shared';
 
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
+/** 시안: a quiet line on a message that landed in a running turn; Codex may have dropped what it was writing. */
+function SteerMarker({ steer }: { readonly steer: NonNullable<RowOf<'user'>['steer']> }): JSX.Element {
+  const copy = useChatCopy().longRun.steer;
+  return (
+    <p className="chat-user__steer" data-testid="chat-steer-landed">
+      <Glyph name="next" /><span>{steer.rewritten ? `${copy.landed} · ${copy.rewritten}` : copy.landed}</span>
+    </p>
+  );
+}
+
 export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
   const fold = useFold(row.id, row.text);
   if (row.origin === 'review-fix' || row.origin === 'review-request') return <ReviewTurnChip row={row} />;
+  if (row.origin === 'app-resume') return <AppSentRow row={row} />;
   if (row.origin === 'subagent-report' && row.from) {
     // Sent by the delegated child when it finished, not typed by the person.
     const from = row.from;
@@ -56,6 +68,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
   return (
     <article className="chat-user" aria-label={copy.you} data-message-id={row.anchorId}>
       <p className="chat-user__who"><span aria-hidden="true">{copy.you}</span><time className="chat-message-time" dateTime={row.createdAt}>{formatClock(row.createdAt, context.locale)}</time></p>
+      {row.steer && <SteerMarker steer={row.steer} />}
       <div className="chat-user__bubble" data-folded={fold.folded || undefined}>
         {row.context?.replyTo && <blockquote className="chat-user__reply">{row.context.replyTo.text}</blockquote>}
         {row.context?.attachments && row.context.attachments.length > 0 && (
@@ -215,7 +228,7 @@ export function BubbleTurnStatus({ row }: { readonly row: RowOf<'turn-status'> }
   const text = turnStatusText(row, now, copy, context.locale);
   if (!text) return null;
   return (
-    <p className="chat-turn-status" data-state={row.state} role={live ? 'status' : undefined}>
+    <p className="chat-turn-status" data-state={row.limited ? 'limited' : row.state} role={live ? 'status' : undefined}>
       {live && row.state !== 'queued' && row.state !== 'blocked' && <Glyph name="spin" className="chat-spin" />}
       {text}
     </p>

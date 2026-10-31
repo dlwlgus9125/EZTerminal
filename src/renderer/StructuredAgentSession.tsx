@@ -1,6 +1,9 @@
 import type { ApprovalResponse } from '../shared/approval-request';
-import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
+import type { SteeredMessage, SteerFallback } from '../shared/long-run';
+import { buildChatModel, coalesceTranscript, type ChatLongRunRows } from './chat/model/build-chat-model';
+import { ChatProvider, type ChatLongRunAction, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
+import { useLongRunDecisions } from './chat/long-run/long-run-decisions';
+import { SteerTray } from './chat/long-run/SteerTray';
 import { ChatTranscript } from './chat/ChatTranscript';
 import type { ChatTailDock } from './chat/ChatViewport';
 import { ReviewStartDialog, type ReviewStartOptions, type ReviewStartRequest, type ReviewStartTarget } from './chat/review/ReviewStartMenu';
@@ -979,6 +982,8 @@ export interface StructuredAgentTranscriptProps {
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
   readonly onFocusDecision?: () => boolean;
+  /** 시안: long-run rows and the usage limit card's buttons. */
+  readonly longRun?: { readonly rows?: ChatLongRunRows; readonly onAction?: (action: ChatLongRunAction) => void };
   /** The phone: where its next-prompt chip floats, and the scroll room for it. */
   readonly tailDock?: ChatTailDock;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
@@ -1024,13 +1029,15 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onReviewAction,
   wrapUp,
   onFocusDecision,
+  longRun,
   tailDock,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
+  const longRunRows = longRun?.rows;
   const built = useMemo(
-    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }),
-    [items, approvals, turns],
+    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(longRunRows ? { longRun: longRunRows } : {}) }),
+    [items, approvals, turns, longRunRows],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -1069,6 +1076,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(results ? { onOpenResults: openResults, resolveFileLink } : onReviewChanges ? { onReviewChanges } : {})}
       {...(onReviewAction ? { onReviewAction } : {})}
       {...(wrapUp?.onAction ? { onWrapUpAction: wrapUp.onAction } : {})}
+      {...(longRun?.onAction ? { onLongRunAction: longRun.onAction } : {})}
       {...(wrapUp?.pending ? { wrapUpPending: wrapUp.pending } : {})}
       {...(wrapUp?.recapRetry ? { recapRetry: true } : {})}
       {...(wrapUp?.taskStart ? { taskStart: wrapUp.taskStart } : {})}
@@ -1197,6 +1205,21 @@ export function StructuredAgentChildTrack({
   );
 }
 
+/**
+ * 시안: a message box that can put a message into the running turn. Only the long-run stories pass this: without it the
+ * box is today's. `running`: a turn is going, also one held by an open approval. What Enter does there is D1.
+ */
+export interface ComposerSteer {
+  readonly running: boolean;
+  readonly onSteer: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  /** On their way, held or failed: a landed message is a transcript row. */
+  readonly messages?: readonly SteeredMessage[];
+  /** Queued turns that were meant for the running one, and why they could not go in. */
+  readonly fellBack?: ReadonlyMap<string, SteerFallback>;
+  readonly onToQueue?: (message: SteeredMessage) => void;
+  readonly onToBox?: (message: SteeredMessage) => void;
+}
+
 export interface StructuredAgentComposerProps {
   readonly toolbar?: ReactNode;
   /** The conversation's AI; the message box carries its colour. */
@@ -1269,6 +1292,8 @@ export interface StructuredAgentComposerProps {
   readonly latestTurnId?: string;
   /** The phone: where the chip floats over the foot of the transcript, so its coming and going moves nothing. */
   readonly suggestionChipAnchor?: HTMLElement | null;
+  /** 시안: see `ComposerSteer`. */
+  readonly steer?: ComposerSteer;
 }
 
 /** A message box holding `/btw …` is a side question being typed: its text never reaches draft storage. */
@@ -1319,10 +1344,14 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   suggestion,
   latestTurnId,
   suggestionChipAnchor,
+  steer,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
+  const steerCopy = chatCopy(ko ? 'ko' : 'en').longRun.steer;
+  const { enter: enterDecision } = useLongRunDecisions();
+  const steerOnEnter = steer?.running === true && enterDecision === 'steer';
   const [queueBusy, setQueueBusy] = useState(false);
   const queueBusyRef = useRef(false);
   /** Queued review fixes whose message is shown (원문 보기). */
@@ -1394,7 +1423,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftAction?.id, disabled]);
   const submittingRef = useRef(false);
-  const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
+  const [submitting, setSubmitting] = useState<'send' | 'interrupt' | 'steer' | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uncertain, setUncertain] = useState(deliveryUncertain);
@@ -1415,7 +1444,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     setUncertain(false);
   };
 
-  const deliver = async (mode: 'send' | 'interrupt'): Promise<void> => {
+  const deliver = async (asked: 'send' | 'interrupt' | 'steer'): Promise<void> => {
     if (disabled || completion.composing.current) return;
     if (completion.runAppCommand()) return;
     setAttempted(true);
@@ -1423,7 +1452,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     const prompt = draft.trim();
     if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
     if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
-    const action = mode === 'interrupt' ? onInterruptAndSend : onSend;
+    const mode = asked === 'send' && steerOnEnter ? 'steer' : asked;
+    const action = mode === 'interrupt' ? onInterruptAndSend : mode === 'steer' ? steer?.onSteer : onSend;
     if (!action) return;
     submittingRef.current = true;
     sentDraft.current = valueRef.current;
@@ -1590,6 +1620,33 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
   // onStop is offered only while the turn can be stopped, including while it waits for approval.
   const showStop = !hasDraft && onStop !== undefined;
+  const sendKind = steerOnEnter ? 'steer' : busy ? 'queue' : 'send';
+  const sendLabel = steerOnEnter ? steerCopy.add : busy ? copy.queue : copy.send;
+  const interruptButton = busy && onInterruptAndSend && hasDraft ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      {...(steer ? { className: 'chat-composer__interrupt' } : {})}
+      disabled={sendBlocked}
+      loading={submitting === 'interrupt'}
+      loadingLabel={copy.sending}
+      onClick={() => void deliver('interrupt')}
+      data-testid="structured-agent-interrupt-send"
+    >
+      {steer ? steerCopy.interruptSend : copy.interruptSend}
+    </Button>
+  ) : null;
+  // 시안: on the phone it has its own row: beside the settings chips it squeezes them to a letter.
+  const interruptOnOwnRow = steer !== undefined && variant === 'mobile';
+  /** What a message that could not go into the turn does next: back to the box, added to what is there. */
+  const steerToBox = (message: SteeredMessage): void => {
+    const current = valueRef.current;
+    const text = current.text.trim() ? `${current.text.replace(/\s+$/u, '')}\n\n${message.text}` : message.text;
+    updateDraft({ ...current, text, selectionStart: text.length, selectionEnd: text.length });
+    steer?.onToBox?.(message);
+    inputRef.current?.focus();
+  };
 
   return (
     <form
@@ -1597,6 +1654,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       data-variant={variant}
       data-provider={providerId || undefined}
       data-busy={busy || undefined}
+      data-long-run={steer ? true : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void deliver('send');
@@ -1614,6 +1672,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         if (!disabled) takeFiles(event.dataTransfer.files);
       }}
     >
+      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} onToBox={steerToBox}
+        {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: steer.onToQueue } : {})} />}
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
         {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
@@ -1628,6 +1688,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             </p>
             {openQueued.has(item.turnId) && <p className="chat-queue__original">{item.text}</p>}
           </> : <p>{item.text}</p>}
+          {steer?.fellBack?.has(item.turnId) && (
+            <p className="chat-queue__fallback" data-testid="chat-queue-fallback"><Glyph name="info" /><span>{steerCopy.fellBack[steer.fellBack.get(item.turnId)!]}</span></p>
+          )}
           {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
           {onQueueAction && <div className="conversation-queue__actions">{(['run-next', 'take', 'remove'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
             disabled={disabled || sendDisabled || queueBusy || submitting !== null || uncertain || (action === 'take' && !!value.parkedDraft)} onClick={() => {
@@ -1707,7 +1770,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             rows={1}
             maxLength={65_536}
             value={draft}
-            placeholder={ghost ? '' : busy
+            placeholder={ghost ? '' : steerOnEnter ? (variant === 'mobile' ? steerCopy.placeholderMobile : steerCopy.placeholder) : busy
               ? (ko ? '다음에 보낼 메시지를 입력하세요 (Esc로 중단)' : 'Queue a follow-up (Esc to stop)')
               : fileSearch
                 ? (ko ? '무엇이든 요청하세요 · @ 파일 참조 · / 명령' : 'Ask anything · @ to mention files · / for commands')
@@ -1754,6 +1817,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           </span>
         )}
         </div>
+        {interruptOnOwnRow && interruptButton && <div className="chat-composer__interrupt-row">{interruptButton}</div>}
         <div className="chat-composer__bar">
           <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
             hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
@@ -1795,20 +1859,22 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               <Glyph name="chat" />
             </button>
           )}
-          {busy && onInterruptAndSend && hasDraft && (
+          {steer?.running && enterDecision === 'queue' && hasDraft && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
+              className="chat-composer__interrupt"
               disabled={sendBlocked}
-              loading={submitting === 'interrupt'}
+              loading={submitting === 'steer'}
               loadingLabel={copy.sending}
-              onClick={() => void deliver('interrupt')}
-              data-testid="structured-agent-interrupt-send"
+              onClick={() => void deliver('steer')}
+              data-testid="structured-agent-steer"
             >
-              {copy.interruptSend}
+              {steerCopy.add}
             </Button>
           )}
+          {!interruptOnOwnRow && interruptButton}
           {/* With a draft the round button sends; stopping stays one click away. */}
           {!showStop && onStop !== undefined && (
             <button
@@ -1840,14 +1906,14 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             <button
               type="submit"
               className="chat-composer__send"
-              data-kind={busy ? 'queue' : 'send'}
+              data-kind={sendKind}
               disabled={sendBlocked}
-              aria-label={busy ? copy.queue : copy.send}
-              title={busy ? copy.queue : copy.send}
+              aria-label={sendLabel}
+              title={sendLabel}
               data-testid="structured-agent-send"
             >
-              {submitting === 'send' ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="send" />}
-              <span className="ez-ui-visually-hidden">{busy ? copy.queue : copy.send}</span>
+              {submitting === 'send' || (steerOnEnter && submitting === 'steer') ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="send" />}
+              <span className="ez-ui-visually-hidden">{sendLabel}</span>
             </button>
           )}
         </div>
@@ -2018,6 +2084,18 @@ export interface StructuredAgentSessionPanelProps {
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
   readonly heartbeatActive?: boolean;
+  /**
+   * 시안: long-run continuity. Only the long-run stories pass this: without it the panel is today's. `rows`: what the
+   * transcript shows, `onAction`: the usage limit card's buttons, `steer`: the message box while a turn runs. `asks`: the
+   * header's state waits on the person (a clock does not). `limitHint`: a clock runs, so sending now has a cost to say.
+   */
+  readonly longRun?: {
+    readonly rows?: ChatLongRunRows;
+    readonly onAction?: (action: ChatLongRunAction) => void;
+    readonly steer?: Omit<ComposerSteer, 'running'>;
+    readonly asks?: boolean;
+    readonly limitHint?: boolean;
+  };
   readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
@@ -2110,6 +2188,7 @@ export function StructuredAgentSessionPanel({
   workflowContext,
   sessionId,
   viewStateKey,
+  longRun,
   title,
   providerId,
   providerLabel,
@@ -2206,6 +2285,7 @@ export function StructuredAgentSessionPanel({
   const chatLocale = useChatLocale();
   const permissionText = agentPermissionCopy(chatLocale);
   const stateLabel = useAgentStateLabel();
+  const { enter: enterDecision } = useLongRunDecisions();
   const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
@@ -2674,6 +2754,13 @@ export function StructuredAgentSessionPanel({
   const [suggestionChipAnchor, setSuggestionChipAnchor] = useState<HTMLDivElement | null>(null);
   const suggestionRoom = composerSuggestion !== undefined;
   const tailDock = useMemo(() => (variant === 'mobile' ? { anchorRef: setSuggestionChipAnchor, room: suggestionRoom } : undefined), [suggestionRoom, variant]);
+  // 시안: what Enter (on the phone, the send button) does here, and what sending costs while a clock runs.
+  const longRunCopy = chatCopy(chatLocale).longRun;
+  const steerHintKey = state === 'blocked' ? 'blocked' : providerId === 'codex' ? 'codex' : 'claude';
+  const steerHint = longRun?.steer && turnCurrent && enterDecision === 'steer'
+    ? (variant === 'mobile' ? longRunCopy.steer.hintMobile : longRunCopy.steer.hint)[steerHintKey] : undefined;
+  const longRunHint = steerHint ?? (longRun?.limitHint ? longRunCopy.limit.composerHint : undefined);
+  const composerSteer = useMemo(() => (longRun?.steer ? { ...longRun.steer, running: turnCurrent } : undefined), [longRun?.steer, turnCurrent]);
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged
@@ -2840,7 +2927,7 @@ export function StructuredAgentSessionPanel({
           {!folderPill && <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>}
         </div>
         <div className="structured-agent-session-header__status">
-          <span className="structured-agent-state" data-state={state}>
+          <span className="structured-agent-state" data-state={longRun?.asks ? 'blocked' : state}>
             <span aria-hidden="true" />
             <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : stateLabel(state))}
           </span>
@@ -3086,6 +3173,7 @@ export function StructuredAgentSessionPanel({
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
         wrapUp={transcriptWrapUp}
         onFocusDecision={focusDecision}
+        {...(longRun ? { longRun } : {})}
         {...(tailDock ? { tailDock } : {})}
       />}
       {full && childTrack !== undefined && (
@@ -3166,6 +3254,8 @@ export function StructuredAgentSessionPanel({
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || lockedByTurn, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
           {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
+          {...(longRunHint ? { statusHint: longRunHint } : {})}
+          {...(composerSteer ? { steer: composerSteer } : {})}
           {...(full ? { onFocusDecision: focusDecision } : {})}
           appCommands={appCommands}
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}

@@ -5,7 +5,7 @@ import type { LiveConversation, LiveFlow, WaitingItem, otherProjects } from './s
 import { StageChain } from './StageChain';
 import type { ShellTerminal } from './LiveList';
 import { workflowRepeatLabel } from '../workflow/workflow-copy';
-import { conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
+import { conversationLineText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
 
 export interface BoardProject {
   readonly name: string;
@@ -158,7 +158,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
             {shown.map((item) => (
               <button key={item.sessionId} type="button" className="ez-shell-card" data-need={item.lamp === 'amber' || undefined}
                 onClick={() => props.onOpenConversation(item.sessionId)} data-testid="shell-conversation-card" data-session={item.sessionId}>
-                <span className="ez-shell-card__k"><Led tone={item.lamp} />{providerName(item.providerId)} · {conversationStateText(item.state, text)}</span>
+                <span className="ez-shell-card__k"><Led tone={item.lamp} />{providerName(item.providerId)} · {conversationLineText(item, text)}</span>
                 <span className="ez-shell-card__t">{item.title}</span>
                 <span className="ez-shell-card__m">{item.children.length > 0 ? text(`하위 에이전트 ${item.children.length}`, `${item.children.length} subagents`) : ' '}</span>
               </button>

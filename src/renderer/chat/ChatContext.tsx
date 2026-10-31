@@ -40,6 +40,15 @@ export type ChatWrapUpAction =
   | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
   | { readonly kind: 'recap-retry'; readonly turnId: string };
 
+/**
+ * 시안: what the person did on a usage limit card. `limit-try-now` and `limit-resume` send "Continue." now; the first is
+ * pressed before a known reset, so a refusal stays in the conversation. Nothing else sends anything by itself.
+ */
+export type ChatLongRunAction = {
+  readonly kind: 'limit-try-now' | 'limit-auto-off' | 'limit-auto-on' | 'limit-resume' | 'limit-schedule' | 'limit-unschedule' | 'limit-leave';
+  readonly turnId: string;
+};
+
 /** What one press starts: the settings on the card's line, and that line in words. */
 export type ChatTaskDefaults = Pick<SuggestedTaskStart, 'agent' | 'settings'>;
 
@@ -66,6 +75,8 @@ export interface ChatContextValue {
   readonly onReviewAction?: (action: ChatReviewAction) => void;
   /** Turn wrap-up card actions. Absent: the cards are read-only. */
   readonly onWrapUpAction?: (action: ChatWrapUpAction) => void;
+  /** 시안: usage limit card actions. Absent: the card is read-only. */
+  readonly onLongRunAction?: (action: ChatLongRunAction) => void;
   readonly wrapUpPending?: ChatWrapUpPending;
   /** A failed recap can be written again now; absent, its line says why it failed and offers nothing that could only fail. */
   readonly recapRetry?: boolean;
@@ -92,7 +103,7 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({
   children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-  onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision,
+  onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision,
 }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
@@ -113,10 +124,10 @@ export function ChatProvider({
   // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
   const context = useMemo<ChatContextValue>(() => ({
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   }), [
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }

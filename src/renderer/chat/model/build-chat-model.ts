@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
+import type { AppSentReason, SteerLanding, TurnUsageLimit } from '../../../shared/long-run';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
@@ -12,10 +13,23 @@ import type {
 } from './types';
 import { foldsIntoCard, suggestTaskRefusal, wrapUpCards } from './wrap-up-cards';
 
+/** 시안: what the long-run stories hand the model instead of host rows; there is no payload for these yet. */
+export interface ChatLongRunRows {
+  /** By the turn that stopped. */
+  readonly limits?: ReadonlyMap<string, TurnUsageLimit>;
+  /** By transcript item: messages that landed in a running turn. */
+  readonly landed?: ReadonlyMap<string, SteerLanding>;
+  /** By transcript item: what the app sent, and why. */
+  readonly appSent?: ReadonlyMap<string, AppSentReason>;
+  /** By turn: stopped at the limit, or a "Continue." the limit refused. Neither is a failure of the work. */
+  readonly limited?: ReadonlyMap<string, 'stopped' | 'refused'>;
+}
+
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
+  readonly longRun?: ChatLongRunRows;
 }
 
 /** A transcript item after streaming fragments have been merged. */
@@ -353,7 +367,7 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], longRun }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
@@ -444,9 +458,13 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         if (payload?.type === 'review-fix') {
           addReviewEvent(payload.reviewId, { sequence: item.sequence, findingIds: payload.findingIds, kind: 'fix', ...(turnId ? { turnId } : {}) });
         }
+        const landing = longRun?.landed?.get(item.id);
+        const appSent = longRun?.appSent?.get(item.id);
         push({
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
+          ...(landing ? { steer: landing } : {}),
+          ...(appSent ? { origin: 'app-resume' as const, appSent } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'instruction' ? { origin: 'parent-agent' as const } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'result' && payload.childSessionId ? {
             origin: 'subagent-report' as const,
@@ -465,9 +483,11 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           const turn = turnById.get(turnId);
           if (turn) {
             statusInserted.add(turnId);
+            const limited = longRun?.limited?.get(turnId);
             rows.push({
               kind: 'turn-status', id: `turn:${turnId}`, turnId, createdAt: item.createdAt, state: turn.state,
               ...(turn.startedAt ? { startedAt: turn.startedAt } : {}), ...(turn.finishedAt ? { finishedAt: turn.finishedAt } : {}),
+              ...(limited ? { limited } : {}),
             });
           }
         }
@@ -722,6 +742,12 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         if (suggestions) finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
         const recap = recapCards.get(row.turnId);
         if (recap && (row.kind === 'recap' || !stoppedRecaps.has(row.turnId))) finalRows.push(recapRowOf(row.turnId, recap));
+        const limit = longRun?.limits?.get(row.turnId);
+        if (limit) {
+          const approvalOpen = approvals.some((approval) => approval.state === 'pending');
+          // Named by the stop, not the turn: the card moves down when a refused try leaves a row, and stays one card.
+          finalRows.push({ kind: 'usage-limit', id: `usage-limit:${limit.stoppedAt}`, turnId: row.turnId, createdAt: limit.stoppedAt, limit, ...(approvalOpen ? { approvalOpen } : {}) });
+        }
       }
       const status = liveStatus.get(row.turnId);
       if (status) {

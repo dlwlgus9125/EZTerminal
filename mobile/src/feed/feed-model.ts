@@ -21,7 +21,7 @@ import {
 /** `null` = every project. */
 export type FeedScope = string | null;
 
-export type FeedWaitingKind = 'approval' | 'question' | 'plan' | 'flow-approval' | 'terminal-agent';
+export type FeedWaitingKind = 'approval' | 'question' | 'plan' | 'flow-approval' | 'terminal-agent' | 'usage-limit';
 
 /** What a card can decide by itself; everything else opens where the decision is made. */
 export type FeedDecision =

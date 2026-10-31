@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 
 import type { TurnWrapUpPause, TurnWrapUpSettings as WrapUpSettings } from '../shared/turn-wrap-up';
 import type { TurnWrapUpAccess } from './capability-access';
@@ -33,7 +33,11 @@ function pauseText(pause: TurnWrapUpPause, ko: boolean): string {
  * suggested tasks — and the pause of the automatic calls near a usage limit, with a pause in force said in words.
  * The AI only proposes: nothing here runs anything on its own.
  */
-export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAccess }): JSX.Element {
+export function TurnWrapUpSettings({ access, after }: {
+  readonly access: TurnWrapUpAccess;
+  /** 시안, D9's other option: the long-run switch inside this section, so its promise is narrowed to the suggestions. */
+  readonly after?: ReactNode;
+}): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const text = (korean: string, english: string): string => (ko ? korean : english);
@@ -60,10 +64,15 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
     <section className="status-section turn-wrap-up-settings" aria-labelledby={titleId} data-testid="turn-wrap-up-settings">
       <div>
         <h2 className="status-section-title" id={titleId}>{text('턴 마무리', 'Turn wrap-up')}</h2>
-        <p className="settings-hint">{text(
-          '턴이 끝나면 AI가 다음에 할 말과 할 일을 제안합니다. 누르기 전에는 아무것도 보내거나 실행하지 않습니다.',
-          'When a turn ends, the AI suggests what to say or do next. Nothing is sent or run until you press it.',
-        )}</p>
+        <p className="settings-hint">{after
+          ? text(
+            '턴이 끝나면 AI가 다음에 할 말과 할 일을 제안합니다. 제안은 누르기 전에는 아무것도 보내거나 실행하지 않습니다. 맨 아래 이어서 하기만 누르지 않아도 보냅니다.',
+            'When a turn ends, the AI suggests what to say or do next. Suggestions send and run nothing until you press them. Only the last switch sends without a press.',
+          )
+          : text(
+            '턴이 끝나면 AI가 다음에 할 말과 할 일을 제안합니다. 누르기 전에는 아무것도 보내거나 실행하지 않습니다.',
+            'When a turn ends, the AI suggests what to say or do next. Nothing is sent or run until you press it.',
+          )}</p>
       </div>
       {settings && (
         <>
@@ -126,6 +135,7 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
               <span>{pauseText(pause, ko)}</span>
             </p>
           ))}
+          {after}
         </>
       )}
       {failed && <Status variant="danger" live="assertive">{text('턴 마무리 설정을 읽거나 저장하지 못했습니다.', 'The turn wrap-up settings could not be read or saved.')}</Status>}

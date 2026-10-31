@@ -21,7 +21,11 @@ export type DeskToolId = typeof DESK_TOOL_IDS[number];
 
 export type Lamp = 'on' | 'amber' | 'red' | 'ok' | 'idle';
 
-export type ConversationState = 'working' | 'approval' | 'question' | 'failed' | 'stopped' | 'done' | 'new';
+/**
+ * 시안 (no host says these yet): `limit-wait` waits on a clock, `limit-ask` on the person (the reset is days away or
+ * unknown, the app was closed, or the tries ran out), `limit-stop` on nothing.
+ */
+export type ConversationState = 'working' | 'approval' | 'question' | 'failed' | 'stopped' | 'done' | 'new' | 'limit-wait' | 'limit-ask' | 'limit-stop';
 
 export interface LiveConversation {
   readonly sessionId: string;
@@ -31,6 +35,8 @@ export interface LiveConversation {
   readonly lamp: Lamp;
   readonly updatedAt: string;
   readonly children: readonly LiveConversation[];
+  /** 시안: `limit-wait`: when the app will send, as the list says it (`15:12`). */
+  readonly limitClock?: string;
 }
 
 export interface WaitingItem {
@@ -41,7 +47,7 @@ export interface WaitingItem {
   /** The conversation that waits (the parent when a subagent asked), the stage, or the terminal agent. */
   readonly title: string;
   readonly providerId: string;
-  readonly kind: 'command' | 'file-change' | 'tool' | 'question' | 'plan' | 'other' | 'flow-approval' | 'terminal-agent';
+  readonly kind: 'command' | 'file-change' | 'tool' | 'question' | 'plan' | 'other' | 'flow-approval' | 'terminal-agent' | 'usage-limit';
   /** One line: the command, the file, the question. */
   readonly detail: string;
   readonly at: string;
@@ -75,7 +81,7 @@ const WORKING = new Set(['starting', 'queued', 'working']);
 function lampOf(state: ConversationState): Lamp {
   switch (state) {
     case 'working': return 'on';
-    case 'approval': case 'question': return 'amber';
+    case 'approval': case 'question': case 'limit-ask': return 'amber';
     case 'failed': return 'red';
     case 'done': return 'ok';
     default: return 'idle';

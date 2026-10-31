@@ -8,7 +8,7 @@ import { Glyph, Led, type GlyphName } from '../ui';
 import { ACTIVITY_RAIL_ID } from './shell-ids';
 import { flattenConversations, type LiveConversation, type LiveFlow, type WaitingItem, type otherProjects } from './shell-model';
 import { StageChain } from './StageChain';
-import { conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
+import { conversationLineText, conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
 
 export interface ShellTerminal {
   readonly panelId: string;
@@ -166,7 +166,7 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
               <Led tone={item.lamp} />
               <span className="ez-shell-row__t">{item.title}</span>
               <span className="ez-shell-row__m">
-                {providerName(item.providerId)} · {conversationStateText(item.state, text)}{item.children.length > 0 ? text(` · 하위 ${item.children.length}`, ` · ${item.children.length} sub`) : ''}
+                {providerName(item.providerId)} · {conversationLineText(item, text)}{item.children.length > 0 ? text(` · 하위 ${item.children.length}`, ` · ${item.children.length} sub`) : ''}
               </span>
             </button>
             {/* Subagents show under the conversation in front, or while one of them works or waits. */}

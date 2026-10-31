@@ -18,6 +18,8 @@ import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import { StructuredProviderSettings } from './StructuredProviderSettings';
 import { ChatAgentCollaborationSettings } from './ChatAgentCollaborationSettings';
 import { TurnWrapUpSettings } from './TurnWrapUpSettings';
+import { LongRunSettings, LongRunSwitch } from './LongRunSettings';
+import { useLongRunDecisions } from './chat/long-run/long-run-decisions';
 
 const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
@@ -110,6 +112,7 @@ export function AgentIntegrationSettings({
 
   // The host keeps these settings: one without `turn-wrap-up-v1` has nothing to show here.
   const [wrapUpOffered, setWrapUpOffered] = useState(false);
+  const { settings: longRunPlace } = useLongRunDecisions();
   useEffect(() => {
     let alive = true;
     void capabilities.daemon.getSnapshot()
@@ -316,7 +319,11 @@ export function AgentIntegrationSettings({
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>
       <ChatAgentCollaborationSettings capabilities={capabilities} />
-      {capabilities.turnWrapUp && wrapUpOffered && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
+      {capabilities.turnWrapUp && wrapUpOffered && (
+        <TurnWrapUpSettings access={capabilities.turnWrapUp}
+          {...(capabilities.longRun && longRunPlace === 'in-wrap-up' ? { after: <LongRunSwitch access={capabilities.longRun} /> } : {})} />
+      )}
+      {capabilities.longRun && longRunPlace === 'own-section' && <LongRunSettings access={capabilities.longRun} />}
       <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}

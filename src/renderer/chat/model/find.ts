@@ -34,6 +34,8 @@ export function rowSearchText(row: ChatRow): string {
       return row.suggestions.tasks.map((task) => `${task.title}\n${task.rationale}`).join('\n');
     case 'recap':
       return row.recap.text ?? '';
+    case 'usage-limit':
+      return '';
   }
 }
 

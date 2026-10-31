@@ -48,7 +48,8 @@ export interface ActionCardAction {
 export interface ActionCardNote {
   readonly id: string;
   readonly text: string;
-  readonly tone?: 'neutral' | 'danger';
+  /** `lead`: the one line a reader must not miss (what will happen, and when). */
+  readonly tone?: 'neutral' | 'danger' | 'lead';
 }
 
 export interface ActionCardProps {
@@ -87,6 +88,8 @@ export interface ActionCardProps {
    * succeeded.
    */
   readonly glyph?: GlyphName;
+  /** The CLI's `⏺` stays neutral unless the card failed: a usage limit is neither a success nor live work. */
+  readonly cliNeutral?: boolean;
 }
 
 function ActionButtons({ actions, cli }: { readonly actions: readonly ActionCardAction[]; readonly cli: boolean }): JSX.Element {
@@ -119,13 +122,13 @@ function ActionButtons({ actions, cli }: { readonly actions: readonly ActionCard
 }
 
 export function ActionCard({
-  label, title, cliName, cliTarget, state, stateText, cliStateText, meta, cliMeta, message, notes = [], stale, children, actions = [], testId, kind, glyph,
+  label, title, cliName, cliTarget, state, stateText, cliStateText, meta, cliMeta, message, notes = [], stale, children, actions = [], testId, kind, glyph, cliNeutral,
 }: ActionCardProps): JSX.Element {
   const { skin } = useChatContext();
   if (skin === 'cli') {
     return (
       <section className="chat-cli-line chat-cli-action-card" data-state={state} data-kind={kind} aria-label={label} data-testid={testId}>
-        <span className="chat-cli-glyph" data-tone={glyph ? 'muted' : CLI_TONE[state]} aria-hidden="true">⏺</span>
+        <span className="chat-cli-glyph" data-tone={glyph || (cliNeutral && state !== 'failed') ? 'muted' : CLI_TONE[state]} aria-hidden="true">⏺</span>
         <div className="chat-cli-line__body">
           <p className="chat-cli-action-card__head" tabIndex={-1} data-card-heading="">
             <span className="chat-cli-tool__name">{cliName}</span>

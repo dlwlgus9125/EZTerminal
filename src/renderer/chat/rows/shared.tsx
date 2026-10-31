@@ -76,6 +76,7 @@ export function turnStatusText(row: Extract<ChatRow, { kind: 'turn-status' }>, n
   const start = row.startedAt ? Date.parse(row.startedAt) : undefined;
   const end = row.finishedAt ? Date.parse(row.finishedAt) : undefined;
   const elapsed = start !== undefined ? formatDuration((end ?? now) - start, locale) : undefined;
+  if (row.limited) return row.limited === 'refused' ? copy.longRun.limit.turnRefused : copy.longRun.limit.turnStopped(elapsed ?? '—');
   switch (row.state) {
     case 'queued':
       return copy.queued;
