@@ -73,8 +73,9 @@ function TaskActions({ suggestions, task, cli, titleRef }: Omit<TaskProps, 'inde
   const onAction = context.onWrapUpAction;
   const phone = context.taskStart?.phone === true;
   // D5, and the AI's own advice: a task it recommends a worktree for is not one click into this folder. The phone has no
-  // start form, so it always starts with the defaults (and says the desktop can pick a worktree).
-  const viaForm = !phone && task.worktree === true;
+  // start form, so it always starts with the defaults (and says the desktop can pick a worktree); where no worktree can
+  // be made the form has nothing to add.
+  const viaForm = context.taskStart?.worktrees === true && task.worktree === true;
   const act = (kind: PlainTaskAction) => (): void => {
     onAction?.({ kind, turnId: suggestions.turnId, taskId: task.id });
     // The start form takes focus and hands it back to this button; once the task started, to its title (data-focus-fallback).
@@ -284,7 +285,7 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
       <span ref={anchorRef} className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-task-announce">{announcement}</span>
       {onAction && settings && (
         <TaskStartAllDialog open={confirmOpen} onOpenChange={setConfirmOpen} tasks={openTasks} settings={settings} folder={folder} phone={phone}
-          ownerDocument={anchorRef.current?.ownerDocument}
+          worktrees={context.taskStart?.worktrees === true} ownerDocument={anchorRef.current?.ownerDocument}
           onStart={(starts) => onAction({ kind: 'task-start-all', turnId: suggestions.turnId, starts })} />
       )}
     </ActionCard>

@@ -182,7 +182,7 @@ const TITLES = {
 
 type Topic = keyof typeof TITLES;
 
-function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, topic: Topic, locale: WrapLanguage, args: Args): StructuredAgentSessionPanelProps {
+function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, topic: Topic, locale: WrapLanguage, args: Args, worktrees = true): StructuredAgentSessionPanelProps {
   const { state } = host;
   // What waits in the conversation's queue, as the host lists it (여기서 하기 while a turn runs lands there).
   const queueItems = conversationQueue(sessionId, state.turns, state.items);
@@ -198,7 +198,7 @@ function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, 
     onSend: args.onSend, onInterruptAndSend: fn(async () => ({ ok: true as const })),
     onChangeSettings: args.onChangeSettings, onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
-    wrapUp: { ...(state.suggestion ? { suggestion: state.suggestion } : {}), onAction: host.onAction, pending: host.pending, recapRetry: true },
+    wrapUp: { ...(state.suggestion ? { suggestion: state.suggestion } : {}), onAction: host.onAction, pending: host.pending, recapRetry: true, worktrees },
   };
 }
 
@@ -208,9 +208,11 @@ interface ChatOptions {
   readonly permissionPreset?: StructuredAgentSessionPanelProps['permissionPreset'];
   readonly width?: number;
   readonly height?: number;
+  /** False: the folder is no repository, so a task cannot start in a new worktree. */
+  readonly worktrees?: boolean;
 }
 
-function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, permissionPreset }: ChatOptions & {
+function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, permissionPreset, worktrees = true }: ChatOptions & {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -222,7 +224,7 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   const host = useStoryHost(fixture, args.onWrapUpAction);
   return (
     <Desk width={width} height={height}>
-      <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args)} skin={skin} {...(permissionPreset ? { permissionPreset } : {})} />
+      <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, topic, locale, args, worktrees)} skin={skin} {...(permissionPreset ? { permissionPreset } : {})} />
       <TaskStartForm host={host} args={args} />
     </Desk>
   );
@@ -245,7 +247,7 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   const host = useStoryHost(fixture, args.onWrapUpAction);
   return (
     <Phone width={width} height={height}>
-      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args)} folders={undefined} onBack={fn()}
+      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args, false)} folders={undefined} onBack={fn()}
         {...(folder ? { workspace: { id: 'ws-long', label: folder, kind: 'local' as const, path: WRAP_ROOT } } : {})} />
     </Phone>
   );
@@ -704,6 +706,26 @@ export const TasksStartAll: Story = {
       ],
     });
     await waitFor(() => expect(within(card).getAllByTestId('chat-task-outcome')).toHaveLength(4));
+  },
+};
+/** A folder that is no repository can have no worktree: everything starts here, and the sheet says they share it. */
+export const TasksStartAllNoRepository: Story = {
+  ...chat('tasks-start-all-no-repository', 'cart', (lang) => cartStory(lang, 'claude', 'mixed'), { worktrees: false }),
+  play: async ({ canvasElement, args }) => {
+    const card = await showCard(canvasElement);
+    await userEvent.click(within(card).getByRole('button', { name: '모두 시작 (4)' }));
+    const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
+    await expect(within(dialog).getByTestId('task-start-all-shared')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    await expect(within(dialog).queryAllByTestId('task-start-all-worktree')).toHaveLength(0);
+    await userEvent.click(within(dialog).getByRole('button', { name: '4개 시작' }));
+    await expect(args.onWrapUpAction).toHaveBeenCalledWith({
+      kind: 'task-start-all', turnId: 'turn-cart', starts: [
+        { taskId: 'task-claude-1', where: { kind: 'this-folder' } },
+        { taskId: 'task-claude-2', where: { kind: 'this-folder' } },
+        { taskId: 'task-claude-3', where: { kind: 'this-folder' } },
+        { taskId: 'task-claude-4', where: { kind: 'this-folder' } },
+      ],
+    });
   },
 };
 /** D5's way out of one click: 바꿔서 시작… opens the existing start form (맡기기) filled from the task, in this folder. */

@@ -72,9 +72,9 @@ export interface ChatContextValue {
   /**
    * What 새 하위 대화로 시작 starts a sub-conversation with, in words (`Claude · Opus 5.5 · 높음 · 승인 후 실행`), and this
    * conversation's folder by name. On the phone it always starts there: only the desktop creates worktrees and has
-   * the start form.
+   * the start form. `worktrees`: a new one can be made here, so not on the phone or in a folder that is no repository.
    */
-  readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean };
+  readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean; readonly worktrees: boolean };
   /** Moves focus to the decision waiting above the message box; false when there is none. */
   readonly onFocusDecision?: () => boolean;
   /** Disclosure state that survives virtualized unmounts and skin switches. */

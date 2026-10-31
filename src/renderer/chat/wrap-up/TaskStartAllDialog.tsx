@@ -17,18 +17,20 @@ type Choices = Readonly<Record<string, boolean>>;
 
 /**
  * Started together, tasks default to a new worktree each: in one folder they would edit it at the same time, and real AIs
- * hardly ever ask for a worktree themselves (0 of 12). A single task follows the AI's advice; the phone always starts here.
+ * hardly ever ask for a worktree themselves (0 of 12). A single task follows the AI's advice; the phone, and a folder that
+ * can have no worktree, always start here.
  */
-function initialChoices(tasks: readonly SuggestedTaskState[], phone: boolean): Choices {
-  return Object.fromEntries(tasks.map((task) => [task.id, !phone && (tasks.length > 1 || task.worktree === true)]));
+function initialChoices(tasks: readonly SuggestedTaskState[], worktrees: boolean): Choices {
+  return Object.fromEntries(tasks.map((task) => [task.id, worktrees && (tasks.length > 1 || task.worktree === true)]));
 }
 
 /**
  * 모두 시작 (D6): what starts, how many and where, before anything runs. Each open task becomes a new
  * sub-conversation with the settings line; on the desktop each works in a new worktree on its own `suggest/…` branch
- * or in this folder. The phone cannot create worktrees, so everything starts in this folder there, and it says so.
+ * or in this folder. Where no worktree can be made, on the phone or in a folder that is no repository, everything starts
+ * in this folder, and it says so.
  */
-export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, ownerDocument, onStart }: {
+export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, worktrees, ownerDocument, onStart }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** The open tasks of one card, in its order. */
@@ -38,19 +40,21 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
   /** This conversation's folder, by name. */
   readonly folder: string;
   readonly phone: boolean;
+  /** A new worktree can be made here. */
+  readonly worktrees: boolean;
   readonly ownerDocument?: Document;
   readonly onStart: (starts: readonly TaskStart[]) => void;
 }): JSX.Element {
   const copy = useChatCopy().taskSuggestions;
   const id = useId();
   const branches = suggestedTaskBranches(tasks);
-  const [worktree, setWorktree] = useState<Choices>(() => initialChoices(tasks, phone));
+  const [worktree, setWorktree] = useState<Choices>(() => initialChoices(tasks, worktrees));
   // Fresh every time it opens: what the card offers now, not what was picked last time.
   useEffect(() => {
-    if (open) setWorktree(initialChoices(tasks, phone));
+    if (open) setWorktree(initialChoices(tasks, worktrees));
     // The tasks are read when it opens, not as they change behind it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, worktrees]);
   const choose = (taskId: string, value: boolean): void => setWorktree((current) => ({ ...current, [taskId]: value }));
   const start = (): void => {
     onStart(tasks.map((task, index): TaskStart => ({
@@ -86,7 +90,7 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
               <span className="task-start-all__name"><InlineCode text={task.title} /></span>
               {task.worktree && <span className="task-start-all__chip"><Glyph name="wt" />{copy.worktreeRecommended}</span>}
             </p>
-            {phone ? (
+            {!worktrees ? (
               <p className="task-start-all__here">{copy.confirm.thisFolder(folder)}</p>
             ) : (
               <fieldset className="task-start-all__choices">
@@ -107,7 +111,11 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
           </li>
         ))}
       </ol>
-      {phone && <p className="task-start-all__note" data-testid="task-start-all-phone"><Glyph name="info" /><span>{copy.confirm.phoneFolder(folder, tasks.length)}</span></p>}
+      {!worktrees && (
+        <p className="task-start-all__note" data-testid={phone ? 'task-start-all-phone' : 'task-start-all-shared'}>
+          <Glyph name="info" /><span>{phone ? copy.confirm.phoneFolder(folder, tasks.length) : copy.confirm.sharedFolder(folder, tasks.length)}</span>
+        </p>
+      )}
       {tasks.length > 1 && <p className="task-start-all__note"><Glyph name="clock" /><span>{copy.confirm.limit}</span></p>}
     </Dialog>
   );

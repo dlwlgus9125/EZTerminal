@@ -834,6 +834,60 @@ test('모두 시작 confirms first and starts each task where it was chosen, one
   }
 });
 
+test('in a folder that is no repository 모두 시작 offers no worktree: every task starts in this folder, and the sheet says they share it', async () => {
+  test.setTimeout(120_000);
+  const { app, page, profile, workspaceId } = await launchProject('no-repository');
+  const tasks: readonly SuggestedTaskInput[] = [
+    { title: 'Add the missing cart tests', rationale: 'Nothing covers the cart.', prompt: 'Add tests for the cart. Keep unrelated files unchanged.', worktree: true },
+    { title: 'Refresh the install notes', rationale: 'The README is stale.', prompt: 'Refresh the README install notes.' },
+  ];
+  try {
+    await draftIn(page, workspaceId);
+    const sessionId = await firstReply(page);
+    const session = sessionView(page, sessionId);
+    writeTasks(profile, 'two', tasks);
+    await exchange(page, sessionId, 'EZTERMINAL_E2E_SUGGEST:two Look around while you are there.');
+    const card = session.getByTestId('chat-task-card');
+    await expect(card.getByTestId('chat-task')).toHaveCount(2);
+    // The AI wanted a worktree for the first, but none can be made: one click starts it here, and the form offers none.
+    const first = card.getByTestId('chat-task').first();
+    await expect(first.locator('[data-action="task-start"]')).toHaveCount(1);
+    await first.locator('[data-action="task-start-custom"]').click();
+    const form = page.getByTestId('delegate-agent-dialog');
+    await expect(form).toBeVisible();
+    await expect(form.getByTestId('delegate-agent-workspace').locator('option').filter({ hasText: 'New worktree' })).toHaveCount(0);
+    await expect(form.getByTestId('delegate-agent-branch')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(form).toHaveCount(0);
+
+    await card.getByTestId('chat-task-start-all').click();
+    const sheet = page.getByTestId('task-start-all-dialog');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByTestId('task-start-all-task')).toHaveCount(2);
+    await expect(sheet.getByTestId('task-start-all-worktree')).toHaveCount(0);
+    await expect(sheet.getByTestId('task-start-all-here')).toHaveCount(0);
+    await expect(sheet.getByTestId('task-start-all-shared')).toContainText('Started together, they share it.');
+    await expect(sheet.getByTestId('task-start-all-shared')).not.toContainText('desktop');
+    await page.screenshot({ path: path.join(evidence, 'start-all-no-repository.png') });
+    await sheet.getByTestId('task-start-all-submit').click();
+    await expect(sheet).toHaveCount(0);
+
+    const row = (title: string): Locator => session.getByTestId('chat-task').filter({ hasText: title });
+    for (const task of tasks) await expect(row(task.title)).toHaveAttribute('data-outcome', 'started', { timeout: 30_000 });
+    const places = await page.evaluate(async (parent) => {
+      const snapshot = await window.ezterminal.getDaemonSnapshot();
+      const children = snapshot?.agentRelations.filter((relation) => relation.parentSessionId === parent).map((relation) => relation.childSessionId) ?? [];
+      return { parent: snapshot?.sessions.find((entry) => entry.id === parent)?.workspaceId, children: snapshot?.sessions.filter((entry) => children.includes(entry.id)).map((entry) => entry.workspaceId) };
+    }, sessionId);
+    expect(places.children).toEqual([places.parent, places.parent]);
+  } catch (error) {
+    await diagnose(page, 'no-repository');
+    throw error;
+  } finally {
+    await app.close();
+  }
+});
+
 test('past the host’s child limit the card says why for each task the host refused, and 다시 시도 repeats that start', async () => {
   test.setTimeout(240_000);
   const { app, page, profile, workspaceId } = await launchProject('limit');

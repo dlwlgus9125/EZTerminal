@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import type { GitDirectoryStatus } from '../shared/git-status';
+
 /**
  * Resolve the branch for each of a set of directories.
  *
@@ -55,6 +57,34 @@ export function useGitBranches(
   }, [key, token]);
 
   return branches;
+}
+
+/**
+ * Whether Git says this directory is not a repository, so it can have no worktree. A status that failed or timed out
+ * rules nothing out: that says nothing about the repository. `generation` as above.
+ */
+export function useNotARepository(
+  directory: string | undefined,
+  read: (directory: string) => Promise<Pick<GitDirectoryStatus, 'availability'>>,
+  generation: unknown = true,
+): boolean {
+  const [notRepository, setNotRepository] = useState<string | undefined>(undefined);
+  const token = String(generation);
+
+  useEffect(() => {
+    if (!directory) return undefined;
+    let alive = true;
+    void read(directory).then((status) => {
+      if (alive) setNotRepository(status.availability === 'not-a-repository' ? directory : undefined);
+    }, () => undefined);
+    return () => {
+      alive = false;
+    };
+    // As above: `read` is recreated each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directory, token]);
+
+  return directory !== undefined && notRepository === directory;
 }
 
 /** Cannot appear in a filesystem path on any platform this app runs on. */

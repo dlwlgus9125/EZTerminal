@@ -29,7 +29,7 @@ afterEach(() => {
   container.remove();
 });
 
-const TASK_START = { settings: 'Claude · Opus 5.5 · 높음 · 승인 후 실행', folder: 'cart-kit', phone: false };
+const TASK_START = { settings: 'Claude · Opus 5.5 · 높음 · 승인 후 실행', folder: 'cart-kit', phone: false, worktrees: true };
 
 function render(fixture: WrapUpFixture, context: Partial<Omit<ChatContextValue, 'isExpanded' | 'setExpanded'>> = {}): void {
   const { rows } = buildChatModel({ items: fixture.items, turns: fixture.turns });
@@ -125,13 +125,13 @@ describe('모두 시작', () => {
   const task = (id: string, title: string, worktree?: boolean): SuggestedTaskState => ({ id, title, rationale: 'Why.', prompt: 'Do it.', outcome: { kind: 'open' }, ...(worktree ? { worktree } : {}) });
   const onStart = vi.fn();
   let opened = 0;
-  const sheet = (tasks: readonly SuggestedTaskState[], phone = false): void => {
+  const sheet = (tasks: readonly SuggestedTaskState[], phone = false, worktrees = !phone, again = false): void => {
     onStart.mockClear();
-    opened += 1;
+    if (!again) opened += 1;
     act(() => root.render(
       <AppI18nProvider locale="ko" languages={['ko']}>
         <ChatProvider skin="bubble" locale="ko">
-          <TaskStartAllDialog key={opened} open onOpenChange={() => undefined} tasks={tasks} settings="Claude" folder="cart-kit" phone={phone} onStart={onStart} />
+          <TaskStartAllDialog key={opened} open onOpenChange={() => undefined} tasks={tasks} settings="Claude" folder="cart-kit" phone={phone} worktrees={worktrees} onStart={onStart} />
         </ChatProvider>
       </AppI18nProvider>,
     ));
@@ -175,6 +175,27 @@ describe('모두 시작', () => {
     expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
   });
 
+  it('stays in this folder on the desktop too where no worktree can be made, and says starting together shares it', () => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], false, false);
+    expect(radios('task-start-all-worktree')).toHaveLength(0);
+    expect(radios('task-start-all-here')).toHaveLength(0);
+    expect(document.querySelector('[data-testid="task-start-all-task"]')?.textContent).toContain('이 폴더 (cart-kit)');
+    expect(document.querySelector('[data-testid="task-start-all-shared"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    // The phone's last sentence would be false here: this is the desktop.
+    expect(document.querySelector('[data-testid="task-start-all-phone"]')).toBeNull();
+    submit();
+    expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
+  });
+
+  it('follows the answer about the folder when it arrives with the sheet open', () => {
+    const tasks = [task('one', 'Fix the cart'), task('two', 'Fix the tax')];
+    sheet(tasks);
+    expect(radios('task-start-all-worktree').map((radio) => radio.checked)).toEqual([true, true]);
+    sheet(tasks, false, false, true);
+    submit();
+    expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
+  });
+
   it('says nothing of sharing to a single task on the phone', () => {
     sheet([task('one', 'Fix the cart')], true);
     expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
@@ -182,6 +203,16 @@ describe('모두 시작', () => {
 });
 
 describe('the suggested-task card', () => {
+  it('starts with one click a task the AI wanted in a worktree where none can be made: the form would have nothing to add', () => {
+    const fixture = cartStory('ko', 'claude', 'mixed');
+    const advised = (): HTMLElement => byTestId('chat-task-worktree')!.closest<HTMLElement>('[data-testid="chat-task"]')!;
+    render(fixture, { onWrapUpAction: vi.fn() });
+    expect(advised().querySelector('[data-action="task-start"]')).toBeNull();
+    expect(advised().querySelector('[data-action="task-start-custom"]')).not.toBeNull();
+    render(fixture, { onWrapUpAction: vi.fn(), taskStart: { ...TASK_START, worktrees: false } });
+    expect(advised().querySelector('[data-action="task-start"]')).not.toBeNull();
+  });
+
   it('reads as a record where nothing can be pressed: no line about what one click starts', () => {
     render(cartStory('ko', 'claude'));
     expect(byTestId('chat-task-card')).not.toBeNull();

@@ -15,6 +15,7 @@ import type { ChatComposerDraft, ChatMessageContext } from '../shared/chat-messa
 import type { ChatStateAccess } from './chat-recovery';
 import type { ConversationSettings } from '../shared/conversation-start';
 import { useChatRecovery } from './use-chat-recovery';
+import { useNotARepository } from './use-git-branch';
 import { useProviderModelCatalogs } from './use-provider-models';
 import { desktopFileSearch, pathForDrop } from './conversation-desktop-access';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
@@ -319,6 +320,14 @@ export function StructuredAgentDockPanel(
   // A suggested task's start form, on what it opened with: a failure behind it must not reset what the person typed.
   const [taskDialog, setTaskDialog] = useState<{ readonly request: TaskFormRequest; readonly values: TaskStartFormValues } | null>(null);
   const wrapUpPending = useWrapUpPending();
+  // A new worktree comes from the project's folder, and a turn can make that a repository: each turn asks again.
+  const worktreeProject = snapshot?.projects.find((project) => project.id === snapshot.sessions.find((entry) => entry.id === sessionId)?.projectId);
+  const notRepository = useNotARepository(
+    worktreeAccess ? worktreeProject?.rootPath : undefined,
+    (directory) => capabilities.files.gitStatus(directory),
+    snapshot?.agents.find((entry) => entry.sessionId === sessionId)?.currentTurnId,
+  );
+  const newWorktrees = notRepository ? undefined : worktreeAccess;
   const [delegateProfiles, setDelegateProfiles] = useState<readonly ChatAgentProfile[]>([]);
   const profilesWanted = delegateMode !== null || taskDialog !== null;
   useEffect(() => {
@@ -1248,7 +1257,7 @@ export function StructuredAgentDockPanel(
   }) : undefined;
   const wrapUpInput: TurnWrapUpHostInput = {
     snapshot, sessionId, items: () => transcriptItemsRef.current, access: commandAccess, ...wrapUpPending,
-    ...(worktreeAccess ? { worktrees: worktreeAccess } : {}),
+    ...(newWorktrees ? { worktrees: newWorktrees } : {}),
     onStartForm: (request) => setTaskDialog({ request, values: taskStartForm(request) }),
   };
   const wrapUp = !historyOnly && owner === 'managed' ? turnWrapUpHost(wrapUpInput) : undefined;
@@ -1260,7 +1269,7 @@ export function StructuredAgentDockPanel(
     workspaces: structuredAgentWorkspaceOptions(snapshot, forSession.projectId).filter((entry) => !isRunOwnedWorkspace(entry.id))
       .map((entry) => ({ id: entry.id, label: entry.label, kind: entry.kind === 'worktree' ? 'worktree' as const : 'local' as const })),
     defaultWorkspaceId: forSession.workspaceId,
-    allowNewWorktree: Boolean(worktreeAccess),
+    allowNewWorktree: Boolean(newWorktrees),
     ...(props.onOpenSettings ? { onManageProfiles: props.onOpenSettings } : {}),
   });
 

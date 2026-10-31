@@ -126,7 +126,7 @@ export interface TurnWrapUpHostInput {
   readonly access: ConversationCommandAccess;
   readonly pending: ChatWrapUpPending;
   readonly onPending: (taskId: string, kind?: 'starting' | 'sending') => void;
-  /** Desktop: makes new worktrees. */
+  /** Makes new worktrees: the desktop, in a folder that can have one. */
   readonly worktrees?: Pick<WorkspaceWorktreeAccess, 'create'>;
   /** Desktop: opens the start form on a task. */
   readonly onStartForm?: (request: TaskFormRequest) => void;
@@ -138,6 +138,8 @@ export interface TurnWrapUpHostProps {
   readonly pending: ChatWrapUpPending;
   /** The session is attached: a recap can be asked for again. After a restart it is not until the person sends a message. */
   readonly recapRetry: boolean;
+  /** A task can start in a new worktree here. */
+  readonly worktrees: boolean;
 }
 
 /** What a task's start form opens on. */
@@ -346,6 +348,7 @@ export function turnWrapUpHost(input: TurnWrapUpHostInput): TurnWrapUpHostProps 
     ...(suggestion ? { suggestion } : {}),
     pending,
     recapRetry: snapshot.sideQuestionSessionIds?.includes(sessionId) === true,
+    worktrees: input.worktrees !== undefined,
     onAction: (action, defaults) => runAction(input, action, defaults),
   };
 }

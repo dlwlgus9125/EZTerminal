@@ -94,6 +94,12 @@ describe('turnWrapUpHost', () => {
     expect(turnWrapUpHost({ ...input, snapshot: null })).toBeUndefined();
   });
 
+  it('says new worktrees can be made only where the screen was given the way to make them', () => {
+    const { input } = harness();
+    expect(turnWrapUpHost({ ...input, worktrees: { create: vi.fn() } })?.worktrees).toBe(true);
+    expect(turnWrapUpHost({ ...input, worktrees: undefined })?.worktrees).toBe(false);
+  });
+
   it('takes the suggestion from the snapshot and offers 다시 만들기 only while the session is attached', () => {
     const fixture = formatStory('en', 'claude', { suggestion: false });
     const attached = snapshotOf(fixture, { nextPromptSuggestions: { [WRAP_SESSION]: { turnId: 'turn-fix', text: 'Yes' } }, sideQuestionSessionIds: [WRAP_SESSION] });
