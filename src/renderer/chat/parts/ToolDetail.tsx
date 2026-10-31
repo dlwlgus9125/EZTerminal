@@ -15,10 +15,12 @@ export function cleanOutput(text: string): string {
   return text.replace(ANSI, '').replace(/\r\n?/gu, '\n').replace(/\n+$/u, '');
 }
 
-export function OutputBlock({ text, label, tone }: {
+export function OutputBlock({ text, label, tone, captioned = false }: {
   readonly text: string;
   readonly label: string;
   readonly tone?: 'error';
+  /** Shows the label above the text, for an output that needs saying whose it is. */
+  readonly captioned?: boolean;
 }): JSX.Element {
   const copy = useChatCopy();
   const [full, setFull] = useState(false);
@@ -28,6 +30,7 @@ export function OutputBlock({ text, label, tone }: {
   const lines = cleaned.split('\n').length;
   return (
     <div className="chat-output" data-tone={tone}>
+      {captioned && <p className="chat-output__caption">{label}</p>}
       <pre className="chat-output__pre" aria-label={label} tabIndex={0}><code>{shown || copy.noOutput}</code></pre>
       {truncated && (
         <button type="button" className="chat-link-button" onClick={() => setFull(true)}>
@@ -55,7 +58,8 @@ export function ToolDetail({ tool, variant = 'card' }: {
 }): JSX.Element {
   const copy = useChatCopy();
   const { workspaceRoot } = useChatContext();
-  const failed = (tool.status === 'failed' || tool.status === 'denied') && tool.refused === undefined;
+  const refused = tool.refused !== undefined;
+  const failed = (tool.status === 'failed' || tool.status === 'denied') && !refused;
   if (tool.changes?.length) {
     return (
       <div className="chat-tool-detail">
@@ -75,7 +79,8 @@ export function ToolDetail({ tool, variant = 'card' }: {
   return (
     <div className="chat-tool-detail">
       {input && <OutputBlock text={input} label={copy.input} />}
-      {tool.output !== undefined && <OutputBlock text={tool.output} label={copy.output} tone={failed ? 'error' : undefined} />}
+      {/* The host's answer to a refused suggestion stays word for word, but it was written to the AI, not to the person. */}
+      {tool.output !== undefined && <OutputBlock text={tool.output} label={refused ? copy.refusedAnswer : copy.output} tone={failed ? 'error' : undefined} captioned={refused} />}
     </div>
   );
 }

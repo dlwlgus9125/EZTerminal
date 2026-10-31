@@ -26,7 +26,7 @@ import { HighlighterProvider } from './markdown/HighlighterProvider';
 import { coalesceTranscript } from './model/build-chat-model';
 import { wrapUpCards } from './model/wrap-up-cards';
 import {
-  applyWrapUpAction, cartStory, formatStory, inSession, LONG_FOLDER, longWordsStory, pendingFor, startedTask, waitingStory, WRAP_ROOT, WRAP_T0,
+  applyWrapUpAction, cartStory, formatStory, inSession, LONG_FOLDER, longWordsStory, pendingFor, refusedCallStory, startedTask, waitingStory, WRAP_ROOT, WRAP_T0,
   type WrapLanguage, type WrapProvider, type WrapUpFixture,
 } from './wrap-up/wrap-up-fixtures';
 import '../index.css';
@@ -708,6 +708,28 @@ export const TasksStartAll: Story = {
     await waitFor(() => expect(within(card).getAllByTestId('chat-task-outcome')).toHaveLength(4));
   },
 };
+/**
+ * A `suggest_task` call past the cap, opened. The row says the app's reason; its detail keeps the host's answer, as with any
+ * tool row, as what the AI was told.
+ */
+function refusedDetail(id: string, provider: WrapProvider, skin: ChatSkin): Story {
+  return {
+    ...chat(id, 'cart', (lang) => refusedCallStory(lang, provider), { provider, skin }),
+    play: async ({ canvasElement }) => {
+      const session = await findIn(canvasElement, '[data-testid="structured-agent-session"]');
+      if (skin === 'bubble') await userEvent.click(await within(session).findByRole('button', { name: /제안 1개 받지 않음/u }));
+      const line = await findIn(session, skin === 'bubble' ? '.chat-tool[data-status="refused"] .chat-tool__line' : '.chat-cli-tool[data-status="refused"] .chat-cli-tool__call');
+      await userEvent.click(line);
+      const row = line.closest<HTMLElement>('[data-status="refused"]')!;
+      await expect(await findIn(row, '.chat-output__caption')).toHaveTextContent('AI에게 보낸 답');
+      await expect(row).toHaveTextContent('Stop suggesting; this one was not kept.');
+    },
+  };
+}
+export const RefusedDetailClaude: Story = refusedDetail('refused-claude', 'claude', 'bubble');
+export const RefusedDetailCodex: Story = refusedDetail('refused-codex', 'codex', 'bubble');
+export const RefusedDetailClaudeCli: Story = refusedDetail('refused-claude-cli', 'claude', 'cli');
+export const RefusedDetailCodexCli: Story = refusedDetail('refused-codex-cli', 'codex', 'cli');
 /** A folder that is no repository can have no worktree: everything starts here, and the sheet says they share it. */
 export const TasksStartAllNoRepository: Story = {
   ...chat('tasks-start-all-no-repository', 'cart', (lang) => cartStory(lang, 'claude', 'mixed'), { worktrees: false }),

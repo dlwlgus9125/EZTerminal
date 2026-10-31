@@ -12,7 +12,7 @@ import { ChatRowView } from '../ChatRowView';
 import { chatCopy } from '../copy';
 import { buildChatModel } from '../model/build-chat-model';
 import { TaskStartAllDialog } from '../wrap-up/TaskStartAllDialog';
-import { cartStory, formatStory, waitingStory, WRAP_SESSION, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
+import { cartStory, formatStory, refusedCallStory, waitingStory, WRAP_SESSION, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,6 +137,30 @@ describe('a suggest_task call the host said no to', () => {
     expect(lines('ko').join(' ')).toMatch(/^[^A-Za-z]*(AI[^A-Za-z]*)*$/u);
   });
 
+  it.each([
+    ['claude', 'bubble'], ['codex', 'bubble'], ['claude', 'cli'], ['codex', 'cli'],
+  ] as const)('opened, the reason stays first and the raw answer reads as what the AI was told (%s, %s)', (provider, skin) => {
+    render(refusedCallStory('ko', provider), { skin });
+    if (skin === 'bubble') openRun();
+    const row = container.querySelector<HTMLElement>(`${skin === 'bubble' ? '.chat-tool' : '.chat-cli-tool'}[data-status="refused"]`)!;
+    act(() => row.querySelector<HTMLButtonElement>('.chat-tool__line, .chat-cli-tool__call')!.click());
+    const caption = row.querySelector<HTMLElement>('.chat-output__caption');
+    expect(caption?.textContent).toBe('AI에게 보낸 답');
+    const answer = caption!.parentElement!.querySelector('pre')!;
+    expect(answer.getAttribute('aria-label')).toBe('AI에게 보낸 답');
+    // Word for word: the audit trail is neither translated nor rewritten.
+    expect(answer.textContent).toContain('{"ok":false,"code":"cap","error":"A turn can suggest 8 tasks. Stop suggesting; this one was not kept."}');
+    expect(answer.closest('.chat-output')?.getAttribute('data-tone')).toBeNull();
+    const text = row.textContent ?? '';
+    expect(text.indexOf('한 턴에 8개까지만 받습니다')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('한 턴에 8개까지만 받습니다')).toBeLessThan(text.indexOf('AI에게 보낸 답'));
+    expect(text.indexOf('AI에게 보낸 답')).toBeLessThan(text.indexOf('Stop suggesting'));
+  });
+
+  it('says so in English too', () => {
+    expect(chatCopy('en').refusedAnswer).toBe('What the AI was told');
+  });
+
   it('leaves a foreign tool of that name an ordinary failed row', () => {
     render(withCall(SUGGEST_TASK_TOOL, 'someone_else'));
     expect(container.querySelector('.chat-run__problems')?.textContent).toBe('1개 실패');
@@ -144,6 +168,8 @@ describe('a suggest_task call the host said no to', () => {
     const row = container.querySelector<HTMLElement>('.chat-tool[data-status="failed"]')!;
     expect(row.textContent).toContain('도구 실패');
     expect(container.querySelector('.chat-tool[data-status="refused"]')).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('.chat-tool[data-status="failed"] .chat-tool__line')!.click());
+    expect(container.querySelector('.chat-output__caption'), 'an ordinary tool row keeps its plain output').toBeNull();
   });
 });
 

@@ -651,6 +651,12 @@
   font: inherit;
 }
 
+.chat-output__caption {
+  margin: 0 0 var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font: 500 var(--ui-font-size-xs) / 1.4 var(--ui-font-body);
+}
+
 .chat-output[data-tone='error'] .chat-output__pre {
   color: var(--ui-danger);
 }

@@ -516,6 +516,35 @@ export function inSession(fixture: WrapUpFixture, sessionId: string): WrapUpFixt
 
 const ACTIVE_TURN: ReadonlySet<DaemonTurn['state']> = new Set(['queued', 'submitting', 'working', 'blocked', 'delivery-uncertain']);
 
+/**
+ * Past the cap: one more `suggest_task` call the host said no to, with the host's words to the AI, as each adapter records
+ * it. Claude's row is the answer alone; Codex's starts with its status line.
+ */
+export function refusedCallStory(lang: WrapLanguage, provider: WrapProvider): WrapUpFixture {
+  const fixture = cartStory(lang, provider);
+  const callId = 'call-refused';
+  const claude = provider === 'claude';
+  const name = claude ? SUGGEST_TASK_CLAUDE_TOOL : SUGGEST_TASK_TOOL;
+  const row = claude ? {} : { server: SUGGEST_TASK_SERVER };
+  const input = JSON.stringify({ title: '점검 9', rationale: '한도 확인', prompt: '점검 9를 해 주세요.' }, null, 2);
+  const answer = JSON.stringify({ ok: false, code: 'cap', error: 'A turn can suggest 8 tasks. Stop suggesting; this one was not kept.' });
+  return {
+    ...fixture,
+    items: [
+      ...fixture.items,
+      item(900, 'tool-call', claude ? `${name}
+${input}` : `${SUGGEST_TASK_SERVER}/${name}: inProgress
+${input}`, {
+        turnId: 'turn-cart', payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'call', status: 'running', target: `${SUGGEST_TASK_SERVER} / ${SUGGEST_TASK_TOOL}`, ...row },
+      }),
+      item(901, 'tool-result', claude ? answer : `${SUGGEST_TASK_SERVER}/${name}: failed
+${answer}`, {
+        turnId: 'turn-cart', payload: { v: 1, type: 'tool', callId, name, category: 'mcp', phase: 'result', status: 'failed', ...row },
+      }),
+    ],
+  };
+}
+
 /** The tasks a story shows as in flight until the host settles them: what `pending` holds in a conversation. */
 export function pendingFor(action: ChatWrapUpAction): ChatWrapUpPending {
   switch (action.kind) {

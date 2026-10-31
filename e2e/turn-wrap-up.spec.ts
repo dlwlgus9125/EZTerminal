@@ -630,6 +630,13 @@ test('the AI suggests tasks: a card with its calls folded and the ninth left vis
     await expect(refused).not.toContainText('Stop suggesting');
     await refused.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(evidence, 'task-refused-call.png') });
+    // Opened, the raw answer stays, as what the AI was told: never a message to the person.
+    await refused.locator('.chat-tool__line').click();
+    await expect(refused.locator('.chat-output__caption')).toHaveText('What the AI was told');
+    await expect(refused.locator('.chat-output', { hasText: 'What the AI was told' }).locator('pre')).toContainText('Stop suggesting; this one was not kept.');
+    await refused.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(evidence, 'task-refused-call-open.png') });
+    await refused.locator('.chat-tool__line').click();
 
     // What either button sends, word for word.
     const first = taskRow(session, 1);
