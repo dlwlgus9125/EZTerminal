@@ -688,11 +688,12 @@ export const TasksStartAll: Story = {
     const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
     const tasks = within(dialog).getAllByTestId('task-start-all-task');
     await expect(tasks).toHaveLength(4);
-    await expect(within(tasks[3]!).getByTestId('task-start-all-worktree')).toBeChecked();
+    for (const task of tasks) await expect(within(task).getByTestId('task-start-all-worktree')).toBeChecked();
     await expect(tasks[3]).toHaveTextContent('suggest/reject-negative-and-fractional');
     await expect(tasks[0]).toHaveTextContent('이 폴더 (cart-kit)');
     await expect(dialog).toHaveTextContent('동시에 실행할 수 있는 대화는 4개');
-    await userEvent.click(within(tasks[0]!).getByTestId('task-start-all-worktree'));
+    await userEvent.click(within(tasks[1]!).getByTestId('task-start-all-here'));
+    await userEvent.click(within(tasks[2]!).getByTestId('task-start-all-here'));
     await userEvent.click(within(dialog).getByRole('button', { name: '4개 시작' }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({
       kind: 'task-start-all', turnId: 'turn-cart', starts: [
@@ -835,7 +836,7 @@ export const PhoneStartAll: Story = {
     const card = await showCard(canvasElement);
     await userEvent.click(within(card).getByTestId('chat-task-start-all'));
     const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
-    await expect(within(dialog).getByTestId('task-start-all-phone')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
+    await expect(within(dialog).getByTestId('task-start-all-phone')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
     await expect(within(dialog).getAllByTestId('task-start-all-task')[0]).toHaveTextContent('이 폴더 (cart-kit)');
     await expect(within(dialog).queryAllByTestId('task-start-all-worktree')).toHaveLength(0);
   },

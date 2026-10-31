@@ -769,17 +769,17 @@ test('모두 시작 confirms first and starts each task where it was chosen, one
     // A branch already exists under the name the third task would take.
     git(projectRoot, 'branch', branches[2]!);
 
-    // Nothing starts until the sheet is confirmed. It offers each task's place, its worktree advice chosen.
+    // Nothing starts until the sheet is confirmed. Started together, each task defaults to a new worktree, advised or not.
     await card.getByTestId('chat-task-start-all').click();
     const sheet = page.getByTestId('task-start-all-dialog');
     await expect(sheet).toBeVisible();
     const sheetRows = sheet.getByTestId('task-start-all-task');
     await expect(sheetRows).toHaveCount(3);
-    await expect(sheetRows.nth(0).getByTestId('task-start-all-worktree')).toBeChecked();
-    await expect(sheetRows.nth(1).getByTestId('task-start-all-here')).toBeChecked();
-    await expect(sheetRows.nth(2).getByTestId('task-start-all-worktree')).toBeChecked();
+    for (const index of [0, 1, 2]) await expect(sheetRows.nth(index).getByTestId('task-start-all-worktree')).toBeChecked();
     await expect(sheetRows.nth(0)).toContainText(branches[0]!);
     await page.screenshot({ path: path.join(evidence, 'start-all-sheet.png') });
+    // Each can still be changed: this one stays in this folder.
+    await sheetRows.nth(1).getByTestId('task-start-all-here').click();
     expect(await page.evaluate(async (id) => (await window.ezterminal.getDaemonSnapshot())?.agentRelations.filter((relation) => relation.parentSessionId === id).length, sessionId)).toBe(0);
     await sheet.getByTestId('task-start-all-submit').click();
     await expect(sheet).toHaveCount(0);
@@ -841,6 +841,9 @@ test('past the host’s child limit the card says why for each task the host ref
     const startAll = async (card: Locator): Promise<void> => {
       await card.getByTestId('chat-task-start-all').click();
       const sheet = page.getByTestId('task-start-all-dialog');
+      // This project is no repository: a new worktree, the sheet's default for tasks started together, cannot exist here.
+      const here = sheet.getByTestId('task-start-all-here');
+      for (const index of Array.from({ length: await here.count() }, (_, position) => position)) await here.nth(index).click();
       await sheet.getByTestId('task-start-all-submit').click();
       await expect(sheet).toHaveCount(0);
     };

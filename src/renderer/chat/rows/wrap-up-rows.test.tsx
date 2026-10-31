@@ -4,10 +4,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SuggestedTaskState } from '../../../shared/turn-wrap-up';
 import { AppI18nProvider } from '../../i18n';
 import { ChatProvider, type ChatContextValue, type ChatWrapUpAction } from '../ChatContext';
 import { ChatRowView } from '../ChatRowView';
 import { buildChatModel } from '../model/build-chat-model';
+import { TaskStartAllDialog } from '../wrap-up/TaskStartAllDialog';
 import { cartStory, formatStory, waitingStory, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,6 +69,66 @@ describe('a recap written while the AI waited, once the turn ran on', () => {
     expect(byTestId('chat-recap-card')?.textContent).toContain('답을 기다렸던 턴');
     expect(page.indexOf('답을 기다렸던 턴')).toBeLessThan(page.indexOf('음수는 괄호로 표시하기로 하고'));
     expect(byTestId('chat-recap-answer')).toBeNull();
+  });
+});
+
+describe('모두 시작', () => {
+  const task = (id: string, title: string, worktree?: boolean): SuggestedTaskState => ({ id, title, rationale: 'Why.', prompt: 'Do it.', outcome: { kind: 'open' }, ...(worktree ? { worktree } : {}) });
+  const onStart = vi.fn();
+  let opened = 0;
+  const sheet = (tasks: readonly SuggestedTaskState[], phone = false): void => {
+    onStart.mockClear();
+    opened += 1;
+    act(() => root.render(
+      <AppI18nProvider locale="ko" languages={['ko']}>
+        <ChatProvider skin="bubble" locale="ko">
+          <TaskStartAllDialog key={opened} open onOpenChange={() => undefined} tasks={tasks} settings="Claude" folder="cart-kit" phone={phone} onStart={onStart} />
+        </ChatProvider>
+      </AppI18nProvider>,
+    ));
+  };
+  const radios = (id: string): HTMLInputElement[] => [...document.querySelectorAll<HTMLInputElement>(`[data-testid="${id}"]`)];
+  const submit = (): void => act(() => document.querySelector<HTMLButtonElement>('[data-testid="task-start-all-submit"]')!.click());
+
+  it('defaults every task to its own new worktree on the desktop when two or more start together', () => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)]);
+    expect(radios('task-start-all-worktree').map((radio) => radio.checked)).toEqual([true, true]);
+    expect(document.querySelector('[data-testid="task-start-all-phone"]')).toBeNull();
+    submit();
+    expect(onStart).toHaveBeenCalledWith([
+      { taskId: 'one', where: { kind: 'new-worktree', branch: 'suggest/fix-the-cart' } },
+      { taskId: 'two', where: { kind: 'new-worktree', branch: 'suggest/fix-the-tax' } },
+    ]);
+  });
+
+  it('lets each task go back to this folder', () => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax')]);
+    act(() => radios('task-start-all-here')[0]!.click());
+    submit();
+    expect(onStart).toHaveBeenCalledWith([
+      { taskId: 'one', where: { kind: 'this-folder' } },
+      { taskId: 'two', where: { kind: 'new-worktree', branch: 'suggest/fix-the-tax' } },
+    ]);
+  });
+
+  it('keeps a single task to its own rule: a worktree only if the AI recommended one', () => {
+    sheet([task('one', 'Fix the cart')]);
+    expect(radios('task-start-all-here')[0]!.checked).toBe(true);
+    sheet([task('one', 'Fix the cart', true)]);
+    expect(radios('task-start-all-worktree')[0]!.checked).toBe(true);
+  });
+
+  it('stays in this folder on the phone, and says starting together shares it', () => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], true);
+    expect(radios('task-start-all-worktree')).toHaveLength(0);
+    expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
+    submit();
+    expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
+  });
+
+  it('says nothing of sharing to a single task on the phone', () => {
+    sheet([task('one', 'Fix the cart')], true);
+    expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
   });
 });
 

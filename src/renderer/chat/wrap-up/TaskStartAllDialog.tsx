@@ -15,15 +15,18 @@ export interface TaskStart {
 
 type Choices = Readonly<Record<string, boolean>>;
 
-/** A worktree-recommended task starts in a new worktree unless the person changes it; the phone always starts here. */
+/**
+ * Started together, tasks default to a new worktree each: in one folder they would edit it at the same time, and real AIs
+ * hardly ever ask for a worktree themselves (0 of 12). A single task follows the AI's advice; the phone always starts here.
+ */
 function initialChoices(tasks: readonly SuggestedTaskState[], phone: boolean): Choices {
-  return Object.fromEntries(tasks.map((task) => [task.id, !phone && task.worktree === true]));
+  return Object.fromEntries(tasks.map((task) => [task.id, !phone && (tasks.length > 1 || task.worktree === true)]));
 }
 
 /**
  * 모두 시작 (D6): what starts, how many and where, before anything runs. Each open task becomes a new
- * sub-conversation with the settings line; on the desktop each works in this folder or in a new worktree on its own
- * `suggest/…` branch. The phone cannot create worktrees, so everything starts in this folder there.
+ * sub-conversation with the settings line; on the desktop each works in a new worktree on its own `suggest/…` branch
+ * or in this folder. The phone cannot create worktrees, so everything starts in this folder there, and it says so.
  */
 export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, ownerDocument, onStart }: {
   readonly open: boolean;
@@ -104,7 +107,7 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
           </li>
         ))}
       </ol>
-      {phone && <p className="task-start-all__note" data-testid="task-start-all-phone"><Glyph name="info" /><span>{copy.confirm.phoneFolder(folder)}</span></p>}
+      {phone && <p className="task-start-all__note" data-testid="task-start-all-phone"><Glyph name="info" /><span>{copy.confirm.phoneFolder(folder, tasks.length)}</span></p>}
       {tasks.length > 1 && <p className="task-start-all__note"><Glyph name="clock" /><span>{copy.confirm.limit}</span></p>}
     </Dialog>
   );
