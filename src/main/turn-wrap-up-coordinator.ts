@@ -620,7 +620,8 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
     const turn = snapshot.turns.find((entry) => entry.id === turnId);
     const agent = turn ? snapshot.agents.find((entry) => entry.sessionId === turn.sessionId) : undefined;
     if (!turn || !agent || !suggestionCurrent(snapshot, turn.sessionId, turn.id) || !this.automatic(snapshot, agent, turn)) return;
-    if (this.suggesting(snapshot, agent.providerId)) this.predict(snapshot, agent, turn);
+    // In plan mode the composer hides a guess, so a Codex fork there would be spent on nothing.
+    if (agent.permissionPreset !== 'plan' && this.suggesting(snapshot, agent.providerId)) this.predict(snapshot, agent, turn);
     // Codex proposes a plan just after its turn ends: that is this turn waiting, whichever of the two settled first.
     this.offerRecap(snapshot, agent, turn, snapshot.approvals.find((entry) => entry.sessionId === turn.sessionId && !entry.turnId && stoppingApproval(entry)));
   }

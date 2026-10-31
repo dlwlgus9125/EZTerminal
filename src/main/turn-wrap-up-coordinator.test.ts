@@ -598,6 +598,29 @@ describe('a forked next-prompt prediction', () => {
     } finally { await dispose(h); }
   });
 
+  it('spends nothing on a turn that ended in plan mode: the composer hides the guess there', async () => {
+    const h = await harness();
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Plan', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan it.' });
+      await h.finishTurn(h.codex, 'chat');
+      await settled();
+      expect(h.codex.predictions).toHaveLength(0);
+    } finally { await dispose(h); }
+  });
+
+  it('comes back with the next turn out of plan mode', async () => {
+    const h = await harness();
+    try {
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Plan', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan it.' });
+      await h.finishTurn(h.codex, 'chat');
+      await settled();
+      await h.execute('agent.set-settings', { sessionId: 'chat', permissionPreset: 'standard' });
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Now do it.' });
+      await h.finishTurn(h.codex, 'chat');
+      await until(() => h.codex.predictions.length === 1, 'the prediction');
+    } finally { await dispose(h); }
+  });
+
   it('is aborted by the next message, which does not wait for it', async () => {
     const h = await harness();
     try {
