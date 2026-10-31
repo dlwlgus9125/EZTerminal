@@ -4,7 +4,7 @@ import type { DaemonApproval, DaemonTurn } from '../../../shared/daemon-protocol
 import type { RecordedFileChange } from '../../../shared/conversation-changes';
 import type { ReviewFinding, ReviewState, ReviewTarget, ReviewerRef } from '../../../shared/review-findings';
 import type { TodoItem, ToolCategory, ToolStatus } from '../../../shared/transcript-payload';
-import type { TurnRecap, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
+import type { SuggestTaskRefusal, TurnRecap, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
 
 /**
  * Presentation model for one conversation. Both skins (bubble and CLI) render
@@ -28,6 +28,9 @@ export interface ChatSubagentLink {
   /** Set once the parent heard the child finish. */
   readonly state?: 'done' | 'error';
 }
+
+/** Why the host said no to a suggestion; `unknown` when it gave no code this client knows. */
+export type ChatToolRefusal = SuggestTaskRefusal | 'unknown';
 
 /** One tool use: the call and (once it arrives) its result, paired. */
 export interface ChatTool {
@@ -56,7 +59,7 @@ export interface ChatTool {
   readonly awaitingApproval?: boolean;
   readonly subagent?: ChatSubagentLink;
   /** The host said no to this suggestion, and why. `status` stays what the AI reported; it reads as a note, not a failure. */
-  readonly refused?: string;
+  readonly refused?: ChatToolRefusal;
 }
 
 /** A line inside an activity run: a tool use or a stretch of reasoning. */

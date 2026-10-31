@@ -5,10 +5,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonTranscriptItem } from '../../../shared/daemon-protocol';
-import { SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, type SuggestedTaskState } from '../../../shared/turn-wrap-up';
+import { SUGGEST_TASK_REFUSALS, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, type SuggestedTaskState } from '../../../shared/turn-wrap-up';
 import { AppI18nProvider } from '../../i18n';
 import { ChatProvider, type ChatContextValue, type ChatWrapUpAction } from '../ChatContext';
 import { ChatRowView } from '../ChatRowView';
+import { chatCopy } from '../copy';
 import { buildChatModel } from '../model/build-chat-model';
 import { TaskStartAllDialog } from '../wrap-up/TaskStartAllDialog';
 import { cartStory, formatStory, waitingStory, WRAP_SESSION, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
@@ -75,8 +76,8 @@ describe('a recap written while the AI waited, once the turn ran on', () => {
 
 describe('a suggest_task call the host said no to', () => {
   const REASON = 'A turn can suggest 8 tasks. Stop suggesting; this one was not kept.';
-  /** A cart turn with one more call. `tool`: as the AI names it. */
-  const withCall = (tool: string, server?: string): WrapUpFixture => {
+  /** A cart turn with one more call. `tool`: as the AI names it; `answer`: the host's. */
+  const withCall = (tool: string, server?: string, answer = `{"ok":false,"code":"cap","error":"${REASON}"}`): WrapUpFixture => {
     const fixture = cartStory('ko', 'codex');
     const row = (sequence: number, kind: 'tool-call' | 'tool-result', text: string, phase: 'call' | 'result', status: 'running' | 'failed'): DaemonTranscriptItem => ({
       id: `refused-${String(sequence)}`, sessionId: WRAP_SESSION, sequence, turnId: 'turn-cart', kind, text, isDelta: false, isSensitive: false, createdAt: fixture.turns[0]!.finishedAt!,
@@ -84,7 +85,7 @@ describe('a suggest_task call the host said no to', () => {
     });
     const head = `${server ?? 'x'}/${tool}`;
     const input = JSON.stringify({ title: '점검 9', rationale: '실검증용', prompt: '답해 줘.' });
-    return { ...fixture, items: [...fixture.items, row(900, 'tool-call', `${head}: inProgress\n${input}`, 'call', 'running'), row(901, 'tool-result', `${head}: failed\n{"ok":false,"error":"${REASON}"}`, 'result', 'failed')] };
+    return { ...fixture, items: [...fixture.items, row(900, 'tool-call', `${head}: inProgress\n${input}`, 'call', 'running'), row(901, 'tool-result', `${head}: failed\n${answer}`, 'result', 'failed')] };
   };
   const openRun = (): void => {
     for (const header of [...container.querySelectorAll<HTMLButtonElement>('.chat-run__header')]) act(() => header.click());
@@ -98,7 +99,8 @@ describe('a suggest_task call the host said no to', () => {
     const row = container.querySelector<HTMLElement>('.chat-tool[data-status="refused"]')!;
     expect(row.textContent).toContain('제안 받지 않음');
     expect(row.textContent).toContain('점검 9');
-    expect(row.textContent).toContain(REASON);
+    expect(row.textContent).toContain('한 턴에 8개까지만 받습니다');
+    expect(row.textContent).not.toContain(REASON);
     expect(row.textContent).not.toContain('도구 실패');
     expect(row.querySelector('[data-tone="danger"]')).toBeNull();
   });
@@ -106,9 +108,33 @@ describe('a suggest_task call the host said no to', () => {
   it('reads calm in the CLI skin', () => {
     render(withCall(SUGGEST_TASK_TOOL, SUGGEST_TASK_SERVER), { skin: 'cli' });
     const row = container.querySelector<HTMLElement>('.chat-cli-tool[data-status="refused"]')!;
-    expect(row.textContent).toContain(`제안 받지 않음 · ${REASON}`);
+    expect(row.textContent).toContain('제안 받지 않음 · 한 턴에 8개까지만 받습니다');
+    expect(row.textContent).not.toContain(REASON);
     expect(row.querySelector('.chat-cli-glyph')?.getAttribute('data-tone')).toBe('muted');
     expect(row.querySelector('.chat-cli-result')?.getAttribute('data-tone')).toBe('muted');
+  });
+
+  it.each([
+    ['no code', `{"ok":false,"error":"${REASON}"}`],
+    ['a code this client does not know', `{"ok":false,"code":"something-new","error":"${REASON}"}`],
+  ])('falls back to a generic line on %s, never to what the host told the AI', (_name, answer) => {
+    render(withCall(SUGGEST_TASK_TOOL, SUGGEST_TASK_SERVER, answer));
+    openRun();
+    const row = container.querySelector<HTMLElement>('.chat-tool[data-status="refused"]')!;
+    expect(row.textContent).toContain('앱이 받지 않았습니다');
+    expect(row.textContent).not.toContain(REASON);
+  });
+
+  it('has a short line of its own for each of the host’s codes, in both languages', () => {
+    const lines = (locale: 'ko' | 'en'): readonly string[] => [...SUGGEST_TASK_REFUSALS, 'unknown' as const].map((code) => chatCopy(locale).refusedReason(code));
+    for (const locale of ['ko', 'en'] as const) {
+      expect(new Set(lines(locale)).size).toBe(SUGGEST_TASK_REFUSALS.length + 1);
+      for (const line of lines(locale)) {
+        expect(line.length).toBeLessThan(45);
+        expect(line).not.toMatch(/suggest_task|Stop suggesting|Do not/u);
+      }
+    }
+    expect(lines('ko').join(' ')).toMatch(/^[^A-Za-z]*(AI[^A-Za-z]*)*$/u);
   });
 
   it('leaves a foreign tool of that name an ordinary failed row', () => {

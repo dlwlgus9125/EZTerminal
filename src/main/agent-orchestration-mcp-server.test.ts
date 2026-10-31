@@ -1221,8 +1221,8 @@ describe('suggest_task, the turn wrap-up tier', () => {
   });
 
   it('reports what the host refused', async () => {
-    const { call } = await connect(() => wrapUpHost({ suggest: vi.fn(async () => ({ ok: false as const, error: 'Suggested tasks are off.' })) }), { current: running(snapshot()) });
-    expect(await call(INPUT)).toEqual({ value: { ok: false, error: 'Suggested tasks are off.' }, isError: true });
+    const { call } = await connect(() => wrapUpHost({ suggest: vi.fn(async () => ({ ok: false as const, code: 'off' as const, error: 'Suggested tasks are off.' })) }), { current: running(snapshot()) });
+    expect(await call(INPUT)).toEqual({ value: { ok: false, code: 'off', error: 'Suggested tasks are off.' }, isError: true });
   });
 
   it('refuses a call outside a turn: nothing could own the card', async () => {
@@ -1235,7 +1235,7 @@ describe('suggest_task, the turn wrap-up tier', () => {
   it('refuses a call while the turn is stopped: a fork of it could land a card', async () => {
     const suggest = vi.fn();
     const { call } = await connect(() => wrapUpHost({ suggest }), { current: running(snapshot(), 'blocked') });
-    expect(await call(INPUT)).toMatchObject({ isError: true, value: { ok: false } });
+    expect(await call(INPUT)).toMatchObject({ isError: true, value: { ok: false, code: 'stopped' } });
     expect(suggest).not.toHaveBeenCalled();
   });
 

@@ -1718,8 +1718,8 @@ describe('suggest_task', () => {
     try {
       const turnId = await start(h);
       for (const task of many(8)) expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, task)).toMatchObject({ ok: true });
-      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Ninth' })).toMatchObject({ ok: false });
-      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Tenth' })).toMatchObject({ ok: false });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Ninth' })).toMatchObject({ ok: false, code: 'cap' });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, { ...INPUT, title: 'Tenth' })).toMatchObject({ ok: false, code: 'cap' });
       expect(cards(h)).toHaveLength(8);
       expect(dropped(h)).toEqual([]);
       await h.finishTurn(h.claude, 'chat');
@@ -1784,7 +1784,7 @@ describe('suggest_task', () => {
     try {
       const turnId = await start(h);
       h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, tasks: false };
-      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false, code: 'off' });
       expect(cards(h)).toEqual([]);
     } finally { await dispose(h); }
   });
@@ -1793,7 +1793,7 @@ describe('suggest_task', () => {
     const h = await harness();
     try {
       const turnId = await start(h, AUTOMATION);
-      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false });
+      expect(await h.coordinator.suggest({ sessionId: 'chat', turnId }, INPUT)).toMatchObject({ ok: false, code: 'unattended' });
       expect(cards(h)).toEqual([]);
     } finally { await dispose(h); }
   });

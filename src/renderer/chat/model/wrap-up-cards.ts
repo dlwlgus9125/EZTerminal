@@ -1,11 +1,11 @@
 import type { DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { parseTranscriptPayload, type TaskSuggestionStatusPayload } from '../../../shared/transcript-payload';
 import {
-  SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskChildSessionId,
+  SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_REFUSALS, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskChildSessionId,
   type SuggestedTask, type SuggestedTaskOutcome, type TurnRecap, type TurnTaskSuggestions,
 } from '../../../shared/turn-wrap-up';
 import { parseObject } from './legacy-decode';
-import type { ChatTool } from './types';
+import type { ChatTool, ChatToolRefusal } from './types';
 
 /**
  * Turn wrap-up's cards, read from the host's rows as they stand: a turn's recap is its latest `recap` row, a task's
@@ -43,15 +43,17 @@ export function foldsIntoCard(tool: Pick<ChatTool, 'callId' | 'name' | 'server' 
 
 /**
  * Why the host said no to a `suggest_task` call, and to which suggestion: a proposal not taken, not a tool that broke.
- * Both AIs record it as failed with the host's `{"ok":false,"error":…}`, Codex after a status line. Anything else that
- * failed stays a failure.
+ * Both AIs record it as failed with the host's `{"ok":false,"code":…,"error":…}`, Codex after a status line. The reason
+ * is the code; `error` is written to the AI, so a code this client does not know is `unknown`, never that text. Anything
+ * else that failed stays a failure.
  */
-export function suggestTaskRefusal(tool: Pick<ChatTool, 'name' | 'server' | 'status' | 'output' | 'input' | 'inputValue'>): { readonly reason: string; readonly title?: string } | undefined {
+export function suggestTaskRefusal(tool: Pick<ChatTool, 'name' | 'server' | 'status' | 'output' | 'input' | 'inputValue'>): { readonly reason: ChatToolRefusal; readonly title?: string } | undefined {
   if (tool.status !== 'failed' || !hostSuggestTask(tool) || !tool.output) return undefined;
   const answer = parseObject(tool.output.slice(tool.output.indexOf('{')));
   if (answer?.ok !== false || typeof answer.error !== 'string') return undefined;
   const title = callInput(tool)?.title;
-  return { reason: answer.error, ...(typeof title === 'string' ? { title } : {}) };
+  const reason = SUGGEST_TASK_REFUSALS.find((code) => code === answer.code) ?? 'unknown';
+  return { reason, ...(typeof title === 'string' ? { title } : {}) };
 }
 
 interface CardRows {

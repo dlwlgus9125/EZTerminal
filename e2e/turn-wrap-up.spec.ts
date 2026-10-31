@@ -626,6 +626,8 @@ test('the AI suggests tasks: a card with its calls folded and the ninth left vis
     expect(toolCalls(await transcriptOf(page, sessionId), 'suggest_task')).toHaveLength(9);
     const refused = await openRefusedCall(session);
     await expect(refused).toHaveCount(1);
+    await expect(refused).toContainText('Only 8 per turn are accepted');
+    await expect(refused).not.toContainText('Stop suggesting');
     await refused.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(evidence, 'task-refused-call.png') });
 
@@ -960,7 +962,9 @@ test('the settings stop what they name, at once: a shown guess, a recap, a card,
     // A call anyway is refused, stays a tool row, and makes no card.
     writeTasks(profile, 'one', [{ title: 'Tidy the notes', rationale: 'They are stale.', prompt: 'Tidy the notes.' }]);
     await exchange(page, sessionId, 'EZTERMINAL_E2E_SUGGEST:one Look around.');
-    await expect(await openRefusedCall(session)).toHaveCount(1);
+    const refusedRow = await openRefusedCall(session);
+    await expect(refusedRow).toHaveCount(1);
+    await expect(refusedRow).toContainText('Suggested tasks are switched off');
     await expect(session.getByTestId('chat-task-card')).toHaveCount(0);
 
     // Turned on later, the running thread hears it once, with the next message.

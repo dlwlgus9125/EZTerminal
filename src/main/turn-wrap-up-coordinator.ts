@@ -450,8 +450,8 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
     const snapshot = this.options.getSnapshot();
     const turn = snapshot.turns.find((entry) => entry.id === context.turnId);
     const agent = snapshot.agents.find((entry) => entry.sessionId === context.sessionId);
-    if (!turn || !agent || !this.automatic(snapshot, agent, turn)) return { ok: false, error: 'suggest_task answers only a turn a person sent.' };
-    if (!this.options.settings()?.tasks) return { ok: false, error: 'Suggested tasks are turned off. Do not suggest more in this conversation.' };
+    if (!turn || !agent || !this.automatic(snapshot, agent, turn)) return { ok: false, code: 'unattended', error: 'suggest_task answers only a turn a person sent.' };
+    if (!this.options.settings()?.tasks) return { ok: false, code: 'off', error: 'Suggested tasks are turned off. Do not suggest more in this conversation.' };
     if (agent.currentTurnId !== turn.id) return { ok: false, error: 'suggest_task works only during a running turn.' };
     const taskId = stableId('task', turn.id, input.title, input.prompt);
     const counted = this.taskCounts.get(turn.id) ?? { accepted: new Set<string>(), dropped: 0 };
@@ -459,7 +459,7 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
     if (counted.accepted.has(taskId)) return { ok: true, taskId };
     if (counted.accepted.size >= TASK_SUGGESTION_LIMITS.perTurn) {
       counted.dropped += 1;
-      return { ok: false, error: `A turn can suggest ${String(TASK_SUGGESTION_LIMITS.perTurn)} tasks. Stop suggesting; this one was not kept.` };
+      return { ok: false, code: 'cap', error: `A turn can suggest ${String(TASK_SUGGESTION_LIMITS.perTurn)} tasks. Stop suggesting; this one was not kept.` };
     }
     // Before the commit: an AI may call several at once, and each must see the others.
     counted.accepted.add(taskId);

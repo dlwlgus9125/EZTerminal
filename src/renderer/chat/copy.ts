@@ -1,5 +1,7 @@
+import { TASK_SUGGESTION_LIMITS } from '../../shared/turn-wrap-up';
 import { useAppTranslation } from '../i18n';
 import type { ChatLocale } from './model/summary';
+import type { ChatToolRefusal } from './model/types';
 
 const EN = {
   you: 'You',
@@ -20,6 +22,13 @@ const EN = {
   failedCount: (count: number) => `${count} failed`,
   deniedCount: (count: number) => `${count} denied`,
   refusedCount: (count: number) => `${count} ${count === 1 ? 'suggestion' : 'suggestions'} not accepted`,
+  refusedReason: (reason: ChatToolRefusal): string => ({
+    cap: `Only ${TASK_SUGGESTION_LIMITS.perTurn} per turn are accepted`,
+    off: 'Suggested tasks are switched off',
+    stopped: 'Not accepted while the AI is stopped',
+    unattended: 'Only a turn a person sent can suggest',
+    unknown: 'The app did not accept it',
+  })[reason],
   interruptedCount: (count: number) => `${count} interrupted`,
   working: (time: string) => `Working for ${time}`,
   worked: (time: string) => `Worked for ${time}`,
@@ -361,6 +370,13 @@ const KO: typeof EN = {
   failedCount: ((count: number) => `${count}개 실패`),
   deniedCount: ((count: number) => `${count}개 거부`),
   refusedCount: ((count: number) => `제안 ${count}개 받지 않음`),
+  refusedReason: (reason: ChatToolRefusal): string => ({
+    cap: `한 턴에 ${TASK_SUGGESTION_LIMITS.perTurn}개까지만 받습니다`,
+    off: '제안 작업이 꺼져 있습니다',
+    stopped: 'AI가 멈춰 있는 동안에는 받지 않습니다',
+    unattended: '사람이 보낸 턴에서만 받습니다',
+    unknown: '앱이 받지 않았습니다',
+  })[reason],
   interruptedCount: ((count: number) => `${count}개 중단`),
   working: ((time: string) => `${time}째 작업 중`),
   worked: ((time: string) => `${time} 동안 작업함`),

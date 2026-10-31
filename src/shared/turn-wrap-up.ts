@@ -97,6 +97,13 @@ export interface TurnRecap {
   readonly createdAt: string;
 }
 
+/**
+ * Why the host said no to a `suggest_task` call, as a code the app words itself: the answer's `error` is written to the
+ * AI, and no screen shows it as the reason.
+ */
+export const SUGGEST_TASK_REFUSALS = ['cap', 'off', 'stopped', 'unattended'] as const;
+export type SuggestTaskRefusal = (typeof SUGGEST_TASK_REFUSALS)[number];
+
 /** One `suggest_task` call: what the AI proposes, with the instruction exactly as it would be sent. */
 export interface SuggestedTask {
   readonly id: string;

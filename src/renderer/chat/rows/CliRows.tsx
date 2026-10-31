@@ -92,7 +92,7 @@ export function CliAssistant({ row, providerLabel }: { readonly row: RowOf<'assi
 
 function resultSummary(tool: ChatTool, copy: ReturnType<typeof useChatCopy>, locale: 'ko' | 'en'): { readonly lines: readonly string[]; readonly hidden: number; readonly tone?: 'danger' | 'muted' } {
   if (tool.awaitingApproval) return { lines: [locale === 'ko' ? '승인 대기 중…' : 'Waiting for approval…'], hidden: 0, tone: 'muted' };
-  if (tool.refused !== undefined) return { lines: [`${toolVerb(tool, locale)} · ${tool.refused}`], hidden: 0, tone: 'muted' };
+  if (tool.refused !== undefined) return { lines: [`${toolVerb(tool, locale)} · ${copy.refusedReason(tool.refused)}`], hidden: 0, tone: 'muted' };
   if (tool.status === 'running') return { lines: [locale === 'ko' ? '실행 중…' : 'Running…'], hidden: 0, tone: 'muted' };
   if (tool.status === 'denied') return { lines: [locale === 'ko' ? '사용자가 거부함' : 'User rejected'], hidden: 0, tone: 'danger' };
   if (tool.status === 'interrupted') return { lines: [locale === 'ko' ? '중단됨' : 'Interrupted'], hidden: 0, tone: 'muted' };

@@ -135,7 +135,7 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
           <StatusGlyph tool={tool} />
           {detail && <Glyph name="next" className="chat-chevron" />}
         </span>
-        {tool.refused !== undefined && <span className="chat-tool__refused">{tool.refused}</span>}
+        {tool.refused !== undefined && <span className="chat-tool__refused">{copy.refusedReason(tool.refused)}</span>}
       </button>
       {tool.subagent && context.onOpenRelated && (
         <button type="button" className="chat-link-button chat-tool__open" onClick={() => context.onOpenRelated?.(tool.subagent!.sessionId)}

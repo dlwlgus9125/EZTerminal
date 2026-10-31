@@ -16,7 +16,7 @@ import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/
 import { childProgress, finalAssistantText, latestFinishedTurn, reportBackRequested, type TranscriptReader } from './managed-child-transcript';
 import type { ProviderSessionContext } from './agent-provider-adapter';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
-import { SUGGEST_TASK_TOOL, TASK_SUGGESTION_LIMITS } from '../shared/turn-wrap-up';
+import { SUGGEST_TASK_TOOL, TASK_SUGGESTION_LIMITS, type SuggestTaskRefusal } from '../shared/turn-wrap-up';
 import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema, type WorkflowCommand } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import { WORKFLOW_SKILL } from '../shared/workflow-skill';
@@ -98,7 +98,8 @@ export interface SuggestTaskInput {
   readonly worktree?: boolean;
 }
 
-export type SuggestTaskResult = { readonly ok: true; readonly taskId: string } | { readonly ok: false; readonly error: string };
+/** `error` is for the AI; `code`, when the host has one, is what a screen words for the person. */
+export type SuggestTaskResult = { readonly ok: true; readonly taskId: string } | { readonly ok: false; readonly code?: SuggestTaskRefusal; readonly error: string };
 
 /** What `suggest_task` calls. */
 export interface WrapUpToolHost {
@@ -901,7 +902,7 @@ export class AgentOrchestrationMcpServer {
     const turnId = ownerAgent.currentTurnId;
     if (!turnId) throw new McpRequestError(-32002, 'suggest_task works only during a turn.');
     // A read-only tool needs no approval, so a fork of a stopped turn could otherwise land a card.
-    if (ownerAgent.state === 'blocked') throw new McpRequestError(-32002, 'suggest_task waits until the turn is no longer stopped on the person.');
+    if (ownerAgent.state === 'blocked') return toolText({ ok: false, code: 'stopped', error: 'suggest_task waits until the turn is no longer stopped on the person.' } satisfies SuggestTaskResult, true);
     const result = await host.suggest({ sessionId, turnId }, { title, prompt, rationale, ...(args.worktree !== undefined ? { worktree: args.worktree } : {}) });
     return toolText(result, !result.ok);
   }

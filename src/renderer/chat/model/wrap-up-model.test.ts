@@ -114,19 +114,37 @@ describe('turn wrap-up rows', () => {
 
   describe('a call the host said no to', () => {
     const REASON = 'A turn can suggest 8 tasks. Stop suggesting; this one was not kept.';
-    const NO = `{"ok":false,"error":"${REASON}"}`;
+    const NO = `{"ok":false,"code":"cap","error":"${REASON}"}`;
     const tools = (items: readonly DaemonTranscriptItem[], fixture: ReturnType<typeof cartStory>) => buildChatModel({ items, turns: fixture.turns }).rows
       .flatMap((row) => (row.kind === 'activity' ? row.entries.flatMap((entry) => (entry.kind === 'tool' ? [entry.tool] : [])) : []))
       .filter((tool) => tool.name.endsWith('suggest_task'));
 
-    it('carries the host’s reason and the suggestion’s title, as each AI records it', () => {
+    it('carries the host’s code and the suggestion’s title, as each AI records it', () => {
       const claude = cartStory('en', 'claude');
       const codex = cartStory('en', 'codex');
       const [fromClaude] = tools([...claude.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: NO })], claude);
       const [fromCodex] = tools([...codex.items, ...call(500, SUGGEST_TASK_TOOL, { server: SUGGEST_TASK_SERVER, status: 'failed', result: `${SUGGEST_TASK_SERVER}/${SUGGEST_TASK_TOOL}: failed\n${NO}` })], codex);
       for (const tool of [fromClaude!, fromCodex!]) {
-        expect(tool).toMatchObject({ status: 'failed', refused: REASON, target: 'Fix the tax rounding' });
+        expect(tool).toMatchObject({ status: 'failed', refused: 'cap', target: 'Fix the tax rounding' });
       }
+    });
+
+    it.each([
+      ['the cap', 'cap', 'cap'],
+      ['the switch', 'off', 'off'],
+      ['a stopped AI', 'stopped', 'stopped'],
+      ['a turn no person sent', 'unattended', 'unattended'],
+      ['a code this client does not know', 'something-new', 'unknown'],
+    ])('reads %s from the host’s code, not its words', (_name, code, refused) => {
+      const fixture = cartStory('en', 'claude');
+      const [tool] = tools([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: `{"ok":false,"code":"${code}","error":"${REASON}"}` })], fixture);
+      expect(tool?.refused).toBe(refused);
+    });
+
+    it('calls an answer with no code unknown: it still is a refusal, and its words were for the AI', () => {
+      const fixture = cartStory('en', 'claude');
+      const [tool] = tools([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: `{"ok":false,"error":"${REASON}"}` })], fixture);
+      expect(tool?.refused).toBe('unknown');
     });
 
     it('leaves another server’s tool of that name an ordinary failed row', () => {
