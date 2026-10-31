@@ -21,7 +21,7 @@ import { createDaemonCommand } from '../../src/shared/daemon-protocol';
 import {
   CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM, fixOutcomesReview, inSession, otherAiReview, OTHER_REVIEW_ID, OUTCOMES_REVIEW_ID, withId,
 } from '../../src/renderer/chat/review/review-fixtures';
-import { cartStory, formatStory, inSession as wrapUpInSession, type WrapUpFixture } from '../../src/renderer/chat/wrap-up/wrap-up-fixtures';
+import { cartStory, formatStory, inSession as wrapUpInSession, waitingStory, type WrapUpFixture } from '../../src/renderer/chat/wrap-up/wrap-up-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -2054,6 +2054,13 @@ describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
     await until(() => { expect(testIds('chat-task-card')[0]).toBeDefined(); });
     expect(container.querySelector('[data-action]')).toBeNull();
     expect(testIds('chat-task-defaults')).toHaveLength(0);
+  });
+
+  it('keeps a recap written while the AI waited above what the turn did after the answer', async () => {
+    await open(waitingStory('en', { answered: true }), [CAPABILITY]);
+    await until(() => { expect(testIds('chat-recap-card')[0]?.textContent).toContain('It stopped to ask'); });
+    const page = container.textContent ?? '';
+    expect(page.indexOf('It stopped to ask')).toBeLessThan(page.indexOf('Understood: no unit test for now.'));
   });
 
   it('shows the PC’s suggestion as the chip', async () => {

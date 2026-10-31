@@ -367,18 +367,18 @@ export function waitingStory(lang: WrapLanguage, { answered = false }: { readonl
   const question = item(asked, 'tool-call', `AskUserQuestion\n${JSON.stringify({ questions })}`, {
     turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'call', status: 'running' },
   });
-  const answer = [
-    item(asked + 1, 'tool-result', text.planOptions[0], {
-      turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'result', status: 'completed' },
-    }),
-    item(asked + 2, 'assistant-message', text.planAnswered, { turnId: lastTurnId }),
-  ];
-  const recap = recapRow(asked + 3, {
+  const recap = recapRow(asked + 1, {
     turnId: lastTurnId, providerId: 'claude', trigger: 'waiting', waiting: 'question', decisionId: WAITING_DECISION_ID, state: 'complete',
     text: lang === 'ko' ? PROBE_RECAPS.claude.afterPlanKoWaiting : PROBE_RECAPS.claude.afterFixEn,
   }, iso(asked * 3 + 6));
+  const answer = [
+    item(asked + 2, 'tool-result', text.planOptions[0], {
+      turnId: lastTurnId, payload: { v: 1, type: 'tool', callId, name: 'AskUserQuestion', category: 'question', phase: 'result', status: 'completed' },
+    }),
+    item(asked + 3, 'assistant-message', text.planAnswered, { turnId: lastTurnId }),
+  ];
   return {
-    items: answered ? [...items, question, ...answer, recap] : [...items, question, recap],
+    items: answered ? [...items, question, recap, ...answer] : [...items, question, recap],
     turns: turns.map((entry) => (entry.id !== lastTurnId ? entry
       : answered ? turn(lastTurnId, 'completed', entry.createdAt, iso((asked + 2) * 3)) : turn(lastTurnId, 'blocked', entry.createdAt))),
     approvals: [{

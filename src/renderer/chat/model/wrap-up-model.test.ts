@@ -183,6 +183,79 @@ describe('turn wrap-up rows', () => {
     expect(recapRow(model.rows).waitingNow).toBeFalsy();
   });
 
+  describe('a recap written while the AI waited', () => {
+    /** A row of the stopped turn, after everything in the fixture. */
+    const later = (fixture: ReturnType<typeof waitingStory>, offset: number, kind: DaemonTranscriptItem['kind'], text: string, payload?: DaemonTranscriptItem['payload']): DaemonTranscriptItem => {
+      const last = fixture.items[fixture.items.length - 1]!;
+      return {
+        id: `later-${String(offset)}`, sessionId: WRAP_SESSION, sequence: last.sequence + offset, turnId: last.turnId!, kind, text, isDelta: false, isSensitive: false, createdAt: last.createdAt,
+        ...(payload ? { payload } : {}),
+      };
+    };
+    const tool = (callId: string, name: string, phase: 'call' | 'result', status: 'running' | 'completed'): NonNullable<DaemonTranscriptItem['payload']> => ({
+      v: 1, type: 'tool', callId, name, category: name === 'AskUserQuestion' ? 'question' : 'read', phase, status,
+    });
+    /** The person answered and the turn ran on: one more tool line, then its last message. */
+    const ranOn = (fixture: ReturnType<typeof waitingStory>) => ({
+      items: [
+        ...fixture.items,
+        later(fixture, 1, 'tool-result', 'Parentheses', tool('call-question', 'AskUserQuestion', 'result', 'completed')),
+        later(fixture, 2, 'tool-call', 'Read', tool('call-after', 'Read', 'call', 'running')),
+        later(fixture, 3, 'tool-result', '1 line', tool('call-after', 'Read', 'result', 'completed')),
+        later(fixture, 4, 'assistant-message', 'Finished after the answer.'),
+      ],
+      turns: fixture.turns.map((turn) => (turn.state === 'blocked' ? { ...turn, state: 'completed' as const, finishedAt: fixture.items[fixture.items.length - 1]!.createdAt } : turn)),
+      approvals: fixture.approvals!.map((approval) => ({ ...approval, state: 'allowed' as const })),
+    });
+
+    it('stays where the AI stopped when the turn runs on below it', () => {
+      const model = buildChatModel(ranOn(waitingStory('en')));
+      expect(kinds(model.rows).slice(-4)).toEqual(['recap', 'activity', 'assistant', 'changes']);
+      expect(recapRow(model.rows).waitingNow).toBeFalsy();
+    });
+
+    it('keeps the tool lines after the stop below it, in their own run', () => {
+      const fixture = waitingStory('en');
+      const recap = fixture.items[fixture.items.length - 1]!;
+      const before = later(fixture, -1, 'tool-call', 'Read', tool('call-before', 'Read', 'call', 'running'));
+      const model = buildChatModel(ranOn({ ...fixture, items: [...fixture.items.slice(0, -1), before, { ...recap, sequence: recap.sequence }] }));
+      const names = kinds(model.rows);
+      expect(names.indexOf('activity')).toBeLessThan(names.indexOf('recap'));
+      expect(names.lastIndexOf('activity')).toBeGreaterThan(names.indexOf('recap'));
+    });
+
+    it('holds its place through a later attempt: its first row is where the AI stopped', () => {
+      const fixture = waitingStory('en');
+      const run = ranOn(fixture);
+      const recap = fixture.items[fixture.items.length - 1]!;
+      const again: DaemonTranscriptItem = {
+        ...recap, id: 'recap-again', sequence: run.items[run.items.length - 1]!.sequence + 1,
+        payload: { v: 1, type: 'recap', turnId: recap.turnId!, providerId: 'claude', trigger: 'waiting', state: 'complete', text: 'Written again.' },
+      };
+      const model = buildChatModel({ ...run, items: [...run.items, again] });
+      expect(kinds(model.rows).slice(-4)).toEqual(['recap', 'activity', 'assistant', 'changes']);
+      expect(kinds(model.rows).filter((kind) => kind === 'recap')).toHaveLength(1);
+      expect(recapRow(model.rows).recap.text).toBe('Written again.');
+    });
+
+    it('closes its turn as any recap does when nothing came after it: after the changes and the tasks', () => {
+      const fixture = cartStory('en', 'codex');
+      const last = fixture.items[fixture.items.length - 1]!;
+      const recap: DaemonTranscriptItem = {
+        id: 'recap-plan', sessionId: WRAP_SESSION, sequence: last.sequence + 1, kind: 'notice', text: 'A plan waits.', isDelta: false, isSensitive: true, turnId: 'turn-cart', createdAt: last.createdAt,
+        payload: { v: 1, type: 'recap', turnId: 'turn-cart', providerId: 'codex', trigger: 'waiting', waiting: 'plan', decisionId: 'plan-1', state: 'complete', text: 'A plan waits.' },
+      };
+      expect(kinds(buildChatModel({ items: [...fixture.items, recap], turns: fixture.turns }).rows).slice(-4)).toEqual(['assistant', 'changes', 'task-suggestions', 'recap']);
+    });
+
+    it('leaves a turn-end recap after the final message', () => {
+      const run = ranOn(waitingStory('en'));
+      const items = run.items.map((item): DaemonTranscriptItem => (item.payload?.type === 'recap'
+        ? { ...item, payload: { v: 1, type: 'recap', turnId: item.turnId!, providerId: 'claude', trigger: 'unattended', state: 'complete', text: 'Away.' } } : item));
+      expect(kinds(buildChatModel({ ...run, items }).rows).slice(-4)).toEqual(['activity', 'assistant', 'changes', 'recap']);
+    });
+  });
+
   it('reads each task’s outcome from its latest row', () => {
     const fixture = cartStory('ko', 'claude', 'states');
     const { rows } = buildChatModel({ items: fixture.items, turns: fixture.turns });

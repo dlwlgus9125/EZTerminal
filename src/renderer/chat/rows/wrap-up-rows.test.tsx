@@ -8,7 +8,7 @@ import { AppI18nProvider } from '../../i18n';
 import { ChatProvider, type ChatContextValue, type ChatWrapUpAction } from '../ChatContext';
 import { ChatRowView } from '../ChatRowView';
 import { buildChatModel } from '../model/build-chat-model';
-import { cartStory, formatStory, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
+import { cartStory, formatStory, waitingStory, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +57,16 @@ describe('a recap that could not be written', () => {
     render(failed, { onWrapUpAction: vi.fn() });
     expect(byTestId('chat-recap-line')?.textContent).toContain('요약을 만들지 못했습니다 · 연결 끊김');
     expect(buttons()).not.toContain('다시 만들기');
+  });
+});
+
+describe('a recap written while the AI waited, once the turn ran on', () => {
+  it.each(['bubble', 'cli'] as const)('stays above what came after the answer and says it was answered (%s)', (skin) => {
+    render(waitingStory('ko', { answered: true }), { skin, onFocusDecision: () => true });
+    const page = container.textContent ?? '';
+    expect(byTestId('chat-recap-card')?.textContent).toContain('답을 기다렸던 턴');
+    expect(page.indexOf('답을 기다렸던 턴')).toBeLessThan(page.indexOf('음수는 괄호로 표시하기로 하고'));
+    expect(byTestId('chat-recap-answer')).toBeNull();
   });
 });
 

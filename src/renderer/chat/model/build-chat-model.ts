@@ -4,6 +4,7 @@ import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
+import type { TurnRecap } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
@@ -398,6 +399,13 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     const turn = turnById.get(turnId);
     return turn ? ACTIVE_TURN_STATES.has(turn.state) : false;
   };
+  // The turns whose recap stays where the AI stopped: a recap of a turn's end goes after its last message instead.
+  const stoppedRecaps = new Set<string>();
+  const recapRowOf = (turnId: string, recap: TurnRecap): ChatRow => {
+    // What it stopped for may have been answered since, and a later turn's approval is not this one.
+    const waitingNow = recap.decisionId !== undefined && approvals.some((approval) => approval.id === recap.decisionId && approval.state === 'pending');
+    return { kind: 'recap', id: `recap:${turnId}`, turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) };
+  };
   const closeActivity = (): void => { activity = undefined; };
   const push = (row: ChatRow): void => {
     closeActivity();
@@ -579,8 +587,17 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           recordTodo(item, [...payload.items]);
           break;
         }
+        // A stopped recap holds its first row's place: what the turn did after the person answered reads below it.
+        if (payload?.type === 'recap') {
+          const recap = recapCards.get(payload.turnId);
+          if (recap?.trigger === 'waiting' && !stoppedRecaps.has(payload.turnId)) {
+            stoppedRecaps.add(payload.turnId);
+            push(recapRowOf(payload.turnId, recap));
+          }
+          break;
+        }
         // Turn wrap-up's rows are read ahead into their turn's cards. Not pushed, like a review's: the run of tool lines goes on.
-        if (payload?.type === 'recap' || payload?.type === 'task-suggestion' || payload?.type === 'task-suggestion-status' || payload?.type === 'task-suggestions-dropped') break;
+        if (payload?.type === 'task-suggestion' || payload?.type === 'task-suggestion-status' || payload?.type === 'task-suggestions-dropped') break;
         // A review keeps the place of its first row; each later row replaces what the card shows.
         // Replaced in place, not pushed: the card does not end the run of tool lines around it.
         if (payload?.type === 'review') {
@@ -682,7 +699,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
       };
     }
     if (row.kind === 'turn-status' && ACTIVE_TURN_STATES.has(row.state)) liveStatus.set(row.turnId, row);
-    else finalRows.push(row);
+    // A stopped recap nothing came after closes its turn as any recap does, below.
+    else if (row.kind !== 'recap' || lastRowOfTurn.get(row.turnId) !== index) finalRows.push(row);
     // A review card stays where it was asked for, also inside a running turn; that turn's rollups still close the turn.
     let after = index + 1;
     while (rows[after]?.kind === 'review' && !rows[after]!.turnId) after += 1;
@@ -698,11 +716,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         const suggestions = taskCards.get(row.turnId);
         if (suggestions) finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
         const recap = recapCards.get(row.turnId);
-        if (recap) {
-          // What it stopped for may have been answered since, and a later turn's approval is not this one.
-          const waitingNow = recap.decisionId !== undefined && approvals.some((approval) => approval.id === recap.decisionId && approval.state === 'pending');
-          finalRows.push({ kind: 'recap', id: `recap:${row.turnId}`, turnId: row.turnId, createdAt: recap.createdAt, recap, ...(waitingNow ? { waitingNow } : {}) });
-        }
+        if (recap && (row.kind === 'recap' || !stoppedRecaps.has(row.turnId))) finalRows.push(recapRowOf(row.turnId, recap));
       }
       const status = liveStatus.get(row.turnId);
       if (status) {
