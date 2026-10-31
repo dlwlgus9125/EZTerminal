@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e6254db598c22faa5adf98c9391941d4fa32f11889463922ce6cc4317040da7f",
+        "inputDigest": "sha256:b5977f6388d91e6e1c6314197cb4f1cb9cef97aa999e3427e05cc5ee1a0fdc81",
         "decision": "map-updated",
         "reason": "Turn wrap-up: main builds a wrap-up coordinator, hands it to the provider runtime and the MCP tier, and starts it after the review coordinator; launches carry suggest_task and wrap-up context; the runtime adds handlers and card checks. Claims name them."
       }
@@ -657,7 +657,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:46bf00dcb1773b4a7d9f475227c844389751aa02e7134dfcc2fac8b2aaf340af",
+        "inputDigest": "sha256:386b3c034b4b5de98285f45fe5f47c80887c208b634a2ddb4f7316e0d8a97ab7",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (turn wrap-up): the conversation surface adds wrap-up cards; planning runs, delivery and the change review the map claims are unchanged and its anchors only moved."
       }

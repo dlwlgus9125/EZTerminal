@@ -121,8 +121,8 @@
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
           "startLine": 1222,
-          "endLine": 1437,
-          "lineDigest": "sha256:20c2aa17505e095be1d2d088e8afea0e7daa4871c53a7245cf3a3da67bda8cf8",
+          "endLine": 1438,
+          "lineDigest": "sha256:e3888947017c0c76127300d857bdc91f79f24475ba3515c0622d6f26037bad9b",
           "claim": "The shared Session surface keeps transcript and encrypted drafts, scoped history, profile hand-off, /clear restart, in-memory /btw questions, host-run AI reviews, turn wrap-up cards, and the workflow reference and send-loading gates."
         },
         {
