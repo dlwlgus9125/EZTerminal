@@ -163,7 +163,7 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md"
       title={text(`${branch} 병합`, `Merge ${branch}`)} icon={<Glyph name="merge" />}
-      description={text(`${branch}의 작업을 ${base}로 합칩니다. ${base}에 병합 커밋이 하나 생깁니다.`, `Brings ${branch} into ${base} with one merge commit.`)}
+      {...(status?.untouched && !inBase ? {} : { description: text(`${branch}의 작업을 ${base}로 합칩니다. ${base}에 병합 커밋이 하나 생깁니다.`, `Brings ${branch} into ${base} with one merge commit.`) })}
       closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
       footer={<>
         <Button variant="secondary" disabled={busy !== null} onClick={() => onOpenChange(false)}>{merged ? text('닫기', 'Close') : text('취소', 'Cancel')}</Button>

@@ -47,6 +47,12 @@ describe('cleaning up a worktree', () => {
     expect(byTestId('worktree-merge-note')?.textContent).toBe('자기 커밋도 커밋 안 된 변경도 없어 병합 없이 정리할 수 있습니다.');
     expect(byTestId('worktree-merge-confirm')).toBeNull();
     expect(byTestId('worktree-cleanup')).not.toBeNull();
+    expect(byTestId('worktree-merge-dialog')?.textContent).not.toContain('병합 커밋이 하나 생깁니다');
+  });
+
+  it('still says what a merge does while there is one to make', async () => {
+    await open({ ...untouched, ahead: 1, untouched: false, status: 'review' });
+    expect(byTestId('worktree-merge-dialog')?.textContent).toContain('병합 커밋이 하나 생깁니다');
   });
 
   it('does not claim its work is merged when it asks to confirm', async () => {
