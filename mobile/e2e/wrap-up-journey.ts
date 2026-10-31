@@ -982,7 +982,8 @@ async function main(): Promise<void> {
     const refusedText = await textOf(refusedRow);
     assert.match(refusedText, /제안 받지 않음/u);
     assert.match(refusedText, /점검 9/u);
-    assert.match(refusedText, /A turn can suggest 8 tasks/u, 'the reason is not on the row');
+    assert.match(refusedText, /한 턴에 8개까지만 받습니다/u, 'the reason is not on the row');
+    assert.doesNotMatch(refusedText, /Stop suggesting|A turn can suggest/u, 'the row shows what the host told the AI');
     assert.doesNotMatch(refusedText, /도구 실패/u);
     await assertFits('받지 않은 제안', refusedRow);
     // One line, then the reason. WebView 74 does not lay a <button> out as a grid, so without its own rule the parts stack.
