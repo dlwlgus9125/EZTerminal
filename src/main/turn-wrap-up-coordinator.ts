@@ -93,11 +93,9 @@ function suggestionsOn(settings: TurnWrapUpSettings, providerId: string): boolea
   return (providerId === 'claude' || providerId === 'codex') && settings.suggestions[providerId];
 }
 
-/** What a provider's own suggestions run as: `on-past-limit` only with the near-limit pause off (it beats the provider's own stop). */
+/** What a provider's own suggestions run as: on, until the switch is off or the pause holds them at 90%. */
 export function suggestionMode(settings: TurnWrapUpSettings, providerId: string, paused: boolean): PromptSuggestionMode {
-  if (!suggestionsOn(settings, providerId)) return 'off';
-  if (!settings.pauseNearLimit) return 'on-past-limit';
-  return paused ? 'off' : 'on';
+  return suggestionsOn(settings, providerId) && !(settings.pauseNearLimit && paused) ? 'on' : 'off';
 }
 
 /** The usage windows at the danger level now; a window whose reset has passed is over, whatever its last reading says. */

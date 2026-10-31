@@ -1940,8 +1940,8 @@ describe('Claude turn wrap-up', () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession(eligible);
     expect(fixture.query.inputOptions.promptSuggestions).toBe(true);
-    // On is the CLI's default: nothing to set before the first turn.
-    expect(fixture.query.flagSettings).toEqual([]);
+    // From before the first turn: left unset, the CLI's own stop at its first usage warning would hold.
+    expect(fixture.query.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'true' } }]);
     await fixture.adapter.dispose();
 
     const plain = makeAdapter();
@@ -1965,17 +1965,16 @@ describe('Claude turn wrap-up', () => {
     await fixture.adapter.dispose();
   });
 
-  it('switches live through the variable: off, on again, and past the CLI’s own near-limit stop', async () => {
+  it('switches live through the variable: on is always `true`, which beats the CLI’s own stop', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession(eligible);
     await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
     await fixture.adapter.setPromptSuggestions(context.sessionId, 'on');
-    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on-past-limit');
     expect(fixture.query.flagSettings).toEqual([
-      { env: { [SUGGESTION_VARIABLE]: 'false' } }, { env: { [SUGGESTION_VARIABLE]: '' } }, { env: { [SUGGESTION_VARIABLE]: 'true' } },
+      { env: { [SUGGESTION_VARIABLE]: 'true' } }, { env: { [SUGGESTION_VARIABLE]: 'false' } }, { env: { [SUGGESTION_VARIABLE]: 'true' } },
     ]);
     // The same mode again sends nothing.
-    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on-past-limit');
+    await fixture.adapter.setPromptSuggestions(context.sessionId, 'on');
     expect(fixture.query.flagSettings).toHaveLength(3);
     await fixture.adapter.dispose();
   });
@@ -1986,6 +1985,15 @@ describe('Claude turn wrap-up', () => {
     await fixture.adapter.setPromptSuggestions(context.sessionId, 'off');
     await fixture.adapter.setPromptSuggestions('no-such-session', 'off');
     expect(fixture.query.flagSettings).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('sets the variable again on a relaunch: a new CLI process starts without it', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(eligible);
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'full-access' });
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.queries[1]!.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'true' } }]);
     await fixture.adapter.dispose();
   });
 
@@ -2007,11 +2015,11 @@ describe('Claude turn wrap-up', () => {
       sessionId: context.sessionId, providerSessionId, turnId, commandId: `command-${turnId}`, prompt: 'Hi', promptSuggestions,
     });
     await send('turn-1', 'off');
-    expect(fixture.query.flagSettings).toEqual([{ env: { [SUGGESTION_VARIABLE]: 'false' } }]);
+    expect(fixture.query.flagSettings.at(-1)).toEqual({ env: { [SUGGESTION_VARIABLE]: 'false' } });
     finish(fixture, 'turn-1');
     await finished(fixture, 'turn-1');
     await send('turn-2', 'on');
-    expect(fixture.query.flagSettings.at(-1)).toEqual({ env: { [SUGGESTION_VARIABLE]: '' } });
+    expect(fixture.query.flagSettings.at(-1)).toEqual({ env: { [SUGGESTION_VARIABLE]: 'true' } });
     await fixture.adapter.dispose();
   });
 

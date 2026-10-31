@@ -132,17 +132,17 @@ describe('wrapUpAllowed: the one rule, by session class', () => {
 describe('suggestionMode', () => {
   const settings = (patch: Partial<TurnWrapUpSettings>): TurnWrapUpSettings => ({ ...DEFAULT_TURN_WRAP_UP_SETTINGS, ...patch });
 
-  it('leaves suggestions to the AI when the pause is on and nothing is near a limit', () => {
+  it('keeps them on while nothing is at 90', () => {
     expect(suggestionMode(settings({}), 'claude', false)).toBe('on');
   });
 
-  it('stops them while paused', () => {
+  it('stops them while paused at 90', () => {
     expect(suggestionMode(settings({}), 'claude', true)).toBe('off');
   });
 
-  it('keeps them on past the AI\'s own near-limit stop when the pause is off', () => {
-    expect(suggestionMode(settings({ pauseNearLimit: false }), 'claude', false)).toBe('on-past-limit');
-    expect(suggestionMode(settings({ pauseNearLimit: false }), 'claude', true)).toBe('on-past-limit');
+  it('never stops them at 90 with the pause off: at the real limit the CLI stops anyway', () => {
+    expect(suggestionMode(settings({ pauseNearLimit: false }), 'claude', false)).toBe('on');
+    expect(suggestionMode(settings({ pauseNearLimit: false }), 'claude', true)).toBe('on');
   });
 
   it('stops them when the switch is off, whatever else holds', () => {
@@ -758,13 +758,15 @@ describe('the live switch for a provider\'s own suggestions', () => {
     } finally { await dispose(h); }
   });
 
-  it('keeps them on past the limit when the pause is off', async () => {
+  it('brings them back at once when the pause is turned off at 90', async () => {
     const h = await harness();
     try {
       await h.conversation('claude');
+      await pause(h, 95);
+      expect(h.claude.setPromptSuggestions).toHaveBeenLastCalledWith('chat', 'off');
       h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, pauseNearLimit: false };
       h.coordinator.settingsChanged();
-      expect(h.claude.setPromptSuggestions).toHaveBeenLastCalledWith('chat', 'on-past-limit');
+      expect(h.claude.setPromptSuggestions).toHaveBeenLastCalledWith('chat', 'on');
     } finally { await dispose(h); }
   });
 
@@ -1814,12 +1816,12 @@ describe('launching a session', () => {
     } finally { await dispose(h); }
   });
 
-  it('launches past the near-limit stop when the pause is off', async () => {
+  it('launches on with the pause off, whatever a window reads', async () => {
     const h = await harness();
     try {
       h.settings.current = { ...DEFAULT_TURN_WRAP_UP_SETTINGS, pauseNearLimit: false };
       await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Fix', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Fix.' });
-      expect(launched(h.claude)?.promptSuggestions).toBe('on-past-limit');
+      expect(launched(h.claude)?.promptSuggestions).toBe('on');
     } finally { await dispose(h); }
   });
 

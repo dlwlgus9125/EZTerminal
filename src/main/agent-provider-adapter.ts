@@ -21,10 +21,10 @@ export type {
 } from '../shared/daemon-provider';
 
 /**
- * A session's next-prompt suggestions, on a provider that makes its own. `off` stops them, `on` leaves them
- * to the provider's rules, `on-past-limit` keeps them on past the provider's own near-limit stop.
+ * A session's next-prompt suggestions, on a provider that makes its own. `on` keeps them on past the provider's
+ * own near-limit stop, so the host's pause at 90% is the only gate; `off` stops them.
  */
-export type PromptSuggestionMode = 'off' | 'on' | 'on-past-limit';
+export type PromptSuggestionMode = 'off' | 'on';
 
 /** Turn wrap-up for a conversation a person sees directly; every other session goes without. */
 export interface ProviderWrapUpContext {

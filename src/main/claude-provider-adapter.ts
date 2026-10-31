@@ -91,10 +91,11 @@ export const CLAUDE_REVIEW_MINIMUM_VERSION = '2.1.312';
 export const CLAUDE_WRAP_UP_MINIMUM_VERSION = '2.1.312';
 /**
  * The only live switch for suggestions (probe P7): `promptSuggestionEnabled` does nothing though `getSettings`
- * says it did, and `env: null` does not restore them. `'true'` beats the CLI's own near-limit stop.
+ * says it did, and `env: null` does not restore them. `'true'` beats the CLI's own stop at its first usage warning
+ * (75% in the live run): the host pauses at 90%, and at the real limit the CLI stops anyway.
  */
 const PROMPT_SUGGESTION_VARIABLE = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
-const PROMPT_SUGGESTION_VALUES: Readonly<Record<PromptSuggestionMode, string>> = { off: 'false', on: '', 'on-past-limit': 'true' };
+const PROMPT_SUGGESTION_VALUES: Readonly<Record<PromptSuggestionMode, string>> = { off: 'false', on: 'true' };
 /** A reviewer reads the folder and the host-supplied diff: no shell (no command allow-list is safe), no writes. */
 const CLAUDE_REVIEW_TOOLS = ['Read', 'Grep', 'Glob'] as const;
 const CLAUDE_REVIEW_DISALLOWED_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task'] as const;
@@ -459,7 +460,7 @@ interface SessionRecord {
   appliedEffort?: string;
   /** The effort this adapter set with applyFlagSettings (absent: the session runs at its own). */
   flagEffort?: string;
-  /** An eligible session's suggestion mode, and the one the CLI runs with: they differ until it is applied. */
+  /** An eligible session's suggestion mode, and the one the CLI runs with: a new CLI process has none until it is applied. */
   suggestionMode?: PromptSuggestionMode;
   appliedSuggestionMode?: PromptSuggestionMode;
   /** The turn a `prompt_suggestion` belongs to: the last one completed, until the next message is sent. */
@@ -2108,7 +2109,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       context,
       bypassArmed: context.permissionPreset === 'full-access' && !context.toolsDisabled,
       ...(context.reasoningEffort ? { appliedEffort: context.reasoningEffort } : {}),
-      ...(context.wrapUp?.promptSuggestions ? { suggestionMode: context.wrapUp.promptSuggestions, appliedSuggestionMode: 'on' as const } : {}),
+      ...(context.wrapUp?.promptSuggestions ? { suggestionMode: context.wrapUp.promptSuggestions } : {}),
       enablement: readiness.enablement,
       handle,
       abortController,
