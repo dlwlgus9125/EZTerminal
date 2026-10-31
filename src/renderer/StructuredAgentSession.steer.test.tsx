@@ -4,7 +4,6 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LongRunDecisionsProvider, RECOMMENDED_LONG_RUN_DECISIONS } from './chat/long-run/long-run-decisions';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
 import { StructuredAgentComposer, type ComposerSteer, type StructuredAgentComposerProps } from './StructuredAgentSession';
@@ -33,14 +32,12 @@ const ok = async (): Promise<{ readonly ok: true }> => ({ ok: true });
 type Sent = StructuredAgentComposerProps['onSend'] & ReturnType<typeof vi.fn>;
 const sender = (): Sent => vi.fn(ok) as unknown as Sent;
 
-function box(props: Partial<StructuredAgentComposerProps> = {}, enter: 'steer' | 'queue' = 'steer'): { readonly send: Sent; readonly interrupt: Sent } {
+function box(props: Partial<StructuredAgentComposerProps> = {}): { readonly send: Sent; readonly interrupt: Sent } {
   const send = sender();
   const interrupt = sender();
   act(() => root.render(
     <AppI18nProvider locale="ko" languages={['ko']}>
-      <LongRunDecisionsProvider value={{ ...RECOMMENDED_LONG_RUN_DECISIONS, enter }}>
-        <StructuredAgentComposer busy onSend={send} onInterruptAndSend={interrupt} {...props} />
-      </LongRunDecisionsProvider>
+      <StructuredAgentComposer busy onSend={send} onInterruptAndSend={interrupt} {...props} />
     </AppI18nProvider>,
   ));
   return { send, interrupt };
@@ -134,18 +131,6 @@ describe('the busy message box', () => {
     await press({ key: 'Enter' });
     expect(send).toHaveBeenCalledWith('이제');
     expect(running.onSteer).not.toHaveBeenCalled();
-  });
-
-  it('with the other D1 option, Enter queues and a button puts it in', async () => {
-    const running = steer();
-    const { send } = box({ steer: running }, 'queue');
-    type('다음에');
-    await press({ key: 'Enter' });
-    expect(send).toHaveBeenCalledWith('다음에');
-    expect(running.onSteer).not.toHaveBeenCalled();
-    type('지금');
-    await click(byId('structured-agent-steer')!);
-    expect(running.onSteer).toHaveBeenCalledWith('지금');
   });
 
   it('brings a failed message back after what is typed, without sending it', async () => {

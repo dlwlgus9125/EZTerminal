@@ -23,7 +23,6 @@ import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
-import { LongRunDecisionsProvider, RECOMMENDED_LONG_RUN_DECISIONS, type LongRunDecisions } from './long-run/long-run-decisions';
 import {
   acceptSteer, applyLongRunAction, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, steerStory,
   type LongLanguage, type LongProvider, type LongRunFixture,
@@ -176,12 +175,11 @@ interface ChatOptions {
   readonly height?: number;
   /** After this many ms a message put into the turn lands (the stories that follow one all the way). */
   readonly landAfter?: number;
-  readonly decisions?: Partial<LongRunDecisions>;
   /** A child conversation (D7). */
   readonly child?: boolean;
 }
 
-function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, decisions, child = false }: ChatOptions & {
+function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -191,12 +189,10 @@ function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', widt
   const [fixture] = useState(() => inLongSession(make(locale), sessionId));
   const host = useStoryHost(fixture, provider, args, landAfter);
   return (
-    <LongRunDecisionsProvider value={{ ...RECOMMENDED_LONG_RUN_DECISIONS, ...decisions }}>
-      <Desk width={width} height={height}>
-        <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, locale, args)} skin={skin}
-          {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})} />
-      </Desk>
-    </LongRunDecisionsProvider>
+    <Desk width={width} height={height}>
+      <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, locale, args)} skin={skin}
+        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})} />
+    </Desk>
   );
 }
 
@@ -387,23 +383,6 @@ export const SteerUnconfirmed: Story = chat('steer-unconfirmed', (lang) => steer
   await expect(tray).toHaveTextContent('다시 보내면 두 번 읽을 수 있습니다');
   await expect(within(tray).queryByTestId('chat-steer-to-queue')).toBeNull();
 });
-/** D1, the other option: Enter queues as it does today; a separate button puts it in. */
-export const EnterQueues: Story = chat('enter-queues', (lang) => steerStory(lang, 'busy'), { decisions: { enter: 'queue' } }, async ({ canvasElement, args }) => {
-  const input = await composer(canvasElement);
-  await expect(input).toHaveAttribute('placeholder', '다음에 보낼 메시지를 입력하세요 (Esc로 중단)');
-  await userEvent.type(input, '다음 턴에 정리해 줘.{Enter}');
-  await expect(args.onSend).toHaveBeenCalledWith('다음 턴에 정리해 줘.');
-  await expect(args.onSteer).not.toHaveBeenCalled();
-  await userEvent.type(input, '그 파일만 돌려 줘.');
-  await userEvent.click(await findIn(canvasElement, '[data-testid="structured-agent-steer"]'));
-  await expect(args.onSteer).toHaveBeenCalledWith('그 파일만 돌려 줘.');
-  await findIn(canvasElement, TRAY);
-});
-/** Its message box with a draft, to compare with BusyDraft. */
-export const EnterQueuesDraft: Story = chat('enter-queues-draft', (lang) => steerStory(lang, 'busy'), { decisions: { enter: 'queue' } }, async ({ canvasElement }) => {
-  await userEvent.type(await composer(canvasElement), '그 파일만 돌려 줘.');
-  await findIn(canvasElement, '[data-testid="structured-agent-steer"]');
-});
 /** A narrow conversation (520 px): the buttons stay on the box's row, the tray wraps. */
 export const SteerNarrow: Story = chat('steer-narrow', (lang) => steerStory(lang, 'on-its-way'), { width: 520, height: 860 }, async ({ canvasElement }) => {
   await userEvent.type(await composer(canvasElement), '그 파일만 돌려 줘.');
@@ -480,12 +459,6 @@ export const LimitResumed: Story = chat('limit-resumed', (lang) => limitStory(la
   await expect(header(canvasElement)).not.toHaveTextContent('한도');
   scrollToTop(await findIn(canvasElement, CARD));
 });
-/** D3, the other option: a description instead of the words sent. */
-export const LimitResumedDescribed: Story = chat('limit-resumed-described', (lang) => limitStory(lang, 'resumed'), { decisions: { appRow: 'described' } }, async ({ canvasElement }) => {
-  const row = await findIn(canvasElement, '[data-testid="chat-app-sent"]');
-  await expect(row).toHaveTextContent('한도가 풀려 앱이 이어서 하라고 보냈습니다.');
-  await expect(row).not.toHaveTextContent('Continue.');
-});
 /** D4: refused although the reset had passed: one later try, ten minutes on. */
 export const LimitRetrying: Story = chat('limit-retrying', (lang) => limitStory(lang, 'retrying'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
@@ -521,13 +494,6 @@ export const LimitWeeklyScheduled: Story = chat('limit-weekly-scheduled', (lang)
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
-/** D2, the other option: always ask, also for a reset an hour away. */
-export const LimitAlwaysAsk: Story = chat('limit-always-ask', (lang) => limitStory(lang, 'ask-reset'), {}, async ({ canvasElement }) => {
-  const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('자동으로 보내지 않습니다.');
-  await expect(card).not.toHaveTextContent('리셋이 며칠 뒤라');
-  scrollToTop(card);
-});
 /** No reset time known: nothing to wait for, and 이어서 하기 says what an early try costs. */
 export const LimitUnknown: Story = chat('limit-unknown', (lang) => limitStory(lang, 'ask-unknown', { window: 'unknown' }), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
@@ -556,11 +522,6 @@ export const LimitReopened: Story = chat('limit-reopened', (lang) => limitStory(
   await expect(card).toHaveTextContent('앱을 열었다고 저절로 보내지 않습니다.');
   await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
-});
-/** D5, the other option: it resumes by itself when the app opens. */
-export const LimitReopenedAuto: Story = chat('limit-reopened-auto', (lang) => limitStory(lang, 'resumed', { atLaunch: true }), {}, async ({ canvasElement }) => {
-  await expect(await findIn(canvasElement, CARD)).toHaveTextContent('앱을 열면서');
-  scrollToTop(await findIn(canvasElement, CARD));
 });
 /** D6: several conversations, one at a time, 60 s apart, the longest-stopped first. This one is second. */
 export const LimitLine: Story = chat('limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), {}, async ({ canvasElement }) => {
@@ -660,7 +621,7 @@ export const ListDesktopEnglish: Story = { render: (args) => <StoryLocale.Provid
 // ── D. Settings › 에이전트 ─────────────────────────────────────────────────────────────────────────────
 const WRAP_ON: TurnWrapUpSettings = { suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: true };
 
-function SettingsScreen({ autoResume = true, place = 'own-section' }: { readonly autoResume?: boolean; readonly place?: LongRunDecisions['settings'] }): JSX.Element {
+function SettingsScreen({ autoResume = true }: { readonly autoResume?: boolean }): JSX.Element {
   const locale = useContext(StoryLocale);
   const capabilities = useMemo((): CapabilityAccess => {
     const base = storyCapabilities(locale);
@@ -672,20 +633,18 @@ function SettingsScreen({ autoResume = true, place = 'own-section' }: { readonly
     return { ...base, daemon: { ...base.daemon, getSnapshot: async () => ({ ...snapshot, capabilities: [...(snapshot.capabilities ?? []), TURN_WRAP_UP_CAPABILITY] }) }, turnWrapUp, longRun };
   }, [autoResume, locale]);
   return (
-    <LongRunDecisionsProvider value={{ ...RECOMMENDED_LONG_RUN_DECISIONS, settings: place }}>
-      <Desk>
-        <DesktopUiPreferencesProvider capabilities={capabilities}>
-          <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-            <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={440} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
-              <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
-            </SidebarShell>
-            <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
-              <ChatBeside />
-            </div>
+    <Desk>
+      <DesktopUiPreferencesProvider capabilities={capabilities}>
+        <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+          <SidebarShell destination="settings" title={locale === 'ko' ? '설정' : 'Settings'} width={440} overlayBelow={0} onClose={() => undefined} onWidthChange={() => undefined}>
+            <SettingsFixture requestedCategory="agents" capabilities={capabilities} />
+          </SidebarShell>
+          <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
+            <ChatBeside />
           </div>
-        </DesktopUiPreferencesProvider>
-      </Desk>
-    </LongRunDecisionsProvider>
+        </div>
+      </DesktopUiPreferencesProvider>
+    </Desk>
   );
 }
 function ChatBeside(): JSX.Element {
@@ -718,17 +677,6 @@ export const SettingsLongRun: Story = {
     await expect(control).not.toBeChecked();
     await userEvent.click(control);
     toggle.scrollIntoView({ block: 'center' });
-  },
-};
-/** D9, the other option: inside 턴 마무리, whose first line then has to carve out this switch. */
-export const SettingsInWrapUp: Story = {
-  render: () => <SettingsScreen place="in-wrap-up" />,
-  play: async ({ canvasElement }) => {
-    await showSwitch(canvasElement);
-    const section = within(canvasElement).getByTestId('turn-wrap-up-settings');
-    await expect(within(section).getByRole('switch', { name: /한도가 풀리면/u })).toBeChecked();
-    await expect(section).toHaveTextContent('맨 아래 이어서 하기만 누르지 않아도 보냅니다.');
-    await expect(within(canvasElement).queryByTestId('long-run-settings')).toBeNull();
   },
 };
 /** Off: every card asks first. */

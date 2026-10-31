@@ -2,7 +2,6 @@ import type { ApprovalResponse } from '../shared/approval-request';
 import type { SteeredMessage, SteerFallback } from '../shared/long-run';
 import { buildChatModel, coalesceTranscript, type ChatLongRunRows } from './chat/model/build-chat-model';
 import { ChatProvider, type ChatLongRunAction, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
-import { useLongRunDecisions } from './chat/long-run/long-run-decisions';
 import { SteerTray } from './chat/long-run/SteerTray';
 import { ChatTranscript } from './chat/ChatTranscript';
 import type { ChatTailDock } from './chat/ChatViewport';
@@ -1350,8 +1349,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const steerCopy = chatCopy(ko ? 'ko' : 'en').longRun.steer;
-  const { enter: enterDecision } = useLongRunDecisions();
-  const steerOnEnter = steer?.running === true && enterDecision === 'steer';
+  const steerOnEnter = steer?.running === true;
   const [queueBusy, setQueueBusy] = useState(false);
   const queueBusyRef = useRef(false);
   /** Queued review fixes whose message is shown (원문 보기). */
@@ -1444,7 +1442,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     setUncertain(false);
   };
 
-  const deliver = async (asked: 'send' | 'interrupt' | 'steer'): Promise<void> => {
+  const deliver = async (asked: 'send' | 'interrupt'): Promise<void> => {
     if (disabled || completion.composing.current) return;
     if (completion.runAppCommand()) return;
     setAttempted(true);
@@ -1872,21 +1870,6 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               <Glyph name="chat" />
             </button>
           )}
-          {steer?.running && enterDecision === 'queue' && hasDraft && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="chat-composer__interrupt"
-              disabled={sendBlocked}
-              loading={submitting === 'steer'}
-              loadingLabel={copy.sending}
-              onClick={() => void deliver('steer')}
-              data-testid="structured-agent-steer"
-            >
-              {steerCopy.add}
-            </Button>
-          )}
           {!interruptOnOwnRow && interruptButton}
           {/* With a draft the round button sends; stopping stays one click away. */}
           {!interruptOnOwnRow && stopButton}
@@ -2286,7 +2269,6 @@ export function StructuredAgentSessionPanel({
   const chatLocale = useChatLocale();
   const permissionText = agentPermissionCopy(chatLocale);
   const stateLabel = useAgentStateLabel();
-  const { enter: enterDecision } = useLongRunDecisions();
   const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
@@ -2758,7 +2740,7 @@ export function StructuredAgentSessionPanel({
   // 시안: what Enter (on the phone, the send button) does here, and what sending costs while a clock runs.
   const longRunCopy = chatCopy(chatLocale).longRun;
   const steerHintKey = state === 'blocked' ? 'blocked' : providerId === 'codex' ? 'codex' : 'claude';
-  const steerHint = longRun?.steer && turnCurrent && enterDecision === 'steer'
+  const steerHint = longRun?.steer && turnCurrent
     ? (variant === 'mobile' ? longRunCopy.steer.hintMobile : longRunCopy.steer.hint)[steerHintKey] : undefined;
   const longRunHint = steerHint ?? (longRun?.limitHint ? longRunCopy.limit.composerHint : undefined);
   const composerSteer = useMemo(() => (longRun?.steer ? { ...longRun.steer, running: turnCurrent } : undefined), [longRun?.steer, turnCurrent]);

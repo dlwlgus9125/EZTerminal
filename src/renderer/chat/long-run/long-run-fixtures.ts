@@ -33,7 +33,6 @@ export const WEEKLY_RESET_AT = kst(3, 23, 50);
 export const WEEKLY_RESUME_AT = kst(3, 23, 52);
 const PERSON_AT = kst(1, 15, 11);
 const PRESSED_AT = kst(1, 15, 30);
-const REOPENED_AT = kst(1, 18, 4);
 const TRIED_AT = kst(1, 14, 59);
 
 export interface LongRunFixture {
@@ -129,7 +128,7 @@ function steered(lang: LongLanguage, state: SteeredMessage['state'], extra: Part
 
 function approval(callId: string, command: string): DaemonApproval {
   return {
-    id: 'approval-command', sessionId: LONG_SESSION, turnId: 'turn-run', providerRequestId: callId, risk: 'write', title: 'Run a command', state: 'pending',
+    id: 'approval-command', sessionId: LONG_SESSION, turnId: 'turn-run', providerRequestId: callId, risk: 'danger', title: 'Run a command', state: 'pending',
     request: { v: 1, kind: 'command', callId, command }, revision: 1, createdAt: at(8), updatedAt: at(8),
   };
 }
@@ -251,10 +250,6 @@ export interface LimitOptions {
   readonly provider?: LongProvider;
   readonly window?: UsageLimitWindow;
   readonly line?: TurnUsageLimit['line'];
-  /** D5, the other option. */
-  readonly atLaunch?: boolean;
-  /** D2, the other option: asks first although the reset is hours away. */
-  readonly alwaysAsk?: boolean;
   /** Who the row after `resumed` says sent it. */
   readonly reason?: AppSentReason;
   readonly failure?: TurnUsageLimit['failure'];
@@ -281,12 +276,11 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
     case 'resuming':
       return fixture({ state: 'working' });
     case 'resumed': {
-      const when = options.atLaunch ? REOPENED_AT : RESUME_AT;
-      const sent = continueRow(9, 'turn-resume', when, 'completed');
+      const sent = continueRow(9, 'turn-resume', RESUME_AT, 'completed');
       return fixture({
-        items: [...items, sent.row, item(10, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: when })], turns: [...turns, sent.turn],
+        items: [...items, sent.row, item(10, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: RESUME_AT })], turns: [...turns, sent.turn],
         rows: { appSent: new Map([[sent.row.id, options.reason ?? 'limit-lifted']]) },
-      }, { ...limit, resumeAt: when, ...(options.atLaunch ? { atLaunch: true } : {}) });
+      });
     }
     case 'retrying': {
       const sent = continueRow(9, 'turn-try-1', RESUME_AT, 'failed');

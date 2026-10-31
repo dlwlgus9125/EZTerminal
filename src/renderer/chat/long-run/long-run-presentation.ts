@@ -95,7 +95,7 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
       return { ...base, message: { text: copy.sending }, notes: [], actions: [] };
     case 'resumed':
       return {
-        ...base, message: { text: (limit.atLaunch ? copy.sentAtLaunch : copy.sent)(clock(limit.resumeAt)) },
+        ...base, message: { text: copy.sent(clock(limit.resumeAt)) },
         notes: [note('kept', copy.notResent)], actions: [],
       };
     case 'retrying':
@@ -112,7 +112,7 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'ask-reset':
       return {
         ...base, message: { text: resets },
-        notes: [note('why', far ? copy.askFar : copy.askAlways, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
+        notes: [note('why', copy.askFar, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
         actions: [{ id: 'limit-schedule', primary: true }, leave],
       };
     case 'ask-unknown':

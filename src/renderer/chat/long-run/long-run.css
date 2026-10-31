@@ -56,13 +56,10 @@
 .chat-app-sent > .chat-app-sent__text {
   margin: 0;
   color: var(--ui-text-primary);
+  font-family: var(--ui-font-mono);
   font-size: var(--ui-font-size-sm);
   overflow-wrap: break-word;
   overflow-wrap: anywhere;
-}
-
-.chat-app-sent > .chat-app-sent__text[data-exact] {
-  font-family: var(--ui-font-mono);
 }
 
 .chat-cli-app-sent .chat-cli-user__text {

@@ -6,8 +6,8 @@ import { useAppTranslation } from './i18n';
 import { Status, Switch } from './ui';
 import './chat/long-run/long-run.css';
 
-/** 시안: 한도가 풀리면 자동으로 이어서 하기, with what it sends and where it applies. */
-export function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Element {
+/** 시안: the one switch, with what it sends and where it applies. */
+function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const text = (korean: string, english: string): string => (ko ? korean : english);

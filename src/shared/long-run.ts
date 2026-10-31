@@ -61,8 +61,6 @@ export interface TurnUsageLimit {
   readonly triedAt?: string;
   /** D6: several conversations resume one at a time. */
   readonly line?: { readonly position: number; readonly total: number };
-  /** D5, the other option: it resumed by itself when the app opened. */
-  readonly atLaunch?: boolean;
   /** `failed`: why nothing went out, in the app's words. */
   readonly failure?: 'disconnected' | 'session-gone';
 }
