@@ -851,7 +851,13 @@ export const PhoneSuggestionArrives: Story = {
     const box = await findIn(canvasElement, '.chat-composer__box');
     const scroller = await findIn(canvasElement, '.chat-viewport__scroll');
     await waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight));
-    await frames();
+    // Late fonts and highlighting still move a fresh screen: this measures the guess, not those.
+    await document.fonts.ready;
+    for (let still = 0, top = NaN, tries = 0; still < 10 && tries < 300; tries += 1) {
+      await frames();
+      still = topOf(card) === top ? still + 1 : 0;
+      top = topOf(card);
+    }
     const before = { card: topOf(card), box: topOf(box), height: scroller.clientHeight };
     window.dispatchEvent(new Event(GUESS_ARRIVES));
     const chip = await findIn(canvasElement, '[data-testid="structured-agent-suggestion-chip"]');
