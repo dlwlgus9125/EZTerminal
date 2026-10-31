@@ -524,6 +524,15 @@
   min-height: 2.75rem;
 }
 
+.task-start-all-dialog[data-variant='sheet'] .ez-ui-button {
+  min-width: 2.75rem;
+}
+
+.task-start-all-dialog[data-variant='sheet'] .ez-ui-icon-button {
+  inline-size: 2.75rem;
+  min-block-size: 2.75rem;
+}
+
 /* ── Settings › 에이전트 › 턴 마무리 ───────────────────────────────────── */
 .turn-wrap-up-settings > * + * {
   margin-top: var(--ui-space-3);
