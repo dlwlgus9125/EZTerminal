@@ -74,8 +74,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
               onChange={(event) => save({ ...settings, suggestions: { ...settings.suggestions, claude: event.target.checked } })}
               label="Claude"
               description={text(
-                '턴이 끝나고 3–8초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음',
-                'Shows 3–8 s after a turn ends · a small call that reuses the conversation’s cache · none after the first turn or in plan mode',
+                '턴이 끝나고 몇 초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음',
+                'Shows a few seconds after a turn ends · a small call that reuses the conversation’s cache · none after the first turn or in plan mode',
               )}
               data-testid="turn-wrap-up-suggestions-claude"
             />
@@ -84,8 +84,8 @@ export function TurnWrapUpSettings({ access }: { readonly access: TurnWrapUpAcce
               onChange={(event) => save({ ...settings, suggestions: { ...settings.suggestions, codex: event.target.checked } })}
               label="Codex"
               description={text(
-                '턴이 끝나고 7–15초 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음',
-                'Shows 7–15 s after a turn ends · a read-only call that reuses the conversation’s cache · about half the time none',
+                '턴이 끝나고 10초쯤 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음',
+                'Shows about 10 s after a turn ends · a read-only call that reuses the conversation’s cache · about half the time none',
               )}
               data-testid="turn-wrap-up-suggestions-codex"
             />

@@ -938,8 +938,8 @@ export const SettingsTurnWrapUp: Story = {
     const section = await showSettings(canvasElement);
     await expect(within(section).getByRole('switch', { name: /Codex/u })).toBeChecked();
     // What each costs, as the probes measured it.
-    await expect(section).toHaveTextContent('턴이 끝나고 3–8초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음');
-    await expect(section).toHaveTextContent('턴이 끝나고 7–15초 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음');
+    await expect(section).toHaveTextContent('턴이 끝나고 몇 초 뒤 · 대화 캐시를 다시 쓰는 작은 호출 · 첫 턴과 계획 모드에는 없음');
+    await expect(section).toHaveTextContent('턴이 끝나고 10초쯤 뒤 · 대화 캐시를 다시 쓰는 읽기 전용 호출 · 절반쯤은 제안 없음');
     await expect(section).toHaveTextContent('아무 화면도 그 대화를 보지 않을 때 턴이 끝나거나 AI가 멈춰 기다리면 3–4줄로 정리합니다. 턴마다 한 번만, 작은 호출 한 번');
     await expect(section).toHaveTextContent('AI 턴 안에서 제안하므로 따로 부르는 호출이 없습니다');
     await userEvent.click(within(section).getByRole('switch', { name: /요약 카드/u }));
