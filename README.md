@@ -141,6 +141,13 @@ them in a read-only fork of the conversation; another AI reads them in a read-on
 own. Findings arrive as a card by file and line. Fixing sends the chosen ones to the same conversation as
 an ordinary message, and no review runs until a person asks for one.
 
+**Turn wrap-up.** When a turn ends the AI guesses your next message as ghost text in the empty box (Tab fills it,
+nothing is sent; a chip on the phone), and a turn no screen was showing, or one that stopped to wait on you, gets a
+short recap card stored in the conversation. Work the AI noticed outside its job arrives as a suggested-task card:
+start a sub-conversation that asks before it runs, do it here, or dismiss it, and **Start all** confirms where each
+task works first. The AI only proposes; nothing is sent or started until a person presses a button. The two automatic
+calls stop when a usage window reaches the danger level, and Settings › AI › Turn wrap-up switches each part off.
+
 If the structured Agent database cannot be opened or migrated safely, EZTerminal latches into
 terminal-only safe mode for that app process. Existing local and remote terminals keep working while
 Agent history, events, commands, and creation fail closed with a concrete recovery explanation.

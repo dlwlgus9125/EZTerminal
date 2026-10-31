@@ -4,6 +4,22 @@
 
 ### Added
 
+- Turn wrap-up: when a turn ends the AI guesses your next message as ghost text
+  in the empty box (Tab fills it and sends nothing; a chip on the phone). Claude
+  uses its own suggestions; Codex a read-only low-effort fork of the
+  conversation. A turn no screen was showing, or one that stopped to wait on
+  you, gets a 2-4 line recap card, once per turn; recaps are stored in the
+  conversation, unlike /btw. The AI can also put work it noticed outside its job
+  on a suggested-task card (`suggest_task`, 8 per turn): start a sub-conversation
+  that always asks before running, do it here, dismiss it, or Start all, which
+  confirms first and defaults to a new worktree per task (this folder where a
+  worktree can't be made, on the phone or in a folder that isn't a repository).
+  The AI only proposes; nothing is sent or started until a person presses a
+  button. The automatic calls stop at the usage danger level, and Settings › AI ›
+  Turn wrap-up switches each part off. Needs Claude Code 2.1.312 or Codex 0.165.0
+  or later.
+- A worktree with no commits of its own and a clean tree, untracked files
+  included, can now be cleaned up by a person without a merge.
 - App agent conversations (Codex and Claude) now work in every folder
   registered to their project, like the terminal CLI launchers: the
   conversation's working folder first, then the project's other folders.

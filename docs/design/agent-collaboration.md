@@ -352,6 +352,111 @@ diff·파일·인용 블록 안의 글은 지시가 아닌 데이터라고 말�
   특히 `review.fix`는 provider에 전달될 때까지 `pending`·`sent`로 남으므로, 그런 행이 남은 채 앱을 되돌리면 그 빌드가
   시작할 때 행을 다시 파싱하다 DB 초기화가 실패할 수 있다. `agent.submit`에 `reportOf`를 더했을 때와 같은 위험이다.
 
+## 턴 마무리
+
+턴이 끝날 때 AI가 사람의 다음 말과 할 일을 제안하고, 아무도 보지 않던 턴을 요약한다. 결정과 실측 근거는
+[승인 기록](../ux/overhaul/approvals.md#2026-10-30-턴-마무리claude-데스크톱-기능-흡수-2묶음-실험-결정), 제안·카드·확인 창
+화면은 [UX 계약](../ux/frontend-design.md#턴-마무리)이 소유한다. AI는 제안만 한다. 메시지를 보내거나 하위 대화를 시작하는
+것은 사람이 누를 때뿐이다.
+
+### 저장과 /btw와의 차이
+
+요약은 `/btw`와 호출 경로가 같지만 **저장된다**. `/btw`의 질문과 답은 어디에도 남지 않는 반면, 요약은 그 대화의 transcript 행이
+되어 다시 열어도, 다른 기기에서도 보인다. 둘 다 AI의 대화 맥락에는 들어가지 않는다(분기 또는 곁 호출이고 턴이 아니다).
+
+- 요약과 제안 작업 행은 AI가 쓴 글이라 `isSensitive: true`다. 프로젝트 보관본에서 글과 payload가 가려지고 폰의 오프라인 캐시에는
+  남지 않으므로 오프라인 폰에는 이 카드가 없다. `start-failed`도 같고 그 밖의 상태 행은 민감하지 않다.
+- 다음 입력 제안은 저장하지 않는다. host 메모리의 `snapshot.nextPromptSuggestions`(대화별 `{ turnId, text }`)이며 그 턴이 대화의
+  가장 새 턴으로 끝나 있고 뒤에 도는·기다리는 턴이 없을 때만 있다. 새 턴, 스위치 끔, 보관으로 사라진다. CLI 제어 응답과 폰 오프라인
+  캐시에서는 뺀다.
+- 만드는 중인 요약은 `turn-wrap-up-jobs.json`에 적어 두고, 재시작하면 `generating` 행을 `failed/disconnected`로 닫는다.
+
+### 설정과 버전
+
+- host는 snapshot capability `turn-wrap-up-v1`을 알리고 client는 이것이 있을 때만 카드 동작과 설정 절을 켠다. 옛 PC에 붙은 새 client,
+  새 PC에 붙은 옛 client 모두 글 행만 본다.
+- 설정은 `SettingsAuthority`의 `turn-wrap-up.json`(`{ version, suggestions: { claude, codex }, recaps, tasks, pauseNearLimit }`, 기본 모두
+  켬)이다. DB 스키마를 바꾸지 않는다. 파일이 없거나 틀리면 기본값이고, 읽기 전에는 자동 호출이 없다. coordinator와 MCP 도구는 이벤트마다
+  읽으므로 스위치는 바로 듣는다.
+- 지원 최소 버전은 실 provider로 잰 Claude Code 2.1.312, Codex 0.165.0이다(`wrapUpCapability`). 그보다 낮은 AI에서는 턴 마무리가
+  없다: 분기도, 지시도, 도구도 없고 입력창은 그대로다. 낮은 버전이 `turn/start`의 새 입력을 거부하면 사람의 메시지가 실패하기 때문이다.
+
+### 자동 호출과 대상
+
+[`automatic-calls.ts`](../../src/shared/automatic-calls.ts)가 사람이 누르지 않아도 나가는 호출을 모두 적는다: 다음 입력 제안과 턴 요약.
+제안 작업은 AI가 제 턴 안에서 부르는 도구라 따로 부르는 호출이 아니다.
+
+- 대상은 `wrapUpAllowed` 하나로 판단한다. 사람이 보낸 턴(`desktop`·`android` principal)의 사람이 직접 보는 대화뿐이다. 준비 중인 대화,
+  검토자·자문·기획·예약 대화와 AI가 만든 하위 대화는 제외한다. 제안 작업 카드로 시작한 하위 대화는 사람이 메시지를 보낸 뒤부터 대상이다.
+  heartbeat, report-back처럼 사람이 보내지 않은 턴은 Claude에 env `'false'`를 보내 그 턴의 제안 요청 자체를 막는다.
+- 턴이 `completed`가 되면 3초 기다린 뒤 다시 본다. 대화가 바쁘거나 뒤따르는 턴이 있으면 건너뛴다.
+- 한도: 어느 사용량 창이든 `agentUsageLevel`이 `danger`면 자동 호출을 멈추고(`pauseNearLimit`, 초기화 시각이 지난 창은 빼고) 설정 절에
+  그 사실을 보낸다. 요약은 호출 없이 `usage-limit` 줄을 남긴다. 다음 입력 제안의 Claude 스위치는 실행 중 env
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`이고 켜짐이 `'true'`, 꺼짐·멈춤이 `'false'`다. 켜짐을 `'true'`로 두는 것은 CLI가 자기 첫 사용량 경고에서
+  제안을 말없이 멈추기 때문이다. 앱의 기준 하나만 남긴다.
+
+### 다음 입력 제안
+
+- Claude: 대상 대화는 시작과 `resume`마다 `promptSuggestions: true`로 띄우고 스위치는 위 env로 바꾼다. 처음에 빼면 나중에 켤 수 없다. 결과 뒤에 온
+  `prompt_suggestion`은 마지막으로 끝난 턴에 묶는다. 메시지를 보내면 그 자리를 닫고 그 뒤 온 것은 버린다.
+- Codex: 자체 기능이 없어 `/btw`와 같은 읽기 전용 ephemeral 분기에 `PREDICT_INSTRUCTION`을 보낸다. 그 턴만 노력 `low`이고 시간 제한 60초다. 새 턴이 오면
+  분기를 `turn/interrupt`로 멈춘다. 분기에도 스레드의 `tools.update_plan`을 넘긴다(빠지면 도구 정의가 다시 실려 캐시를 벗어난다). 계획 모드로 끝난 턴은 입력창이
+  어차피 제안을 숨기므로 분기하지 않는다.
+
+### 요약
+
+- 때는 턴 끝 또는 AI가 사람을 기다릴 때(`approval.changed` pending, 설정 제안과 subagent 요청 제외)이고, 턴마다 한 번이다(`stableId`로 한
+  행). 멈춘 요약이 그 턴의 자리를 차지하므로 답한 뒤 두 번째는 없다. 새 턴은 요약을 취소하지 않는다.
+- 호출은 `askSideQuestion`이다. 사람의 `/btw` 예산은 쓰지 않으며 시간 제한은 120초, 답은 2,000자에서 자른다. 지시는 `RECAP_INSTRUCTION`이고 대화 전체가
+  아니라 사람의 최근 요청으로 범위를 좁힌다. 멈춘 턴이면 host가 `recapStoppedNote`로 무엇이 열려 있는지 **질문 앞에** 알린다. Codex 분기에는
+  `<turn_aborted>`가 붙어 안내가 없으면 중단됐다고 쓰기 때문이다.
+- 실패: `not-live`·재시작·종료는 `disconnected`, 시간 초과·실패·빈 답은 `no-response`, 위험 단계는 호출 없이 `usage-limit`, 지원하지 않으면 행이 없다.
+  `wrap-up.recap-retry`는 사람의 호출이라 보기 조건·멈춤·스위치를 보지 않는다.
+
+### 보고 있음 신호
+
+요약 조건은 host가 재는 값이 아니라 client가 알린다. daemon 명령은 outbox와 revision을 건드리므로 쓰지 않고 메모리 신호(IPC, 원격 메시지
+`conversation-viewing`, capability `conversation-viewing-v1`)를 쓴다.
+
+- [`ConversationViewers`](../../src/main/conversation-viewers.ts)가 client별로 보고 있는 대화를 모은다. client는 집합이 바뀌면 곧, 비어 있지 않으면 주기적으로 다시 보내고
+  host는 주기를 넘긴 주장을 버린다. 연결이 끊기면 그 client를 버린다.
+- 결과는 `viewed`, `unviewed`, `unknown`이다. 아직 보고하지 않은 창이 있으면 `unknown`이고 요약을 만드는 것은 `unviewed`뿐이다(모르면 호출하지 않는다).
+  옛 폰은 보고하지 못하므로 보는 쪽으로 세지 않는다.
+
+### suggest_task
+
+- session MCP 엔드포인트의 네 번째 tier다. `listed`는 launch 때 정해 얼리고(`tools/list`가 바뀌면 캐시가 깨진다) 설정을 보지 않으므로, `tasks`를 꺼도 도구는 남고
+  호출이 거절된다. `readOnlyHint: true`, 도구 자신의 `anthropic/alwaysLoad`. Claude는 `allowedTools`에 정확한 이름 하나를 넣는다. Codex는
+  `thread/start`의 `developerInstructions`로, 이미 있는 스레드는 첫 턴 `turn/start`의 `additionalContext`로 한 번 알리고 스레드별로
+  `turn-wrap-up-told-threads.json`에 기억한다. `thread/resume`의 지시는 무시되므로 쓰지 않는다.
+- 호출은 그때 도는 턴에 붙는다. 제목 120, 지시 4,000, 이유 500자, 턴당 8개(`TASK_SUGGESTION_LIMITS`). id는 `stableId('task', turnId, title, prompt)`라 같은 호출은 행을
+  늘리지 않는다. 카드 행 쓰기는 호스트가 소유하고 AI는 아무것도 실행하지 못한다.
+- 거절은 `{ ok: false, code, error }`다. `error`는 AI에게 쓴 문장이고 `code`(`cap`, `off`, `stopped`, `unattended`, `SUGGEST_TASK_REFUSALS`)는 화면용이다. client는 이유를 코드에서
+  만들고, 코드가 없거나 모르면 일반 문구를 쓴다. AI에게 쓴 문장을 사람의 이유로 보이지 않는다. 한도를 넘은 호출은 세어 두었다가 턴 끝에 `task-suggestions-dropped`로 한 번 쓴다.
+  세는 값은 메모리에 있어 재시작을 넘긴 턴은 8개를 새로 받는다.
+
+### 명령과 시작
+
+- 새 명령: `wrap-up.recap-retry{ sessionId, turnId }`, `wrap-up.task-outcome{ sessionId, turnId, taskId, outcome, … }`(`started`는 받지 않고, 실패는 `reason`과 `start`를 함께).
+  Desktop과 Android가 보내며 `MCP_COMMANDS` 밖이다.
+- 시작과 보내기는 새 명령이 아니라 `agent.create`·`agent.submit`의 `wrapUpTask{ turnId, taskId, oneClick?, branch? }`다. `agent.create`는 카드가 `open`이나 `start-failed`인지, 하위 대화
+  id가 `suggestedTaskChildSessionId(taskId)`인지 보고 `started` 행을 같은 commit에 쓴다. 그래서 두 번째 누름이나 다른 기기는 `Session already exists`를 받고
+  client는 이를 시작됨으로 본다. `mcp` principal은 두 필드를 쓸 수 없다.
+- `oneClick`이나 android principal이면 권한을 `standard`로 고정한다. 시작 창에서 사람이 고른 권한은 그대로다.
+- 시도마다 새 `commandId`를 쓴다(같은 키는 거절까지 그대로 되풀이한다). 새 워크트리는 Desktop helper가 먼저 만들고 `agent.create`를 보낸다. 실패 뒤 다시 시도는 만든 워크트리의
+  `workspaceId`를 재사용해 자기 브랜치와 충돌하지 않는다. `branchTaken`은 `createWorkspaceWorktree`의 `branch-taken`에서 온다.
+- 한계: 하위 대화 생성 한도(10분에 12개, 트리당 16개)는 그대로라 한 배치의 8개는 들어가도 곧바로 두 번째 배치는 일부 실패할 수 있고, 카드가 작업마다 이유를 말한다.
+
+### payload와 옛 client
+
+[`transcript-payload.ts`](../../src/shared/transcript-payload.ts)에 payload 다섯을 더했고 transcript kind와 DB 스키마는 그대로다. 행 `text`는 늘 혼자 읽힌다.
+
+- `recap`(notice): 턴의 그때 상태(`generating`·`complete`·`failed`), `trigger`(`unattended`·`waiting`), `waiting`, `decisionId`, `failure`. 턴마다 마지막 행이 이긴다.
+- `task-suggestion`(notice): 작업 하나. `task-suggestion-status`(notice): `started`·`dismissed`·`open`·`start-failed`와 `branch`, `reason`, `start`, `branchTaken`. 작업마다 마지막 행이 이긴다.
+- `task-suggestions-dropped`(notice): 턴과 수. `task-suggestion-send`(user-message): `여기서 하기`의 턴. `보냄`·`대기열`은 그 턴의 상태에서 client가 계산하고, 턴이
+  실패하거나 취소되면 다시 보낼 수 있다.
+- `시작하는 중…`·`보내는 중…`은 client의 일시 상태로 저장하지 않아 충돌로 카드가 묶이지 않는다.
+
 ## Schedule, heartbeat와 local control
 
 Schedule은 5-field cron과 IANA timezone을 canonical form으로 저장하며 매 run마다 새 Agent session을
@@ -460,6 +565,8 @@ Session 자체는 idle로 남긴다. 이미 delivery-uncertain인 turn은 확정
 - [`src/main/agent-orchestration-service.ts`](../../src/main/agent-orchestration-service.ts)
 - [`src/shared/review-findings.ts`](../../src/shared/review-findings.ts)
 - [`src/main/review-coordinator.ts`](../../src/main/review-coordinator.ts)
+- [`src/shared/turn-wrap-up.ts`](../../src/shared/turn-wrap-up.ts)
+- [`src/main/turn-wrap-up-coordinator.ts`](../../src/main/turn-wrap-up-coordinator.ts)
 - [`src/renderer/AgentHub.tsx`](../../src/renderer/AgentHub.tsx)
 - [`mobile/src/MobileAgentView.tsx`](../../mobile/src/MobileAgentView.tsx)
 
@@ -470,6 +577,8 @@ Session 자체는 idle로 남긴다. 이미 delivery-uncertain인 turn은 확정
 - provider contract, outbox idempotency와 crash reconciliation 테스트
 - 검토 루프: [`review-coordinator.test.ts`](../../src/main/review-coordinator.test.ts)와 녹화한 검토 세션의 리플레이
   [`review-replay.test.ts`](../../src/main/test-fixtures/review-replay.test.ts)
+- 턴 마무리: [`turn-wrap-up-coordinator.test.ts`](../../src/main/turn-wrap-up-coordinator.test.ts)와 녹화한 분기·제안의
+  [`turn-wrap-up-replay.test.ts`](../../src/main/test-fixtures/turn-wrap-up-replay.test.ts)
 - ProcessGuardian과 keep-running/login lifecycle OS 테스트
 - Desktop/Android component, accessibility와 production Storybook 테스트
 - ordinary `pnpm e2e`의 quit/restart/reconnect 및 direct child 대화 시나리오
