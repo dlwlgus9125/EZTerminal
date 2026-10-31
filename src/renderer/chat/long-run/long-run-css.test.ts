@@ -22,9 +22,10 @@ describe('long-run.css at the WebView 74 floor', () => {
     }
   });
 
-  it('touches the existing message box only through the attribute a long-run box carries', () => {
+  it('touches the existing message box only through what a long-run box alone has', () => {
     const shared = css.split('\n').filter((line) => /\.chat-composer__(?:bar|send|stop)|\.structured-agent-composer__hint/u.test(line));
     expect(shared.length).toBeGreaterThan(0);
-    for (const line of shared) expect(line).toContain('[data-long-run]');
+    // The attribute, or the row only a long-run box renders.
+    for (const line of shared) expect(line).toMatch(/\[data-long-run\]|\.chat-composer__interrupt-row/u);
   });
 });
