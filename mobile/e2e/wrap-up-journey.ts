@@ -426,7 +426,8 @@ async function draftIn(workspaceId: string, firstMessage: string): Promise<void>
   await setTestIdTextValue('structured-agent-composer-input', firstMessage);
   await waitFor(`(document.querySelector('[data-testid="structured-agent-send"]') || {}).disabled === false`, 'first Send ready');
   await tapTestIdOnce('structured-agent-send');
-  await waitForTestIdHidden('conversation-start', 30_000);
+  // The provider starts first: a third conversation late in the journey took 30.4 s on API 29.
+  await waitForTestIdHidden('conversation-start', 60_000);
   await waitForTestId('structured-agent-session');
 }
 async function sendFromPhone(text: string): Promise<void> {
