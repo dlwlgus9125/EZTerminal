@@ -565,11 +565,17 @@
   font-size: var(--ui-font-size-xs);
 }
 
-/* Under the line, wrapped: the reason is what the row is for, and it would not fit beside the verb on a phone. */
+/* The suggestion's title is the AI's words, not a path. Under it, wrapped: the reason is what the row is for, and it would not fit beside the verb on a phone. */
+.chat-tool[data-status='refused'] .chat-tool__target {
+  font-family: inherit;
+}
+
 .chat-tool__refused {
-  margin: 0 0 var(--ui-space-1) calc(1rem + var(--ui-space-2) * 2);
+  grid-column: 2 / -1;
+  padding-bottom: var(--ui-space-1);
   color: var(--ui-text-muted);
   font-size: var(--ui-font-size-xs);
+  white-space: normal;
 }
 
 .chat-tool__meta {
