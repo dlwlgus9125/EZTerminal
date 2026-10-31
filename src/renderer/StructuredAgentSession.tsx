@@ -1625,7 +1625,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const interruptButton = busy && onInterruptAndSend && hasDraft ? (
     <Button
       type="button"
-      variant="ghost"
+      variant={steer && variant === 'mobile' ? 'secondary' : 'ghost'}
       size="sm"
       {...(steer ? { className: 'chat-composer__interrupt' } : {})}
       disabled={sendBlocked}
@@ -1637,8 +1637,21 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       {steer ? steerCopy.interruptSend : copy.interruptSend}
     </Button>
   ) : null;
-  // 시안: on the phone it has its own row: beside the settings chips it squeezes them to a letter.
-  const interruptOnOwnRow = steer !== undefined && variant === 'mobile';
+  // 시안: on the phone it and the stop button have their own row: beside the settings chips they squeeze them to a letter.
+  const interruptOnOwnRow = steer !== undefined && variant === 'mobile' && interruptButton !== null;
+  const stopButton = !showStop && onStop !== undefined ? (
+    <button
+      type="button"
+      className="chat-icon-action chat-composer__stop"
+      disabled={disabled || stopping}
+      aria-label={ko ? '중단' : 'Stop'}
+      title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
+      onClick={() => onStop()}
+      data-testid="structured-agent-stop"
+    >
+      {stopping ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="stop" />}
+    </button>
+  ) : null;
   /** What a message that could not go into the turn does next: back to the box, added to what is there. */
   const steerToBox = (message: SteeredMessage): void => {
     const current = valueRef.current;
@@ -1817,7 +1830,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           </span>
         )}
         </div>
-        {interruptOnOwnRow && interruptButton && <div className="chat-composer__interrupt-row">{interruptButton}</div>}
+        {interruptOnOwnRow && <div className="chat-composer__interrupt-row">{interruptButton}{stopButton}</div>}
         <div className="chat-composer__bar">
           <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
             hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
@@ -1876,19 +1889,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           )}
           {!interruptOnOwnRow && interruptButton}
           {/* With a draft the round button sends; stopping stays one click away. */}
-          {!showStop && onStop !== undefined && (
-            <button
-              type="button"
-              className="chat-icon-action chat-composer__stop"
-              disabled={disabled || stopping}
-              aria-label={ko ? '중단' : 'Stop'}
-              title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
-              onClick={() => onStop()}
-              data-testid="structured-agent-stop"
-            >
-              {stopping ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="stop" />}
-            </button>
-          )}
+          {!interruptOnOwnRow && stopButton}
           {showStop ? (
             <button
               type="button"

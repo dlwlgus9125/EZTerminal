@@ -28,9 +28,9 @@ export function conversationStateText(state: ConversationState, text: ShellText)
     case 'stopped': return text('멈춤', 'Stopped');
     case 'done': return text('끝남', 'Finished');
     case 'new': return text('새 대화', 'New');
-    case 'limit-wait': return text('한도 대기', 'Waiting for the limit');
-    case 'limit-ask': return text('한도 · 답 기다림', 'Limit · waiting for you');
-    case 'limit-stop': return text('한도로 멈춤', 'Stopped at the limit');
+    case 'limit-wait': return text('한도 대기', 'Limit wait');
+    case 'limit-ask': return text('한도 · 답 기다림', 'Limit · needs you');
+    case 'limit-stop': return text('한도로 멈춤', 'Stopped at limit');
   }
 }
 
