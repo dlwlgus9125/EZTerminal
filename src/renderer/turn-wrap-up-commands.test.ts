@@ -100,6 +100,13 @@ describe('turnWrapUpHost', () => {
     expect(turnWrapUpHost({ ...input, worktrees: undefined })?.worktrees).toBe(false);
   });
 
+  it('passes on what Git said about the folder, and nothing when it has not said', () => {
+    const { input } = harness();
+    expect(turnWrapUpHost({ ...input, repository: true })?.repository).toBe(true);
+    expect(turnWrapUpHost({ ...input, repository: false })?.repository).toBe(false);
+    expect(turnWrapUpHost(input)).not.toHaveProperty('repository');
+  });
+
   it('takes the suggestion from the snapshot and offers 다시 만들기 only while the session is attached', () => {
     const fixture = formatStory('en', 'claude', { suggestion: false });
     const attached = snapshotOf(fixture, { nextPromptSuggestions: { [WRAP_SESSION]: { turnId: 'turn-fix', text: 'Yes' } }, sideQuestionSessionIds: [WRAP_SESSION] });

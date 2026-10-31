@@ -875,7 +875,7 @@ test('in a folder that is no repository 모두 시작 offers no worktree: every 
     await expect(sheet.getByTestId('task-start-all-task')).toHaveCount(2);
     await expect(sheet.getByTestId('task-start-all-worktree')).toHaveCount(0);
     await expect(sheet.getByTestId('task-start-all-here')).toHaveCount(0);
-    await expect(sheet.getByTestId('task-start-all-shared')).toContainText('Started together, they share it.');
+    await expect(sheet.getByTestId('task-start-all-shared')).toContainText('Started together, they share it. It is not a Git repository, so it cannot have a new worktree.');
     await expect(sheet.getByTestId('task-start-all-shared')).not.toContainText('desktop');
     await page.screenshot({ path: path.join(evidence, 'start-all-no-repository.png') });
     await sheet.getByTestId('task-start-all-submit').click();

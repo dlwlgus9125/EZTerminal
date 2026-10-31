@@ -46,7 +46,7 @@ import {
   type GitDirectoryStatus,
 } from '../../src/shared/git-status';
 import { formatCwd } from '../../src/renderer/format-cwd';
-import { useGitBranches } from '../../src/renderer/use-git-branch';
+import { useGitBranches, useRepositoryAnswer } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
 import { AgentRelativeAge } from '../../src/renderer/AgentTime';
@@ -1355,6 +1355,13 @@ export function MobileAgentView({
     } };
   }, [transport]);
   const chatRecovery=useChatRecovery(selectedDaemonSession?.projectId, chatAccess ? selectedDaemonSession?.id ?? null : null, chatAccess ?? NO_CHAT_STATE);
+  // As the desktop asks: a new worktree comes from the project's folder, and a turn can make that a repository. No way to
+  // ask is no answer, not a no.
+  const repository = useRepositoryAnswer(
+    onReadGitStatus ? daemonRuntimeState.snapshot?.projects.find((project) => project.id === selectedDaemonSession?.projectId)?.rootPath : undefined,
+    onReadGitStatus ?? readNothing,
+    `${selectedDaemonAgent?.currentTurnId ?? ''}:${String(disconnected)}`,
+  );
   const [chatSending,setChatSending]=useState(false);
   // "Saved" only once the latest composition is stored; while its autosave runs it is "saving".
   const chatStatus:MobileChatSaveStatus=chatRecovery.view.status === 'loading' ? 'loading'
@@ -1559,6 +1566,7 @@ export function MobileAgentView({
       items: () => wrapUpItems.current,
       access: chatCommands,
       ...wrapUpPending,
+      ...(repository !== undefined ? { repository } : {}),
     }) : undefined;
     return (<>
       <MobileStructuredAgentSession

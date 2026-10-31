@@ -60,22 +60,22 @@ export function useGitBranches(
 }
 
 /**
- * Whether Git says this directory is not a repository, so it can have no worktree. A status that failed or timed out
- * rules nothing out: that says nothing about the repository. `generation` as above.
+ * What Git says about this directory: true, a repository; false, not one, so it can have no worktree; undefined, no answer.
+ * A status that failed or timed out rules nothing out: that says nothing about the repository. `generation` as above.
  */
-export function useNotARepository(
+export function useRepositoryAnswer(
   directory: string | undefined,
   read: (directory: string) => Promise<Pick<GitDirectoryStatus, 'availability'>>,
   generation: unknown = true,
-): boolean {
-  const [notRepository, setNotRepository] = useState<string | undefined>(undefined);
+): boolean | undefined {
+  const [answer, setAnswer] = useState<{ readonly directory: string; readonly repository: boolean } | undefined>(undefined);
   const token = String(generation);
 
   useEffect(() => {
     if (!directory) return undefined;
     let alive = true;
     void read(directory).then((status) => {
-      if (alive) setNotRepository(status.availability === 'not-a-repository' ? directory : undefined);
+      if (alive) setAnswer(status.availability === 'unavailable' ? undefined : { directory, repository: status.availability === 'ready' });
     }, () => undefined);
     return () => {
       alive = false;
@@ -84,7 +84,7 @@ export function useNotARepository(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [directory, token]);
 
-  return directory !== undefined && notRepository === directory;
+  return directory !== undefined && answer?.directory === directory ? answer.repository : undefined;
 }
 
 /** Cannot appear in a filesystem path on any platform this app runs on. */

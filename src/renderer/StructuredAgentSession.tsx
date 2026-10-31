@@ -973,7 +973,7 @@ export interface StructuredAgentTranscriptProps {
     readonly onAction?: (action: ChatWrapUpAction) => void;
     readonly pending?: ChatWrapUpPending;
     readonly recapRetry?: boolean;
-    readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean; readonly worktrees: boolean };
+    readonly taskStart?: { readonly settings: string; readonly folder: string; readonly phone: boolean; readonly worktrees: boolean; readonly repository?: boolean };
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
   readonly onFocusDecision?: () => boolean;
@@ -1997,6 +1997,8 @@ export interface StructuredAgentSessionPanelProps {
     readonly pending?: ChatWrapUpPending;
     readonly recapRetry?: boolean;
     readonly worktrees?: boolean;
+    /** What Git said about the project's folder; left out when it has not said. */
+    readonly repository?: boolean;
   };
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
@@ -2613,7 +2615,10 @@ export function StructuredAgentSessionPanel({
   };
   const taskSettings = `${providerName} · ${settingsText(taskValues, true)}`;
   const taskWorktrees = wrapUp?.worktrees === true;
-  const taskStart = useMemo(() => ({ settings: taskSettings, folder: workspace.label, phone: variant === 'mobile', worktrees: taskWorktrees }), [taskSettings, taskWorktrees, variant, workspace.label]);
+  const taskRepository = wrapUp?.repository;
+  const taskStart = useMemo(() => ({
+    settings: taskSettings, folder: workspace.label, phone: variant === 'mobile', worktrees: taskWorktrees, ...(taskRepository !== undefined ? { repository: taskRepository } : {}),
+  }), [taskRepository, taskSettings, taskWorktrees, variant, workspace.label]);
   const onWrapUpAction = wrapUp?.onAction;
   const wrapUpPending = wrapUp?.pending;
   const recapRetry = wrapUp?.recapRetry === true;

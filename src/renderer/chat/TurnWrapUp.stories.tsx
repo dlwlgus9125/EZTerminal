@@ -182,7 +182,7 @@ const TITLES = {
 
 type Topic = keyof typeof TITLES;
 
-function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, topic: Topic, locale: WrapLanguage, args: Args, worktrees = true): StructuredAgentSessionPanelProps {
+function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, topic: Topic, locale: WrapLanguage, args: Args, worktrees = true, repository: boolean | undefined = worktrees): StructuredAgentSessionPanelProps {
   const { state } = host;
   // What waits in the conversation's queue, as the host lists it (여기서 하기 while a turn runs lands there).
   const queueItems = conversationQueue(sessionId, state.turns, state.items);
@@ -198,7 +198,7 @@ function panelProps(sessionId: string, host: StoryHost, provider: WrapProvider, 
     onSend: args.onSend, onInterruptAndSend: fn(async () => ({ ok: true as const })),
     onChangeSettings: args.onChangeSettings, onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
-    wrapUp: { ...(state.suggestion ? { suggestion: state.suggestion } : {}), onAction: host.onAction, pending: host.pending, recapRetry: true, worktrees },
+    wrapUp: { ...(state.suggestion ? { suggestion: state.suggestion } : {}), onAction: host.onAction, pending: host.pending, recapRetry: true, worktrees, ...(repository !== undefined ? { repository } : {}) },
   };
 }
 
@@ -230,7 +230,7 @@ function ChatScreen({ id, topic, make, args, provider = 'claude', skin = 'bubble
   );
 }
 
-function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height, folder }: {
+function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height, folder, repository = 'yes' }: {
   readonly id: string;
   readonly topic: Topic;
   readonly make: (lang: WrapLanguage) => WrapUpFixture;
@@ -240,6 +240,8 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   readonly height: number;
   /** The working folder's name, when not the cart kit's. */
   readonly folder?: string;
+  /** What the host said about the folder. */
+  readonly repository?: 'yes' | 'no' | 'unknown';
 }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = `wrap-up-story-${id}`;
@@ -247,7 +249,7 @@ function PhoneScreen({ id, topic, make, args, provider = 'claude', width, height
   const host = useStoryHost(fixture, args.onWrapUpAction);
   return (
     <Phone width={width} height={height}>
-      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args, false)} folders={undefined} onBack={fn()}
+      <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, topic, locale, args, false, repository === 'unknown' ? undefined : repository === 'yes')} folders={undefined} onBack={fn()}
         {...(folder ? { workspace: { id: 'ws-long', label: folder, kind: 'local' as const, path: WRAP_ROOT } } : {})} />
     </Phone>
   );
@@ -730,14 +732,14 @@ export const RefusedDetailClaude: Story = refusedDetail('refused-claude', 'claud
 export const RefusedDetailCodex: Story = refusedDetail('refused-codex', 'codex', 'bubble');
 export const RefusedDetailClaudeCli: Story = refusedDetail('refused-claude-cli', 'claude', 'cli');
 export const RefusedDetailCodexCli: Story = refusedDetail('refused-codex-cli', 'codex', 'cli');
-/** A folder that is no repository can have no worktree: everything starts here, and the sheet says they share it. */
+/** A folder that is no repository can have no worktree: everything starts here, and the sheet says they share it and why. */
 export const TasksStartAllNoRepository: Story = {
   ...chat('tasks-start-all-no-repository', 'cart', (lang) => cartStory(lang, 'claude', 'mixed'), { worktrees: false }),
   play: async ({ canvasElement, args }) => {
     const card = await showCard(canvasElement);
     await userEvent.click(within(card).getByRole('button', { name: '모두 시작 (4)' }));
     const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
-    await expect(within(dialog).getByTestId('task-start-all-shared')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    await expect(within(dialog).getByTestId('task-start-all-shared')).toHaveTextContent('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다. Git 저장소가 아니라 새 워크트리를 만들 수 없습니다.');
     await expect(within(dialog).queryAllByTestId('task-start-all-worktree')).toHaveLength(0);
     await userEvent.click(within(dialog).getByRole('button', { name: '4개 시작' }));
     await expect(args.onWrapUpAction).toHaveBeenCalledWith({
@@ -885,6 +887,21 @@ export const PhoneStartAll: Story = {
     await expect(within(dialog).queryAllByTestId('task-start-all-worktree')).toHaveLength(0);
   },
 };
+/** Phone: where the host says no repository, or cannot say, nothing claims the desktop could pick a worktree. */
+function phoneStartAllNoClaim(id: string, repository: 'no' | 'unknown'): Story {
+  return {
+    render: (args) => <PhoneScreen id={id} topic="cart" make={(lang) => cartStory(lang, 'claude', 'mixed')} args={args} width={412} height={915} repository={repository} />,
+    play: async ({ canvasElement }) => {
+      const card = await showCard(canvasElement);
+      await expect(within(card).queryAllByTestId('chat-task-worktree-desktop')).toHaveLength(0);
+      await userEvent.click(within(card).getByTestId('chat-task-start-all'));
+      const dialog = await waitFor(() => { const element = document.querySelector<HTMLElement>('[data-testid="task-start-all-dialog"]'); expect(element).not.toBeNull(); return element!; });
+      await expect(within(dialog).getByTestId('task-start-all-phone').textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    },
+  };
+}
+export const PhoneStartAllNoRepository: Story = phoneStartAllNoClaim('phone-start-all-no-repository', 'no');
+export const PhoneStartAllRepositoryUnknown: Story = phoneStartAllNoClaim('phone-start-all-unknown', 'unknown');
 /**
  * The WebView 74 floor: `overflow-wrap: anywhere` needs Chrome 80, so there the declared `break-word` fallback is what
  * runs, and it does not lower a flex item's min-content. This style forces that case in a current browser.

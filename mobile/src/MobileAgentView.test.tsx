@@ -10,7 +10,7 @@ import {
   AGENT_ORCHESTRATION_SCHEMA_VERSION,
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
-import type { GitDiffResult } from '../../src/shared/git-status';
+import { EMPTY_GIT_DIRECTORY_STATUS, UNAVAILABLE_GIT_DIRECTORY_STATUS, type GitDiffResult, type GitDirectoryStatus } from '../../src/shared/git-status';
 import type { ConversationEntry } from '../../src/shared/conversation-history';
 import type {
   DaemonEvent,
@@ -2002,7 +2002,7 @@ describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
   const CAPABILITY = 'turn-wrap-up-v1';
   const ANDROID = { kind: 'android', id: 'mobile-agent-ui' };
 
-  async function open(fixture: WrapUpFixture, capabilities: readonly string[], overrides: Partial<DaemonSnapshot> = {}) {
+  async function open(fixture: WrapUpFixture, capabilities: readonly string[], overrides: Partial<DaemonSnapshot> = {}, onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>) {
     const moved = wrapUpInSession(fixture, SESSION);
     const items: DaemonTranscriptItem[] = moved.items.map((entry, index) => ({ ...entry, sequence: index + 1, id: `wrap-item-${String(index + 1)}` }));
     let emit: ((event: DaemonEvent, continuity: 'next') => void) | undefined;
@@ -2041,7 +2041,7 @@ describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
       save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
     };
     await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
-      chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} />);
+      chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} {...(onReadGitStatus ? { onReadGitStatus } : {})} />);
     await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
     return { sendDaemonCommand };
   }
@@ -2084,8 +2084,42 @@ describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
     });
   });
 
+  const READY_REPOSITORY: GitDirectoryStatus = { availability: 'ready', tracked: true, changes: [], truncated: false };
+  const PROJECT_ROOT = 'C:\\project-root';
+  const inProject = { projects: [{ id: 'project-1', name: 'Project', rootPath: PROJECT_ROOT, source: 'native' as const, revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP }] };
+  const startAll = async (): Promise<string> => {
+    await until(() => { expect(testIds('chat-task-start-all')[0]).toBeDefined(); });
+    await act(async () => { testIds('chat-task-start-all')[0]!.click(); await Promise.resolve(); });
+    await until(() => { expect(document.querySelector('[data-testid="task-start-all-phone"]')).not.toBeNull(); });
+    return document.querySelector('[data-testid="task-start-all-phone"]')?.textContent ?? '';
+  };
+
+  it('asks the host about the project’s folder, and only a yes makes the claim about the desktop', async () => {
+    const onReadGitStatus = vi.fn(async () => READY_REPOSITORY);
+    await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY], inProject, onReadGitStatus);
+    await until(() => { expect(testIds('chat-task-worktree-desktop')[0]).toBeDefined(); });
+    expect(onReadGitStatus).toHaveBeenCalledWith(PROJECT_ROOT);
+    expect(await startAll()).toContain('You can pick a new worktree on the desktop.');
+  });
+
+  it.each([
+    ['says the folder is no repository', async () => EMPTY_GIT_DIRECTORY_STATUS],
+    ['cannot say', async () => UNAVAILABLE_GIT_DIRECTORY_STATUS],
+    ['does not answer', async () => { throw new Error('no answer'); }],
+  ])('drops the claim when the host %s', async (_name, read) => {
+    await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY], inProject, read);
+    expect(await startAll()).not.toContain('desktop');
+    expect(testIds('chat-task-worktree-desktop')).toHaveLength(0);
+  });
+
+  it('drops the claim when it has no way to ask: not knowing is no yes', async () => {
+    await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY], inProject);
+    expect(await startAll()).not.toContain('desktop');
+    expect(testIds('chat-task-worktree-desktop')).toHaveLength(0);
+  });
+
   it('starts a worktree-recommended task here too: there is no form on the phone, and the card says where it can be picked', async () => {
-    const { sendDaemonCommand } = await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY]);
+    const { sendDaemonCommand } = await open(cartStory('en', 'codex', 'mixed'), [CAPABILITY], inProject, async () => READY_REPOSITORY);
     await until(() => { expect(testIds('chat-task-worktree-desktop')[0]).toBeDefined(); });
     expect(container.querySelector('[data-action="task-start-custom"]')).toBeNull();
     const buttons = container.querySelectorAll<HTMLButtonElement>('[data-action="task-start"]');

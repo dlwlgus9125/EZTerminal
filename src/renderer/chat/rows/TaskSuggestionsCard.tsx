@@ -5,7 +5,7 @@ import {
 } from '../../../shared/turn-wrap-up';
 import { Button } from '../../ui/Button';
 import { Glyph, type GlyphName } from '../../ui/Glyph';
-import { useChatContext, type ChatWrapUpAction, type ChatWrapUpPending } from '../ChatContext';
+import { useChatContext, type ChatContextValue, type ChatWrapUpAction, type ChatWrapUpPending } from '../ChatContext';
 import { formatClock, useChatCopy, type ChatCopy } from '../copy';
 import type { ChatRow } from '../model/types';
 import { focusAfterAction, providerName, useClearing } from '../review/review-presentation';
@@ -51,9 +51,13 @@ function withPending(task: SuggestedTaskState, pending: ChatWrapUpPending | unde
   return kind && (task.outcome.kind === 'open' || task.outcome.kind === 'start-failed') ? { ...task, outcome: { kind } } : task;
 }
 
-/** Only the desktop creates worktrees: the phone says so where a task wants one (recommended, or a failed start in one). */
-function wantsDesktop(task: SuggestedTaskState, phone: boolean): boolean {
-  return phone && (task.worktree === true || (task.outcome.kind === 'start-failed' && task.outcome.start.where.kind === 'new-worktree'));
+/**
+ * Only the desktop creates worktrees: the phone says so where a task wants one (recommended, or a failed start in one), and
+ * only for a folder the host says is a repository: anywhere else the desktop could not either.
+ */
+function wantsDesktop(task: SuggestedTaskState, start: ChatContextValue['taskStart']): boolean {
+  return start?.phone === true && start.repository === true
+    && (task.worktree === true || (task.outcome.kind === 'start-failed' && task.outcome.start.where.kind === 'new-worktree'));
 }
 
 interface TaskProps {
@@ -164,7 +168,6 @@ function BubbleTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.E
   const titleRef = useRef<HTMLParagraphElement>(null);
   const promptId = useId();
   const prompt = usePromptToggle(suggestions, task);
-  const phone = context.taskStart?.phone === true;
   return (
     <li className="chat-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-focus-fallback="[data-task-title]" data-testid="chat-task">
       <div className="chat-task__head">
@@ -173,7 +176,7 @@ function BubbleTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.E
         {task.worktree && <span className="chat-task__chip" data-testid="chat-task-worktree"><Glyph name="wt" />{copy.taskSuggestions.worktreeRecommended}</span>}
       </div>
       <p className="chat-task__rationale"><InlineCode text={task.rationale} /></p>
-      {wantsDesktop(task, phone) && <p className="chat-task__note" data-testid="chat-task-worktree-desktop"><Glyph name="info" />{copy.taskSuggestions.worktreeDesktop}</p>}
+      {wantsDesktop(task, context.taskStart) && <p className="chat-task__note" data-testid="chat-task-worktree-desktop"><Glyph name="info" />{copy.taskSuggestions.worktreeDesktop}</p>}
       <button type="button" className="chat-link-button chat-task__toggle" aria-expanded={prompt.open} aria-controls={prompt.open ? promptId : undefined}
         onClick={prompt.toggle} data-testid="chat-task-prompt-toggle">
         <Glyph name="next" className="chat-chevron" />{prompt.open ? copy.taskSuggestions.hidePrompt : copy.taskSuggestions.showPrompt}
@@ -195,7 +198,6 @@ function CliTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.Elem
   const titleRef = useRef<HTMLSpanElement>(null);
   const promptId = useId();
   const prompt = usePromptToggle(suggestions, task);
-  const phone = context.taskStart?.phone === true;
   return (
     <li className="chat-cli-result chat-cli-task" data-outcome={task.outcome.kind} data-task-id={task.id} data-focus-fallback="[data-task-title]" data-testid="chat-task">
       <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
@@ -206,7 +208,7 @@ function CliTask({ suggestions, task, index }: Omit<TaskProps, 'cli'>): JSX.Elem
           {task.worktree && <span className="chat-cli-dim" data-testid="chat-task-worktree"> [{copy.taskSuggestions.worktreeRecommended}]</span>}
         </span>
         <span className="chat-cli-result__line chat-cli-task__rationale"><InlineCode text={task.rationale} /></span>
-        {wantsDesktop(task, phone) && <span className="chat-cli-result__line chat-cli-dim" data-testid="chat-task-worktree-desktop">{copy.taskSuggestions.worktreeDesktop}</span>}
+        {wantsDesktop(task, context.taskStart) && <span className="chat-cli-result__line chat-cli-dim" data-testid="chat-task-worktree-desktop">{copy.taskSuggestions.worktreeDesktop}</span>}
         <span className="chat-cli-result__line">
           <button type="button" className="chat-cli-action" aria-expanded={prompt.open} aria-controls={prompt.open ? promptId : undefined}
             onClick={prompt.toggle} data-testid="chat-task-prompt-toggle">
@@ -285,7 +287,7 @@ export function TaskSuggestionsCard({ row }: { readonly row: RowOf<'task-suggest
       <span ref={anchorRef} className="chat-visually-hidden" role="status" aria-live="polite" data-testid="chat-task-announce">{announcement}</span>
       {onAction && settings && (
         <TaskStartAllDialog open={confirmOpen} onOpenChange={setConfirmOpen} tasks={openTasks} settings={settings} folder={folder} phone={phone}
-          worktrees={context.taskStart?.worktrees === true} ownerDocument={anchorRef.current?.ownerDocument}
+          worktrees={context.taskStart?.worktrees === true} {...(context.taskStart?.repository !== undefined ? { repository: context.taskStart.repository } : {})} ownerDocument={anchorRef.current?.ownerDocument}
           onStart={(starts) => onAction({ kind: 'task-start-all', turnId: suggestions.turnId, starts })} />
       )}
     </ActionCard>

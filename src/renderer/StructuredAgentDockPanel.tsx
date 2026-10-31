@@ -15,7 +15,7 @@ import type { ChatComposerDraft, ChatMessageContext } from '../shared/chat-messa
 import type { ChatStateAccess } from './chat-recovery';
 import type { ConversationSettings } from '../shared/conversation-start';
 import { useChatRecovery } from './use-chat-recovery';
-import { useNotARepository } from './use-git-branch';
+import { useRepositoryAnswer } from './use-git-branch';
 import { useProviderModelCatalogs } from './use-provider-models';
 import { desktopFileSearch, pathForDrop } from './conversation-desktop-access';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
@@ -322,12 +322,12 @@ export function StructuredAgentDockPanel(
   const wrapUpPending = useWrapUpPending();
   // A new worktree comes from the project's folder, and a turn can make that a repository: each turn asks again.
   const worktreeProject = snapshot?.projects.find((project) => project.id === snapshot.sessions.find((entry) => entry.id === sessionId)?.projectId);
-  const notRepository = useNotARepository(
+  const repository = useRepositoryAnswer(
     worktreeAccess ? worktreeProject?.rootPath : undefined,
     (directory) => capabilities.files.gitStatus(directory),
     snapshot?.agents.find((entry) => entry.sessionId === sessionId)?.currentTurnId,
   );
-  const newWorktrees = notRepository ? undefined : worktreeAccess;
+  const newWorktrees = repository === false ? undefined : worktreeAccess;
   const [delegateProfiles, setDelegateProfiles] = useState<readonly ChatAgentProfile[]>([]);
   const profilesWanted = delegateMode !== null || taskDialog !== null;
   useEffect(() => {
@@ -1258,6 +1258,7 @@ export function StructuredAgentDockPanel(
   const wrapUpInput: TurnWrapUpHostInput = {
     snapshot, sessionId, items: () => transcriptItemsRef.current, access: commandAccess, ...wrapUpPending,
     ...(newWorktrees ? { worktrees: newWorktrees } : {}),
+    ...(repository !== undefined ? { repository } : {}),
     onStartForm: (request) => setTaskDialog({ request, values: taskStartForm(request) }),
   };
   const wrapUp = !historyOnly && owner === 'managed' ? turnWrapUpHost(wrapUpInput) : undefined;

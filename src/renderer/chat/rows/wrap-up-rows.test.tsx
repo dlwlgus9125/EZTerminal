@@ -177,13 +177,14 @@ describe('모두 시작', () => {
   const task = (id: string, title: string, worktree?: boolean): SuggestedTaskState => ({ id, title, rationale: 'Why.', prompt: 'Do it.', outcome: { kind: 'open' }, ...(worktree ? { worktree } : {}) });
   const onStart = vi.fn();
   let opened = 0;
-  const sheet = (tasks: readonly SuggestedTaskState[], phone = false, worktrees = !phone, again = false): void => {
+  const sheet = (tasks: readonly SuggestedTaskState[], phone = false, worktrees = !phone, again = false, repository?: boolean): void => {
     onStart.mockClear();
     if (!again) opened += 1;
     act(() => root.render(
       <AppI18nProvider locale="ko" languages={['ko']}>
         <ChatProvider skin="bubble" locale="ko">
-          <TaskStartAllDialog key={opened} open onOpenChange={() => undefined} tasks={tasks} settings="Claude" folder="cart-kit" phone={phone} worktrees={worktrees} onStart={onStart} />
+          <TaskStartAllDialog key={opened} open onOpenChange={() => undefined} tasks={tasks} settings="Claude" folder="cart-kit" phone={phone} worktrees={worktrees}
+            {...(repository !== undefined ? { repository } : {})} onStart={onStart} />
         </ChatProvider>
       </AppI18nProvider>,
     ));
@@ -220,23 +221,41 @@ describe('모두 시작', () => {
   });
 
   it('stays in this folder on the phone, and says starting together shares it', () => {
-    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], true);
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], true, false, false, true);
     expect(radios('task-start-all-worktree')).toHaveLength(0);
     expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
     submit();
     expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
   });
 
+  it.each([
+    ['says the folder is no repository', false],
+    ['cannot tell', undefined],
+  ])('claims nothing about the desktop on the phone when the host %s', (_name, repository) => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], true, false, false, repository);
+    expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+  });
+
   it('stays in this folder on the desktop too where no worktree can be made, and says starting together shares it', () => {
-    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], false, false);
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax', true)], false, false, false, false);
     expect(radios('task-start-all-worktree')).toHaveLength(0);
     expect(radios('task-start-all-here')).toHaveLength(0);
     expect(document.querySelector('[data-testid="task-start-all-task"]')?.textContent).toContain('이 폴더 (cart-kit)');
-    expect(document.querySelector('[data-testid="task-start-all-shared"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+    // The cause, beside what it means.
+    expect(document.querySelector('[data-testid="task-start-all-shared"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다. Git 저장소가 아니라 새 워크트리를 만들 수 없습니다.');
     // The phone's last sentence would be false here: this is the desktop.
     expect(document.querySelector('[data-testid="task-start-all-phone"]')).toBeNull();
     submit();
     expect(onStart).toHaveBeenCalledWith([{ taskId: 'one', where: { kind: 'this-folder' } }, { taskId: 'two', where: { kind: 'this-folder' } }]);
+  });
+
+  it('gives no cause on the desktop that Git has not said', () => {
+    sheet([task('one', 'Fix the cart'), task('two', 'Fix the tax')], false, false);
+    expect(document.querySelector('[data-testid="task-start-all-shared"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 함께 시작하면 같은 폴더를 씁니다.');
+  });
+
+  it('says the cause in English too', () => {
+    expect(chatCopy('en').taskSuggestions.confirm.notRepository).toBe('It is not a Git repository, so it cannot have a new worktree.');
   });
 
   it('follows the answer about the folder when it arrives with the sheet open', () => {
@@ -249,12 +268,24 @@ describe('모두 시작', () => {
   });
 
   it('says nothing of sharing to a single task on the phone', () => {
-    sheet([task('one', 'Fix the cart')], true);
+    sheet([task('one', 'Fix the cart')], true, false, false, true);
     expect(document.querySelector('[data-testid="task-start-all-phone"]')?.textContent).toBe('이 폴더 (cart-kit)에서 시작합니다. 새 워크트리는 데스크톱에서 고를 수 있습니다.');
   });
 });
 
 describe('the suggested-task card', () => {
+  it.each(['bubble', 'cli'] as const)('on the phone, says the desktop can pick a worktree only for a folder the host says is a repository (%s)', (skin) => {
+    const note = (repository?: boolean): HTMLElement | null => {
+      render(cartStory('ko', 'claude', 'mixed'), {
+        skin, onWrapUpAction: vi.fn(), taskStart: { ...TASK_START, phone: true, worktrees: false, ...(repository !== undefined ? { repository } : {}) },
+      });
+      return byTestId('chat-task-worktree-desktop');
+    };
+    expect(note(true)?.textContent).toContain('새 워크트리는 데스크톱에서 고를 수 있습니다');
+    expect(note(false)).toBeNull();
+    expect(note()).toBeNull();
+  });
+
   it('starts with one click a task the AI wanted in a worktree where none can be made: the form would have nothing to add', () => {
     const fixture = cartStory('ko', 'claude', 'mixed');
     const advised = (): HTMLElement => byTestId('chat-task-worktree')!.closest<HTMLElement>('[data-testid="chat-task"]')!;

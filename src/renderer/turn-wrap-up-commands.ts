@@ -128,6 +128,8 @@ export interface TurnWrapUpHostInput {
   readonly onPending: (taskId: string, kind?: 'starting' | 'sending') => void;
   /** Makes new worktrees: the desktop, in a folder that can have one. */
   readonly worktrees?: Pick<WorkspaceWorktreeAccess, 'create'>;
+  /** What Git said about the project's folder; left out when it has not said. */
+  readonly repository?: boolean;
   /** Desktop: opens the start form on a task. */
   readonly onStartForm?: (request: TaskFormRequest) => void;
 }
@@ -140,6 +142,8 @@ export interface TurnWrapUpHostProps {
   readonly recapRetry: boolean;
   /** A task can start in a new worktree here. */
   readonly worktrees: boolean;
+  /** What Git said about the project's folder; left out when it has not said. */
+  readonly repository?: boolean;
 }
 
 /** What a task's start form opens on. */
@@ -349,6 +353,7 @@ export function turnWrapUpHost(input: TurnWrapUpHostInput): TurnWrapUpHostProps 
     pending,
     recapRetry: snapshot.sideQuestionSessionIds?.includes(sessionId) === true,
     worktrees: input.worktrees !== undefined,
+    ...(input.repository !== undefined ? { repository: input.repository } : {}),
     onAction: (action, defaults) => runAction(input, action, defaults),
   };
 }

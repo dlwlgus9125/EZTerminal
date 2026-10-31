@@ -28,9 +28,10 @@ function initialChoices(tasks: readonly SuggestedTaskState[], worktrees: boolean
  * 모두 시작 (D6): what starts, how many and where, before anything runs. Each open task becomes a new
  * sub-conversation with the settings line; on the desktop each works in a new worktree on its own `suggest/…` branch
  * or in this folder. Where no worktree can be made, on the phone or in a folder that is no repository, everything starts
- * in this folder, and it says so.
+ * in this folder, and it says so: the desktop names the cause, the phone says the desktop can pick one only of a folder
+ * Git calls a repository.
  */
-export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, worktrees, ownerDocument, onStart }: {
+export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder, phone, worktrees, repository, ownerDocument, onStart }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** The open tasks of one card, in its order. */
@@ -42,6 +43,8 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
   readonly phone: boolean;
   /** A new worktree can be made here. */
   readonly worktrees: boolean;
+  /** What Git said about the project's folder; left out when it has not said. */
+  readonly repository?: boolean;
   readonly ownerDocument?: Document;
   readonly onStart: (starts: readonly TaskStart[]) => void;
 }): JSX.Element {
@@ -113,7 +116,11 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
       </ol>
       {!worktrees && (
         <p className="task-start-all__note" data-testid={phone ? 'task-start-all-phone' : 'task-start-all-shared'}>
-          <Glyph name="info" /><span>{phone ? copy.confirm.phoneFolder(folder, tasks.length) : copy.confirm.sharedFolder(folder, tasks.length)}</span>
+          <Glyph name="info" />
+          <span>
+            {phone && repository === true ? copy.confirm.phoneFolder(folder, tasks.length) : copy.confirm.sharedFolder(folder, tasks.length)}
+            {!phone && repository === false ? ` ${copy.confirm.notRepository}` : ''}
+          </span>
         </p>
       )}
       {tasks.length > 1 && <p className="task-start-all__note"><Glyph name="clock" /><span>{copy.confirm.limit}</span></p>}
