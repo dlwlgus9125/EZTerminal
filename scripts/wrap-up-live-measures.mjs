@@ -137,7 +137,7 @@ export function codexForks(records) {
     forks.push({
       at: record.at, threadId, sourceThreadId: record.data.params?.threadId, purpose: forkPurpose(text, start?.data?.params?.clientUserMessageId),
       ephemeral: record.data.params?.ephemeral, sandbox: record.data.params?.sandbox, approvalPolicy: record.data.params?.approvalPolicy,
-      effort: start?.data?.params?.effort ?? null, question: text.slice(0, 900), answer, interrupted, status: finished?.data.params?.turn?.status ?? null,
+      effort: start?.data?.params?.effort ?? null, question: text.slice(0, 1400), answer, interrupted, status: finished?.data.params?.turn?.status ?? null,
       tookMs: finished ? finished.at - record.at : null,
       first: first ? { input: number(first.inputTokens), cached: number(first.cachedInputTokens), output: number(first.outputTokens) } : null,
       parentContext, ratio: ratio(number(first?.cachedInputTokens), parentContext), calls: usage.length,

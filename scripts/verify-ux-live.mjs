@@ -1904,8 +1904,14 @@ async function runSuggestion(page, report, providerId) {
     const requests = claudeRequests(telemetry, facts.providerSessionId);
     facts.requests = requests.length;
     facts.suggestionCalls = claudeCalls(requests, 'prompt_suggestion').map(({ at, source, model, ...rest }) => rest);
-    facts.messages = claudeStream(tapNow(), facts.providerSessionId).filter((record) => record.data?.type === 'prompt_suggestion').map((record) => record.data.suggestion);
+    const stream = claudeStream(tapNow(), facts.providerSessionId);
+    facts.messages = stream.filter((record) => record.data?.type === 'prompt_suggestion').map((record) => record.data.suggestion);
+    // The reading these turns ran under, and what the host told the CLI: `true` is what lifts its own stop at 75%.
+    facts.usage = (await snapshot(page)).providerUsage?.claude;
+    facts.rateLimits = stream.filter((record) => record.data?.type === 'rate_limit_event').map((record) => record.data.rate_limit_info).slice(-2);
+    facts.suggestionEnv = stream.filter((record) => record.direction === 'in').flatMap((record) => JSON.stringify(record.data).match(/CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"(\w*)"/u)?.slice(1) ?? []);
     if (!facts.suggestionCalls.length) problems.push('no prompt_suggestion request reached the telemetry');
+    if (!facts.suggestionEnv.includes('true')) problems.push(`the host sent ${JSON.stringify(facts.suggestionEnv)}, not "true"`);
   } else {
     facts.forks = codexForks(tapNow()).filter((fork) => fork.sourceThreadId === facts.providerSessionId);
     const predict = facts.forks.filter((fork) => fork.purpose === 'predict');
@@ -2117,13 +2123,26 @@ async function runRecapWaiting(page, report, name, providerId, { kind, preset = 
   const turn = turns.find((entry) => entry.id === seen.recap?.turnId) ?? turns.at(-1);
   const rows = recapRows(items);
   await shootSurface(page, panel, `${name}-answered`, report, card);
+  // Where the AI stopped: what the turn did after the answer reads below the card.
+  const recapRow = rows.find((item) => item.payload.turnId === seen.recap?.turnId);
+  const lastMessage = items.filter((item) => item.kind === 'assistant-message' && item.turnId === seen.recap?.turnId).at(-1);
+  const ranOnBelow = Boolean(recapRow && lastMessage && lastMessage.sequence > recapRow.sequence);
+  const domOrder = await panel.evaluate((root) => [...root.querySelectorAll('[data-testid="chat-recap-card"], [data-message-id], .chat-run, .chat-cli-run')]
+    .map((node) => (node.getAttribute('data-testid') === 'chat-recap-card' ? 'recap' : node.matches('.chat-run, .chat-cli-run') ? 'run' : 'message')));
+  const askedWith = recapCallFacts(conversation, providerSessionId);
+  const asked = askedWith.calls?.[0]?.question ?? '';
   const facts = {
     sessionId, earlierRecaps: rows.filter((item) => item.payload.turnId !== stoppedTurn).length, stoppedKind: approval.request?.kind, title: approval.title?.slice(0, 120), whileWaiting, recapAfterStopMs: seen.doneAt ? seen.doneAt - stoppedAt : null,
     stateAtRecap: agentAtRecap?.state, ranOnMs: Date.parse(turn.finishedAt ?? '') - answeredAt, turnStates: turns.map((entry) => entry.state), laterApprovals: allowed.length,
     cardAfterAnswer: await textOf(card), recapRows: rowFacts(rows), final: finalMessage(items).slice(-300), changedBefore: before, changedAfter: gitChanged(conversation.root),
+    ranOnBelow, domOrder, ...(providerId === 'codex' ? { noteBeforeQuestion: asked.includes('Right now this turn is stopped') && asked.indexOf('Right now this turn is stopped') < asked.indexOf('Question: ') } : {}),
     ...recapCalls,
   };
   const problems = [];
+  if (ranOnBelow && domOrder.lastIndexOf('recap') === domOrder.length - 1) problems.push(`the recap sits below what ran after the answer: ${domOrder.join(' ')}`);
+  if (providerId === 'codex' && !facts.noteBeforeQuestion) problems.push('the note is not before the question');
+  // The composer hides a guess in plan mode: a fork there is spent on nothing.
+  if (providerId === 'codex' && preset === 'plan' && askedWith.predictForks?.length) problems.push(`${askedWith.predictForks.length} predict forks on plan-mode turns`);
   if (seen.recap?.state !== 'complete') problems.push(`recap ${seen.recap?.state ?? 'never came'} ${seen.recap?.failure ?? ''}`);
   if (seen.recap?.trigger !== 'waiting' || seen.recap?.waiting !== kind) problems.push(`trigger ${seen.recap?.trigger} waiting ${seen.recap?.waiting}, expected ${kind}`);
   if (!whileWaiting.decisionMatches) problems.push('the recap does not name the decision it stopped for');
@@ -2289,13 +2308,13 @@ async function settleChildren(page, childIds, timeoutMs, label) {
   return done;
 }
 
-/** 모두 시작 with the first task in a new worktree. The worktree it made is removed again; the kit stays, as the daemon expects. */
+/** 모두 시작 left as it opens: a new worktree each. Nothing changed in them, so a person cleans them up without a merge; the kit stays. */
 async function runTaskStartAllWorktree(page, report) {
   requireTap();
   const name = 'task-start-all-worktree';
   const { conversation, panel } = await conversationWithTasks(page, 'claude', name, [
-    taskLine(1, '워크트리 작업', ', worktree true'), taskLine(2, '같은 폴더 작업 하나'), taskLine(3, '같은 폴더 작업 둘'),
-  // A clean kit is on main: a worktree with no commits of its own counts as merged, so the product can remove it.
+    taskLine(1, '워크트리 작업', ', worktree true'), taskLine(2, '권장 없는 작업 하나'), taskLine(3, '권장 없는 작업 둘'),
+  // A clean kit on main: each worktree starts with nothing of its own.
   ], 3, { clean: true });
   const { sessionId } = conversation;
   const card = taskCard(panel);
@@ -2333,23 +2352,39 @@ async function runTaskStartAllWorktree(page, report) {
     allSettled, childTurns: children.map((id) => turnsOfSession(after, id).map((turn) => turn.state).join(',')), childPresets: children.map((id) => agentOf(after, id)?.permissionPreset),
     gitWorktrees: execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: conversation.root, encoding: 'utf8' }).split(/\r?\n/u).filter((line) => line.startsWith('branch ')),
   };
-  // What it made goes again, the product's way: the child's conversation archived, then its worktree and branch removed.
+  // What it made goes again, the product's way: no merge and no force, because nothing in them is new. The first as a person does it.
   const cleanup = [];
-  for (const place of worktrees) {
+  const projectId = after.sessions.find((session) => session.id === sessionId)?.projectId;
+  for (const [index, place] of worktrees.entries()) {
     if (!place.rootPath) continue;
     const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: place.rootPath, encoding: 'utf8' }).trim();
-    const archived = await command(page, 'agent.archive', { sessionId: place.id });
-    await wait(1500);
-    const first = await page.evaluate((id) => window.ezterminal.workspaceWorktrees.remove(id), place.workspaceId).catch((error) => ({ ok: false, reason: String(error?.message ?? error).slice(0, 200) }));
-    // The app removes only merged work, and a merge commit is its proof: an untouched branch has none. Git removes this
-    // scratch worktree, and the app then finishes off what git already forgot.
-    let removed = first;
-    if (!first?.ok) {
-      execFileSync('git', ['worktree', 'remove', '--force', place.rootPath], { cwd: conversation.root });
-      execFileSync('git', ['branch', '-D', branch], { cwd: conversation.root });
-      removed = await page.evaluate((id) => window.ezterminal.workspaceWorktrees.remove(id), place.workspaceId).catch((error) => ({ ok: false, reason: String(error?.message ?? error).slice(0, 200) }));
+    const status = await page.evaluate(async ({ project, id }) => (await window.ezterminal.workspaceWorktrees.status(project)).value?.find((entry) => entry.workspaceId === id), { project: projectId, id: place.workspaceId });
+    if (index > 0) {
+      const removed = await page.evaluate((id) => window.ezterminal.workspaceWorktrees.remove(id), place.workspaceId).catch((error) => ({ ok: false, reason: String(error?.message ?? error).slice(0, 200) }));
+      cleanup.push({ branch, status, removed });
+      continue;
     }
-    cleanup.push({ branch, archived: Boolean(archived?.ok), firstRefusal: first?.ok ? undefined : first?.reason, removed: removed?.ok ?? removed });
+    // Its own tab opens the board: this long-used profile's 모든 프로젝트 list is a search away.
+    await page.locator(`[data-testid="shell-project-tab"][data-project="${projectId}"]`).click();
+    await page.getByTestId('shell-board').waitFor({ timeout: 15_000 });
+    await page.getByTestId('shell-board').getByRole('button', { name: '워크트리', exact: true }).click();
+    await page.getByTestId('worktrees-dialog').waitFor({ timeout: 15_000 });
+    await worktreeRow(page, place.workspaceId).getByTestId('workspace-merge').click();
+    await page.getByTestId('worktree-merge-dialog').waitFor();
+    await page.getByTestId('worktree-cleanup').waitFor({ timeout: 15_000 });
+    const why = await textOf(page.getByTestId('worktree-merge-note'));
+    await shootDialog(page, `${name}-untouched`, report);
+    await page.getByTestId('worktree-cleanup').click();
+    await page.getByTestId('worktree-cleanup-confirm').waitFor({ timeout: 10_000 });
+    await poll(() => page.getByTestId('worktree-cleanup-confirm').isDisabled(), (disabled) => disabled === false, 15_000, 'cleanup enabled');
+    const consequences = await textOf(page.getByTestId('worktree-cleanup-consequences'));
+    await shootDialog(page, `${name}-untouched-confirm`, report);
+    await page.getByTestId('worktree-cleanup-confirm').click();
+    await page.getByTestId('worktree-merge-dialog').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => undefined);
+    const dialogLeft = await textOf(page.getByTestId('worktree-merge-dialog'));
+    if (dialogLeft) await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    cleanup.push({ branch, status, why, consequences, dialogLeft, folderGone: !existsSync(place.rootPath) });
   }
   facts.cleanup = cleanup;
   facts.gitAfterCleanup = {
@@ -2358,8 +2393,14 @@ async function runTaskStartAllWorktree(page, report) {
   };
   const problems = [];
   if (statuses.filter((entry) => entry.outcome === 'started').length !== 3) problems.push(`${statuses.filter((entry) => entry.outcome === 'started').length} started of 3`);
-  if (worktrees.length !== 1) problems.push(`${worktrees.length} children in a new worktree`);
-  if (worktrees[0]?.branch && !/^suggest\//u.test(worktrees[0].branch)) problems.push(`branch ${worktrees[0].branch}`);
+  if (offered.some((entry) => entry.worktree !== true)) problems.push(`the sheet did not default to worktrees: ${JSON.stringify(offered)}`);
+  if (worktrees.length !== 3) problems.push(`${worktrees.length} children in a new worktree`);
+  if (facts.statuses.some((entry) => !/^suggest\/task-[0-9a-f]{8}$/u.test(entry.branch ?? ''))) problems.push(`branches ${facts.statuses.map((entry) => entry.branch).join(', ')}`);
+  for (const entry of cleanup) {
+    if (!entry.status?.untouched) problems.push(`${entry.branch} is not untouched: ${JSON.stringify(entry.status)}`);
+    if (entry.removed ? !entry.removed.ok : !entry.folderGone) problems.push(`${entry.branch} was not cleaned up: ${JSON.stringify(entry.removed ?? entry.dialogLeft)}`);
+  }
+  if (facts.gitAfterCleanup.branches.some((branch) => branch.startsWith('suggest/'))) problems.push(`branches left: ${facts.gitAfterCleanup.branches.join(', ')}`);
   if (facts.childPresets.some((preset) => preset !== 'standard')) problems.push(`child presets ${facts.childPresets.join(',')}`);
   if (facts.gitAfterCleanup.worktrees !== 1) problems.push(`${facts.gitAfterCleanup.worktrees} worktrees left in the kit`);
   report.push({ scenario: name, ...facts, problems });
@@ -2380,15 +2421,15 @@ async function runTaskCapEight(page, report, providerId) {
   const calls = suggestCalls(items);
   const dropped = items.filter((item) => item.payload?.type === 'task-suggestions-dropped').map((item) => item.payload.count);
   await shootSurface(page, panel, `${name}-cap`, report, card);
-  const failedRun = panel.locator('.chat-run').filter({ has: page.locator('.chat-tool[data-status="failed"]') });
-  const runHeader = panel.locator('.chat-run__header').last();
+  const failedRun = panel.locator('.chat-run').filter({ hasText: '받지 않음' });
+  const runHeader = failedRun.locator('.chat-run__header').first();
   const collapsed = { runs: await panel.locator('.chat-run').count(), headerText: (await textOf(runHeader))?.slice(0, 160) };
   if (await runHeader.count()) await runHeader.click().catch(() => undefined);
   await wait(500);
-  const refusedRows = panel.locator('.chat-tool[data-status="failed"]');
+  const refusedRows = panel.locator('.chat-tool[data-status="refused"]');
   const facts = {
     sessionId, tasks: taskRows(items).length, calls: calls.length, dropped, note: (await textOf(card))?.match(/그 밖의 제안[^.]*받지 않았[^.]*/u)?.[0],
-    collapsed, refusedRowsOnScreen: await refusedRows.count(), refusedRowText: (await refusedRows.allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/gu, ' ').slice(0, 200)).slice(0, 3), failedRuns: await failedRun.count(),
+    collapsed, redRuns: await panel.locator('.chat-run__problems').count(), refusedRowsOnScreen: await refusedRows.count(), refusedRowText: (await refusedRows.allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/gu, ' ').slice(0, 200)).slice(0, 3), failedRuns: await failedRun.count(),
     ...(providerId === 'codex' ? { reported: refusedCodexCalls(providerSessionId) } : {}),
   };
   await failedRun.first().scrollIntoViewIfNeeded().catch(() => undefined);
@@ -2399,6 +2440,8 @@ async function runTaskCapEight(page, report, providerId) {
   await card.getByTestId('chat-task-start-all').click();
   const sheet = page.getByTestId('task-start-all-dialog');
   await sheet.waitFor({ timeout: 10_000 });
+  const here = sheet.getByTestId('task-start-all-here');
+  for (let index = 0; index < await here.count(); index += 1) await here.nth(index).click();
   const startedAt = Date.now();
   await sheet.getByTestId('task-start-all-submit').click();
   await sheet.waitFor({ state: 'hidden', timeout: 15_000 });
