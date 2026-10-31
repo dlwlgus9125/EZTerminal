@@ -669,6 +669,186 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-리뷰-루프",
         "decidedAt": "2026-10-29"
       }
+    },
+    {
+      "id": "turn-suggestion",
+      "title": "A turn no screen showed: its recap after the last message, and the guess of the next message as ghost text with Tab to fill",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "AwayClaudeReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--away-claude-reference",
+        "snapshot": "reference-2-0-turn-suggestion-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/turn-suggestion.png",
+        "sha256": "353d43c926e6ba22ec5b8b1813b20515e8970d522ce18c34595bfebc4b0f701b"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
+    },
+    {
+      "id": "turn-recap",
+      "title": "A recap written while the AI stopped for the person: what it waits on, a way to the decision, the decision dock below",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "RecapWaitingReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--recap-waiting-reference",
+        "snapshot": "reference-2-0-turn-recap-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/turn-recap.png",
+        "sha256": "8b7135d9a01c04a672f995b7eb5ccd9fc184a700e01c4c6e9998a6810e8569e2"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-31"
+      }
+    },
+    {
+      "id": "turn-recap-cli",
+      "title": "The recap in the CLI skin: a row per line, the ghost text in the box",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "CliSuggestionReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--cli-suggestion-reference",
+        "snapshot": "reference-2-0-turn-recap-cli-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/turn-recap-cli.png",
+        "sha256": "9cab38f36004b9a2d6b0bbab858a7366bb654bf2c83dae9525f66b29af2728b1"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
+    },
+    {
+      "id": "task-card",
+      "title": "Suggested-task card: what one click starts, each task with its reason and instruction, start, do it here, dismiss, change and start, start all",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "TasksClaudeReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--tasks-claude-reference",
+        "snapshot": "reference-2-0-task-card-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/task-card.png",
+        "sha256": "e7d000fb197774cba39191f76bf916598221e6dd7b08763aea20980c5887ab26"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
+    },
+    {
+      "id": "task-card-cli",
+      "title": "The same card in the CLI skin, its actions real buttons",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "CliTasksReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--cli-tasks-reference",
+        "snapshot": "reference-2-0-task-card-cli-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/task-card-cli.png",
+        "sha256": "6c131c787b21d7040b33ac1077d900ae695ea618b5e190b9106801c077fead8c"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
+    },
+    {
+      "id": "task-start-all",
+      "title": "Start all confirmation: each task in this folder or, by default, a new worktree on its own branch",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "TasksStartAllReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--tasks-start-all-reference",
+        "snapshot": "reference-2-0-task-start-all-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/task-start-all.png",
+        "sha256": "78f13be61a873300c67fe887b3a24f8d6090aa1cb46070acbb269b8f218eb1a4"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-31"
+      }
+    },
+    {
+      "id": "wrap-up-settings",
+      "title": "Settings › AI › Turn wrap-up: next-prompt suggestions by AI, recap cards, suggested tasks, pause near the limit",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "SettingsTurnWrapUpReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--settings-turn-wrap-up-reference",
+        "snapshot": "reference-2-0-wrap-up-settings-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/wrap-up-settings.png",
+        "sha256": "f175384082ebe7b4aef82a6c17c40a7e2db6a9e3954acb16e39e3a2fffb357dc"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-31"
+      }
+    },
+    {
+      "id": "task-phone-card",
+      "title": "Phone suggested-task card: starts in this folder only, thumb-sized actions",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "PhoneTasksReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--phone-tasks-reference",
+        "snapshot": "reference-2-0-task-phone-card-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/task-phone-card.png",
+        "sha256": "40bc81b8a03ba3fbd7f5fe1f943e1783c07a2bed18f59063c6ff57f8ab9e3fb2"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
+    },
+    {
+      "id": "suggestion-phone-chip",
+      "title": "Phone next-prompt suggestion: a one-line chip above the box, with its dismiss",
+      "story": {
+        "file": "src/renderer/chat/TurnWrapUp.stories.tsx",
+        "export": "PhoneSuggestionReference"
+      },
+      "visual": {
+        "storyId": "production-turnwrapup-mockup--phone-suggestion-reference",
+        "snapshot": "reference-2-0-suggestion-phone-chip-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/suggestion-phone-chip.png",
+        "sha256": "cb2edc9c052e7c91236b67e7f7528c3ab047f151a95ecd5b671fd9290bea3a6a"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
+        "decidedAt": "2026-10-30"
+      }
     }
   ]
 }

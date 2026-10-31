@@ -93,6 +93,8 @@ describe('2.0 design reference manifest', () => {
       'harness-settings-agents', 'harness-composer-queued', 'harness-canvas-agents', 'harness-canvas-answer', 'harness-settings-proposal',
       'harness-phone-assign', 'harness-phone-queued',
       'review-card', 'review-card-cli', 'review-start', 'review-walkthrough', 'review-phone-card', 'review-phone-sheet',
+      'turn-suggestion', 'turn-recap', 'turn-recap-cli', 'task-card', 'task-card-cli', 'task-start-all', 'wrap-up-settings',
+      'task-phone-card', 'suggestion-phone-chip',
     ]);
     expect([...result.retired].sort()).toEqual(legacyManifest.surfaces.map((surface: { id: string }) => surface.id).sort());
   });

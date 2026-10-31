@@ -264,6 +264,81 @@ const designReferenceCases = [
     theme: "matrix",
     viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
   },
+  // 턴 마무리 (approved 2026-10-30, 모두 시작's default 2026-10-31): the next-message guess and the recap, the stopped
+  // recap, the recap in the CLI skin, the suggested-task card in both skins, 모두 시작, the settings, and the phone's
+  // card and chip.
+  {
+    storyId: "production-turnwrapup-mockup--away-claude-reference",
+    screenshot: "reference-2-0-turn-suggestion-matrix-ko.png",
+    readySelector: "[data-testid='structured-agent-suggestion']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--recap-waiting-reference",
+    screenshot: "reference-2-0-turn-recap-matrix-ko.png",
+    readySelector: "[data-testid='chat-recap-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--cli-suggestion-reference",
+    screenshot: "reference-2-0-turn-recap-cli-matrix-ko.png",
+    readySelector: ".chat-cli-action-card[data-kind='recap']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--tasks-claude-reference",
+    screenshot: "reference-2-0-task-card-matrix-ko.png",
+    readySelector: "[data-testid='chat-task-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--cli-tasks-reference",
+    screenshot: "reference-2-0-task-card-cli-matrix-ko.png",
+    readySelector: "[data-testid='chat-task-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--tasks-start-all-reference",
+    screenshot: "reference-2-0-task-start-all-matrix-ko.png",
+    readySelector: "[data-testid='task-start-all-dialog']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--settings-turn-wrap-up-reference",
+    screenshot: "reference-2-0-wrap-up-settings-matrix-ko.png",
+    readySelector: "[data-testid='turn-wrap-up-settings']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--phone-tasks-reference",
+    screenshot: "reference-2-0-task-phone-card-matrix-ko.png",
+    readySelector: "[data-testid='chat-task-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
+  {
+    storyId: "production-turnwrapup-mockup--phone-suggestion-reference",
+    screenshot: "reference-2-0-suggestion-phone-chip-matrix-ko.png",
+    readySelector: "[data-testid='structured-agent-suggestion-chip']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
 ] as const;
 
 for (const item of designReferenceCases) {
