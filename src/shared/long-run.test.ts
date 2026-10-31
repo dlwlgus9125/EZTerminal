@@ -12,7 +12,7 @@ function limit(phase: UsageLimitPhase, extra: Partial<TurnUsageLimit> = {}): Tur
 }
 
 const PHASES: readonly UsageLimitPhase[] = [
-  'waiting', 'resuming', 'resumed', 'retrying', 'gave-up', 'ask-reset', 'scheduled', 'ask-unknown', 'ask-reopened', 'off', 'left', 'cancelled', 'skipped', 'not-included', 'child', 'failed',
+  'waiting', 'resuming', 'resumed', 'retrying', 'gave-up', 'ask-reset', 'scheduled', 'ask-unknown', 'ask-reopened', 'off', 'left', 'cancelled', 'person-refused', 'skipped', 'not-included', 'child', 'failed', 'unconfirmed',
 ];
 
 describe('when the app may send by itself', () => {

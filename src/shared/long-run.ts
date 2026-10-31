@@ -31,16 +31,20 @@ export type UsageLimitPhase =
   | 'off'
   /** They left it (그대로 두기). */
   | 'left'
-  /** They sent a message before the app did. */
+  /** They sent a message before the app did, and it went through. */
   | 'cancelled'
+  /** They sent a message before the reset and the limit refused it: it stays in the session, and auto-resume is off. */
+  | 'person-refused'
   /** An approval was open when the time came. */
   | 'skipped'
   /** `usage_not_included`: the plan cannot use this at all, and nothing resets. */
   | 'not-included'
   /** A child conversation: offered, never automatic (D7). */
   | 'child'
-  /** The send itself failed; nothing went out. */
-  | 'failed';
+  /** The host confirms the send failed and nothing went out. */
+  | 'failed'
+  /** The host cannot say whether "Continue." arrived. */
+  | 'unconfirmed';
 
 /** One stopped turn's limit: the host knows the window and usually the reset. */
 export interface TurnUsageLimit {
@@ -95,6 +99,8 @@ export type SteerDelivery =
   | 'on-its-way'
   /** An open approval holds it; it lands after the answer. */
   | 'behind-approval'
+  /** The host confirms it landed. The only state that may say so: leaving the list proves nothing. */
+  | 'landed'
   /** The host says it did not get there. */
   | 'failed'
   /** The host cannot say: it may have been read. */
@@ -110,6 +116,8 @@ export interface SteeredMessage {
   readonly behind?: 'tool' | 'text';
   /** `failed`: why, in the app's words. */
   readonly failure?: 'disconnected' | 'refused';
+  /** `unconfirmed`: what ended the turn before it landed. A refused prompt stays in the session, so it may yet be read. */
+  readonly caught?: 'stop' | 'limit';
 }
 
 /**
@@ -120,6 +128,8 @@ export interface SteeredMessage {
 export interface SteerLanding {
   readonly rewritten?: boolean;
   readonly newTurn?: boolean;
+  /** It landed in a turn the limit then refused: it stays in the session and is read when this continues. */
+  readonly refused?: boolean;
 }
 
 /** Why a message meant for the running turn went to the queue instead. */

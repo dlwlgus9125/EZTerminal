@@ -14,7 +14,7 @@ function limit(phase: UsageLimitPhase, extra: Partial<TurnUsageLimit> = {}): Tur
 }
 
 const PHASES: readonly UsageLimitPhase[] = [
-  'waiting', 'resuming', 'resumed', 'retrying', 'gave-up', 'ask-reset', 'scheduled', 'ask-unknown', 'ask-reopened', 'off', 'left', 'cancelled', 'skipped', 'not-included', 'child', 'failed',
+  'waiting', 'resuming', 'resumed', 'retrying', 'gave-up', 'ask-reset', 'scheduled', 'ask-unknown', 'ask-reopened', 'off', 'left', 'cancelled', 'person-refused', 'skipped', 'not-included', 'child', 'failed', 'unconfirmed',
 ];
 
 describe('the usage limit card', () => {
@@ -76,6 +76,23 @@ describe('the usage limit card', () => {
     expect(limitView(limit('skipped'), ko, 'ko', false).actions.map((action) => action.id)).toEqual(['limit-resume', 'limit-leave']);
   });
 
+  it('keeps a send it cannot confirm apart from one that did not happen', () => {
+    const unknown = limitView(limit('unconfirmed'), ko, 'ko');
+    expect(unknown.state).not.toBe('failed');
+    expect(unknown.message.text).toBe(ko.unconfirmed);
+    expect(unknown.notes.map((note) => note.text)).toContain(ko.unconfirmedNote);
+    expect(unknown.notes.map((note) => note.text)).not.toContain(ko.failedNote);
+    expect(unknown.actions.map((action) => action.id)).toEqual(['limit-resume', 'limit-leave']);
+    expect(limitStatus(limit('unconfirmed'), ko, 'ko')).toMatchObject({ asks: true });
+  });
+
+  it('says a refused message of the person\'s stays and is read when this continues', () => {
+    const view = limitView(limit('person-refused'), ko, 'ko');
+    expect(view.message.text).toBe(ko.personRefused);
+    expect(view.notes.map((note) => note.text)).toEqual(expect.arrayContaining([ko.personRefusedKept, ko.resumeNow]));
+    expect(view.actions.map((action) => action.id)).toEqual(['limit-resume']);
+  });
+
   it('is an error only when the send itself failed', () => {
     for (const phase of PHASES) expect(limitView(limit(phase, { failure: 'disconnected' }), ko, 'ko').state === 'failed', phase).toBe(phase === 'failed');
     expect(limitView(limit('failed', { failure: 'disconnected' }), ko, 'ko').message).toMatchObject({ tone: 'danger', label: ko.failedLabel });
@@ -96,7 +113,7 @@ describe('the state on the list and in the header', () => {
   it('only an ask-first case waits on the person', () => {
     for (const phase of PHASES) {
       const asks = limitStatus(limit(phase), ko, 'ko')?.asks === true;
-      expect(asks, phase).toBe(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened'].includes(phase));
+      expect(asks, phase).toBe(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened', 'unconfirmed'].includes(phase));
     }
   });
 

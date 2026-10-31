@@ -168,6 +168,30 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 이 턴에서 다시 씁니다');
   });
 
+  it('says a message was delivered only when the host says it landed, never because it left the list', () => {
+    const held = { id: 'm', text: '그 파일만', state: 'on-its-way' as const, sentAt: '2026-11-01T05:50:00.000Z', behind: 'tool' as const };
+    const running = steer({ messages: [held] });
+    box({ steer: running });
+    box({ steer: { ...running, messages: [] } });
+    expect(byId('chat-steer-tray')).toBeNull();
+    expect(byId('chat-steer-announce')?.textContent).toBe('');
+    box({ steer: { ...running, messages: [held] } });
+    box({ steer: { ...running, messages: [{ ...held, state: 'landed' }] } });
+    expect(byId('chat-steer-announce')?.textContent).toBe('메시지가 전달됐습니다.');
+    // A landed one is a transcript row by now, not a line above the box.
+    expect(byId('chat-steer-tray')).toBeNull();
+  });
+
+  it('says what a stop or a limit left unknown, and offers no resend', () => {
+    const at = '2026-11-01T05:50:00.000Z';
+    box({ steer: steer({ messages: [{ id: 's', text: '그 파일만', state: 'unconfirmed', sentAt: at, caught: 'stop' }, { id: 'l', text: '다른 파일도', state: 'unconfirmed', sentAt: at, caught: 'limit' }] }) });
+    const tray = byId('chat-steer-tray')?.textContent;
+    expect(tray).toContain('턴이 멈춰 전달됐는지 확인하지 못했습니다');
+    expect(tray).toContain('한도로 턴이 멈춰 전달됐는지 확인하지 못했습니다');
+    expect(tray).toContain('이어서 할 때 AI가 읽을 수 있습니다');
+    expect(byId('chat-steer-to-queue')).toBeNull();
+  });
+
   it('never says a held message arrived', () => {
     box({ steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'behind-approval', sentAt: '2026-11-01T05:50:00.000Z' }] }) });
     const tray = byId('chat-steer-tray');

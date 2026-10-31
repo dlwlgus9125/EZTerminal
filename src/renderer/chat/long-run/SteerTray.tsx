@@ -16,16 +16,17 @@ export function steerStateText(message: SteeredMessage, copy: SteerCopy, codex: 
   switch (message.state) {
     case 'on-its-way': return `${copy.onItsWay} · ${codex && message.behind === 'text' ? copy.behind.codex : copy.behind[message.behind ?? 'tool']}`;
     case 'behind-approval': return copy.behindApproval;
+    case 'landed': return copy.announceLanded;
     case 'failed': return message.failure ? `${copy.failed} · ${copy.failure[message.failure]}` : copy.failed;
-    case 'unconfirmed': return copy.unconfirmed;
+    case 'unconfirmed': return message.caught ? copy.caught[message.caught] : copy.unconfirmed;
   }
 }
 
 /**
  * 시안: messages on their way into the running turn. They sit above the message box, not in the transcript: until a
- * message lands it has no place there. It leaves this list when it lands, and the list never says more than the host
- * confirmed. A failed one is never sent again by a button here (neither AI drops a repeat for us): it can go to the
- * queue or back to the box.
+ * message lands it has no place there. Only the host's explicit `landed` says it arrived: a message that just leaves the
+ * list is announced as nothing, since the host may have cancelled or moved it. A failed one is never sent again by a
+ * button here (neither AI drops a repeat for us): it can go to the queue or back to the box.
  */
 export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox }: {
   readonly messages: readonly SteeredMessage[];
@@ -37,23 +38,19 @@ export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox
   const copy = useChatCopy().longRun.steer;
   const [announced, setAnnounced] = useState('');
   const known = useRef(new Map(messages.map((message) => [message.id, message.state])));
-  const moved = useRef(new Set<string>());
   useEffect(() => {
-    const landed = [...known.current.keys()].some((id) => !moved.current.has(id) && !messages.some((message) => message.id === id));
     const changed = messages.find((message) => known.current.get(message.id) !== message.state);
     known.current = new Map(messages.map((message) => [message.id, message.state]));
-    if (changed) setAnnounced(copy.announceHeld(steerStateText(changed, copy, codex)));
-    else if (landed) setAnnounced(copy.announceLanded);
+    if (changed) setAnnounced(changed.state === 'landed' ? copy.announceLanded : copy.announceHeld(steerStateText(changed, copy, codex)));
   }, [codex, copy, messages]);
-  const toQueue = (message: SteeredMessage): void => { moved.current.add(message.id); onToQueue?.(message); };
-  const toBox = (message: SteeredMessage): void => { moved.current.add(message.id); onToBox(message); };
+  const shown = messages.filter((message) => message.state !== 'landed');
   return (
     <>
-      {messages.length > 0 && (
+      {shown.length > 0 && (
         <section className="chat-steer" aria-label={copy.tray} data-testid="chat-steer-tray">
-          <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{messages.length}</span></p>
+          <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{shown.length}</span></p>
           <ol>
-            {messages.map((message) => (
+            {shown.map((message) => (
               <li key={message.id} className="chat-steer__item" data-state={message.state} data-testid="chat-steer-message">
                 <p className="chat-steer__text">{message.text}</p>
                 <p className="chat-steer__state">
@@ -62,7 +59,7 @@ export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox
                   {(message.state === 'failed' || message.state === 'unconfirmed') && <Glyph name="warn" />}
                   <span>{steerStateText(message, copy, codex)}</span>
                 </p>
-                {message.state === 'unconfirmed' && <p className="chat-steer__note">{copy.unconfirmedNote}</p>}
+                {message.state === 'unconfirmed' && <p className="chat-steer__note">{message.caught ? copy.caughtNote[message.caught] : copy.unconfirmedNote}</p>}
                 {message.state === 'behind-approval' && onFocusDecision && (
                   <div className="chat-steer__actions">
                     <Button type="button" variant="ghost" size="sm" onClick={() => onFocusDecision()}>{copy.answer}</Button>
@@ -71,9 +68,9 @@ export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox
                 {(message.state === 'failed' || message.state === 'unconfirmed') && (
                   <div className="chat-steer__actions">
                     {message.state === 'failed' && message.failure !== 'disconnected' && onToQueue && (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => toQueue(message)} data-testid="chat-steer-to-queue">{copy.toQueue}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => onToQueue(message)} data-testid="chat-steer-to-queue">{copy.toQueue}</Button>
                     )}
-                    <Button type="button" variant="ghost" size="sm" onClick={() => toBox(message)} data-testid="chat-steer-to-box">{copy.toBox}</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => onToBox(message)} data-testid="chat-steer-to-box">{copy.toBox}</Button>
                   </div>
                 )}
               </li>

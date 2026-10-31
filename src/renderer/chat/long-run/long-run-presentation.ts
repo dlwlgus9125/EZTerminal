@@ -10,14 +10,15 @@ type LimitCopy = ChatCopy['longRun']['limit'];
 const CARD_STATE: Readonly<Record<UsageLimitPhase, ActionCardState>> = {
   waiting: 'queued', scheduled: 'queued', retrying: 'queued', resuming: 'running', resumed: 'done',
   'gave-up': 'queued', 'ask-reset': 'queued', 'ask-unknown': 'queued', 'ask-reopened': 'queued',
-  off: 'stopped', left: 'stopped', cancelled: 'stopped', skipped: 'stopped', child: 'stopped', 'not-included': 'unsupported', failed: 'failed',
+  off: 'stopped', left: 'stopped', cancelled: 'stopped', 'person-refused': 'stopped', skipped: 'stopped', child: 'stopped', 'not-included': 'unsupported', failed: 'failed', unconfirmed: 'stopped',
 };
 
 /** The states that wait on the person. Everything else waits on a clock, or on nothing. */
-const ASKS: ReadonlySet<UsageLimitPhase> = new Set(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened']);
+const ASKS: ReadonlySet<UsageLimitPhase> = new Set(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened', 'unconfirmed']);
 
 /** The quiet mark on a message that landed: how it landed, as the host confirmed it. */
 export function steerMark(steer: SteerLanding, copy: ChatCopy['longRun']['steer']): string {
+  if (steer.refused) return copy.landedRefused;
   if (steer.newTurn) return copy.landedNewTurn;
   return steer.rewritten ? `${copy.landed} · ${copy.rewritten}` : copy.landed;
 }
@@ -140,6 +141,10 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
       return { ...base, message: { text: resets }, notes: [note('left', copy.left), note('now', copy.resumeNow)], actions: [{ id: 'limit-resume' }] };
     case 'cancelled':
       return { ...base, message: { text: copy.cancelled }, notes: [note('none', copy.cancelledNote)], actions: [] };
+    case 'person-refused':
+      return { ...base, message: { text: copy.personRefused }, notes: [note('kept', copy.personRefusedKept), note('now', copy.resumeNow)], actions: [{ id: 'limit-resume' }] };
+    case 'unconfirmed':
+      return { ...base, message: { text: copy.unconfirmed }, notes: [note('why', copy.unconfirmedNote)], actions: [{ id: 'limit-resume' }, leave] };
     case 'skipped':
       return approvalOpen
         ? { ...base, message: { text: copy.skipped }, notes: [note('then', copy.skippedAnswer)], actions: [{ id: 'focus-decision', primary: true }] }

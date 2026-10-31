@@ -118,7 +118,7 @@ interface StoryHost {
   readonly settingOff: () => void;
 }
 
-function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Args, landAfter?: number): StoryHost {
+function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Args, landAfter?: number, personRefused = false): StoryHost {
   const [state, setState] = useState(fixture);
   const timers = useRef<number[]>([]);
   const next = useRef(1);
@@ -152,9 +152,9 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
   }, [args, landAfter, provider]);
   const onSend = useCallback(async (prompt: string): Promise<StructuredAgentUiResult> => {
     const result = await args.onSend(prompt);
-    setState((current) => personSends(current, prompt));
+    setState((current) => personSends(current, prompt, personRefused));
     return result;
-  }, [args]);
+  }, [args, personRefused]);
   const turnOff = useCallback(() => setState((current) => settingOff(current)), []);
   const steer = useMemo(() => ({
     onSteer,
@@ -205,9 +205,11 @@ interface ChatOptions {
   readonly landAfter?: number;
   /** A child conversation (D7). */
   readonly child?: boolean;
+  /** What the person sends before the reset is refused. */
+  readonly personRefused?: boolean;
 }
 
-function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false }: ChatOptions & {
+function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false, personRefused = false }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -215,7 +217,7 @@ function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', widt
   const locale = useContext(StoryLocale);
   const sessionId = `long-run-story-${id}`;
   const [fixture] = useState(() => inLongSession(make(locale), sessionId));
-  const host = useStoryHost(fixture, provider, args, landAfter);
+  const host = useStoryHost(fixture, provider, args, landAfter, personRefused);
   return (
     <Desk width={width} height={height}>
       <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, locale, args)} skin={skin}
@@ -422,6 +424,26 @@ export const SteerUnconfirmed: Story = chat('steer-unconfirmed', (lang) => steer
   await expect(tray).toHaveTextContent('다시 보내면 두 번 읽을 수 있습니다');
   await expect(within(tray).queryByTestId('chat-steer-to-queue')).toBeNull();
 });
+/** The person stopped the turn with a message on its way. What became of it was never measured, so nothing claims either way, and the box is the way back. */
+export const SteerCaughtByStop: Story = chat('steer-caught-by-stop', (lang) => steerStory(lang, 'caught-stop'), {}, async ({ canvasElement }) => {
+  const tray = await findIn(canvasElement, TRAY);
+  await expect(tray).toHaveTextContent('턴이 멈춰 전달됐는지 확인하지 못했습니다');
+  await expect(tray).toHaveTextContent('세션에 남았다면 다음 턴에서 AI가 읽을 수 있습니다.');
+  await expect(within(tray).getByTestId('chat-steer-to-box')).toBeVisible();
+  await expect(within(tray).queryByTestId('chat-steer-to-queue')).toBeNull();
+});
+/** The limit stopped the turn with a message on its way: the card is below it, and the message may be read on continuing. */
+export const SteerCaughtByLimit: Story = chat('steer-caught-by-limit', (lang) => steerStory(lang, 'caught-limit'), {}, async ({ canvasElement }) => {
+  const tray = await findIn(canvasElement, TRAY);
+  await expect(tray).toHaveTextContent('한도로 턴이 멈춰 전달됐는지 확인하지 못했습니다');
+  await expect(tray).toHaveTextContent('세션에 남았다면 이어서 할 때 AI가 읽을 수 있습니다.');
+  await findIn(canvasElement, CARD);
+});
+/** The host saw it land, and the limit refused that turn: measured, it stays in the session and is read on continuing. */
+export const SteerLandedThenLimit: Story = chat('steer-landed-then-limit', (lang) => steerStory(lang, 'landed-then-limit'), {}, async ({ canvasElement }) => {
+  await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('한도로 멈춘 턴에 남음, 이어서 할 때 AI가 읽습니다');
+  await findIn(canvasElement, CARD);
+});
 /** A narrow conversation (520 px): the buttons stay on the box's row, the tray wraps. */
 export const SteerNarrow: Story = chat('steer-narrow', (lang) => steerStory(lang, 'on-its-way'), { width: 520, height: 860 }, async ({ canvasElement }) => {
   await userEvent.type(await composer(canvasElement), '그 파일만 돌려 줘.');
@@ -526,6 +548,16 @@ export const ClockPersonFirst: Story = chat('clock-person-first', (lang) => limi
   passTime(RESUME_AT);
   await expect(args.onResumeSent).not.toHaveBeenCalled();
 });
+/** The person sends before the reset and the limit refuses it: the schedule stays cancelled, the message stays in the conversation, and the time passes with nothing sent. */
+export const ClockPersonRefused: Story = chat('clock-person-refused', (lang) => limitStory(lang, 'waiting'), { personRefused: true }, async ({ canvasElement, args }) => {
+  await userEvent.type(await composer(canvasElement), '내가 먼저 보낼게.{Enter}');
+  const card = await findIn(canvasElement, CARD);
+  await waitFor(() => expect(card).toHaveTextContent('직접 보낸 메시지가 한도로 거절됐습니다. 자동 재개는 취소됐습니다.'));
+  passTime(RESUME_AT);
+  await expect(args.onResumeSent).not.toHaveBeenCalled();
+  await expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toBeNull();
+  scrollToTop(card);
+});
 /** Being sent now: nothing says it arrived. */
 export const LimitResuming: Story = chat('limit-resuming', (lang) => limitStory(lang, 'resuming'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
@@ -594,6 +626,13 @@ export const LimitCancelled: Story = chat('limit-cancelled', (lang) => limitStor
   await expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toBeNull();
   scrollToTop(card);
 });
+/** The same refused message as a resting screen: its row, 한도로 거절됨, the card under it, and how it can go on. */
+export const LimitPersonRefused: Story = chat('limit-person-refused', (lang) => limitStory(lang, 'person-refused'), {}, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, CARD);
+  await expect(card).toHaveTextContent('그 메시지는 대화에 남아 있어, 이어서 하면 AI가 함께 읽습니다.');
+  await expect(within(card).getByRole('button', { name: '이어서 하기' })).toBeVisible();
+  scrollToTop(card);
+});
 /** An approval was open when the time came: skipped, and the card leads to it. */
 export const LimitSkipped: Story = chat('limit-skipped', (lang) => limitStory(lang, 'skipped'), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
@@ -646,6 +685,15 @@ export const LimitResumePressed: Story = chat('limit-resume-pressed', (lang) => 
   await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 이어서 하기를 누름'), { timeout: 4_000 });
   scrollToTop(await findIn(canvasElement, CARD));
 });
+/** The host cannot say whether "Continue." arrived: not the same as nothing having gone out, so it asks, and says what sending again risks. */
+export const LimitUnconfirmed: Story = chat('limit-unconfirmed', (lang) => limitStory(lang, 'unconfirmed'), {}, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, CARD);
+  await expect(card).toHaveTextContent('"Continue."가 전달됐는지 확인하지 못했습니다.');
+  await expect(card).toHaveTextContent('다시 보내면 두 번 읽을 수 있습니다.');
+  await expect(card).not.toHaveTextContent('아무것도 보내지 않았습니다');
+  await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
+  scrollToTop(card);
+});
 /** A narrow conversation (520 px). */
 export const LimitNarrow: Story = chat('limit-narrow', (lang) => limitStory(lang, 'waiting'), { width: 520, height: 860 }, showCard);
 export const LimitEnglish: Story = english('limit-en', (lang) => limitStory(lang, 'waiting'), {}, showCard);
@@ -660,6 +708,11 @@ export const CliLimitWaiting: Story = chat('cli-limit-waiting', (lang) => limitS
 export const CliLimitResumed: Story = chat('cli-limit-resumed', (lang) => limitStory(lang, 'resumed'), { skin: 'cli' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-app-sent"]')).toHaveTextContent('Continue.');
   const card = await findIn(canvasElement, '.chat-cli-action-card[data-kind="usage-limit"]');
+  await expect(card.querySelector('.chat-cli-glyph')).toHaveAttribute('data-tone', 'muted');
+});
+export const CliLimitUnconfirmed: Story = chat('cli-limit-unconfirmed', (lang) => limitStory(lang, 'unconfirmed'), { skin: 'cli' }, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, '.chat-cli-action-card[data-kind="usage-limit"]');
+  // Not known is not an error.
   await expect(card.querySelector('.chat-cli-glyph')).toHaveAttribute('data-tone', 'muted');
 });
 export const CliLimitWeekly: Story = chat('cli-limit-weekly', (lang) => limitStory(lang, 'ask-reset', { window: 'weekly' }), { skin: 'cli' });
@@ -838,6 +891,9 @@ export const PhoneSteerBehindApproval360: Story = phone('phone-steer-behind', (l
 export const PhoneSteerFailed360: Story = phone('phone-steer-failed', (lang) => steerStory(lang, 'failed'), 360, 800, {}, async ({ canvasElement }) => {
   await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));
 });
+export const PhoneSteerCaughtByLimit360: Story = phone('phone-steer-caught-limit', (lang) => steerStory(lang, 'caught-limit'), 360, 800, {}, async ({ canvasElement }) => {
+  await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));
+});
 export const PhoneSteerFellBack360: Story = phone('phone-steer-fell-back', (lang) => steerStory(lang, 'review-turn'), 360, 800, { provider: 'codex' }, async ({ canvasElement }) => {
   await findIn(canvasElement, '[data-testid="chat-queue-fallback"]');
 });
@@ -857,6 +913,8 @@ export const PhoneLimitWaiting360: Story = phone('phone-limit-waiting-360', (lan
 export const PhoneLimitWaiting412: Story = phone('phone-limit-waiting-412', (lang) => limitStory(lang, 'waiting', { provider: 'codex' }), 412, 915, { provider: 'codex' }, phoneCard());
 export const PhoneLimitWeekly360: Story = phone('phone-limit-weekly', (lang) => limitStory(lang, 'ask-reset', { window: 'weekly' }), 360, 800, {}, phoneCard());
 export const PhoneLimitUnknown360: Story = phone('phone-limit-unknown', (lang) => limitStory(lang, 'ask-unknown', { window: 'unknown' }), 360, 800, {}, phoneCard());
+export const PhoneLimitPersonRefused360: Story = phone('phone-limit-person-refused', (lang) => limitStory(lang, 'person-refused'), 360, 800, {}, phoneCard());
+export const PhoneLimitUnconfirmed360: Story = phone('phone-limit-unconfirmed', (lang) => limitStory(lang, 'unconfirmed'), 360, 800, {}, phoneCard());
 export const PhoneLimitReopened360: Story = phone('phone-limit-reopened', (lang) => limitStory(lang, 'ask-reopened'), 360, 800, {}, phoneCard());
 export const PhoneLimitResumed360: Story = phone('phone-limit-resumed', (lang) => limitStory(lang, 'resumed'), 360, 800, {}, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="chat-app-sent"]'); });
 export const PhoneLimitLine412: Story = phone('phone-limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), 412, 915, {}, phoneCard());

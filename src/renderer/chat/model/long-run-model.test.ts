@@ -79,6 +79,22 @@ describe('long-run rows in the chat model', () => {
     expect(model(fixture).rows.some((row) => row.kind === 'user' && row.text === text)).toBe(false);
   });
 
+  it('keeps a message the limit caught after it landed, marked, with the card after it', () => {
+    const rows = model(steerStory('ko', 'landed-then-limit')).rows;
+    const landed = rows.find((row) => row.kind === 'user' && row.steer !== undefined);
+    expect(landed).toMatchObject({ steer: { refused: true } });
+    expect(rows.at(-1)?.kind).toBe('usage-limit');
+  });
+
+  it('shows a refused message of the person\'s as a row, then the one card', () => {
+    const rows = model(limitStory('ko', 'person-refused')).rows;
+    const users = rows.filter((row) => row.kind === 'user');
+    expect(users).toHaveLength(2);
+    expect(rows.filter((row) => row.kind === 'usage-limit')).toHaveLength(1);
+    expect(rows.at(-1)?.kind).toBe('usage-limit');
+    expect(rows.filter((row) => row.kind === 'turn-status').map((row) => (row.kind === 'turn-status' ? row.limited : undefined))).toEqual(['stopped', 'refused']);
+  });
+
   it('tells the card an approval waits', () => {
     const card = model(limitStory('ko', 'skipped')).rows.find((row) => row.kind === 'usage-limit');
     expect(card).toMatchObject({ approvalOpen: true });
