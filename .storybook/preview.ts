@@ -39,7 +39,18 @@ export function StoryReadyBoundary({
   return createElement('div', { style: { display: 'contents' } }, children);
 }
 
+/**
+ * Every declared face, before a story mounts. With `font-display: swap` a face that lands after the first layout changes
+ * row heights while the transcript pins its tail, and Chromium's scroll anchoring answers: where the view ends up then
+ * depends on which frame each face arrived in. Loaded first, a story's first layout is its last.
+ */
+async function loadDeclaredFonts(): Promise<Record<string, never>> {
+  await Promise.allSettled([...document.fonts].map((face) => face.load()));
+  return {};
+}
+
 const preview: Preview = {
+  loaders: [loadDeclaredFonts],
   parameters: {
     a11y: {
       test: 'error',
