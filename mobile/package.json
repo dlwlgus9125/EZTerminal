@@ -24,6 +24,7 @@
     "e2e:planning-workflow": "node --experimental-strip-types e2e/planning-workflow.ts",
     "e2e:conversation-journey": "node --experimental-strip-types e2e/conversation-journey.ts",
     "e2e:review-journey": "node --experimental-strip-types e2e/review-journey.ts",
+    "e2e:wrap-up-journey": "node --experimental-strip-types e2e/wrap-up-journey.ts",
     "e2e:subagent-tree": "node --experimental-strip-types e2e/subagent-tree.ts",
     "e2e:i4-feed-terminal": "node --experimental-strip-types e2e/i4-feed-terminal.ts",
     "e2e:session-restart-expired": "node --experimental-strip-types e2e/session-force-stop-recovery.ts --offline-ms=330000",
