@@ -49,7 +49,7 @@
 
 ### Android
 
-`mobile/e2e/wrap-up-journey.ts`, 가짜 Codex 격리 데스크톱, 360×800, 한국어. 수정 목록 반영 뒤 API 35·API 29(WebView 74)에서 통과(점검 17, 터치 대상 16개 모두 44px 이상, 그림 29장), 기능 이전 PC에 붙은 경우(`--old-host`)도 통과. 칩, 무엇이 보는 것인지(앞의 대화, 앱이 뒤, 다른 화면, 다른 대화, 재연결), 요약과 실패, 답하러 가기, 전체 권한 대화의 작업 시작, 여기서 하기, 무시와 다시 열기, 모두 시작 시트, 긴 단어.
+`mobile/e2e/wrap-up-journey.ts`, 가짜 Codex 격리 데스크톱, 360×800, 한국어. 수정 목록 반영 뒤와 최종 소스에서 API 35·API 29(WebView 74)에서 통과(점검 17, 터치 대상 16개 모두 44px 이상, 그림 29장), 기능 이전 PC에 붙은 경우(`--old-host`)는 수정 목록 전에 통과. 칩, 무엇이 보는 것인지(앞의 대화, 앱이 뒤, 다른 화면, 다른 대화, 재연결), 요약과 실패, 답하러 가기, 전체 권한 대화의 작업 시작, 여기서 하기, 무시와 다시 열기, 모두 시작 시트, 긴 단어.
 
 ## 계획과 달라진 것
 
@@ -72,3 +72,16 @@
 - 범위 밖, 손대지 않음: `codexReviewForkRequest`의 `tools.update_plan` 빈틈, 턴 도는 중 Codex `/btw`에도 있을 `<turn_aborted>` 거짓, 옛 `overflow-wrap: anywhere` 112곳, 폰의 전송 뒤 빨간 줄, 아래 플레이크.
 - `pnpm e2e` 플레이크: `agent-management:45`와 `project-workbench:379`는 기준 `19047d61`에서도 재현(각 6번 중 1번). `agent-management:115`는 이 브랜치에서 13번 중 1번, 기준에서 6번 중 0번으로 원인이 증명되지 않았다(이 브랜치가 바꾸지 않은 경로).
 - 설정 사이드바 기본 폭 320px에서는 `턴 마무리` 설명 열이 약 65px로 좁다. 기존 배치이고 사람이 넓힐 수 있다.
+
+## 최종 검사
+
+2026-10-31, 프로젝트 맵 재고정(`48390097`) 뒤 소스 확정 상태에서 차례로 돌렸다(`artifacts/turn-wrap-up/final-gates/`, 로컬).
+
+- `pnpm typecheck`, `pnpm lint` 통과.
+- `pnpm test` 통과: docs:check(링크 428), Project Map check(7개 맵), 단위 5,214(건너뜀 5), OS 97, 가드 전부(design-reference 2.0 화면 41개 포함).
+- `pnpm test:storybook` 609 통과. `pnpm test:visual` 96 통과(새 기준 9개, 기존 스냅샷 변화 없음). `pnpm -C mobile typecheck`·`lint`·`test`(705) 통과.
+- `rm -rf .vite` 뒤 `pnpm e2e` 190개 중 189 통과, 1개 실패 — 초록이 아니다. 실패는 `project-workbench:379`로 파일 패널이 외부 폴더로 이동하지 않은 것이다. 기준 `19047d61`에서도 재현한 플레이크이고 그 spec과 파일 패널 코드는 이 브랜치에서 바뀌지 않았다. 그 spec만 따로 5번 돌리면 4 통과 1 실패다. `agent-management:45`·`:115`는 이번에 실패하지 않았다.
+- `pnpm test:e2e:packaged` 8 통과. 이 8개는 턴 마무리 경로를 지나지 않아, 같은 패키지 EXE에서 가짜 Codex로 따로 확인했다(커밋하지 않은 spec): `turn-wrap-up-v1`, MCP `suggest_task`(카드 8개, 아홉째는 앱 문구로 거절), 한 번 눌러 시작한 하위 대화(`승인 후 실행`), 예측 분기의 제안, 저장된 요약. Claude SDK 경로는 패키지 EXE에서 돌리지 않았다. 가짜 Claude가 없어, SDK가 `main.js`에 번들되어 있는 것과 `guard:claude-provider`까지만 봤다.
+- 최종 소스의 APK로 `mobile/e2e/wrap-up-journey.ts`를 API 35·API 29(WebView 74)에서 다시 돌려 통과했다.
+- 2.0 기준 화면 9개를 실앱·API 35 캡처로 고정(`17c372ed`): `turn-suggestion`, `turn-recap`, `turn-recap-cli`, `task-card`, `task-card-cli`, `task-start-all`, `wrap-up-settings`, `task-phone-card`, `suggestion-phone-chip`.
+- 이 수치를 적은 문서 커밋 뒤 `pnpm test`를 다시 돌렸다. 성능 측정은 돌리지 않았다.

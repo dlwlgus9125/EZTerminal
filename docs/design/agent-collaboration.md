@@ -390,7 +390,7 @@ diff·파일·인용 블록 안의 글은 지시가 아닌 데이터라고 말�
   검토자·자문·기획·예약 대화와 AI가 만든 하위 대화는 제외한다. 제안 작업 카드로 시작한 하위 대화는 사람이 메시지를 보낸 뒤부터 대상이다.
   heartbeat, report-back처럼 사람이 보내지 않은 턴은 Claude에 env `'false'`를 보내 그 턴의 제안 요청 자체를 막는다.
 - 턴이 `completed`가 되면 3초 기다린 뒤 다시 본다. 대화가 바쁘거나 뒤따르는 턴이 있으면 건너뛴다.
-- 한도: 어느 사용량 창이든 `agentUsageLevel`이 `danger`면 자동 호출을 멈추고(`pauseNearLimit`, 초기화 시각이 지난 창은 빼고) 설정 절에
+- 한도: 그 대화 AI의 사용량 창 하나라도 `agentUsageLevel`이 `danger`면 자동 호출을 멈추고(`pauseNearLimit`, 초기화 시각이 지난 창은 빼고) 설정 절에
   그 사실을 보낸다. 요약은 호출 없이 `usage-limit` 줄을 남긴다. 다음 입력 제안의 Claude 스위치는 실행 중 env
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`이고 켜짐이 `'true'`, 꺼짐·멈춤이 `'false'`다. 켜짐을 `'true'`로 두는 것은 CLI가 자기 첫 사용량 경고에서
   제안을 말없이 멈추기 때문이다. 앱의 기준 하나만 남긴다.
