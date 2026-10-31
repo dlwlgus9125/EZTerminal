@@ -118,15 +118,52 @@ describe('removeWorkspaceWorktree with git', () => {
     expect(git(s.repo, 'show', 'HEAD:notes.md')).toBe('from the worktree\n');
   });
 
-  it('keeps work that is not merged, and a worktree that has nothing in it yet', async () => {
+  describe('a worktree with nothing of its own', () => {
+    it('is cleaned up without a merge: the folder and the branch go, and the base gets no commit', async () => {
+      const s = await setup();
+      const before = git(s.repo, 'rev-parse', 'HEAD');
+      const fresh = await s.create('P0', 'suggest/untouched');
+      expect(await removeWorkspaceWorktree(s.deps, fresh.workspaceId)).toEqual({ ok: true, value: { branch: 'suggest/untouched', branchDeleted: true, archivedChats: 0, notes: [] } });
+      expect(existsSync(fresh.path)).toBe(false);
+      expect(s.branches()).toEqual(['main']);
+      expect(git(s.repo, 'rev-parse', 'HEAD')).toBe(before);
+    });
+
+    it('stays so when the base moved on behind it', async () => {
+      const s = await setup();
+      const fresh = await s.create('P0', 'suggest/behind');
+      writeFileSync(path.join(s.repo, 'later.md'), 'on main\n');
+      git(s.repo, 'add', '.');
+      git(s.repo, 'commit', '-qm', 'later');
+      expect(await removeWorkspaceWorktree(s.deps, fresh.workspaceId)).toMatchObject({ ok: true, value: { branchDeleted: true } });
+      expect(s.branches()).toEqual(['main']);
+    });
+
+    it.each([
+      ['a commit of its own', 'not-merged', async (s: Awaited<ReturnType<typeof setup>>, tree: { workspaceId: string; path: string }) => { await s.commitAndMerge(tree, 'notes.md', false); }],
+      ['a modified file', 'dirty-worktree', (_s: unknown, tree: { path: string }) => { writeFileSync(path.join(tree.path, 'README.md'), 'changed\n'); }],
+      ['an untracked file', 'dirty-worktree', (_s: unknown, tree: { path: string }) => { writeFileSync(path.join(tree.path, 'scratch.md'), 'new\n'); }],
+      ['an untracked file git is told not to list', 'dirty-worktree', (s: { repo: string }, tree: { path: string }) => {
+        git(s.repo, 'config', 'status.showUntrackedFiles', 'no');
+        writeFileSync(path.join(tree.path, 'scratch.md'), 'new\n');
+      }],
+    ] as const)('is not what a worktree with %s is', async (_label, reason, change) => {
+      const s = await setup();
+      const tree = await s.create('P0', 'suggest/touched');
+      await change(s, tree);
+      expect(await removeWorkspaceWorktree(s.deps, tree.workspaceId)).toMatchObject({ ok: false, reason });
+      expect(existsSync(tree.path)).toBe(true);
+      expect(s.branches()).toEqual(['main', 'suggest/touched']);
+    });
+  });
+
+  it('keeps work that is not merged', async () => {
     const s = await setup();
     const unmerged = await s.create('P0', 'feature/unmerged');
     await s.commitAndMerge(unmerged, 'notes.md', false);
     expect(await removeWorkspaceWorktree(s.deps, unmerged.workspaceId)).toMatchObject({ ok: false, reason: 'not-merged' });
-    const fresh = await s.create('P0', 'feature/fresh');
-    expect(await removeWorkspaceWorktree(s.deps, fresh.workspaceId)).toMatchObject({ ok: false, reason: 'not-merged' });
-    expect(existsSync(unmerged.path) && existsSync(fresh.path)).toBe(true);
-    expect(s.branches()).toEqual(['feature/fresh', 'feature/unmerged', 'main']);
+    expect(existsSync(unmerged.path)).toBe(true);
+    expect(s.branches()).toEqual(['feature/unmerged', 'main']);
   });
 
   it('removes the whole folder for projects that are subfolders of one repository', async () => {

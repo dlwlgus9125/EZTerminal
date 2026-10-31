@@ -35,9 +35,9 @@ function withWorktrees(): DaemonSnapshot {
   };
 }
 const statuses: readonly WorkspaceWorktreeStatusView[] = [
-  { workspaceId: 'wt-login', branch: 'feature/login', dirty: true, ahead: 2, merged: false, status: 'review' },
-  { workspaceId: 'wt-docs', branch: 'docs/readme', dirty: false, ahead: 0, merged: true, status: 'done' },
-  { workspaceId: 'wt-fresh', branch: 'fresh', dirty: false, ahead: 0, merged: false },
+  { workspaceId: 'wt-login', branch: 'feature/login', dirty: true, ahead: 2, merged: false, untouched: false, status: 'review' },
+  { workspaceId: 'wt-docs', branch: 'docs/readme', dirty: false, ahead: 0, merged: true, untouched: true, status: 'done' },
+  { workspaceId: 'wt-fresh', branch: 'fresh', dirty: false, ahead: 0, merged: false, untouched: true },
 ];
 const flush = async (): Promise<void> => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 

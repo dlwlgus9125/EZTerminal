@@ -94,11 +94,12 @@ export interface WorkspaceWorktreeCleanupDeps extends WorkspaceWorktreeActionDep
 }
 
 /**
- * Removes a merged worktree. Its chats are archived first: they cannot go on without the folder,
- * and on Windows their provider processes keep it open. The folder is then removed through git
- * without force, the merged branch deleted, and the daemon forgets the workspace. Nothing is
- * touched unless the work is merged and clean and nothing runs there; a refusal leaves the
- * worktree as it was, so cleaning up again is safe. A worktree git already forgot (an earlier
+ * Removes a worktree whose work is merged, or that has nothing of its own to merge. A person asks
+ * for this; nothing calls it on its own. Its chats are archived first: they cannot go on without the
+ * folder, and on Windows their provider processes keep it open. The folder is then removed through
+ * git without force, the branch deleted (git refuses one the base lacks), and the daemon forgets the
+ * workspace. Nothing is touched unless the worktree is clean, merged or untouched, and nothing runs
+ * there; a refusal leaves the worktree as it was, so cleaning up again is safe. A worktree git already forgot (an earlier
  * cleanup was cut short) is finished off if nothing but empty folders is left of it.
  */
 export async function removeWorkspaceWorktree(
@@ -125,8 +126,8 @@ export async function removeWorkspaceWorktree(
       return { ok: false, reason: 'git-failed', message: gitMessage(error) };
     }
     if (status.dirty) return { ok: false, reason: 'dirty-worktree', message: 'The worktree has uncommitted changes. Commit and merge them first.' };
-    if (!status.branch || status.ahead > 0 || !status.merged) {
-      return { ok: false, reason: 'not-merged', message: `Merge ${status.branch ?? 'this worktree'} first; only merged work is cleaned up.` };
+    if (!status.branch || status.ahead > 0 || !(status.merged || status.untouched)) {
+      return { ok: false, reason: 'not-merged', message: `Merge ${status.branch ?? 'this worktree'} first; only merged work, or a worktree with nothing of its own, is cleaned up.` };
     }
   } else if (!(await onlyEmptyFolders(workspace.rootPath))) {
     return { ok: false, reason: 'invalid', message: 'Git does not know this folder as a worktree and it still has files, so it is left alone.' };

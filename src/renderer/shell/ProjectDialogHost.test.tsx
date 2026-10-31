@@ -138,7 +138,7 @@ describe('ProjectDialogHost', () => {
   });
 
   it('goes from the worktrees to a merge and back, reading git again; a new worktree cancelled goes back too', async () => {
-    const status = vi.fn(async () => ({ ok: true as const, value: [{ workspaceId: 'wt-1', branch: 'feature/a', dirty: false, ahead: 1, merged: false, status: 'review' as const }] }));
+    const status = vi.fn(async () => ({ ok: true as const, value: [{ workspaceId: 'wt-1', branch: 'feature/a', dirty: false, ahead: 1, merged: false, untouched: false, status: 'review' as const }] }));
     const worktrees = {
       create: vi.fn(async () => ({ ok: true as const, value: { workspaceId: 'wt-2' } })),
       status,

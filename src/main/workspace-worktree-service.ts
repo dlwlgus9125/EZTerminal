@@ -5,6 +5,7 @@ import { GitCommandError, GitRunner } from './worktree-service';
  * `review` — uncommitted changes, or commits its base does not have yet;
  * `done` — its work is merged into the base (a merge commit has it as a parent);
  * neither — a fresh worktree with nothing in it yet.
+ * `untouched` is the fact behind cleaning one up without a merge: nothing of its own to lose.
  */
 export interface WorkspaceWorktreeStatus {
   readonly workspaceId: string;
@@ -13,6 +14,8 @@ export interface WorkspaceWorktreeStatus {
   readonly dirty: boolean;
   readonly ahead: number;
   readonly merged: boolean;
+  /** On a branch of its own with no commit the base lacks and a clean tree, untracked files included. */
+  readonly untouched: boolean;
   readonly status?: 'review' | 'done';
 }
 
@@ -42,9 +45,10 @@ export class WorkspaceWorktreeService {
   async status(target: WorkspaceWorktreeTarget, signal?: AbortSignal): Promise<WorkspaceWorktreeStatus> {
     const branch = await this.currentBranch(target.rootPath, signal);
     const baseBranch = await this.currentBranch(target.mainRoot, signal);
-    const dirty = (await this.git.run(target.rootPath, ['status', '--porcelain'], signal)).trim().length > 0;
+    // Named: a repository set to hide untracked files must not read as clean, because cleaning up deletes them.
+    const dirty = (await this.git.run(target.rootPath, ['status', '--porcelain', '--untracked-files=normal'], signal)).trim().length > 0;
     if (!branch || !baseBranch || branch === baseBranch) {
-      return { workspaceId: target.workspaceId, ...(branch ? { branch } : {}), ...(baseBranch ? { baseBranch } : {}), dirty, ahead: 0, merged: false, ...(dirty ? { status: 'review' as const } : {}) };
+      return { workspaceId: target.workspaceId, ...(branch ? { branch } : {}), ...(baseBranch ? { baseBranch } : {}), dirty, ahead: 0, merged: false, untouched: false, ...(dirty ? { status: 'review' as const } : {}) };
     }
     const ahead = Number.parseInt((await this.git.run(target.mainRoot, ['rev-list', '--count', `${baseBranch}..${branch}`], signal)).trim(), 10) || 0;
     const tip = (await this.git.run(target.mainRoot, ['rev-parse', '--verify', `${branch}^{commit}`], signal)).trim();
@@ -52,7 +56,7 @@ export class WorkspaceWorktreeService {
     // Merged through a merge commit: the base has the branch tip as a non-first parent.
     const merged = ahead === 0 && merges.split(/\r?\n/u).some((line) => line.split(' ').slice(2).includes(tip));
     const status = dirty || ahead > 0 ? 'review' as const : merged ? 'done' as const : undefined;
-    return { workspaceId: target.workspaceId, branch, baseBranch, dirty, ahead, merged, ...(status ? { status } : {}) };
+    return { workspaceId: target.workspaceId, branch, baseBranch, dirty, ahead, merged, untouched: !dirty && ahead === 0, ...(status ? { status } : {}) };
   }
 
   /** Commits everything in the worktree (the person reviewed it first). */
@@ -107,7 +111,7 @@ export class WorkspaceWorktreeService {
     return branch && SAFE_BRANCH.test(branch) ? branch : undefined;
   }
 
-  /** Deletes a branch that is fully merged (git refuses otherwise); its worktree must already be gone. */
+  /** Deletes a branch the base has all of (git refuses otherwise); its worktree must already be gone. */
   async deleteMergedBranch(mainRoot: string, branch: string, signal?: AbortSignal): Promise<{ readonly deleted: boolean; readonly message?: string }> {
     if (!SAFE_BRANCH.test(branch)) return { deleted: false, message: 'The branch is not a plain local branch name.' };
     try {

@@ -60,7 +60,7 @@ describe('removeWorkspaceWorktree', () => {
   type Row = Record<string, unknown>;
 
   function cleanup(options: {
-    status?: Partial<{ branch: string | undefined; dirty: boolean; ahead: number; merged: boolean }>;
+    status?: Partial<{ branch: string | undefined; dirty: boolean; ahead: number; merged: boolean; untouched: boolean }>;
     sessions?: Row[]; agents?: Row[]; turns?: Row[]; approvals?: Row[]; relations?: Row[];
     workspaces?: Row[]; projects?: Row[];
     listed?: Row[]; listedAfterRemove?: Row[]; removeResult?: Row; branchResult?: { deleted: boolean; message?: string };
@@ -77,7 +77,7 @@ describe('removeWorkspaceWorktree', () => {
       sessions: options.sessions ?? [], agents: options.agents ?? [], turns: options.turns ?? [],
       approvals: options.approvals ?? [], agentRelations: options.relations ?? [],
     } as unknown as DaemonSnapshot;
-    const status = { workspaceId: 'W', branch: 'feature', baseBranch: 'main', dirty: false, ahead: 0, merged: true, ...options.status };
+    const status = { workspaceId: 'W', branch: 'feature', baseBranch: 'main', dirty: false, ahead: 0, merged: true, untouched: true, ...options.status };
     let conflicts = options.conflictsFirst ?? 0;
     let removeTried = false;
     const worktrees = { execute: vi.fn(async (request: { action: string }) => {
@@ -135,9 +135,9 @@ describe('removeWorkspaceWorktree', () => {
 
   it.each([
     ['uncommitted changes', { status: { dirty: true } }, 'dirty-worktree'],
-    ['commits not merged yet', { status: { ahead: 2, merged: false } }, 'not-merged'],
-    ['a branch that was never merged', { status: { merged: false } }, 'not-merged'],
-    ['a detached checkout', { status: { branch: undefined } }, 'not-merged'],
+    ['commits not merged yet', { status: { ahead: 2, merged: false, untouched: false } }, 'not-merged'],
+    ['a branch that was never merged', { status: { merged: false, untouched: false } }, 'not-merged'],
+    ['a detached checkout', { status: { branch: undefined, merged: false, untouched: false } }, 'not-merged'],
     ['a worktree EZTerminal did not create', { listed: [{ worktreeId: 'x', path: folder, managed: false, main: false, locked: false }] }, 'invalid'],
     ['a locked worktree', { listed: [{ worktreeId: 'x', path: folder, managed: true, main: false, locked: true }] }, 'invalid'],
     ['a turn in flight', { sessions: [chat('lead')], agents: [agent('lead', { currentTurnId: 't1' })] }, 'in-use'],

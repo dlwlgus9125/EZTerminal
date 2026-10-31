@@ -18,9 +18,9 @@ const snapshot: DaemonSnapshot = {
   agents: [...base.agents, { sessionId: 's-wt', providerId: 'claude', permissionPreset: 'standard', queuedTurnCount: 0, orchestrationEnabled: false, state: 'working', ...record }],
 };
 const statuses: readonly WorkspaceWorktreeStatusView[] = [
-  { workspaceId: 'wt-login', branch: 'feat/login', baseBranch: 'main', dirty: true, ahead: 3, merged: false, status: 'review' },
-  { workspaceId: 'wt-crash', branch: 'fix/crash', baseBranch: 'main', dirty: true, ahead: 0, merged: false, status: 'review' },
-  { workspaceId: 'wt-deps', branch: 'chore/deps', baseBranch: 'main', dirty: false, ahead: 0, merged: true, status: 'done' },
+  { workspaceId: 'wt-login', branch: 'feat/login', baseBranch: 'main', dirty: true, ahead: 3, merged: false, untouched: false, status: 'review' },
+  { workspaceId: 'wt-crash', branch: 'fix/crash', baseBranch: 'main', dirty: true, ahead: 0, merged: false, untouched: false, status: 'review' },
+  { workspaceId: 'wt-deps', branch: 'chore/deps', baseBranch: 'main', dirty: false, ahead: 0, merged: true, untouched: true, status: 'done' },
 ];
 
 const meta = {

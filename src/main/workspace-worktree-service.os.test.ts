@@ -33,15 +33,15 @@ describe('WorkspaceWorktreeService', () => {
     const { main, tree } = repository();
     const service = new WorkspaceWorktreeService();
     const target = { workspaceId: 'w', rootPath: tree, mainRoot: main };
-    expect(await service.status(target)).toMatchObject({ branch: 'feature/login', baseBranch: 'main', dirty: false, ahead: 0, merged: false });
+    expect(await service.status(target)).toMatchObject({ branch: 'feature/login', baseBranch: 'main', dirty: false, ahead: 0, merged: false, untouched: true });
     expect((await service.status(target)).status).toBeUndefined();
 
     writeFileSync(path.join(tree, 'app.ts'), 'export const a = 2;\n');
-    expect(await service.status(target)).toMatchObject({ dirty: true, status: 'review' });
+    expect(await service.status(target)).toMatchObject({ dirty: true, status: 'review', untouched: false });
 
     const committed = await service.commit(target, 'Change a');
     expect(committed.ok).toBe(true);
-    expect(await service.status(target)).toMatchObject({ dirty: false, ahead: 1, status: 'review' });
+    expect(await service.status(target)).toMatchObject({ dirty: false, ahead: 1, status: 'review', untouched: false });
 
     const merged = await service.merge(target);
     expect(merged).toMatchObject({ ok: true, value: { into: 'main' } });

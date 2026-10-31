@@ -69,6 +69,8 @@ export interface WorkspaceWorktreeStatusView {
   readonly dirty: boolean;
   readonly ahead: number;
   readonly merged: boolean;
+  /** On a branch of its own with no commit the base lacks and a clean tree, untracked files included. */
+  readonly untouched: boolean;
   readonly status?: 'review' | 'done';
 }
 
@@ -77,7 +79,7 @@ export interface WorkspaceWorktreeAccess {
   status(projectId: string): Promise<WorkspaceWorktreeIpcResult<readonly WorkspaceWorktreeStatusView[]>>;
   commit(workspaceId: string, message: string): Promise<WorkspaceWorktreeIpcResult<{ readonly commit: string }>>;
   merge(workspaceId: string): Promise<WorkspaceWorktreeIpcResult<{ readonly into: string; readonly commit: string }>>;
-  /** Removes a merged worktree: archives its chats, deletes the folder and the merged branch. */
+  /** Removes a merged or untouched worktree: archives its chats, deletes the folder and the branch. */
   remove(workspaceId: string): Promise<WorkspaceWorktreeIpcResult<RemovedWorkspaceWorktree>>;
 }
 

@@ -93,7 +93,9 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   useEffect(() => { if (confirming) backRef.current?.focus(); }, [confirming]);
   const branch = status?.branch ?? title;
   const base = status?.baseBranch ?? 'main';
-  const cleanable = Boolean(cleanup && status && !status.dirty && status.ahead === 0 && (merged || status.merged));
+  // The work is in the base, or there never was any: what makes a worktree safe to delete, and what the person is told.
+  const inBase = Boolean(merged || status?.merged);
+  const cleanable = Boolean(cleanup && status && !status.dirty && status.ahead === 0 && (inBase || status.untouched));
   const runCleanup = async (): Promise<void> => {
     if (!cleanup) return;
     setBusy('cleanup');
@@ -138,7 +140,9 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
         <div className="worktree-merge">
           <ul className="worktree-merge__consequences" data-testid="worktree-cleanup-consequences">
             <li>{text('워크트리 폴더를 지웁니다.', 'Deletes the worktree folder.')}</li>
-            <li>{text(`브랜치 ${branch}를 삭제합니다. 작업은 ${base}에 병합돼 있습니다.`, `Deletes the branch ${branch}; its work is merged into ${base}.`)}</li>
+            <li>{inBase
+              ? text(`브랜치 ${branch}를 삭제합니다. 작업은 ${base}에 병합돼 있습니다.`, `Deletes the branch ${branch}; its work is merged into ${base}.`)
+              : text(`브랜치 ${branch}를 삭제합니다. 이 브랜치에는 자기 커밋도 커밋 안 된 변경도 없습니다.`, `Deletes the branch ${branch}; it has no commits of its own and nothing uncommitted.`)}</li>
             {cleanup.chats > 0 && <li>{text(`이 위치의 대화 ${cleanup.chats}개를 보관합니다. 기록은 남지만 더 이어 갈 수 없습니다.`, `Archives the ${cleanup.chats} chat(s) here. Their history stays, but they cannot continue.`)}</li>}
           </ul>
           <p className="worktree-merge__warning">{text('되돌릴 수 없습니다.', 'This cannot be undone.')}</p>
@@ -185,7 +189,9 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
           </div>
         )}
         {status && !status.dirty && status.ahead === 0 && !merged && (
-          <p className="worktree-merge__note">{status.merged ? text(`이미 ${base}에 병합됐습니다.`, `Already merged into ${base}.`) : text('아직 병합할 커밋이 없습니다.', 'Nothing to merge yet.')}</p>
+          <p className="worktree-merge__note" data-testid="worktree-merge-note">{status.merged ? text(`이미 ${base}에 병합됐습니다.`, `Already merged into ${base}.`)
+            : status.untouched ? text('자기 커밋도 커밋 안 된 변경도 없어 병합 없이 정리할 수 있습니다.', 'It has no commits of its own and nothing uncommitted, so it can be cleaned up without a merge.')
+              : text('아직 병합할 커밋이 없습니다.', 'Nothing to merge yet.')}</p>
         )}
         {merged && <p className="worktree-merge__done" role="status">{text(`${branch}를 ${merged}에 병합했습니다.`, `Merged ${branch} into ${merged}.`)}</p>}
         {error && <p className="worktree-merge__error" role="alert">{error}</p>}
