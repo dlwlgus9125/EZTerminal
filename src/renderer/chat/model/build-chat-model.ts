@@ -10,7 +10,7 @@ import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
   PendingInteraction, TodoChange,
 } from './types';
-import { foldsIntoCard, wrapUpCards } from './wrap-up-cards';
+import { foldsIntoCard, suggestTaskRefusal, wrapUpCards } from './wrap-up-cards';
 
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
@@ -557,6 +557,11 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           activityFor(item).push({ kind: 'tool', tool });
         }
         applyResult(tool, item);
+        const refusal = suggestTaskRefusal(tool);
+        if (refusal) {
+          tool.refused = refusal.reason;
+          if (refusal.title) tool.target = refusal.title;
+        }
         const index = open.indexOf(tool);
         if (index >= 0) open.splice(index, 1);
         if (legacyTasks?.result(tool)) recordTodo(item, legacyTasks.list());

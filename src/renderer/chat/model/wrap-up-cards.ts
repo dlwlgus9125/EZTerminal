@@ -21,18 +21,37 @@ export interface WrapUpCards {
   readonly stoppedCalls: ReadonlySet<string>;
 }
 
+/** The host's own `suggest_task`: another server's tool of that name, or a bare name with no server, is a tool call like any other. */
+function hostSuggestTask(tool: Pick<ChatTool, 'name' | 'server'>): boolean {
+  return tool.name === SUGGEST_TASK_CLAUDE_TOOL || (tool.name === SUGGEST_TASK_TOOL && tool.server === SUGGEST_TASK_SERVER);
+}
+
+const callInput = (tool: Pick<ChatTool, 'input' | 'inputValue'>): Readonly<Record<string, unknown>> | undefined => tool.inputValue ?? (tool.input ? parseObject(tool.input) : undefined);
+
 /**
  * Whether a tool call is only how a card's task got there, so the card stands for it. It must be the host's own tool
- * (another server's `suggest_task`, or a bare name with no server, is a tool call like any other) and have left that
- * task word for word: a call the host refused (the cap, the setting, a stopped turn, a turn no person sent) leaves no
- * row, and stays a tool row. So does one that did not finish, or whose input cannot be read: nothing the AI did is hidden.
+ * and have left that task word for word: a call the host refused (the cap, the setting, a stopped turn, a turn no person
+ * sent) leaves no row, and stays a tool row. So does one that did not finish, or whose input cannot be read: nothing the
+ * AI did is hidden.
  */
 export function foldsIntoCard(tool: Pick<ChatTool, 'callId' | 'name' | 'server' | 'input' | 'inputValue'>, turnId: string | undefined, cards: WrapUpCards): boolean {
-  const own = tool.name === SUGGEST_TASK_CLAUDE_TOOL || (tool.name === SUGGEST_TASK_TOOL && tool.server === SUGGEST_TASK_SERVER);
   const card = turnId === undefined ? undefined : cards.tasks.get(turnId);
-  if (!own || !card || cards.stoppedCalls.has(tool.callId)) return false;
-  const input = tool.inputValue ?? (tool.input ? parseObject(tool.input) : undefined);
+  if (!hostSuggestTask(tool) || !card || cards.stoppedCalls.has(tool.callId)) return false;
+  const input = callInput(tool);
   return card.tasks.some((task) => task.title === input?.title && task.prompt === input?.prompt);
+}
+
+/**
+ * Why the host said no to a `suggest_task` call, and to which suggestion: a proposal not taken, not a tool that broke.
+ * Both AIs record it as failed with the host's `{"ok":false,"error":…}`, Codex after a status line. Anything else that
+ * failed stays a failure.
+ */
+export function suggestTaskRefusal(tool: Pick<ChatTool, 'name' | 'server' | 'status' | 'output' | 'input' | 'inputValue'>): { readonly reason: string; readonly title?: string } | undefined {
+  if (tool.status !== 'failed' || !hostSuggestTask(tool) || !tool.output) return undefined;
+  const answer = parseObject(tool.output.slice(tool.output.indexOf('{')));
+  if (answer?.ok !== false || typeof answer.error !== 'string') return undefined;
+  const title = callInput(tool)?.title;
+  return { reason: answer.error, ...(typeof title === 'string' ? { title } : {}) };
 }
 
 interface CardRows {

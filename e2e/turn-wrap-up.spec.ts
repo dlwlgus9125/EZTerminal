@@ -271,11 +271,11 @@ async function launchProject(name: string, options: { readonly version?: string;
   return { app, page, profile, projectRoot, projectId, workspaceId };
 }
 
-/** A settled run folds to its summary, which names the failure; opened, it shows the `suggest_task` calls that failed. */
+/** A settled run folds to its summary, which says so calmly; opened, it shows the `suggest_task` calls the host did not take. */
 async function openRefusedCall(session: Locator): Promise<Locator> {
-  const run = session.locator('.chat-run').filter({ hasText: '1 failed' });
+  const run = session.locator('.chat-run').filter({ hasText: '1 suggestion not accepted' });
   await run.locator('.chat-run__header').click();
-  return run.locator('.chat-tool[data-status="failed"]').filter({ hasText: 'Tried to call' }).filter({ hasText: 'ezterminal_orchestration / suggest_task' });
+  return run.locator('.chat-tool[data-status="refused"]').filter({ hasText: 'Suggestion not accepted' });
 }
 
 function ghostOf(session: Locator): Locator {

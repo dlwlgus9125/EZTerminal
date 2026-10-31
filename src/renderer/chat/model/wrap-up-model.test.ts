@@ -4,6 +4,7 @@ import type { DaemonTranscriptItem } from '../../../shared/daemon-protocol';
 import { SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, suggestedTaskChildSessionId } from '../../../shared/turn-wrap-up';
 import { applyWrapUpAction, cartStory, formatStory, WAITING_DECISION_ID, waitingStory, WRAP_SESSION } from '../wrap-up/wrap-up-fixtures';
 import { buildChatModel } from './build-chat-model';
+import { summarizeActivity } from './summary';
 import type { ChatRow } from './types';
 
 function kinds(rows: readonly ChatRow[]): string[] {
@@ -29,15 +30,15 @@ function recapRow(rows: readonly ChatRow[]): Extract<ChatRow, { kind: 'recap' }>
 const outcome = (rows: readonly ChatRow[], index: number) => taskCard(rows).suggestions.tasks[index]!.outcome;
 
 /** One more tool call in the cart turn, as an adapter records it. `server`: the Codex shape, beside the name. */
-function call(sequence: number, name: string, options: { readonly server?: string; readonly input?: unknown; readonly status?: 'completed' | 'failed' | 'denied' | 'interrupted' } = {}): DaemonTranscriptItem[] {
-  const { server, input = { title: 'Fix the tax rounding', rationale: 'Why', prompt: 'Do it.' }, status = 'completed' } = options;
+function call(sequence: number, name: string, options: { readonly server?: string; readonly input?: unknown; readonly status?: 'completed' | 'failed' | 'denied' | 'interrupted'; readonly result?: string } = {}): DaemonTranscriptItem[] {
+  const { server, input = { title: 'Fix the tax rounding', rationale: 'Why', prompt: 'Do it.' }, status = 'completed', result = '{"ok":true}' } = options;
   const body = JSON.stringify(input, null, 2);
   const row = (offset: number, kind: 'tool-call' | 'tool-result', text: string, phase: 'call' | 'result', state: 'running' | typeof status): DaemonTranscriptItem => ({
     id: `extra-${String(sequence + offset)}`, sessionId: WRAP_SESSION, sequence: sequence + offset, turnId: 'turn-cart', kind, text, isDelta: false, isSensitive: false, createdAt: '2026-10-30T05:53:00.000Z',
     payload: { v: 1, type: 'tool', callId: `extra-call-${String(sequence)}`, name, category: 'mcp', phase, status: state, ...(server ? { server } : {}) },
   });
   const head = server ? `${server}/${name}: inProgress` : name;
-  return [row(0, 'tool-call', `${head}\n${body}`, 'call', 'running'), row(1, 'tool-result', '{"ok":true}', 'result', status)];
+  return [row(0, 'tool-call', `${head}\n${body}`, 'call', 'running'), row(1, 'tool-result', result, 'result', status)];
 }
 
 const suggestTasksShown = (items: readonly DaemonTranscriptItem[], fixture: ReturnType<typeof cartStory>): string[] => (
@@ -109,6 +110,47 @@ describe('turn wrap-up rows', () => {
       const quiet = provider === 'claude' ? call(500, SUGGEST_TASK_CLAUDE_TOOL) : call(500, SUGGEST_TASK_TOOL, { server: SUGGEST_TASK_SERVER });
       expect(suggestTasksShown([...fixture.items, ...quiet], fixture)).toHaveLength(1);
     }
+  });
+
+  describe('a call the host said no to', () => {
+    const REASON = 'A turn can suggest 8 tasks. Stop suggesting; this one was not kept.';
+    const NO = `{"ok":false,"error":"${REASON}"}`;
+    const tools = (items: readonly DaemonTranscriptItem[], fixture: ReturnType<typeof cartStory>) => buildChatModel({ items, turns: fixture.turns }).rows
+      .flatMap((row) => (row.kind === 'activity' ? row.entries.flatMap((entry) => (entry.kind === 'tool' ? [entry.tool] : [])) : []))
+      .filter((tool) => tool.name.endsWith('suggest_task'));
+
+    it('carries the host’s reason and the suggestion’s title, as each AI records it', () => {
+      const claude = cartStory('en', 'claude');
+      const codex = cartStory('en', 'codex');
+      const [fromClaude] = tools([...claude.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: NO })], claude);
+      const [fromCodex] = tools([...codex.items, ...call(500, SUGGEST_TASK_TOOL, { server: SUGGEST_TASK_SERVER, status: 'failed', result: `${SUGGEST_TASK_SERVER}/${SUGGEST_TASK_TOOL}: failed\n${NO}` })], codex);
+      for (const tool of [fromClaude!, fromCodex!]) {
+        expect(tool).toMatchObject({ status: 'failed', refused: REASON, target: 'Fix the tax rounding' });
+      }
+    });
+
+    it('leaves another server’s tool of that name an ordinary failed row', () => {
+      const fixture = cartStory('en', 'codex');
+      const [foreign] = tools([...fixture.items, ...call(500, SUGGEST_TASK_TOOL, { server: 'someone_else', status: 'failed', result: `someone_else/${SUGGEST_TASK_TOOL}: failed\n${NO}` })], fixture);
+      expect(foreign).toMatchObject({ status: 'failed' });
+      expect(foreign).not.toHaveProperty('refused');
+    });
+
+    it('takes only the host’s own answer for a refusal: any other failure stays a failure', () => {
+      const fixture = cartStory('en', 'claude');
+      const [broken] = tools([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: 'MCP error -32000: Connection closed' })], fixture);
+      expect(broken).not.toHaveProperty('refused');
+      const [answered] = tools([...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: '{"ok":true}' })], fixture);
+      expect(answered).not.toHaveProperty('refused');
+    });
+
+    it('counts apart from failures, so the folded run can say so calmly', () => {
+      const fixture = cartStory('en', 'claude');
+      const rows = buildChatModel({ items: [...fixture.items, ...call(500, SUGGEST_TASK_CLAUDE_TOOL, { status: 'failed', result: NO })], turns: fixture.turns }).rows;
+      const run = rows.find((row) => row.kind === 'activity' && row.entries.some((entry) => entry.kind === 'tool' && entry.tool.name === SUGGEST_TASK_CLAUDE_TOOL));
+      if (run?.kind !== 'activity') throw new Error('No run.');
+      expect(summarizeActivity(run.entries, false, 'en')).toMatchObject({ failed: 0, refused: 1 });
+    });
   });
 
   it('keeps a call with a card’s words visible when it did not finish', () => {

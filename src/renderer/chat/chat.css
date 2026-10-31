@@ -487,6 +487,12 @@
   font-size: var(--ui-font-size-xs);
 }
 
+.chat-run__note {
+  flex: none;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
 .chat-run__lines {
   margin: 2px 0 0;
   padding: 0 0 0 1.125rem;
@@ -556,6 +562,13 @@
 
 .chat-tool__target[data-mono] {
   font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Under the line, wrapped: the reason is what the row is for, and it would not fit beside the verb on a phone. */
+.chat-tool__refused {
+  margin: 0 0 var(--ui-space-1) calc(1rem + var(--ui-space-2) * 2);
+  color: var(--ui-text-muted);
   font-size: var(--ui-font-size-xs);
 }
 

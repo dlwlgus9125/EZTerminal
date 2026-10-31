@@ -4,13 +4,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SuggestedTaskState } from '../../../shared/turn-wrap-up';
+import type { DaemonTranscriptItem } from '../../../shared/daemon-protocol';
+import { SUGGEST_TASK_SERVER, SUGGEST_TASK_TOOL, type SuggestedTaskState } from '../../../shared/turn-wrap-up';
 import { AppI18nProvider } from '../../i18n';
 import { ChatProvider, type ChatContextValue, type ChatWrapUpAction } from '../ChatContext';
 import { ChatRowView } from '../ChatRowView';
 import { buildChatModel } from '../model/build-chat-model';
 import { TaskStartAllDialog } from '../wrap-up/TaskStartAllDialog';
-import { cartStory, formatStory, waitingStory, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
+import { cartStory, formatStory, waitingStory, WRAP_SESSION, type WrapUpFixture } from '../wrap-up/wrap-up-fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,6 +70,54 @@ describe('a recap written while the AI waited, once the turn ran on', () => {
     expect(byTestId('chat-recap-card')?.textContent).toContain('답을 기다렸던 턴');
     expect(page.indexOf('답을 기다렸던 턴')).toBeLessThan(page.indexOf('음수는 괄호로 표시하기로 하고'));
     expect(byTestId('chat-recap-answer')).toBeNull();
+  });
+});
+
+describe('a suggest_task call the host said no to', () => {
+  const REASON = 'A turn can suggest 8 tasks. Stop suggesting; this one was not kept.';
+  /** A cart turn with one more call. `tool`: as the AI names it. */
+  const withCall = (tool: string, server?: string): WrapUpFixture => {
+    const fixture = cartStory('ko', 'codex');
+    const row = (sequence: number, kind: 'tool-call' | 'tool-result', text: string, phase: 'call' | 'result', status: 'running' | 'failed'): DaemonTranscriptItem => ({
+      id: `refused-${String(sequence)}`, sessionId: WRAP_SESSION, sequence, turnId: 'turn-cart', kind, text, isDelta: false, isSensitive: false, createdAt: fixture.turns[0]!.finishedAt!,
+      payload: { v: 1, type: 'tool', callId: 'refused-call', name: tool, category: 'mcp', phase, status, ...(server ? { server } : {}) },
+    });
+    const head = `${server ?? 'x'}/${tool}`;
+    const input = JSON.stringify({ title: '점검 9', rationale: '실검증용', prompt: '답해 줘.' });
+    return { ...fixture, items: [...fixture.items, row(900, 'tool-call', `${head}: inProgress\n${input}`, 'call', 'running'), row(901, 'tool-result', `${head}: failed\n{"ok":false,"error":"${REASON}"}`, 'result', 'failed')] };
+  };
+  const openRun = (): void => {
+    for (const header of [...container.querySelectorAll<HTMLButtonElement>('.chat-run__header')]) act(() => header.click());
+  };
+
+  it('reads calm in the bubble skin: no red, the reason on the row, a quiet count on the folded run', () => {
+    render(withCall(SUGGEST_TASK_TOOL, SUGGEST_TASK_SERVER));
+    expect(container.querySelector('.chat-run__note')?.textContent).toBe('제안 1개 받지 않음');
+    expect(container.querySelector('.chat-run__problems')).toBeNull();
+    openRun();
+    const row = container.querySelector<HTMLElement>('.chat-tool[data-status="refused"]')!;
+    expect(row.textContent).toContain('제안 받지 않음');
+    expect(row.textContent).toContain('점검 9');
+    expect(row.textContent).toContain(REASON);
+    expect(row.textContent).not.toContain('도구 실패');
+    expect(row.querySelector('[data-tone="danger"]')).toBeNull();
+  });
+
+  it('reads calm in the CLI skin', () => {
+    render(withCall(SUGGEST_TASK_TOOL, SUGGEST_TASK_SERVER), { skin: 'cli' });
+    const row = container.querySelector<HTMLElement>('.chat-cli-tool[data-status="refused"]')!;
+    expect(row.textContent).toContain(`제안 받지 않음 · ${REASON}`);
+    expect(row.querySelector('.chat-cli-glyph')?.getAttribute('data-tone')).toBe('muted');
+    expect(row.querySelector('.chat-cli-result')?.getAttribute('data-tone')).toBe('muted');
+  });
+
+  it('leaves a foreign tool of that name an ordinary failed row', () => {
+    render(withCall(SUGGEST_TASK_TOOL, 'someone_else'));
+    expect(container.querySelector('.chat-run__problems')?.textContent).toBe('1개 실패');
+    openRun();
+    const row = container.querySelector<HTMLElement>('.chat-tool[data-status="failed"]')!;
+    expect(row.textContent).toContain('도구 실패');
+    expect(container.querySelector('.chat-tool[data-status="refused"]')).toBeNull();
   });
 });
 

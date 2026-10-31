@@ -2,7 +2,7 @@ import { Glyph } from '../../ui/Glyph';
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
-import { formatDuration, toolDisplayTarget } from '../model/summary';
+import { formatDuration, toolDisplayTarget, toolVerb } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
 import { Prose } from '../parts/Prose';
@@ -92,6 +92,7 @@ export function CliAssistant({ row, providerLabel }: { readonly row: RowOf<'assi
 
 function resultSummary(tool: ChatTool, copy: ReturnType<typeof useChatCopy>, locale: 'ko' | 'en'): { readonly lines: readonly string[]; readonly hidden: number; readonly tone?: 'danger' | 'muted' } {
   if (tool.awaitingApproval) return { lines: [locale === 'ko' ? '승인 대기 중…' : 'Waiting for approval…'], hidden: 0, tone: 'muted' };
+  if (tool.refused !== undefined) return { lines: [`${toolVerb(tool, locale)} · ${tool.refused}`], hidden: 0, tone: 'muted' };
   if (tool.status === 'running') return { lines: [locale === 'ko' ? '실행 중…' : 'Running…'], hidden: 0, tone: 'muted' };
   if (tool.status === 'denied') return { lines: [locale === 'ko' ? '사용자가 거부함' : 'User rejected'], hidden: 0, tone: 'danger' };
   if (tool.status === 'interrupted') return { lines: [locale === 'ko' ? '중단됨' : 'Interrupted'], hidden: 0, tone: 'muted' };
@@ -124,10 +125,10 @@ function CliTool({ tool }: { readonly tool: ChatTool }): JSX.Element {
   const open = context.isExpanded(key, Boolean(tool.changes?.length) && smallDiff);
   const summary = resultSummary(tool, copy, context.locale);
   const target = toolDisplayTarget(tool, context.workspaceRoot);
-  const glyphTone = tool.status === 'running' ? 'live' : tool.status === 'failed' || tool.status === 'denied' ? 'danger' : tool.status === 'interrupted' ? 'muted' : 'success';
+  const glyphTone = tool.refused !== undefined ? 'muted' : tool.status === 'running' ? 'live' : tool.status === 'failed' || tool.status === 'denied' ? 'danger' : tool.status === 'interrupted' ? 'muted' : 'success';
   const expandable = hasToolDetail(tool);
   return (
-    <li className="chat-cli-line chat-cli-tool" data-status={tool.status}>
+    <li className="chat-cli-line chat-cli-tool" data-status={tool.refused === undefined ? tool.status : 'refused'}>
       <span className="chat-cli-glyph" data-tone={glyphTone} aria-hidden="true">⏺</span>
       <div className="chat-cli-line__body">
         <button type="button" className="chat-cli-tool__call" aria-expanded={expandable ? open : undefined} disabled={!expandable}

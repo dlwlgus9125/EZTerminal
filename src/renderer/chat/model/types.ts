@@ -55,6 +55,8 @@ export interface ChatTool {
   /** The pending approval in the dock is about this call; it has not started. */
   readonly awaitingApproval?: boolean;
   readonly subagent?: ChatSubagentLink;
+  /** The host said no to this suggestion, and why. `status` stays what the AI reported; it reads as a note, not a failure. */
+  readonly refused?: string;
 }
 
 /** A line inside an activity run: a tool use or a stretch of reasoning. */

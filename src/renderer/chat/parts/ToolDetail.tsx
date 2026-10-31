@@ -55,7 +55,7 @@ export function ToolDetail({ tool, variant = 'card' }: {
 }): JSX.Element {
   const copy = useChatCopy();
   const { workspaceRoot } = useChatContext();
-  const failed = tool.status === 'failed' || tool.status === 'denied';
+  const failed = (tool.status === 'failed' || tool.status === 'denied') && tool.refused === undefined;
   if (tool.changes?.length) {
     return (
       <div className="chat-tool-detail">

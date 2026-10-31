@@ -72,6 +72,8 @@ export interface ActivitySummary {
   readonly failed: number;
   readonly denied: number;
   readonly interrupted: number;
+  /** Suggestions the host did not take: a note, not a problem. */
+  readonly refused: number;
   readonly thoughtMs?: number;
 }
 
@@ -115,7 +117,8 @@ export function summarizeActivity(entries: readonly ChatActivity[], live: boolea
     const entry = counts.get(key);
     return entry ? [phrases[key](entry.total, live && entry.running > 0)] : [];
   });
-  const failed = tools.filter((tool) => tool.status === 'failed').length;
+  const refused = tools.filter((tool) => tool.refused !== undefined).length;
+  const failed = tools.filter((tool) => tool.status === 'failed').length - refused;
   const denied = tools.filter((tool) => tool.status === 'denied').length;
   const interrupted = tools.filter((tool) => tool.status === 'interrupted').length;
   const single = tools.length === 1 && tools[0].category === 'command' ? tools[0].command ?? tools[0].target : undefined;
@@ -129,11 +132,12 @@ export function summarizeActivity(entries: readonly ChatActivity[], live: boolea
       ? (locale === 'ko' ? `${formatDuration(thoughtMs, locale)} 동안 생각함` : `Thought for ${formatDuration(thoughtMs, locale)}`)
       : (locale === 'ko' ? '생각함' : 'Thought');
   }
-  return { text, ...(single ? { singleCommand: single } : {}), failed, denied, interrupted, ...(thoughtMs !== undefined ? { thoughtMs } : {}) };
+  return { text, ...(single ? { singleCommand: single } : {}), failed, denied, interrupted, refused, ...(thoughtMs !== undefined ? { thoughtMs } : {}) };
 }
 
 /** Verb for one tool line: "Read", "Ran", "Edited"… and failures as "Tried to …". */
 export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
+  if (tool.refused !== undefined) return locale === 'ko' ? '제안 받지 않음' : 'Suggestion not accepted';
   const failed = tool.status === 'failed' || tool.status === 'denied';
   if (locale === 'ko') {
     const map: Readonly<Record<string, string>> = {

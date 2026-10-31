@@ -92,6 +92,7 @@ export function BubbleAssistant({ row, providerLabel }: { readonly row: RowOf<'a
 }
 
 function StatusGlyph({ tool }: { readonly tool: ChatTool }): JSX.Element | null {
+  if (tool.refused !== undefined) return null;
   if (tool.awaitingApproval) return <Glyph name="q" className="chat-status-icon" data-tone="warning" />;
   switch (tool.status) {
     case 'running':
@@ -115,9 +116,9 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
   const detail = hasToolDetail(tool);
   const meta = toolMeta(tool, context.locale, copy);
   const target = toolDisplayTarget(tool, context.workspaceRoot);
-  const mono = tool.category !== 'web' && tool.category !== 'agent' && tool.category !== 'todo';
+  const mono = tool.category !== 'web' && tool.category !== 'agent' && tool.category !== 'todo' && tool.refused === undefined;
   return (
-    <li className="chat-tool" data-status={tool.status} data-category={tool.category} data-linked={tool.subagent ? true : undefined}>
+    <li className="chat-tool" data-status={tool.refused === undefined ? tool.status : 'refused'} data-category={tool.category} data-linked={tool.subagent ? true : undefined}>
       <button
         type="button"
         className="chat-tool__line"
@@ -139,6 +140,7 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
         <button type="button" className="chat-link-button chat-tool__open" onClick={() => context.onOpenRelated?.(tool.subagent!.sessionId)}
           aria-label={`${copy.openSubagent}: ${tool.subagent.title ?? target ?? copy.subagent}`}>{copy.openSubagent}</button>
       )}
+      {tool.refused !== undefined && <p className="chat-tool__refused">{tool.refused}</p>}
       {open && detail && <ToolDetail tool={tool} />}
     </li>
   );
@@ -189,6 +191,7 @@ export function BubbleActivity({ row }: { readonly row: RowOf<'activity'> }): JS
         <Glyph name="next" className="chat-chevron" />
         <span className="chat-run__summary" data-mono={single ? true : undefined}>{single ? `$ ${single}` : summary.text}</span>
         {problems.length > 0 && <span className="chat-run__problems">{problems.join(' · ')}</span>}
+        {summary.refused > 0 && <span className="chat-run__note">{copy.refusedCount(summary.refused)}</span>}
         {row.live
           ? <Glyph name="spin" className="chat-spin" />
           : toolCount > 0 && problems.length === 0 && <Glyph name="check" className="chat-status-icon" data-tone="success" />}
