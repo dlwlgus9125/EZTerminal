@@ -52,6 +52,7 @@ const TEXT = {
     found: '실패 세 개 가운데 둘은 `cartTotal` 루프가 원인입니다. 이것부터 고치고 전체 테스트를 돌립니다.',
     steer: '`src/cart.test.ts`만 돌려도 돼. 전체 테스트는 오래 걸려.',
     streaming: '`cartTotal`은 마지막 항목 다음까지 읽고 있었습니다. 조건을 `<`로 바꾸',
+    written: '`cartTotal`은 마지막 항목 다음까지 읽고 있었습니다. 조건을 `<`로 바꾸겠습니다.',
     afterSteer: '알겠습니다. `src/cart.test.ts`만 돌립니다.',
     partial: '`cartTotal`을 고쳤습니다. 남은 실패 하나는 `applyDiscount`의 퍼센트 계산입니다. 이어서 고칩니다.',
     afterResume: '`src/discount.ts`의 퍼센트 계산까지 고쳤습니다. `pnpm test`가 모두 통과합니다.',
@@ -64,6 +65,7 @@ const TEXT = {
     found: 'Two of the three failures come from the `cartTotal` loop. I’ll fix that first, then run the whole suite.',
     steer: 'Running `src/cart.test.ts` alone is enough. The whole suite takes long.',
     streaming: '`cartTotal` read past the last item. Changing the condition to `<`',
+    written: '`cartTotal` read past the last item. I will change the condition to `<`.',
     afterSteer: 'Understood. Running only `src/cart.test.ts`.',
     partial: '`cartTotal` is fixed. The one failure left is the percentage in `applyDiscount`. Continuing with that.',
     afterResume: 'The percentage in `src/discount.ts` is fixed too. `pnpm test` passes.',
@@ -116,7 +118,7 @@ function opening(lang: LongLanguage, turnId: string): DaemonTranscriptItem[] {
 // ── A. Into a running turn ─────────────────────────────────────────────────────
 
 export type SteerVariant =
-  | 'busy' | 'on-its-way' | 'on-its-way-text' | 'landed' | 'landed-rewritten' | 'behind-approval' | 'review-turn' | 'compact-turn' | 'turn-ended' | 'failed' | 'failed-disconnected' | 'unconfirmed';
+  | 'busy' | 'writing' | 'on-its-way' | 'on-its-way-text' | 'landed' | 'landed-new-turn' | 'landed-rewritten' | 'behind-approval' | 'review-turn' | 'compact-turn' | 'turn-ended' | 'failed' | 'failed-disconnected' | 'unconfirmed';
 
 const FULL_SUITE = 'pnpm test';
 const ONE_FILE = 'pnpm vitest run src/cart.test.ts';
@@ -143,14 +145,12 @@ export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFi
   const text = TEXT[lang];
   const work = [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, false)];
   const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', started)], state: 'working', rows: {} };
+  const writing: LongRunFixture = { ...running, items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })] };
   switch (variant) {
     case 'busy': return running;
+    case 'writing': return writing;
     case 'on-its-way': return { ...running, steered: [steered(lang, 'on-its-way', { behind: 'tool' })] };
-    case 'on-its-way-text': return {
-      ...running,
-      items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })],
-      steered: [steered(lang, 'on-its-way', { behind: 'text' })],
-    };
+    case 'on-its-way-text': return { ...writing, steered: [steered(lang, 'on-its-way', { behind: 'text' })] };
     case 'landed': {
       // At a tool boundary: the tool ended and nothing was being written, on either AI.
       const landed = item(8, 'user-message', text.steer, { turnId: 'turn-run' });
@@ -158,6 +158,15 @@ export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFi
         ...running,
         items: [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, true), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(10, 'turn-run', ONE_FILE, false)],
         rows: { landed: new Map<string, SteerLanding>([[landed.id, {}]]) },
+      };
+    }
+    case 'landed-new-turn': {
+      // Claude was writing: that text ended its turn, and the message is the next one.
+      const landed = item(8, 'user-message', text.steer, { turnId: 'turn-next' });
+      return {
+        items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.written, { turnId: 'turn-run' }), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-next' }), ...shell(10, 'turn-next', ONE_FILE, false)],
+        turns: [turn('turn-run', 'completed', started, at(7)), turn('turn-next', 'working', at(8))], state: 'working',
+        rows: { landed: new Map<string, SteerLanding>([[landed.id, { newTurn: true }]]) },
       };
     }
     case 'landed-rewritten': {
@@ -193,11 +202,16 @@ const sessionOf = (fixture: LongRunFixture): string => fixture.items[0]?.session
 /** What the story host does with a message put into the turn. */
 export function acceptSteer(fixture: LongRunFixture, text: string, id: string): LongRunFixture {
   const held = fixture.approvals?.some((entry) => entry.state === 'pending') === true;
-  const message: SteeredMessage = { id, text, state: held ? 'behind-approval' : 'on-its-way', sentAt: at(9), ...(held ? {} : { behind: 'tool' as const }) };
+  const behind = fixture.items.at(-1)?.isDelta ? 'text' as const : 'tool' as const;
+  const message: SteeredMessage = { id, text, state: held ? 'behind-approval' : 'on-its-way', sentAt: at(9), ...(held ? {} : { behind }) };
   return { ...fixture, steered: [...(fixture.steered ?? []), message] };
 }
 
-/** It got there: out of the tray, into the transcript at the place it landed. Only Codex drops, and only text it was writing. */
+/**
+ * It got there: out of the tray, into the transcript at the place it landed. A tool's end folds it into the turn. While
+ * text is being written, Codex drops that text and goes on in the same turn, and Claude ends the turn with it and starts
+ * a new one with the message.
+ */
 export function landSteer(fixture: LongRunFixture, id: string, provider: LongProvider): LongRunFixture {
   const message = fixture.steered?.find((entry) => entry.id === id);
   if (!message) return fixture;
@@ -209,8 +223,19 @@ export function landSteer(fixture: LongRunFixture, id: string, provider: LongPro
     ? [item(sequence, 'tool-result', 'ok', { turnId: 'turn-run', sessionId, payload: { ...last.payload, phase: 'result', status: 'completed' } })] : [];
   const row = item(sequence + 1, 'user-message', message.text, { turnId: 'turn-run', sessionId });
   const landed = new Map(fixture.rows.landed);
-  landed.set(row.id, provider === 'codex' && message.behind === 'text' ? { rewritten: true } : {});
-  return { ...fixture, items: [...fixture.items, ...ended, row], rows: { ...fixture.rows, landed }, steered: fixture.steered?.filter((entry) => entry.id !== id) };
+  const steered = fixture.steered?.filter((entry) => entry.id !== id);
+  if (message.behind === 'text' && provider === 'claude') {
+    const next = item(sequence + 1, 'user-message', message.text, { turnId: 'turn-next', sessionId });
+    landed.set(next.id, { newTurn: true });
+    return {
+      ...fixture, steered, rows: { ...fixture.rows, landed },
+      items: [...fixture.items.map((entry) => (entry.isDelta ? { ...entry, isDelta: false } : entry)), next],
+      turns: [...fixture.turns.map((entry) => (entry.id === 'turn-run' ? { ...entry, state: 'completed' as const, finishedAt: at(9) } : entry)), { ...turn('turn-next', 'working', at(9)), sessionId }],
+    };
+  }
+  const dropped = message.behind === 'text';
+  landed.set(row.id, dropped ? { rewritten: true } : {});
+  return { ...fixture, items: [...fixture.items.filter((entry) => !(dropped && entry.isDelta)), ...ended, row], rows: { ...fixture.rows, landed }, steered };
 }
 
 /** 대기열에 넣기 on a message that could not go in: an ordinary queued turn. */

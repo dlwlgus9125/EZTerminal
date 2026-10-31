@@ -3,6 +3,7 @@ import { Glyph } from '../../ui/Glyph';
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
 import { AppSentRow } from '../long-run/AppSentRow';
+import { steerMark } from '../long-run/long-run-presentation';
 import { formatDuration, toolDisplayTarget, toolVerb } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -74,7 +75,7 @@ export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
         <div className="chat-cli-result chat-cli-steer" data-tone="muted" data-testid="chat-steer-landed">
           <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
           <div className="chat-cli-result__body">
-            <span className="chat-cli-result__line">{row.steer.rewritten ? `${copy.longRun.steer.landed} · ${copy.longRun.steer.rewritten}` : copy.longRun.steer.landed}</span>
+            <span className="chat-cli-result__line">{steerMark(row.steer, copy.longRun.steer)}</span>
           </div>
         </div>
       )}

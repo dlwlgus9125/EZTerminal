@@ -58,7 +58,18 @@ describe('long-run rows in the chat model', () => {
     };
     expect(held('text', 'codex')).toEqual({ rewritten: true });
     expect(held('tool', 'codex')).toEqual({});
-    expect(held('text', 'claude')).toEqual({});
+    expect(held('text', 'claude')).toEqual({ newTurn: true });
+    expect(held('tool', 'claude')).toEqual({});
+  });
+
+  it('draws a message sent during Claude\'s text as its own turn, after that text ended its turn', () => {
+    const fixture = steerStory('ko', 'landed-new-turn');
+    const rows = model(fixture).rows;
+    const landed = rows.find((row) => row.kind === 'user' && row.steer !== undefined);
+    expect(landed).toMatchObject({ steer: { newTurn: true } });
+    const first = rows.find((row) => row.kind === 'user');
+    expect(landed?.turnId).not.toBe(first?.turnId);
+    expect(fixture.turns.find((turn) => turn.id === first?.turnId)?.state).toBe('completed');
   });
 
   it('holds a message that has not landed out of the transcript', () => {

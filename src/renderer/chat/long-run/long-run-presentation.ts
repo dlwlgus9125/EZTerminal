@@ -1,4 +1,4 @@
-import type { TurnUsageLimit, UsageLimitPhase } from '../../../shared/long-run';
+import type { SteerLanding, TurnUsageLimit, UsageLimitPhase } from '../../../shared/long-run';
 import type { ChatLongRunAction } from '../ChatContext';
 import { formatClock, type ChatCopy } from '../copy';
 import type { ChatLocale } from '../model/summary';
@@ -15,6 +15,12 @@ const CARD_STATE: Readonly<Record<UsageLimitPhase, ActionCardState>> = {
 
 /** The states that wait on the person. Everything else waits on a clock, or on nothing. */
 const ASKS: ReadonlySet<UsageLimitPhase> = new Set(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened']);
+
+/** The quiet mark on a message that landed: how it landed, as the host confirmed it. */
+export function steerMark(steer: SteerLanding, copy: ChatCopy['longRun']['steer']): string {
+  if (steer.newTurn) return copy.landedNewTurn;
+  return steer.rewritten ? `${copy.landed} · ${copy.rewritten}` : copy.landed;
+}
 
 /** Time today, or the day and time for a reset days away. */
 export function formatWhen(iso: string, locale: ChatLocale, far = false): string {

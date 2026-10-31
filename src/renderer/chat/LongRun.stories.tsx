@@ -258,17 +258,17 @@ function phone(id: string, make: (lang: LongLanguage) => LongRunFixture, width: 
 // ── A. An instruction into a running turn ──────────────────────────────────────────────────────────────
 /** A long tool runs. The empty box says what Enter does now (D1), and that it does not stop the turn. */
 export const BusyClaude: Story = chat('busy-claude', (lang) => steerStory(lang, 'busy'), {}, async ({ canvasElement }) => {
-  await expect(await composer(canvasElement)).toHaveAttribute('placeholder', '이 턴에 끼워넣을 지시를 입력하세요 (Esc로 중단)');
-  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('Enter 끼워넣기 · 하던 도구나 글이 끝나면 들어갑니다 · Esc 멈춤');
+  await expect(await composer(canvasElement)).toHaveAttribute('placeholder', '실행 중에 보낼 지시를 입력하세요 (Esc로 중단)');
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('Enter 끼워넣기 · 도구가 끝나면 이 턴에, 글을 쓰는 중이면 그 글이 끝난 뒤 새 턴으로 들어갑니다 · Esc 멈춤');
 });
 /** Codex: text being written is dropped and redone, tools are not cut; the hint says so rather than promising otherwise. */
 export const BusyCodex: Story = chat('busy-codex', (lang) => steerStory(lang, 'busy'), { provider: 'codex' }, async ({ canvasElement }) => {
-  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('글을 쓰는 중이면 버리고 다시 쓰고, 도구는 끊지 않습니다');
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('이 턴에 들어갑니다. 글을 쓰는 중이면 버리고 다시 쓰고, 도구는 끊지 않습니다');
 });
 /** With a draft: 끊고 보내기 and the round button are two different things, and each says which. */
 export const BusyDraft: Story = chat('busy-draft', (lang) => steerStory(lang, 'busy'), {}, async ({ canvasElement }) => {
   await userEvent.type(await composer(canvasElement), '`src/cart.test.ts`만 돌려도 돼.');
-  await expect(await findIn(canvasElement, '[data-testid="structured-agent-send"]')).toHaveAttribute('aria-label', '이 턴에 끼워넣기');
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-send"]')).toHaveAttribute('aria-label', '실행 중에 끼워넣기');
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-send"]')).toHaveAttribute('data-kind', 'steer');
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-interrupt-send"]')).toHaveTextContent('끊고 보내기');
 });
@@ -282,12 +282,19 @@ export const EnterSteers: Story = chat('enter-steers', (lang) => steerStory(lang
   await expect(args.onInterruptAndSend).not.toHaveBeenCalled();
   await expect(input).toHaveValue('');
   const tray = await findIn(canvasElement, TRAY);
-  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면');
+  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면 이 턴에');
   // Nothing says it arrived until it does.
   await expect(canvasElement.querySelector('[data-testid="chat-steer-landed"]')).toBeNull();
   await findIn(canvasElement, '[data-testid="chat-steer-landed"]');
   await expect(canvasElement.querySelector(TRAY)).toBeNull();
-  await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-steer-announce"]')).toHaveTextContent('메시지가 이 턴에 들어갔습니다.'));
+  await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-steer-announce"]')).toHaveTextContent('메시지가 전달됐습니다.'));
+});
+/** While Claude writes, Enter still adds it, and the tray says it will be a new turn; that is what lands. */
+export const EnterWhileWriting: Story = chat('enter-while-writing', (lang) => steerStory(lang, 'writing'), { landAfter: 900 }, async ({ canvasElement, args }) => {
+  await userEvent.type(await composer(canvasElement), '그 파일만 돌려 줘.{Enter}');
+  await expect(args.onSteer).toHaveBeenCalledWith('그 파일만 돌려 줘.');
+  await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('곧 들어갑니다 · 지금 글이 끝나면 새 턴으로 전달');
+  await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 보냄 · 앞 글이 끝난 뒤 새 턴으로 전달됨');
 });
 /** 끊고 보내기 is the only way that stops the turn, and it stays a separate, named action. */
 export const InterruptSend: Story = chat('interrupt-send', (lang) => steerStory(lang, 'busy'), {}, async ({ canvasElement, args }) => {
@@ -298,22 +305,26 @@ export const InterruptSend: Story = chat('interrupt-send', (lang) => steerStory(
 });
 /** On its way: a long tool holds it. It has no place in the transcript yet, so it sits above the box. */
 export const SteerOnItsWay: Story = chat('steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), {}, showTray);
-/** Claude while it writes: the message waits for that text to end. */
+/** Claude while it writes: measured, that text ends its turn and the message starts a new one, so the tray does not say "this turn". */
 export const SteerOnItsWayText: Story = chat('steer-on-its-way-text', (lang) => steerStory(lang, 'on-its-way-text'), {}, showTray);
 /** Codex while it writes: the promise it can keep. */
 export const SteerOnItsWayCodex: Story = chat('steer-on-its-way-codex', (lang) => steerStory(lang, 'on-its-way-text'), { provider: 'codex' }, async ({ canvasElement }) => {
-  await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('곧 들어갑니다 · 쓰던 글은 버리고 다시 씁니다');
+  await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('곧 들어갑니다 · 쓰던 글은 버리고 이 턴에서 다시 씁니다');
 });
 /** Codex behind a tool: it does not cut tools, so nothing is dropped and the tray does not say so. */
 export const SteerOnItsWayCodexTool: Story = chat('steer-on-its-way-codex-tool', (lang) => steerStory(lang, 'on-its-way'), { provider: 'codex' }, async ({ canvasElement }) => {
   const tray = await findIn(canvasElement, TRAY);
-  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면');
+  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면 이 턴에');
   await expect(tray).not.toHaveTextContent('버리고');
 });
 /** Landed: an ordinary message of the person's, where it arrived, between the tool before it and the work it changed. */
 export const SteerLanded: Story = chat('steer-landed', (lang) => steerStory(lang, 'landed'), {}, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 끼워넣음');
   await expect(canvasElement.querySelector(TRAY)).toBeNull();
+});
+/** Landed on Claude after text: its own turn, right after the text that ended the last one. */
+export const SteerLandedNewTurn: Story = chat('steer-landed-new-turn', (lang) => steerStory(lang, 'landed-new-turn'), {}, async ({ canvasElement }) => {
+  await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 보냄 · 앞 글이 끝난 뒤 새 턴으로 전달됨');
 });
 /** Landed on Codex, which had been writing: the text is gone, and the mark says so. */
 export const SteerLandedCodex: Story = chat('steer-landed-codex', (lang) => steerStory(lang, 'landed-rewritten'), { provider: 'codex' }, async ({ canvasElement }) => {
@@ -395,6 +406,9 @@ export const BusyEnglishCodex: Story = english('busy-en-codex', (lang) => steerS
 /** CLI skin: the same words after the `›` prompt, the tray in the same place. */
 export const CliBusy: Story = chat('cli-busy', (lang) => steerStory(lang, 'busy'), { skin: 'cli' });
 export const CliSteerOnItsWay: Story = chat('cli-steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), { skin: 'cli' }, showTray);
+export const CliSteerLandedNewTurn: Story = chat('cli-steer-landed-new-turn', (lang) => steerStory(lang, 'landed-new-turn'), { skin: 'cli' }, async ({ canvasElement }) => {
+  await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('새 턴으로 전달됨');
+});
 /** CLI skin: the person's `›` line and a `⎿` mark under it. */
 export const CliSteerLanded: Story = chat('cli-steer-landed', (lang) => steerStory(lang, 'landed-rewritten'), { skin: 'cli', provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, '[data-testid="chat-steer-landed"]')).toHaveTextContent('실행 중에 끼워넣음 · 쓰던 글은 버리고 다시 씀');
@@ -698,7 +712,7 @@ export const SettingsEnglish: Story = {
 /** Phone 360×800: no Enter here, so the hint names the send button, and 끊고 보내기 and 끼워넣기 stay thumb targets. */
 export const PhoneBusyDraft360: Story = phone('phone-busy-360', (lang) => steerStory(lang, 'busy'), 360, 800, {}, async ({ canvasElement, args }) => {
   const input = await composer(canvasElement);
-  await expect(input).toHaveAttribute('placeholder', '이 턴에 끼워넣을 지시를 입력하세요');
+  await expect(input).toHaveAttribute('placeholder', '실행 중에 보낼 지시를 입력하세요');
   await userEvent.type(input, '그 파일만 돌려 줘.');
   const hint = await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]');
   await expect(hint).toHaveTextContent('보내기로 끼워넣기');
@@ -719,6 +733,7 @@ export const PhoneBusyDraft412: Story = phone('phone-busy-412', (lang) => steerS
   await thumbTargets([await findIn(canvasElement, '[data-testid="structured-agent-send"]'), await findIn(canvasElement, '[data-testid="structured-agent-interrupt-send"]')]);
 });
 export const PhoneSteerOnItsWay360: Story = phone('phone-steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), 360, 800, {}, showTray);
+export const PhoneSteerLandedNewTurn360: Story = phone('phone-steer-landed-new-turn', (lang) => steerStory(lang, 'landed-new-turn'), 360, 800);
 export const PhoneSteerLanded360: Story = phone('phone-steer-landed', (lang) => steerStory(lang, 'landed-rewritten'), 360, 800, { provider: 'codex' });
 export const PhoneSteerBehindApproval360: Story = phone('phone-steer-behind', (lang) => steerStory(lang, 'behind-approval'), 360, 800, {}, async ({ canvasElement }) => {
   await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));

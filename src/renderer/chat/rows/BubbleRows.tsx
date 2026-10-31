@@ -3,6 +3,7 @@ import { Glyph } from '../../ui/Glyph';
 import { formatClock, useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
 import { AppSentRow } from '../long-run/AppSentRow';
+import { steerMark } from '../long-run/long-run-presentation';
 import { formatDuration, summarizeActivity, toolDisplayTarget, toolVerb, workspacePath } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -19,7 +20,7 @@ function SteerMarker({ steer }: { readonly steer: NonNullable<RowOf<'user'>['ste
   const copy = useChatCopy().longRun.steer;
   return (
     <p className="chat-user__steer" data-testid="chat-steer-landed">
-      <Glyph name="next" /><span>{steer.rewritten ? `${copy.landed} · ${copy.rewritten}` : copy.landed}</span>
+      <Glyph name="next" /><span>{steerMark(steer, copy)}</span>
     </p>
   );
 }

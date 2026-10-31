@@ -83,9 +83,9 @@ describe('the busy message box', () => {
   it('with it, Enter puts the message into the running turn and nothing else', async () => {
     const running = steer();
     const { send, interrupt } = box({ steer: running });
-    expect(input().getAttribute('placeholder')).toBe('이 턴에 끼워넣을 지시를 입력하세요 (Esc로 중단)');
+    expect(input().getAttribute('placeholder')).toBe('실행 중에 보낼 지시를 입력하세요 (Esc로 중단)');
     type('그 파일만');
-    expect(byId('structured-agent-send')?.getAttribute('aria-label')).toBe('이 턴에 끼워넣기');
+    expect(byId('structured-agent-send')?.getAttribute('aria-label')).toBe('실행 중에 끼워넣기');
     await press({ key: 'Enter' });
     expect(running.onSteer).toHaveBeenCalledWith('그 파일만');
     expect(send).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe('the busy message box', () => {
   it('on the phone the send button does what Enter does, and Enter stays a new line', async () => {
     const running = steer();
     box({ steer: running, variant: 'mobile' });
-    expect(input().getAttribute('placeholder')).toBe('이 턴에 끼워넣을 지시를 입력하세요');
+    expect(input().getAttribute('placeholder')).toBe('실행 중에 보낼 지시를 입력하세요');
     type('그 파일만');
     await press({ key: 'Enter' });
     expect(running.onSteer).not.toHaveBeenCalled();
@@ -146,6 +146,17 @@ describe('the busy message box', () => {
     expect(running.onSteer).not.toHaveBeenCalled();
   });
 
+  it('promises Claude only what it does: into this turn after a tool, a new turn after text', () => {
+    const on = (behind: 'tool' | 'text'): void => {
+      box({ providerId: 'claude', steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'on-its-way', sentAt: '2026-11-01T05:50:00.000Z', behind }] }) });
+    };
+    on('tool');
+    expect(byId('chat-steer-tray')?.textContent).toContain('지금 도구가 끝나면 이 턴에');
+    on('text');
+    expect(byId('chat-steer-tray')?.textContent).toContain('지금 글이 끝나면 새 턴으로 전달');
+    expect(byId('chat-steer-tray')?.textContent).not.toContain('버리고');
+  });
+
   it('promises Codex drops text only when it is writing: a tool holds a message on either AI', () => {
     const on = (behind: 'tool' | 'text'): void => {
       box({ providerId: 'codex', steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'on-its-way', sentAt: '2026-11-01T05:50:00.000Z', behind }] }) });
@@ -154,7 +165,7 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')?.textContent).toContain('지금 도구가 끝나면');
     expect(byId('chat-steer-tray')?.textContent).not.toContain('버리고');
     on('text');
-    expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 다시 씁니다');
+    expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 이 턴에서 다시 씁니다');
   });
 
   it('never says a held message arrived', () => {

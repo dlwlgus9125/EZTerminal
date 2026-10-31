@@ -38,6 +38,18 @@ describe('long-run wording', () => {
     expect(chatCopy('en').longRun.limit.reopened('15:10')).toContain('PC app');
   });
 
+  it('does not call everything "this turn": Claude takes a message sent during text as a new turn', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const steer = chatCopy(locale).longRun.steer;
+      for (const text of [steer.add, steer.tray, steer.placeholder, steer.placeholderMobile, steer.announceLanded]) expect(text).not.toMatch(/이 턴|this turn/iu);
+    }
+    expect(chatCopy('ko').longRun.steer.behind.text).toContain('새 턴');
+    expect(chatCopy('ko').longRun.steer.behind.tool).toContain('이 턴');
+    expect(chatCopy('ko').longRun.steer.behind.codex).toContain('이 턴');
+    expect(chatCopy('ko').longRun.steer.hint.claude).toContain('새 턴');
+    expect(chatCopy('ko').longRun.steer.hint.codex).not.toContain('새 턴');
+  });
+
   it('tells a screen at the scheduled time apart from a confirmed lift', () => {
     expect(chatCopy('ko').longRun.appSent.why['scheduled-time']).toBe('앱이 보냄 · 예약 시각이 되어');
     expect(chatCopy('en').longRun.appSent.why['scheduled-time']).toBe('Sent by the app · at the scheduled time');

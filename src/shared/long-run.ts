@@ -93,9 +93,14 @@ export interface SteeredMessage {
   readonly failure?: 'disconnected' | 'refused';
 }
 
-/** It landed. `rewritten`: Codex was writing, so what it had written was dropped and asked for again. */
+/**
+ * It landed. At a tool's end it folds into the running turn. `rewritten`: Codex was writing, so what it had written was
+ * dropped and asked for again, in the same turn. `newTurn`: Claude was writing, so that text ended its turn and the
+ * message started the next one.
+ */
 export interface SteerLanding {
   readonly rewritten?: boolean;
+  readonly newTurn?: boolean;
 }
 
 /** Why a message meant for the running turn went to the queue instead. */
