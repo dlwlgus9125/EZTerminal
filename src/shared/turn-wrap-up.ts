@@ -158,12 +158,14 @@ export type SuggestedTaskWhere =
 
 const TRAILING_FILLER = new Set(['a', 'an', 'and', 'at', 'for', 'in', 'of', 'on', 'src', 'the', 'to']);
 const BRANCH_SLUG_LENGTH = 32;
+const BRANCH_ID_LENGTH = 8;
 
 /**
  * `suggest/<slug>` from a task's title: its ASCII words up to 32 characters (a path counts as its file's name), without
- * a dangling filler word, or `suggest/task-<n>` when the title has none (a Korean title). Callers keep one batch distinct.
+ * a dangling filler word. A title with none (a Korean one) takes `suggest/task-<short id>` from the task's id, which is
+ * unique to its turn: a position in the batch would collide with the next batch's. Callers keep one batch distinct.
  */
-export function suggestedTaskBranch(title: string, index: number): string {
+export function suggestedTaskBranch({ id, title }: Pick<SuggestedTask, 'id' | 'title'>): string {
   const words = title
     .replace(/(?:[\w.-]+\/)+/gu, '')
     .replace(/\.(?:tsx?|jsx?|mjs|cjs|json|md|css)\b/giu, '')
@@ -174,14 +176,15 @@ export function suggestedTaskBranch(title: string, index: number): string {
     kept.push(word);
   }
   while (kept.length && TRAILING_FILLER.has(kept[kept.length - 1]!)) kept.pop();
-  return `suggest/${kept.length ? kept.join('-') : `task-${String(index + 1)}`}`;
+  const shortId = id.replace(/^task-/u, '').toLowerCase().replace(/[^a-z0-9]/gu, '').slice(0, BRANCH_ID_LENGTH);
+  return `suggest/${kept.length ? kept.join('-') : `task-${shortId}`}`;
 }
 
 /** One branch per task of a batch, numbered when two titles give the same name. */
-export function suggestedTaskBranches(titles: readonly string[]): string[] {
+export function suggestedTaskBranches(tasks: readonly Pick<SuggestedTask, 'id' | 'title'>[]): string[] {
   const seen = new Map<string, number>();
-  return titles.map((title, index) => {
-    const branch = suggestedTaskBranch(title, index);
+  return tasks.map((task) => {
+    const branch = suggestedTaskBranch(task);
     const count = (seen.get(branch) ?? 0) + 1;
     seen.set(branch, count);
     return count === 1 ? branch : `${branch}-${String(count)}`;

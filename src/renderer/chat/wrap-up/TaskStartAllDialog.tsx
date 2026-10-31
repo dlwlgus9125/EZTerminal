@@ -43,7 +43,7 @@ export function TaskStartAllDialog({ open, onOpenChange, tasks, settings, folder
 }): JSX.Element {
   const copy = useChatCopy().taskSuggestions;
   const id = useId();
-  const branches = suggestedTaskBranches(tasks.map((task) => task.title));
+  const branches = suggestedTaskBranches(tasks);
   const [worktree, setWorktree] = useState<Choices>(() => initialChoices(tasks, phone));
   // Fresh every time it opens: what the card offers now, not what was picked last time.
   useEffect(() => {

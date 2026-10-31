@@ -107,26 +107,37 @@ describe('suggestedTaskChildSessionId', () => {
 });
 
 describe('suggestedTaskBranch', () => {
+  const ID = 'task-6f0976269ac27cb343c18b65ef67cf63';
+  const named = (title: string, id = ID): string => suggestedTaskBranch({ id, title });
+
   // Titles as Claude and Codex wrote them in the 2026-10-30 probes.
   it('names a branch from the title words, short and without a dangling filler word', () => {
-    expect(suggestedTaskBranch('Fix the always-true role check in src/auth.ts', 0)).toBe('suggest/fix-the-always-true-role-check');
-    expect(suggestedTaskBranch('Fix percentage math in applyDiscount (src/discount.ts)', 1)).toBe('suggest/fix-percentage-math');
-    expect(suggestedTaskBranch('Fix cents conversion in src/format.ts', 2)).toBe('suggest/fix-cents-conversion-in-format');
-    expect(suggestedTaskBranch('Correct percentage calculation in src/discount.ts', 0)).toBe('suggest/correct-percentage-calculation');
+    expect(named('Fix the always-true role check in src/auth.ts')).toBe('suggest/fix-the-always-true-role-check');
+    expect(named('Fix percentage math in applyDiscount (src/discount.ts)')).toBe('suggest/fix-percentage-math');
+    expect(named('Fix cents conversion in src/format.ts')).toBe('suggest/fix-cents-conversion-in-format');
+    expect(named('Correct percentage calculation in src/discount.ts')).toBe('suggest/correct-percentage-calculation');
     // A path reads as its file's name.
-    expect(suggestedTaskBranch('Fix logic bugs in src/auth.ts, src/format.ts, and src/discount.ts', 0)).toBe('suggest/fix-logic-bugs-in-auth-format');
+    expect(named('Fix logic bugs in src/auth.ts, src/format.ts, and src/discount.ts')).toBe('suggest/fix-logic-bugs-in-auth-format');
   });
 
   it('stays a valid branch name for any title', () => {
     for (const title of ['음수 금액을 괄호로 표시', '', '!!!', 'A'.repeat(300), 'fix: auth/role (v2) — now']) {
-      expect(suggestedTaskBranch(title, 4)).toMatch(/^suggest\/[a-z0-9-]{1,32}$/u);
+      expect(named(title)).toMatch(/^suggest\/[a-z0-9-]{1,32}$/u);
     }
-    expect(suggestedTaskBranch('음수 금액을 괄호로 표시', 4)).toBe('suggest/task-5');
+  });
+
+  it('names a title with no ASCII words from the task id, so a later batch cannot collide', () => {
+    expect(named('음수 금액을 괄호로 표시')).toBe('suggest/task-6f097626');
+    expect(named('음수 금액을 괄호로 표시', 'task-0a1b2c3d4e5f60718293a4b5c6d7e8f9')).toBe('suggest/task-0a1b2c3d');
+  });
+
+  it('keeps an ASCII word of a mixed title to the slug rule', () => {
+    expect(named('README 설치 문서 고치기')).toBe('suggest/readme');
   });
 
   it('keeps the names of one batch distinct', () => {
-    expect(suggestedTaskBranches(['Fix the auth check', 'Fix the auth check', '할인 계산'])).toEqual([
-      'suggest/fix-the-auth-check', 'suggest/fix-the-auth-check-2', 'suggest/task-3',
+    expect(suggestedTaskBranches([{ id: 'task-aa', title: 'Fix the auth check' }, { id: 'task-bb', title: 'Fix the auth check' }, { id: ID, title: '할인 계산' }])).toEqual([
+      'suggest/fix-the-auth-check', 'suggest/fix-the-auth-check-2', 'suggest/task-6f097626',
     ]);
   });
 });

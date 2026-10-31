@@ -161,7 +161,7 @@ export function taskStartForm({ task, tasks, defaults }: TaskFormRequest): TaskS
   const asked = failed ?? defaults;
   const branch = failed
     ? (failed.where.kind === 'new-worktree' ? failed.where.branch : undefined)
-    : (task.worktree ? suggestedTaskBranches(tasks.map((entry) => entry.title))[tasks.findIndex((entry) => entry.id === task.id)] : undefined);
+    : (task.worktree ? suggestedTaskBranches(tasks)[tasks.findIndex((entry) => entry.id === task.id)] : undefined);
   return {
     initialInstruction: task.prompt,
     initialAgent: { ...asked.agent, label: asked.settings },

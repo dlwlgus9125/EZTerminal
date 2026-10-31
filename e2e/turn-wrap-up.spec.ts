@@ -750,7 +750,7 @@ test('모두 시작 confirms first and starts each task where it was chosen, one
     { title: 'Refresh the install notes', rationale: 'The README is stale.', prompt: 'Refresh the README install notes.' },
     { title: 'Rename the price helper', rationale: 'Its name misleads.', prompt: 'Rename the price helper. Keep unrelated files unchanged.', worktree: true },
   ];
-  const branches = suggestedTaskBranches(tasks.map((task) => task.title));
+  const branches = suggestedTaskBranches(tasks.map((task, index) => ({ id: String(index), title: task.title })));
   try {
     await draftIn(page, workspaceId);
     const sessionId = await firstReply(page);

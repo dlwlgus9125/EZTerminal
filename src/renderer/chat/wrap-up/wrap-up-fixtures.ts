@@ -435,7 +435,7 @@ export function cartStory(lang: WrapLanguage, provider: WrapProvider, set: TaskS
     : set === 'states' || set === 'mixed' ? [...probe, DRAFTED_TASKS[0]!] : set === 'retry' ? probe.slice(0, 2) : probe;
   const prefix = `task-${provider}`;
   const asked = { agent: START_AGENT[provider], settings: START_SETTINGS[provider][lang] };
-  const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch(draft.title, index) }, ...asked });
+  const inWorktree = (draft: TaskDraft, index: number): SuggestedTaskStart => ({ where: { kind: 'new-worktree', branch: suggestedTaskBranch({ id: taskId(prefix, index), title: draft.title }) }, ...asked });
   const { items, turns, after } = cartTurn(lang, provider, drafts, prefix);
   const status = (offset: number, index: number, row: Omit<TaskSuggestionStatusPayload, 'v' | 'type' | 'taskId' | 'turnId'>): DaemonTranscriptItem => (
     statusRow(after + 1 + offset, { taskId: taskId(prefix, index), turnId: 'turn-cart', ...row })
