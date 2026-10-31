@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseTranscriptPayload } from './transcript-payload';
 import {
-  DEFAULT_TURN_WRAP_UP_SETTINGS, nextPromptText, NEXT_PROMPT_MAX_CHARS, parseTurnWrapUpSettings, RECAP_INSTRUCTION, recapQuestion, recapStoppedNote,
+  DEFAULT_TURN_WRAP_UP_SETTINGS, nextPromptText, NEXT_PROMPT_MAX_CHARS, parseTurnWrapUpSettings, RECAP_INSTRUCTION, recapStoppedNote,
   isSuggestedTaskChildSession, suggestedTaskBranch, suggestedTaskBranches, suggestedTaskChildSessionId, TASK_SUGGESTION_LIMITS, TURN_RECAP_LIMITS,
 } from './turn-wrap-up';
 
@@ -13,11 +13,7 @@ describe('recap prompt', () => {
   });
 
   it('asks the plain instruction at a turn’s end, and says what is open first when the turn stopped', () => {
-    expect(recapQuestion()).toBe(RECAP_INSTRUCTION);
-    const waiting = 'an approval for a file change to src/cart.ts.';
-    const stopped = recapQuestion(waiting);
-    expect(stopped.startsWith(recapStoppedNote(waiting))).toBe(true);
-    expect(stopped.endsWith(RECAP_INSTRUCTION)).toBe(true);
+    const stopped = recapStoppedNote('an approval for a file change to src/cart.ts.');
     // Without the note Codex reports the stopped turn as aborted (probe P5).
     expect(stopped).toMatch(/not finished: an approval for a file change to src\/cart\.ts\. It is still open/u);
     expect(stopped).toMatch(/nothing was aborted/u);

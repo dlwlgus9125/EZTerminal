@@ -31,14 +31,12 @@ export const RECAP_INSTRUCTION = 'Recap for the person, who was not watching thi
   + 'State only what actually happened in this conversation; never claim an action, file change or test that did not happen. '
   + 'Write in the language the person has been using. No preamble.';
 
-/** Host-composed: a fork of a stopped turn may show the open call as aborted, and without this Codex says it was (probe P5). */
+/**
+ * Host-composed: a fork of a stopped turn may show the open call as aborted, and without this Codex says it was. It goes
+ * before the question, as it did in the probe (4/4 right, against 8/10 after `Question:`), through the side question's `note`.
+ */
 export const recapStoppedNote = (waiting: string): string => `Right now this turn is stopped, not finished: ${waiting} It is still open and waiting for the `
   + 'person. If your history shows that call as aborted or interrupted, that is only how this side view shows it; nothing was aborted.';
-
-/** What a recap asks. `waiting`: what the stopped turn has open, as a sentence. */
-export function recapQuestion(waiting?: string): string {
-  return waiting ? `${recapStoppedNote(waiting)}\n\n${RECAP_INSTRUCTION}` : RECAP_INSTRUCTION;
-}
 
 /** Codex's next-message fork; Claude predicts on its own. */
 export const PREDICT_INSTRUCTION = "Predict the person's most likely next message to you in this conversation. Reply with "

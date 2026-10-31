@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import { parseTranscriptPayload } from '../../shared/transcript-payload';
 import {
-  nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, recapQuestion, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
+  nextPromptText, PREDICT_INSTRUCTION, RECAP_INSTRUCTION, SUGGEST_TASK_CLAUDE_TOOL, SUGGEST_TASK_INSTRUCTIONS, SUGGEST_TASK_TOOL,
 } from '../../shared/turn-wrap-up';
 import { buildChatModel } from '../../renderer/chat/model/build-chat-model';
 import type { AgentProviderEvent } from '../agent-provider-adapter';
@@ -163,7 +163,7 @@ describe('turn wrap-up recordings', () => {
 
     const requests: { readonly method: string; readonly params: unknown }[] = [];
     const { result, events } = await replayCodexSideFork(fixture, (adapter, conversation, signal) => (
-      adapter.askSideQuestion({ ...conversation, question: recapQuestion(), history: [] }, signal)
+      adapter.askSideQuestion({ ...conversation, question: RECAP_INSTRUCTION, history: [] }, signal)
     ), { onCodexRequest: (method, params) => requests.push({ method, params }) });
     const turn = requests.find((request) => request.method === 'turn/start')?.params as { readonly effort?: string; readonly input: readonly { readonly text: string }[] };
     expect(turn.effort).toBeUndefined();

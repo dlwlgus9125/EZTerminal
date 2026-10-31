@@ -18,7 +18,7 @@ import type { ApprovalRequest } from '../shared/approval-request';
 import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
 import { type ConversationViewingStatus } from '../shared/conversation-viewing';
 import {
-  DEFAULT_TURN_WRAP_UP_SETTINGS, RECAP_INSTRUCTION, recapQuestion, SUGGEST_TASK_INSTRUCTIONS, suggestedTaskChildSessionId, TURN_RECAP_LIMITS, type TurnWrapUpSettings,
+  DEFAULT_TURN_WRAP_UP_SETTINGS, RECAP_INSTRUCTION, recapStoppedNote, SUGGEST_TASK_INSTRUCTIONS, suggestedTaskChildSessionId, TURN_RECAP_LIMITS, type TurnWrapUpSettings,
 } from '../shared/turn-wrap-up';
 import {
   ProviderSideQuestionError,
@@ -1075,7 +1075,7 @@ describe('a recap while the AI waits on the person', () => {
       const turnId = await start(h);
       const approval = await h.raise(h.claude, 'chat', FILE_CHANGE);
       await until(() => h.claude.asks.length === 1, 'the recap call');
-      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion('the person has not answered your request to change format.ts.'));
+      expect(h.claude.asks[0]!.input).toMatchObject({ question: RECAP_INSTRUCTION, note: recapStoppedNote('the person has not answered your request to change format.ts.') });
       h.claude.asks[0]!.resolve({ text: 'Waiting on your approval of format.ts.', synthetic: false });
       await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
       expect(h.recaps().at(-1)).toMatchObject({ turnId, trigger: 'waiting', waiting: 'approval', decisionId: approval.id, text: 'Waiting on your approval of format.ts.' });
@@ -1093,7 +1093,7 @@ describe('a recap while the AI waits on the person', () => {
       await start(h);
       await h.raise(h.claude, 'chat', request);
       await until(() => h.claude.asks.length === 1, 'the recap call');
-      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion(note));
+      expect(h.claude.asks[0]!.input).toMatchObject({ question: RECAP_INSTRUCTION, note: recapStoppedNote(note) });
       expect(h.recaps().at(-1)).toMatchObject({ trigger: 'waiting', waiting });
     } finally { await dispose(h); }
   });
@@ -1104,7 +1104,7 @@ describe('a recap while the AI waits on the person', () => {
       await start(h);
       await h.raise(h.claude, 'chat', undefined);
       await until(() => h.claude.asks.length === 1, 'the recap call');
-      expect(h.claude.asks[0]!.input.question).toBe(recapQuestion('the person has not answered your request: Edit a file.'));
+      expect(h.claude.asks[0]!.input).toMatchObject({ question: RECAP_INSTRUCTION, note: recapStoppedNote('the person has not answered your request: Edit a file.') });
     } finally { await dispose(h); }
   });
 
@@ -1315,7 +1315,7 @@ describe('wrap-up.recap-retry', () => {
       await until(() => h.recaps().at(-1)?.state === 'failed', 'the failure');
       await h.execute('wrap-up.recap-retry', { sessionId: 'chat', turnId });
       await until(() => h.claude.asks.length === 2, 'the second call');
-      expect(h.claude.asks[1]!.input.question).toBe(recapQuestion('the person has not answered your request to run a command.'));
+      expect(h.claude.asks[1]!.input).toMatchObject({ question: RECAP_INSTRUCTION, note: recapStoppedNote('the person has not answered your request to run a command.') });
       expect(h.recaps().at(-1)).toMatchObject({ trigger: 'waiting', waiting: 'approval', decisionId: approval.id, state: 'generating' });
     } finally { await dispose(h); }
   });

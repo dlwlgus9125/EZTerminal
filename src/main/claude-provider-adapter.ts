@@ -1712,7 +1712,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }));
     let reply: Awaited<ReturnType<NonNullable<ClaudeQuerySession['askSideQuestion']>>>;
     try {
-      reply = await ask(input.question, { ...(history.length ? { history } : {}), signal });
+      reply = await ask(input.note ? `${input.note}\n\n${input.question}` : input.question, { ...(history.length ? { history } : {}), signal });
     } catch {
       if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
       if (session.disposed) throw new ProviderSideQuestionError(session.endedFor === 'relaunch' ? 'session-restarted' : 'not-live');

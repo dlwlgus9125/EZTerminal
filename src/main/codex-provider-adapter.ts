@@ -370,11 +370,11 @@ function threadIdFromParams(params: JsonObject): string | undefined {
   return asString(params.threadId) ?? asString(params.conversationId);
 }
 
-function sideQuestionPrompt(question: string, history: readonly SideQuestionExchange[]): string {
+function sideQuestionPrompt(question: string, history: readonly SideQuestionExchange[], note?: string): string {
   const earlier = history.length
     ? [`Earlier side questions in this thread:\n${history.map((entry) => `Q: ${entry.question}\nA: ${entry.answer}`).join('\n')}`]
     : [];
-  return [SIDE_QUESTION_INSTRUCTION, ...earlier, `Question: ${question}`].join('\n\n');
+  return [SIDE_QUESTION_INSTRUCTION, ...earlier, ...(note ? [note] : []), `Question: ${question}`].join('\n\n');
 }
 
 /**
@@ -1637,7 +1637,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
    */
   async askSideQuestion(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
     return this.sideFork({
-      sessionId: input.sessionId, providerSessionId: input.providerSessionId, text: sideQuestionPrompt(input.question, input.history), purpose: 'side-question',
+      sessionId: input.sessionId, providerSessionId: input.providerSessionId, text: sideQuestionPrompt(input.question, input.history, input.note), purpose: 'side-question',
     }, signal);
   }
 

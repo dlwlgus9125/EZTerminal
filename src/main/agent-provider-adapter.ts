@@ -328,6 +328,8 @@ export interface ProviderSideQuestionInput {
   readonly sessionId: string;
   readonly providerSessionId: string;
   readonly question: string;
+  /** The host's own words, read before the question. A person's side question has none. */
+  readonly note?: string;
   readonly history: readonly SideQuestionExchange[];
 }
 

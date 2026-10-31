@@ -25,7 +25,8 @@ import {
 } from '../shared/transcript-payload';
 import {
   isSuggestedTaskChildSession,
-  recapQuestion,
+  RECAP_INSTRUCTION,
+  recapStoppedNote,
   SUGGEST_TASK_INSTRUCTIONS,
   TASK_SUGGESTION_LIMITS,
   TURN_RECAP_LIMITS,
@@ -306,7 +307,7 @@ export interface TurnWrapUpCoordinatorOptions {
   readonly onEvent: (listener: (event: DaemonEvent) => void) => () => void;
   /** One question to the conversation's AI (`DaemonAgentRuntime.askSideQuestion`): it leaves the person's /btw budget alone. */
   readonly ask: (
-    input: { readonly sessionId: string; readonly question: string; readonly history: readonly SideQuestionExchange[] },
+    input: { readonly sessionId: string; readonly question: string; readonly note?: string; readonly history: readonly SideQuestionExchange[] },
     signal: AbortSignal,
   ) => Promise<ProviderSideQuestionAnswer>;
   readonly viewers: { status(sessionId: string): ConversationViewingStatus };
@@ -690,7 +691,8 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
     timeout.unref?.();
     let outcome: { readonly state: 'complete'; readonly text: string } | { readonly state: 'failed'; readonly failure: TurnRecapFailure };
     try {
-      const answer = await this.options.ask({ sessionId: record.sessionId, question: recapQuestion(job.waitingNote), history: [] }, job.abort.signal);
+      const note = job.waitingNote ? { note: recapStoppedNote(job.waitingNote) } : {};
+      const answer = await this.options.ask({ sessionId: record.sessionId, question: RECAP_INSTRUCTION, ...note, history: [] }, job.abort.signal);
       const text = answer.synthetic ? undefined : answer.text?.trim();
       outcome = text ? { state: 'complete', text } : { state: 'failed', failure: 'no-response' };
     } catch (error) {

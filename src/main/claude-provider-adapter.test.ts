@@ -1834,6 +1834,15 @@ describe('Claude side questions (/btw)', () => {
   const ask = (fixture: ReturnType<typeof makeAdapter>, signal = new AbortController().signal, history: { question: string; answer: string; fallbackNotice?: string }[] = []) =>
     fixture.adapter.askSideQuestion({ sessionId: context.sessionId, providerSessionId, question: 'Which config file was it?', history }, signal);
 
+  it('puts a host note before the question, and adds nothing to a person’s', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    await fixture.adapter.askSideQuestion({ sessionId: context.sessionId, providerSessionId, question: 'Recap.', note: 'The turn is stopped.', history: [] }, new AbortController().signal);
+    await ask(fixture);
+    expect(fixture.query.sideQuestions.map((entry) => entry.question)).toEqual(['The turn is stopped.\n\nRecap.', 'Which config file was it?']);
+    await fixture.adapter.dispose();
+  });
+
   it('asks the live query with the snake_case history and records nothing', async () => {
     const fixture = makeAdapter();
     await start(fixture);

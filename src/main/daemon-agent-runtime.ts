@@ -614,7 +614,7 @@ export class DaemonAgentRuntime {
    * anything: the question and answer leave no turn, transcript item, event or store change.
    */
   async askSideQuestion(
-    input: { readonly sessionId: string; readonly question: string; readonly history: readonly SideQuestionExchange[] },
+    input: { readonly sessionId: string; readonly question: string; readonly note?: string; readonly history: readonly SideQuestionExchange[] },
     signal: AbortSignal,
   ): Promise<ProviderSideQuestionAnswer> {
     if (this.disposed) throw new ProviderSideQuestionError('not-live');
@@ -643,6 +643,7 @@ export class DaemonAgentRuntime {
       sessionId: input.sessionId,
       providerSessionId: current.providerSessionId,
       question: input.question,
+      ...(input.note ? { note: input.note } : {}),
       history: input.history,
     }, signal);
   }

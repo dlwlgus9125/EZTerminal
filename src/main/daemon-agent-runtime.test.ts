@@ -4565,6 +4565,8 @@ describe('side questions (/btw) on a live conversation', () => {
       const signal = new AbortController().signal;
       await expect(h.runtime.askSideQuestion(question, signal)).resolves.toEqual({ text: 'It was src/config.ts.', synthetic: false });
       expect(h.claude.askSideQuestion).toHaveBeenCalledWith({ sessionId: 'agent-1', providerSessionId, question: 'Which file?', history: [{ question: 'q1', answer: 'a1' }] }, signal);
+      await h.runtime.askSideQuestion({ ...question, note: 'The turn is stopped.' }, signal);
+      expect(h.claude.askSideQuestion).toHaveBeenLastCalledWith(expect.objectContaining({ question: 'Which file?', note: 'The turn is stopped.' }), signal);
       await h.runtime.whenIdle();
       const after = h.router.getSnapshot();
       expect([after.revision, after.eventSequence, after.turns]).toEqual([before.revision, before.eventSequence, before.turns]);

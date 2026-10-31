@@ -554,6 +554,8 @@ test('a turn stopped on the person while no screen shows it gets its recap; answ
     const [stopped] = forks(profile, 'recap');
     expect(stopped).toMatchObject({ stopped: true });
     expect(stopped!.prompt).toContain('the person has not answered your request to run a command.');
+    // Before the question, as the probe that measured it had it: after it, two recaps in ten said the call was aborted.
+    expect(stopped!.prompt!.indexOf('Right now this turn is stopped')).toBeLessThan(stopped!.prompt!.indexOf('Question: '));
     await expect(card).toHaveAttribute('aria-label', /Recap · Stopped for your answer · Written by Codex/u);
     await expect(card).toContainText('The AI is waiting for your approval');
     await page.screenshot({ path: path.join(evidence, 'recap-waiting.png') });

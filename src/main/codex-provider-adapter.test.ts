@@ -9,7 +9,7 @@ import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
-import { PREDICT_INSTRUCTION } from '../shared/turn-wrap-up';
+import { PREDICT_INSTRUCTION, RECAP_INSTRUCTION } from '../shared/turn-wrap-up';
 import type {
   AgentProviderEvent,
   ProviderSessionContext,
@@ -2374,6 +2374,18 @@ describe('Codex side questions (/btw)', () => {
     expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
     expect(sent('turn/interrupt')).toEqual([]);
     expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('puts a host note between the instruction and the question, as the probe that measured it did', async () => {
+    const { adapter, forkTurnStarts, forkTurnStarted, fork } = await sideQuestionFixture();
+    const answered = adapter.askSideQuestion({
+      sessionId: 'session-1', providerSessionId: 'thread-1', question: RECAP_INSTRUCTION, note: 'The turn is stopped.', history: [],
+    }, new AbortController().signal);
+    await forkTurnStarted();
+    expect(forkTurnStarts()[0]?.input[0]?.text).toBe(`${instruction}\n\nThe turn is stopped.\n\nQuestion: ${RECAP_INSTRUCTION}`);
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', items: [] } });
+    await answered;
     await adapter.dispose();
   });
 
