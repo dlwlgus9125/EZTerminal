@@ -1066,7 +1066,7 @@ function readHistory() {
 
 function scenarioVerdict(key, scenario) {
   if (scenario.error && !scenario.results) return { error: scenario.error };
-  const group = key.split(':')[0];
+  const group = key.split(/[:#]/u)[0];
   const results = scenario.afterReset?.results ?? scenario.results ?? [];
   const brief = (result) => ({ subtype: result.subtype, isError: result.isError, apiError: result.apiError, status: result.apiErrorStatus, terminal: result.terminalReason, turns: result.numTurns, uuids: result.userMessageUuids?.length ?? 0 });
   if (group === 'shape' || group === 'watchdog') {

@@ -1020,7 +1020,7 @@ function readHistory() {
 
 function scenarioVerdict(key, scenario) {
   if (scenario.error && !scenario.calls) return { error: scenario.error };
-  const group = key.split(':')[0];
+  const group = key.split(/[:#]/u)[0];
   const retries = (scenario.stream ?? []).filter((line) => / error /u.test(line) && /"willRetry":true/u.test(line)).length;
   if (group === 'limit') {
     return { status: scenario.turnCompleted?.status ?? null, codexErrorInfo: scenario.turnCompleted?.error?.codexErrorInfo ?? null, willRetry: retries, calls: scenario.calls?.length ?? 0, threadStatus: scenario.threadRead?.status?.type ?? null, primaryResetsAt: typeof scenario.rateLimits?.at(-1)?.limits?.primary?.resetsAt === 'number', resetInMessage: /try again at /u.test(scenario.turnCompleted?.error?.message ?? '') };
