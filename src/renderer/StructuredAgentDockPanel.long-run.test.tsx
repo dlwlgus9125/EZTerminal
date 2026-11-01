@@ -205,10 +205,8 @@ describe('a limit card', () => {
   const stopped = (): { readonly snapshot: DaemonSnapshot; readonly transcript: readonly DaemonTranscriptItem[] } => {
     const fixture = inLongSession(limitStory('en', 'waiting', { provider: 'codex' }), SESSION);
     const limit = { stopId: LIMIT_STOP, turnId: 'turn-limit', providerId: 'codex', phase: 'waiting' as const, window: 'five-hour' as const, stoppedAt: NOW, resumeAt: RESUME_AT };
-    // The tab refuses a gap in the sequence; the fixture's numbers are only its order.
-    const transcript = fixture.items.map((item, index) => ({ ...item, sequence: index + 1 }));
-    const transcriptHeads = [{ sessionId: SESSION, lastSequence: transcript.length, itemCount: transcript.length }];
-    return { transcript, snapshot: snapshotWith({ turns: [...fixture.turns], transcriptHeads, usageLimits: { [SESSION]: limit } }, { state: 'idle', currentTurnId: undefined }) };
+    const transcriptHeads = [{ sessionId: SESSION, lastSequence: fixture.items.length, itemCount: fixture.items.length }];
+    return { transcript: fixture.items, snapshot: snapshotWith({ turns: [...fixture.turns], transcriptHeads, usageLimits: { [SESSION]: limit } }, { state: 'idle', currentTurnId: undefined }) };
   };
 
   it('reads from its row and presses through to the host', async () => {

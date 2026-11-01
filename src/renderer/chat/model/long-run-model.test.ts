@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { buildChatModel } from './build-chat-model';
 import { latestLimit } from './long-run-rows';
-import { resumesByItself } from '../../../shared/long-run';
+import { resumesByItself, USAGE_LIMIT_PHASES } from '../../../shared/long-run';
 import { conversationQueue } from '../../conversation-queue';
-import { landSteer, LIMIT_STOP, LONG_SESSION, limitStory, steerStory, type LongRunFixture } from '../long-run/long-run-fixtures';
+import { landSteer, LIMIT_STOP, LONG_SESSION, limitStory, steerStory, type LongRunFixture, type SteerVariant } from '../long-run/long-run-fixtures';
 
 const model = ({ items, turns, approvals }: LongRunFixture, line?: LongRunFixture['line']): ReturnType<typeof buildChatModel> => {
   const limit = latestLimit(items);
@@ -13,6 +13,30 @@ const model = ({ items, turns, approvals }: LongRunFixture, line?: LongRunFixtur
 
 const kinds = (fixture: LongRunFixture): readonly string[] => model(fixture).rows.map((row) => row.kind);
 const card = (fixture: LongRunFixture, line?: LongRunFixture['line']) => model(fixture, line).rows.find((row) => row.kind === 'usage-limit');
+
+describe('long-run fixtures', () => {
+  const STEERS: readonly SteerVariant[] = [
+    'long-messages', 'long-behind-approval', 'busy', 'writing', 'on-its-way', 'on-its-way-text', 'landed', 'landed-new-turn', 'landed-rewritten', 'landed-then-limit',
+    'caught-stop', 'caught-limit', 'behind-approval', 'review-turn', 'compact-turn', 'turn-ended', 'failed', 'failed-disconnected', 'unconfirmed',
+  ];
+  const contiguous = ({ items }: LongRunFixture): void => {
+    expect(items.map((item) => item.sequence)).toEqual(items.map((_item, index) => index + 1));
+    expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+  };
+
+  it.each(STEERS)('steer %s numbers its rows as a host does: the tab refuses a gap', (variant) => {
+    contiguous(steerStory('en', variant));
+  });
+
+  it.each(USAGE_LIMIT_PHASES)('limit %s numbers its rows as a host does', (phase) => {
+    contiguous(limitStory('en', phase));
+  });
+
+  it.each(['tool', 'text'] as const)('a message landing behind %s keeps the numbers whole, on either AI', (behind) => {
+    const fixture = steerStory('en', behind === 'text' ? 'on-its-way-text' : 'on-its-way');
+    for (const provider of ['claude', 'codex'] as const) contiguous(landSteer(fixture, fixture.steered![0]!.id, provider));
+  });
+});
 
 describe('long-run rows in the chat model', () => {
   it('reads a limit card from its row, and a conversation with no such row stays plain', () => {

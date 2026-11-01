@@ -150,15 +150,15 @@ function approval(callId: string, command: string): DaemonApproval {
 
 /** Sent while a turn ran, and refused: it waits as an ordinary queued turn, and its row says why. */
 function queuedFallback(lang: LongLanguage, base: LongRunFixture, reason: SteerFallback): LongRunFixture {
-  const queued = item(20, 'user-message', TEXT[lang].steer, { turnId: 'turn-queued', payload: { v: 1, type: 'steer-queued', reason } });
+  const queued = item(nextSequence(base), 'user-message', TEXT[lang].steer, { turnId: 'turn-queued', payload: { v: 1, type: 'steer-queued', reason } });
   return { ...base, items: [...base.items, queued], turns: [...base.turns, turn('turn-queued', 'queued', at(9))] };
 }
 
 export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFixture {
   const text = TEXT[lang];
-  const work = [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, false)];
+  const work = [...opening(lang, 'turn-run'), ...shell(5, 'turn-run', FULL_SUITE, false)];
   const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', started)], state: 'working' };
-  const writing: LongRunFixture = { ...running, items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })] };
+  const writing: LongRunFixture = { ...running, items: [...opening(lang, 'turn-run'), item(5, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })] };
   switch (variant) {
     case 'long-messages':
       return { ...running, steered: [1, 2, 3, 4].map((index) => steered(lang, 'on-its-way', { id: `long-${String(index)}`, text: LONG_TEXT[lang], behind: 'tool' })) };
@@ -170,52 +170,52 @@ export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFi
     case 'on-its-way-text': return { ...writing, steered: [steered(lang, 'on-its-way', { behind: 'text' })] };
     case 'landed': {
       // At a tool boundary: the tool ended and nothing was being written, on either AI.
-      const landed = item(8, 'user-message', text.steer, { turnId: 'turn-run', payload: { v: 1, type: 'steer' } });
+      const landed = item(7, 'user-message', text.steer, { turnId: 'turn-run', payload: { v: 1, type: 'steer' } });
       return {
         ...running,
-        items: [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, true), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(10, 'turn-run', ONE_FILE, false)],
+        items: [...opening(lang, 'turn-run'), ...shell(5, 'turn-run', FULL_SUITE, true), landed, item(8, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(9, 'turn-run', ONE_FILE, false)],
       };
     }
     case 'landed-new-turn': {
       // Claude was writing: that text ended its turn, and the message is the next one.
-      const landed = item(8, 'user-message', text.steer, { turnId: 'turn-next', payload: { v: 1, type: 'steer', newTurn: true } });
+      const landed = item(6, 'user-message', text.steer, { turnId: 'turn-next', payload: { v: 1, type: 'steer', newTurn: true } });
       return {
-        items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.written, { turnId: 'turn-run' }), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-next' }), ...shell(10, 'turn-next', ONE_FILE, false)],
+        items: [...opening(lang, 'turn-run'), item(5, 'assistant-message', text.written, { turnId: 'turn-run' }), landed, item(7, 'assistant-message', text.afterSteer, { turnId: 'turn-next' }), ...shell(8, 'turn-next', ONE_FILE, false)],
         turns: [turn('turn-run', 'completed', started, at(7)), turn('turn-next', 'working', at(8))], state: 'working',
       };
     }
     case 'landed-then-limit': {
       // Measured: the message folded into the turn the limit then refused; it stays in the session and is read on continuing.
       const limited = limitStory(lang, 'waiting');
-      const landed = item(7.5, 'user-message', text.steer, { turnId: LIMIT_TURN, payload: { v: 1, type: 'steer' } });
-      return { ...limited, items: [...limited.items.filter((entry) => entry.sequence < 8), landed, ...limited.items.filter((entry) => entry.sequence >= 8)] };
+      const landed = item(7, 'user-message', text.steer, { id: `${LONG_SESSION}:steer`, turnId: LIMIT_TURN, payload: { v: 1, type: 'steer' } });
+      return { ...limited, items: [...limited.items.filter((entry) => entry.sequence < 7), landed, ...limited.items.filter((entry) => entry.sequence >= 7).map((entry) => ({ ...entry, sequence: entry.sequence + 1 }))] };
     }
     case 'caught-stop': {
       // The person stopped the turn with a message still on its way: what became of it was not measured, so it says so.
-      return { ...running, items: [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, true)], turns: [turn('turn-run', 'interrupted', started, at(9))], state: 'idle', steered: [steered(lang, 'unconfirmed', { caught: 'stop' })] };
+      return { ...running, items: [...opening(lang, 'turn-run'), ...shell(5, 'turn-run', FULL_SUITE, true)], turns: [turn('turn-run', 'interrupted', started, at(9))], state: 'idle', steered: [steered(lang, 'unconfirmed', { caught: 'stop' })] };
     }
     case 'caught-limit':
       return { ...limitStory(lang, 'waiting'), steered: [steered(lang, 'unconfirmed', { caught: 'limit' })] };
     case 'landed-rewritten': {
       // Codex was writing: that text is gone from the transcript, and the mark says so.
-      const landed = item(8, 'user-message', text.steer, { turnId: 'turn-run', payload: { v: 1, type: 'steer', rewritten: true } });
+      const landed = item(5, 'user-message', text.steer, { turnId: 'turn-run', payload: { v: 1, type: 'steer', rewritten: true } });
       return {
         ...running,
-        items: [...opening(lang, 'turn-run'), landed, item(9, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(10, 'turn-run', ONE_FILE, false)],
+        items: [...opening(lang, 'turn-run'), landed, item(6, 'assistant-message', text.afterSteer, { turnId: 'turn-run' }), ...shell(7, 'turn-run', ONE_FILE, false)],
       };
     }
     case 'behind-approval': {
-      const call = shell(6, 'turn-run', FULL_SUITE, false);
+      const call = shell(5, 'turn-run', FULL_SUITE, false);
       return {
         ...running, items: [...opening(lang, 'turn-run'), ...call], turns: [turn('turn-run', 'blocked', started)], state: 'blocked',
-        approvals: [approval('call-6', FULL_SUITE)], steered: [steered(lang, 'behind-approval')],
+        approvals: [approval('call-5', FULL_SUITE)], steered: [steered(lang, 'behind-approval')],
       };
     }
     case 'review-turn':
     case 'compact-turn':
       return queuedFallback(lang, running, variant);
     case 'turn-ended':
-      return queuedFallback(lang, { ...running, items: [...opening(lang, 'turn-run'), ...shell(6, 'turn-run', FULL_SUITE, true)], turns: [turn('turn-run', 'completed', started, at(9))] }, 'turn-ended');
+      return queuedFallback(lang, { ...running, items: [...opening(lang, 'turn-run'), ...shell(5, 'turn-run', FULL_SUITE, true)], turns: [turn('turn-run', 'completed', started, at(9))] }, 'turn-ended');
     case 'failed': return { ...running, steered: [steered(lang, 'failed', { failure: 'refused' })] };
     case 'failed-disconnected': return { ...running, steered: [steered(lang, 'failed', { failure: 'disconnected' })] };
     case 'unconfirmed': return { ...running, steered: [steered(lang, 'unconfirmed')] };
@@ -251,7 +251,7 @@ export function landSteer(fixture: LongRunFixture, id: string, provider: LongPro
   // Its row is what says so; the list only loses it.
   const steered = fixture.steered?.filter((entry) => entry.id !== id);
   if (message.behind === 'text' && provider === 'claude') {
-    const next = item(sequence + 1, 'user-message', message.text, { turnId: 'turn-next', sessionId, payload: { v: 1, type: 'steer', newTurn: true } });
+    const next = item(sequence, 'user-message', message.text, { turnId: 'turn-next', sessionId, payload: { v: 1, type: 'steer', newTurn: true } });
     return {
       ...fixture, steered,
       items: [...fixture.items.map((entry) => (entry.isDelta ? { ...entry, isDelta: false } : entry)), next],
@@ -259,8 +259,9 @@ export function landSteer(fixture: LongRunFixture, id: string, provider: LongPro
     };
   }
   const dropped = message.behind === 'text';
-  const row = item(sequence + 1, 'user-message', message.text, { turnId: 'turn-run', sessionId, payload: { v: 1, type: 'steer', ...(dropped ? { rewritten: true } : {}) } });
-  return { ...fixture, items: [...fixture.items.filter((entry) => !(dropped && entry.isDelta)), ...ended, row], steered };
+  const kept = fixture.items.filter((entry) => !(dropped && entry.isDelta));
+  const row = item(nextSequence({ ...fixture, items: kept }) + ended.length, 'user-message', message.text, { turnId: 'turn-run', sessionId, payload: { v: 1, type: 'steer', ...(dropped ? { rewritten: true } : {}) } });
+  return { ...fixture, items: [...kept, ...ended, row], steered };
 }
 
 /** 대기열에 넣기 on a message that could not go in: an ordinary queued turn. */
@@ -287,7 +288,7 @@ const limitedTurn = (id: string, startedAt: string, finishedAt: string): DaemonT
 
 function stopped(lang: LongLanguage): { readonly items: DaemonTranscriptItem[]; readonly turns: DaemonTurn[] } {
   return {
-    items: [...opening(lang, LIMIT_TURN), ...shell(6, LIMIT_TURN, FULL_SUITE, true), item(8, 'assistant-message', TEXT[lang].partial, { turnId: LIMIT_TURN })],
+    items: [...opening(lang, LIMIT_TURN), ...shell(5, LIMIT_TURN, FULL_SUITE, true), item(7, 'assistant-message', TEXT[lang].partial, { turnId: LIMIT_TURN })],
     turns: [limitedTurn(LIMIT_TURN, started, STOPPED_AT)],
   };
 }
@@ -339,30 +340,30 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
   };
   const base: LongRunFixture = { items, turns, state: 'idle', ...(options.line ? { line: options.line } : {}) };
   // The stop's first row names the turn that stopped; what the limit refuses later moves the card down.
-  const first: LongRunFixture = { ...base, items: [...items, limitRow(9, { ...limit, phase: 'waiting' })] };
+  const first: LongRunFixture = { ...base, items: [...items, limitRow(8, { ...limit, phase: 'waiting' })] };
   switch (phase) {
     case 'resuming':
       return { ...withLimit(base, { ...limit, sendReason: options.reason ?? 'scheduled-time' }), state: 'working' };
     case 'resumed': {
-      const sent = continueRow(10, 'turn-resume', RESUME_AT, 'completed', LONG_SESSION, options.reason);
-      return withLimit(first, limit, [sent.row, item(11, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: RESUME_AT })], [sent.turn]);
+      const sent = continueRow(9, 'turn-resume', RESUME_AT, 'completed', LONG_SESSION, options.reason);
+      return withLimit(first, limit, [sent.row, item(10, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: RESUME_AT })], [sent.turn]);
     }
     case 'retrying': {
-      const sent = continueRow(10, 'turn-try-1', RESUME_AT, 'failed');
+      const sent = continueRow(9, 'turn-try-1', RESUME_AT, 'failed');
       return withLimit(first, { ...limit, turnId: 'turn-try-1', refusedAt: RESUME_AT, retryAt: RETRY_AT }, [sent.row], [sent.turn]);
     }
     case 'gave-up': {
-      const one = continueRow(10, 'turn-try-1', RESUME_AT, 'failed');
+      const one = continueRow(9, 'turn-try-1', RESUME_AT, 'failed');
       const retrying = withLimit(first, { ...limit, phase: 'retrying', turnId: 'turn-try-1', refusedAt: RESUME_AT, retryAt: RETRY_AT }, [one.row], [one.turn]);
-      const two = continueRow(12, 'turn-try-2', RETRY_AT, 'failed');
+      const two = continueRow(11, 'turn-try-2', RETRY_AT, 'failed');
       return withLimit(retrying, { ...limit, turnId: 'turn-try-2', refusedAt: RETRY_AT }, [two.row], [two.turn]);
     }
     case 'cancelled': {
-      const person = item(10, 'user-message', text.person, { turnId: 'turn-person', createdAt: PERSON_AT });
-      return withLimit(first, limit, [person, item(11, 'assistant-message', text.afterPerson, { turnId: 'turn-person', createdAt: PERSON_AT }), ...shell(12, 'turn-person', FULL_SUITE, false)], [turn('turn-person', 'working', PERSON_AT)], { state: 'working' });
+      const person = item(9, 'user-message', text.person, { turnId: 'turn-person', createdAt: PERSON_AT });
+      return withLimit(first, limit, [person, item(10, 'assistant-message', text.afterPerson, { turnId: 'turn-person', createdAt: PERSON_AT }), ...shell(11, 'turn-person', FULL_SUITE, false)], [turn('turn-person', 'working', PERSON_AT)], { state: 'working' });
     }
     case 'person-refused': {
-      const person = item(10, 'user-message', text.person, { turnId: 'turn-person', createdAt: REFUSED_AT });
+      const person = item(9, 'user-message', text.person, { turnId: 'turn-person', createdAt: REFUSED_AT });
       return withLimit(first, { ...limit, turnId: 'turn-person' }, [person], [limitedTurn('turn-person', REFUSED_AT, REFUSED_AT)]);
     }
     case 'skipped':

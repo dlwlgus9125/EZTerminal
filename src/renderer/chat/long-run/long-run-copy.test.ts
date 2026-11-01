@@ -55,6 +55,13 @@ describe('long-run wording', () => {
     expect(settings).toContain('6 hours');
   });
 
+  it('says what a message into a stopped conversation costs, not that a turn just ended', () => {
+    expect(chatCopy('ko').longRun.steer.fellBack['limit-open']).toContain('자동 재개는 취소');
+    expect(chatCopy('ko').longRun.steer.fellBack['limit-open']).toContain('거절되어 대화에 남을 수');
+    expect(chatCopy('en').longRun.steer.fellBack['limit-open']).toContain('cancels any scheduled resume');
+    expect(chatCopy('en').longRun.steer.fellBack['limit-open']).toContain('may be refused and stay in the conversation');
+  });
+
   it('tells a screen at the scheduled time apart from a confirmed lift', () => {
     expect(chatCopy('ko').longRun.appSent.why['scheduled-time']).toBe('앱이 보냄 · 예약 시각이 되어');
     expect(chatCopy('en').longRun.appSent.why['scheduled-time']).toBe('Sent by the app · at the scheduled time');
