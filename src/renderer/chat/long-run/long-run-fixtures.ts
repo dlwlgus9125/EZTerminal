@@ -375,13 +375,13 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
 
 const limitOf = (fixture: LongRunFixture): TurnUsageLimit | undefined => latestLimit(fixture.items);
 
-/** Finished or let go, as the host's `holds`: it has its rows, and the snapshot no longer carries it. */
-const NOT_HELD: ReadonlySet<UsageLimitPhase> = new Set(['resumed', 'cancelled', 'left', 'person-refused']);
+/** Finished, as the host's `finished`: it has its rows, and the snapshot no longer carries it. */
+const FINISHED: ReadonlySet<UsageLimitPhase> = new Set(['resumed', 'cancelled']);
 
 /** What `snapshot.usageLimits` holds for this conversation. */
 export function openLimitOf(fixture: LongRunFixture): OpenUsageLimit | undefined {
   const limit = limitOf(fixture);
-  if (!limit || NOT_HELD.has(limit.phase) || (limit.phase === 'child' && limit.childKind === 'managed')) return undefined;
+  if (!limit || FINISHED.has(limit.phase) || (limit.phase === 'child' && limit.childKind === 'managed')) return undefined;
   return { ...limit, ...(fixture.line ? { line: fixture.line } : {}) };
 }
 

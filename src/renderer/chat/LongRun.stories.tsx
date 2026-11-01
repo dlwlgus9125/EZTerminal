@@ -676,6 +676,9 @@ export const LimitPersonRefused: Story = chat('limit-person-refused', (lang) => 
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('그 메시지는 대화에 남아 있어, 이어서 하면 AI가 함께 읽습니다.');
   await expect(within(card).getByRole('button', { name: '이어서 하기' })).toBeVisible();
+  // Nothing will happen by itself and nothing asks: stopped, with no amber, until something else runs here.
+  await expect(header(canvasElement)).toHaveTextContent('한도로 멈춤');
+  await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
 /** An approval was open when the time came: skipped, and the card leads to it. */

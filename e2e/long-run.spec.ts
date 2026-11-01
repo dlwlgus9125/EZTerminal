@@ -236,6 +236,13 @@ async function waitsOnAClock(page: Page, session: Locator, sessionId: string, li
   await expect(headerState(session)).not.toHaveAttribute('data-state', 'blocked');
 }
 
+/** Nothing is going to happen by itself and nothing asks, so the conversation does not read as ready, and is not amber. */
+async function saysItStopped(page: Page, session: Locator, sessionId: string): Promise<void> {
+  await expect(session.locator('.structured-agent-state').first().locator('..')).toContainText('Stopped at limit');
+  await expect(listRow(page, sessionId)).toContainText('Stopped at limit');
+  await expect(listRow(page, sessionId)).not.toHaveAttribute('data-need', 'true');
+}
+
 /** It waits on the person: amber in the list and the header, and a line in 나를 기다리는 것. */
 async function asksThePerson(page: Page, session: Locator, sessionId: string): Promise<void> {
   await expect(listRow(page, sessionId)).toContainText('Limit · needs you');
@@ -663,6 +670,7 @@ test('a person who writes first cancels the send: it never goes, whether their m
     await send(session, 'I will fix the discount myself.');
     await reaches(page, sessionId, 'person-refused');
     await expect(limitCard(session)).toContainText('Your message was refused at the limit too. Auto-resume is cancelled.');
+    await saysItStopped(page, session, sessionId);
     await page.screenshot({ path: path.join(evidence, 'limit-person-refused.png') });
     await waitPast(page, sessionId);
     expect(continues(profile)).toEqual([]);
@@ -761,6 +769,7 @@ test('a weekly limit, a far reset and an unknown reset ask first; the amber foll
     await session.getByTestId('chat-limit-limit-leave').click();
     await reaches(page, sessionId, 'left');
     await expect(page.getByTestId('shell-live-waiting')).toHaveCount(0);
+    await saysItStopped(page, session, sessionId);
 
     await afterTheLimit(page, profile, sessionId);
     limitAccount(profile, { window: 'five-hour', resetIn: 8 * HOURS });
@@ -834,10 +843,7 @@ test('a plan that does not include this AI stops with no button and nothing to w
     await expect(page.getByTestId('shell-live-waiting')).toHaveCount(0);
     await page.waitForTimeout(3_000);
     expect(continues(profile)).toEqual([]);
-    // Nothing is going to happen by itself, so the conversation does not read as ready.
-    await expect(session.locator('.structured-agent-state').first().locator('..')).toContainText('Stopped at limit');
-    await expect(listRow(page, sessionId)).toContainText('Stopped at limit');
-    await expect(listRow(page, sessionId)).not.toHaveAttribute('data-need', 'true');
+    await saysItStopped(page, session, sessionId);
   });
 });
 

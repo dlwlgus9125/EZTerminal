@@ -133,12 +133,12 @@ const ACTION_PHASES: Readonly<Record<LimitAction, ReadonlySet<UsageLimitPhase>>>
 
 const finished = (job: LimitJobRecord): boolean => FINISHED_PHASES.has(job.phase) || (job.phase === 'child' && job.childKind === 'managed');
 const holds = (job: LimitJobRecord): boolean => !finished(job) && !RELEASED_PHASES.has(job.phase);
-/** The plan does not include this AI: no button and no clock, so only the header and the list keep saying it stopped. */
-const carried = (job: LimitJobRecord): boolean => holds(job) || job.phase === 'not-included';
-/** Anything else that ran in the conversation: the stop no longer describes it. A refusal is a new stop. */
+/** Anything else that ran in the conversation: the stop no longer describes it. */
 const overtaken = (snapshot: Pick<DaemonSnapshot, 'turns'>, job: LimitJobRecord): boolean => (
-  job.phase === 'not-included' && snapshot.turns.filter((turn) => turn.sessionId === job.sessionId).at(-1)?.id !== job.turnId
+  snapshot.turns.filter((turn) => turn.sessionId === job.sessionId).at(-1)?.id !== job.turnId
 );
+/** Let go, nothing goes on by itself either: the header and the list keep saying it stopped until something else runs. */
+const carried = (snapshot: Pick<DaemonSnapshot, 'turns'>, job: LimitJobRecord): boolean => holds(job) || (!finished(job) && !overtaken(snapshot, job));
 
 /** When a job's clock says to send, if it waits on one. */
 function dueAt(job: LimitJobRecord): number | undefined {
@@ -470,8 +470,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   }
 
   /** What the snapshot carries: the list and the feed have no transcripts. Never stored. */
-  usageLimits(snapshot: Pick<DaemonSnapshot, 'sessions'>): DaemonSnapshot['usageLimits'] {
-    const open = [...this.jobs.values()].filter((job) => carried(job) && snapshot.sessions.some((session) => session.id === job.sessionId && session.archivedAt === undefined));
+  usageLimits(snapshot: Pick<DaemonSnapshot, 'sessions' | 'turns'>): DaemonSnapshot['usageLimits'] {
+    const open = [...this.jobs.values()].filter((job) => carried(snapshot, job) && snapshot.sessions.some((session) => session.id === job.sessionId && session.archivedAt === undefined));
     return open.length ? Object.fromEntries(open.map((job) => [job.sessionId, this.view(job)])) : undefined;
   }
 
@@ -1007,7 +1007,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     let dropped = false;
     for (const job of [...this.jobs.values()]) {
       const session = snapshot.sessions.find((entry) => entry.id === job.sessionId);
-      if (session && session.archivedAt === undefined && !overtaken(snapshot, job)) continue;
+      // A plan without this AI has no button left, and a refusal after it is a new stop. Other cards keep theirs.
+      if (session && session.archivedAt === undefined && !(job.phase === 'not-included' && overtaken(snapshot, job))) continue;
       this.jobs.delete(job.stopId);
       dropped = true;
     }

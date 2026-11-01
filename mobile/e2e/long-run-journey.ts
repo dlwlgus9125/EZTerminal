@@ -788,6 +788,7 @@ async function main(): Promise<void> {
     await tapOnce(limitButton('leave'), '그대로 두기');
     await reaches(sessionId, 'left');
     await waitFor(exists(limitButton('resume')), 'the card left with its way on');
+    await waitFor(textContains(HEADER_STATE, '한도로 멈춤'), 'the header of a card that was left');
     await scrollIntoView(CARD);
     await capture('21-limit-left');
     stateWords.left = { header: await textOf(HEADER_STATE) };
@@ -827,6 +828,7 @@ async function main(): Promise<void> {
     await sendFromPhone('직접 먼저 보냅니다.');
     await reaches(sessionId, 'person-refused');
     await waitFor(textContains(CARD, '직접 보낸 메시지가 한도로 거절됐습니다.'), 'the refused message on the card');
+    await waitFor(textContains(HEADER_STATE, '한도로 멈춤'), 'the header of a refused message');
     await scrollIntoView(CARD);
     await capture('25-limit-person-refused');
     stateWords['person-refused'] = { header: await textOf(HEADER_STATE) };

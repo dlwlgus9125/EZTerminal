@@ -377,14 +377,33 @@ describe('what the snapshot carries', () => {
     expect(h.coordinator.usageLimits(h.held.snapshot)).toBeUndefined();
     h.stop();
     await h.coordinator.settled();
-    expect(h.coordinator.usageLimits({ sessions: [session('chat', { archivedAt: STOPPED })] })).toBeUndefined();
-    expect(h.coordinator.usageLimits({ sessions: [] })).toBeUndefined();
+    expect(h.coordinator.usageLimits({ sessions: [session('chat', { archivedAt: STOPPED })], turns: h.held.snapshot.turns })).toBeUndefined();
+    expect(h.coordinator.usageLimits({ sessions: [], turns: h.held.snapshot.turns })).toBeUndefined();
   });
 
-  it('never a card that holds nothing', async () => {
-    const h = harness({ jobs: { 'stop-1': job({ phase: 'left' }) } });
+  it.each(['left', 'person-refused'] as const)('a card %s holds nothing, and stays said: the header and the list have only the snapshot', async (phase) => {
+    const h = harness({ jobs: { 'stop-1': job({ phase }) } });
     await h.coordinator.load();
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(true);
+    expect(h.coordinator.usageLimits(h.held.snapshot)?.chat).toMatchObject({ phase });
+  });
+
+  it('the turn that refused a person belongs to the stop, so its card stays said', async () => {
+    const refused = turn('turn-person', { state: 'failed' });
+    const h = harness({ jobs: { 'stop-1': job({ phase: 'person-refused', turnId: 'turn-person' }) }, snapshot: { turns: [turn('turn-1'), refused] } });
+    await h.coordinator.load();
+    expect(h.coordinator.usageLimits(h.held.snapshot)?.chat).toMatchObject({ phase: 'person-refused' });
+  });
+
+  it.each(['left', 'person-refused'] as const)('a turn after a card %s takes the state back, and the card keeps its way on', async (phase) => {
+    const h = harness({ jobs: { 'stop-1': job({ phase }) } });
+    await h.coordinator.start();
+    h.held.snapshot = { ...h.held.snapshot, turns: [...h.held.snapshot.turns, turn('turn-queued', { state: 'completed', errorCode: undefined })] } as DaemonSnapshot;
+    h.emit({ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: 'turn-queued' } } as DaemonEvent);
+    await new Promise((resolve) => setImmediate(resolve));
+    await h.coordinator.settled();
     expect(h.coordinator.usageLimits(h.held.snapshot)).toBeUndefined();
+    expect(h.coordinator.limitAction({ sessionId: 'chat', stopId: 'stop-1', action: 'resume' })).toMatchObject({ ok: true });
   });
 });
 
