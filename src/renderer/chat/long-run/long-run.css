@@ -149,8 +149,12 @@
   margin-right: var(--ui-space-1);
 }
 
-.chat-steer__toggle > span + span {
+.chat-steer__toggle > span {
   flex: none;
+  white-space: nowrap;
+}
+
+.chat-steer__toggle > span + span {
   margin-left: var(--ui-space-1);
 }
 

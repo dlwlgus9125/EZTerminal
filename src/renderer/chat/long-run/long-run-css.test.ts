@@ -22,6 +22,13 @@ describe('long-run.css at the WebView 74 floor', () => {
     }
   });
 
+  it('keeps the folded tray\'s title on one line: only its summary gives way, or a 360 px phone breaks the word', () => {
+    const rule = /\.chat-steer__toggle > span \{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    expect(rule).toContain('flex: none');
+    expect(rule).toContain('white-space: nowrap');
+    expect(/\.chat-steer__toggle > \.chat-steer__summary \{([^}]*)\}/u.exec(css)?.[1]).toContain('flex: 1 1 auto');
+  });
+
   it('touches the existing message box only through what a long-run box alone has', () => {
     const shared = css.split('\n').filter((line) => /\.chat-composer__(?:bar|send|stop)|\.structured-agent-composer__hint/u.test(line));
     expect(shared.length).toBeGreaterThan(0);
