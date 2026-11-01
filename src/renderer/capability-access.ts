@@ -299,11 +299,11 @@ export interface CapabilityAccess {
   readonly agentManagement?: AgentManagementAccess;
   /** Settings › 에이전트 › 턴 마무리, on a host with `turn-wrap-up-v1`. Optional so test doubles need not supply it. */
   readonly turnWrapUp?: TurnWrapUpAccess;
-  /** 시안: Settings › 에이전트 › 이어서 하기. Only the long-run stories supply it; no host does yet. */
+  /** Settings › 에이전트 › 이어서 하기, on a host with `long-run-v1`. Optional so test doubles need not supply it. */
   readonly longRun?: LongRunAccess;
 }
 
-/** 시안: the one long-run setting. */
+/** The one long-run setting. */
 export interface LongRunAccess {
   readonly load: () => Promise<LongRunSettings>;
   readonly save: (settings: LongRunSettings) => Promise<LongRunSettings>;
@@ -1025,6 +1025,11 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     save: async (settings) => settingsBridge().setTurnWrapUp(settings),
   };
 
+  const longRun: LongRunAccess = {
+    load: async () => settingsBridge().longRun(),
+    save: async (settings) => settingsBridge().setLongRun(settings),
+  };
+
   return {
     snapshot: () => ({
       core: resolveCore() ? 'available' : 'unavailable',
@@ -1045,6 +1050,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     files,
     agentManagement,
     turnWrapUp,
+    longRun,
   };
 }
 

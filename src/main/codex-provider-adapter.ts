@@ -69,6 +69,8 @@ export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 export const CODEX_REVIEW_MINIMUM_VERSION = '0.165.0';
 /** Below this `additionalContext`, `developerInstructions` and the forks were never measured: wrap-up stays off. */
 export const CODEX_WRAP_UP_MINIMUM_VERSION = '0.165.0';
+/** The version a limit's frames and `turn/steer` were measured on (`long-run-v1`). */
+export const CODEX_LONG_RUN_MINIMUM_VERSION = '0.165.0';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 /** Opening tabs and starting conversations ask Codex for the plan limits at most this often. */
@@ -971,6 +973,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
   readonly reviewMinimumVersion = CODEX_REVIEW_MINIMUM_VERSION;
   readonly wrapUp = { suggestions: 'fork', recapWhileBlocked: true, minimumVersion: CODEX_WRAP_UP_MINIMUM_VERSION } as const;
+  readonly longRun = { minimumVersion: CODEX_LONG_RUN_MINIMUM_VERSION } as const;
 
   private readonly toldThreads: CodexToldThreads;
   private readonly executable: string;

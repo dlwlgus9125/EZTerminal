@@ -8,6 +8,7 @@ import type {
 } from '../shared/ipc';
 import type { OpenClawVisibility } from '../shared/openclaw';
 import type { AppUpdateSnapshot } from '../shared/app-update';
+import { DEFAULT_LONG_RUN_SETTINGS } from '../shared/long-run';
 import { DEFAULT_TURN_WRAP_UP_SETTINGS } from '../shared/turn-wrap-up';
 import {
   createCapabilityAccess,
@@ -27,6 +28,22 @@ function accessFor(mutable: MutableSource) {
   };
   return createCapabilityAccess(source);
 }
+
+describe('longRun', () => {
+  it('reads and saves through the desktop’s settings bridge', async () => {
+    const longRun = vi.fn(async () => DEFAULT_LONG_RUN_SETTINGS);
+    const setLongRun = vi.fn(async (next: typeof DEFAULT_LONG_RUN_SETTINGS) => next);
+    const access = accessFor({ core: { settingsChanges: { longRun, setLongRun } } as unknown as EzTerminalApi, desktop: undefined });
+    await expect(access.longRun?.load()).resolves.toEqual(DEFAULT_LONG_RUN_SETTINGS);
+    await expect(access.longRun?.save({ autoResume: false })).resolves.toEqual({ autoResume: false });
+    expect(setLongRun).toHaveBeenCalledWith({ autoResume: false });
+  });
+
+  it('rejects where there is no such bridge, for the section to say so', async () => {
+    const access = accessFor({ core: undefined, desktop: undefined });
+    await expect(access.longRun?.load()).rejects.toBeInstanceOf(RequiredCapabilityUnavailableError);
+  });
+});
 
 describe('turnWrapUp', () => {
   it('reads and saves through the desktop’s settings bridge', async () => {
