@@ -104,6 +104,8 @@ export interface TurnUsageLimit {
 export interface OpenUsageLimit extends TurnUsageLimit {
   /** D6: sends go out one at a time, 60 s apart; none waits for the conversation before it to finish. */
   readonly line?: { readonly position: number; readonly total: number };
+  /** When it really goes, if the line holds it past its own time. Never stored: it moves as the line does. */
+  readonly sendsAt?: string;
 }
 
 export const USAGE_LIMIT_FAILURES = ['disconnected', 'session-gone'] as const;

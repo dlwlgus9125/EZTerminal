@@ -37,9 +37,9 @@ export function formatWhen(iso: string, locale: ChatLocale, far = false): string
   return `${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}, ${clock}`;
 }
 
-/** The time the app will send at, if a clock runs. */
-const clockOf = (limit: TurnUsageLimit): string | undefined => (limit.phase === 'retrying' ? limit.retryAt
-  : limit.phase === 'waiting' || limit.phase === 'scheduled' ? limit.resumeAt : undefined);
+/** The time the app will send at, if a clock runs: the line's, when the line holds it back. */
+const clockOf = (limit: OpenUsageLimit): string | undefined => (limit.phase === 'retrying' ? limit.sendsAt ?? limit.retryAt
+  : limit.phase === 'waiting' || limit.phase === 'scheduled' ? limit.sendsAt ?? limit.resumeAt : undefined);
 
 /** Where a limit stands: it asks the person, is being sent, waits on a clock, or nothing more will happen by itself. */
 export type LimitStanding = 'asks' | 'sending' | 'clock' | 'stopped';
@@ -120,7 +120,7 @@ export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLo
       return {
         ...base, message: { text: resets },
         notes: [
-          note('plan', copy.resumesAt(clock(limit.resumeAt)), 'lead'),
+          note('plan', copy.resumesAt(clock(clockOf(limit))), 'lead'),
           note('within', copy.within),
           ...(limit.line ? [note('line', copy.line(limit.line.total, limit.line.position)), note('line-gap', copy.lineNote)] : []),
           note('sends', copy.sends),
@@ -129,7 +129,7 @@ export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLo
         actions: [tryNow, autoOff],
       };
     case 'scheduled':
-      return { ...base, message: { text: resets }, notes: [note('plan', copy.resumesAtManual(clock(limit.resumeAt)), 'lead'), note('sends', copy.sends)], actions: [{ id: 'limit-unschedule' }] };
+      return { ...base, message: { text: resets }, notes: [note('plan', copy.resumesAtManual(clock(clockOf(limit))), 'lead'), note('sends', copy.sends)], actions: [{ id: 'limit-unschedule' }] };
     case 'resuming':
       return { ...base, message: { text: limit.sendReason ? copy.sending[limit.sendReason] : copy.sendingUnknown }, notes: [], actions: [] };
     case 'resumed':
@@ -140,7 +140,7 @@ export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'retrying':
       return {
         ...base, message: { text: copy.refused(clock(limit.refusedAt)) },
-        notes: [note('plan', copy.retry(clock(limit.retryAt)), 'lead'), note('kept', copy.refusedKept)],
+        notes: [note('plan', copy.retry(clock(clockOf(limit))), 'lead'), note('kept', copy.refusedKept)],
         actions: [autoOff],
       };
     case 'gave-up':

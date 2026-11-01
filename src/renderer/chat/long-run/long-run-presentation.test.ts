@@ -104,6 +104,15 @@ describe('the usage limit card', () => {
     expect(notes.join(' ')).not.toContain('이어집니다');
   });
 
+  it('a place further back says when it really goes, on the card and in the list', () => {
+    const sendsAt = '2026-11-01T06:13:00.000Z';
+    const clock = formatClock(sendsAt, 'ko');
+    expect(limitView(limit('waiting', { sendsAt }), ko, 'ko').notes[0]?.text).toBe(ko.resumesAt(clock));
+    expect(limitView(limit('retrying', { retryAt: RESUME, refusedAt: RESET, sendsAt }), ko, 'ko').notes[0]?.text).toBe(ko.retry(clock));
+    expect(limitStatus(limit('waiting', { sendsAt }), ko, 'ko')?.text).toContain(clock);
+    expect(limitView(limit('waiting'), ko, 'ko').notes[0]?.text).toBe(ko.resumesAt(formatClock(RESUME, 'ko')));
+  });
+
   it('never resumes a child by itself, and offers it by hand only where that path is supported (D7)', () => {
     const managed = limitView(limit('child', { childKind: 'managed-supported' }), ko, 'ko');
     expect(managed.actions.map((action) => action.id)).toEqual(['limit-resume']);

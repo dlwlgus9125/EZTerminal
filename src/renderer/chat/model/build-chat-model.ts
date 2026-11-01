@@ -740,9 +740,9 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit }:
         const limit = limitCards.get(row.turnId);
         if (limit) {
           const approvalOpen = approvals.some((approval) => approval.state === 'pending');
-          const line = openLimit?.stopId === limit.stopId ? openLimit.line : undefined;
+          const open = openLimit?.stopId === limit.stopId ? openLimit : undefined;
           // Named by the stop, not the turn: the card moves down when a refused try leaves a row, and stays one card.
-          finalRows.push({ kind: 'usage-limit', id: `usage-limit:${limit.stopId}`, turnId: row.turnId, createdAt: limit.stoppedAt, limit: { ...limit, ...(line ? { line } : {}) }, ...(approvalOpen ? { approvalOpen } : {}) });
+          finalRows.push({ kind: 'usage-limit', id: `usage-limit:${limit.stopId}`, turnId: row.turnId, createdAt: limit.stoppedAt, limit: { ...limit, ...(open?.line ? { line: open.line } : {}), ...(open?.sendsAt ? { sendsAt: open.sendsAt } : {}) }, ...(approvalOpen ? { approvalOpen } : {}) });
         }
       }
       const status = liveStatus.get(row.turnId);

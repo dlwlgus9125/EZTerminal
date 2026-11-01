@@ -1300,6 +1300,23 @@ describe('the scheduler', () => {
       for (const card of h.cards()) expect(card).not.toHaveProperty('line');
     });
 
+    it('says when a place further back really goes, and it moves with the line', async () => {
+      const h = harness(two());
+      await h.coordinator.start();
+      await h.coordinator.settled();
+      const before = h.coordinator.usageLimits(h.held.snapshot);
+      expect(before?.old?.sendsAt).toBeUndefined();
+      expect(before?.new?.sendsAt).toBe(new Date(DUE + RESUME_TIMING.lineGapMs).toISOString());
+
+      // The first has gone at its time: the next waits out the gap, though it is now alone in the line.
+      await at(DUE);
+      await h.coordinator.settled();
+      const after = h.coordinator.usageLimits(h.held.snapshot);
+      expect(after?.new?.line).toBeUndefined();
+      expect(after?.new?.sendsAt).toBe(new Date(DUE + RESUME_TIMING.lineGapMs).toISOString());
+      for (const card of h.cards()) expect(card).not.toHaveProperty('sendsAt');
+    });
+
     it('no line for one alone, or for stops whose times are apart', async () => {
       const alone = await waiting();
       expect(alone.coordinator.usageLimits(alone.held.snapshot)?.chat?.line).toBeUndefined();

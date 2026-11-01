@@ -666,18 +666,34 @@ export class LongRunCoordinator implements DaemonLongRunHost {
 
   private view(job: LimitJobRecord): OpenUsageLimit {
     const line = this.line(job);
-    return { ...cardFields(job), ...(line ? { line } : {}) };
+    const sendsAt = this.sendsAt(job);
+    return { ...cardFields(job), ...(line ? { line } : {}), ...(sendsAt ? { sendsAt } : {}) };
   }
 
   /** Stops of one AI whose times fall together share a line: the same reset, in practice. It is never stored. */
-  private line(job: LimitJobRecord): OpenUsageLimit['line'] {
-    const due = dueAt(job);
-    if (due === undefined) return undefined;
-    const peers = [...this.jobs.values()].filter((other) => {
+  private peers(job: LimitJobRecord, due: number): readonly LimitJobRecord[] {
+    return [...this.jobs.values()].filter((other) => {
       const theirs = dueAt(other);
       return other.providerId === job.providerId && theirs !== undefined && Math.abs(theirs - due) <= this.timing.lineGapMs;
     }).sort(oldestFirst);
+  }
+
+  private line(job: LimitJobRecord): OpenUsageLimit['line'] {
+    const due = dueAt(job);
+    if (due === undefined) return undefined;
+    const peers = this.peers(job, due);
     return peers.length > 1 ? { position: peers.findIndex((other) => other.stopId === job.stopId) + 1, total: peers.length } : undefined;
+  }
+
+  /** The line's gaps after the last send, one for each stop ahead: `fire` keeps that order, so this is when it goes. */
+  private sendsAt(job: LimitJobRecord): string | undefined {
+    const due = dueAt(job);
+    if (due === undefined) return undefined;
+    const ahead = this.peers(job, due).findIndex((other) => other.stopId === job.stopId);
+    const last = this.lastSend.get(job.providerId);
+    const free = Math.max(due, last === undefined ? due : last + this.timing.lineGapMs);
+    const at = free + ahead * this.timing.lineGapMs;
+    return at > due ? new Date(at).toISOString() : undefined;
   }
 
   private arm(): void {

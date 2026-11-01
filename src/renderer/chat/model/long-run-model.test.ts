@@ -67,6 +67,15 @@ describe('long-run rows in the chat model', () => {
     expect(rows.at(-1)?.kind).toBe('usage-limit');
   });
 
+  it('carries when the line lets it go, which no row says, to the stop it is about', () => {
+    const fixture = limitStory('ko', 'waiting');
+    const sendsAt = '2026-11-01T06:13:00.000Z';
+    const open = { ...latestLimit(fixture.items)!, sendsAt };
+    const found = (openLimit: typeof open) => buildChatModel({ items: fixture.items, turns: fixture.turns, openLimit }).rows.find((row) => row.kind === 'usage-limit');
+    expect(found(open)).toMatchObject({ limit: { sendsAt } });
+    expect(found({ ...open, stopId: 'another-stop' })).not.toMatchObject({ limit: { sendsAt } });
+  });
+
   it('adds the line of sends, which no row says, to the stop it is about', () => {
     const fixture = limitStory('ko', 'waiting');
     const line = { position: 2, total: 3 };
