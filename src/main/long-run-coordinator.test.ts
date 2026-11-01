@@ -194,9 +194,18 @@ describe('a stop becomes a card', () => {
     expect(h.wakeQueuedTurns).toHaveBeenCalled();
   });
 
-  it('a managed child never resumes by itself, and nothing can be offered yet (D7)', async () => {
+  it.each(['claude', 'codex'])('a managed child never resumes by itself, and on %s, where the live run proved it, a person can carry it on (D7)', async (providerId) => {
     const h = harness({ conversation: false, snapshot: { agentRelations: [relation('chat')] } });
-    h.stop();
+    h.coordinator.limitStopped({ sessionId: 'chat', providerId, turn: turn('turn-1', { sessionId: 'chat' }), limit: fiveHour, stoppedAt: STOPPED });
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'child', childKind: 'managed-supported' });
+    expect(h.lastCard()?.resumeAt).toBeUndefined();
+    expect(h.sent).toEqual([]);
+  });
+
+  it('on an AI the live run has not proved, a managed child is a card with nothing to offer', async () => {
+    const h = harness({ conversation: false, snapshot: { agentRelations: [relation('chat')] } });
+    h.coordinator.limitStopped({ sessionId: 'chat', providerId: 'another-ai', turn: turn('turn-1', { sessionId: 'chat' }), limit: fiveHour, stoppedAt: STOPPED });
     await h.coordinator.settled();
     expect(h.lastCard()).toMatchObject({ phase: 'child', childKind: 'managed' });
     expect(h.saved.jobs).toEqual({});

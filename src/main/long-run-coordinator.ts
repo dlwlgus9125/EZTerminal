@@ -104,8 +104,8 @@ export type SteerProgress =
 const FINISHED_PHASES = new Set<UsageLimitPhase>(['resumed', 'cancelled', 'not-included']);
 /** Still a card with 이어서 하기, but nothing waits on it: the queue goes on and the list shows nothing. */
 const RELEASED_PHASES = new Set<UsageLimitPhase>(['left', 'person-refused']);
-/** The AIs a managed child's resume was proved on (D7): the live scenario adds them. */
-const MANAGED_RESUME_PROVEN: ReadonlySet<string> = new Set();
+/** The AIs a managed child's resume was proved on (D7): `*-limit-child` in scripts/verify-ux-live.mjs, real CLIs on the stub. */
+const MANAGED_RESUME_PROVEN: ReadonlySet<string> = new Set(['claude', 'codex']);
 /** D4: the first try, and one later one. */
 const RESUME_ATTEMPTS = 2;
 /** A send that keeps losing the revision race stops here, as a report-back does. */
