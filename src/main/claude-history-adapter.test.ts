@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ClaudeHistoryAdapter,
   encodeClaudeProjectDirName,
+  readClaudeSessionLimit,
 } from './claude-history-adapter';
 
 /** Envelope fields every conversation record carries in a real transcript. */
@@ -598,4 +599,44 @@ it('a model-only CLI override leaves Claude permission configuration intact', ()
   const adapter = new ClaudeHistoryAdapter({ homeDir: os.tmpdir() });
   expect(adapter.buildNewCommand(['C:\\Work'], { provider: 'claude', model: 'custom-model' }))
     .toEqual({ commandText: "!claude --model 'custom-model'", displayCommandText: 'claude' });
+});
+
+describe('the last limit in a session file', () => {
+  const providerSessionId = '11111111-1111-4111-8111-111111111111';
+  const workspaceRoot = path.resolve('limit-workspace');
+  const record = (quotaLimits: Record<string, unknown>) => JSON.stringify({ type: 'assistant', isApiErrorMessage: true, quotaLimits });
+  function homeWith(lines: readonly string[]): string {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'claude-limit-'));
+    const project = path.join(home, '.claude', 'projects', encodeClaudeProjectDirName(workspaceRoot));
+    mkdirSync(project, { recursive: true });
+    writeFileSync(path.join(project, `${providerSessionId}.jsonl`), `${lines.join('\n')}\n`);
+    return home;
+  }
+  const read = (home: string, id = providerSessionId) => readClaudeSessionLimit({ workspaceRoot, providerSessionId: id }, home);
+
+  it('reads the window and the reset, in seconds', async () => {
+    const home = homeWith([record({ status: 'rejected', rateLimitType: 'seven_day', resetsAt: 1_800_000_000 })]);
+    await expect(read(home)).resolves.toEqual({ window: 'weekly', resetsAt: '2027-01-15T08:00:00.000Z' });
+  });
+
+  it('lets the newest record decide: an older reset has passed', async () => {
+    const home = homeWith([
+      record({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_700_000_000 }),
+      record({ status: 'rejected', rateLimitType: 'five_hour' }),
+    ]);
+    await expect(read(home)).resolves.toEqual({ window: 'five-hour' });
+    await expect(read(homeWith([record({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_700_000_000 }), record({ status: 'allowed', resetsAt: 1_800_000_000 })]))).resolves.toBeUndefined();
+  });
+
+  it('reads past a tail that starts mid-line and ignores other records', async () => {
+    const home = homeWith(['{"quotaLimits":{"status":"rejec', record({ status: 'rejected', rateLimitType: 'other', resetsAt: 1_800_000_000 }), '{"type":"user"}']);
+    await expect(read(home)).resolves.toEqual({ window: 'unknown', resetsAt: '2027-01-15T08:00:00.000Z' });
+  });
+
+  it('answers nothing for a missing file or an id that is not a session id', async () => {
+    const home = homeWith([record({ status: 'rejected', resetsAt: 1 })]);
+    await expect(read(home, '22222222-2222-4222-8222-222222222222')).resolves.toBeUndefined();
+    await expect(read(home, '../../secrets')).resolves.toBeUndefined();
+    await expect(read(path.join(home, 'nowhere'))).resolves.toBeUndefined();
+  });
 });

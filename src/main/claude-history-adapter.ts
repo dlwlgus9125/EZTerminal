@@ -33,8 +33,10 @@ import {
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
+import type { UsageLimitReading } from '../shared/long-run';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { claudeRejectedLimit } from './agent-usage-readings';
 import { presetForClaudePermissionMode } from './claude-provider-adapter';
 import type {
   AgentHistoryProviderAdapter,
@@ -153,6 +155,48 @@ export function claudeProjectDirNames(
     }
   }
   return names;
+}
+
+const SESSION_TAIL_BYTES = 256 * 1024;
+
+async function readTail(filePath: string): Promise<string | undefined> {
+  let file: fs.FileHandle | undefined;
+  try {
+    file = await fs.open(filePath, 'r');
+    const { size } = await file.stat();
+    const length = Math.min(size, SESSION_TAIL_BYTES);
+    const { buffer } = await file.read(Buffer.alloc(length), 0, length, size - length);
+    return buffer.toString('utf8');
+  } catch {
+    return undefined;
+  } finally {
+    await file?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * The reset of a conversation's last limit, from `quotaLimits` in its session file: where to look when a stop's own
+ * frames named no time. The newest record decides, because an older one's reset has passed.
+ */
+export async function readClaudeSessionLimit(
+  input: { readonly workspaceRoot: string; readonly providerSessionId: string },
+  homeDir = os.homedir(),
+): Promise<UsageLimitReading | undefined> {
+  if (!SESSION_ID_PATTERN.test(input.providerSessionId)) return undefined;
+  const projects = path.join(homeDir, '.claude', 'projects');
+  const names = await fs.readdir(projects).then((entries) => claudeProjectDirNames(entries, input.workspaceRoot), () => []);
+  for (const name of names) {
+    const tail = await readTail(path.join(projects, name, `${input.providerSessionId}.jsonl`));
+    for (const line of (tail ?? '').split('\n').reverse()) {
+      if (!line.includes('"quotaLimits"')) continue;
+      try {
+        return claudeRejectedLimit(asObject(JSON.parse(line))?.quotaLimits);
+      } catch {
+        // The tail starts mid-line.
+      }
+    }
+  }
+  return undefined;
 }
 
 /**

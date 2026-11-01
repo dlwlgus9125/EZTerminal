@@ -1,4 +1,5 @@
 import type { AgentUsageLimitsReading, AgentUsageWindow } from '../shared/agent-usage';
+import type { UsageLimitReading } from '../shared/long-run';
 
 /**
  * Provider wire values → the numbers the CLI HUDs show. Every formula for
@@ -59,6 +60,17 @@ export function claudeLimitsFromRateLimitInfo(info: unknown): AgentUsageLimitsRe
   if (value.rateLimitType === 'five_hour') return { fiveHour: single };
   if (value.rateLimitType === 'seven_day') return { weekly: single };
   return undefined;
+}
+
+/** The window Claude refused, from `rate_limit_info` or a session file's `quotaLimits`; anything but a refusal is undefined. */
+export function claudeRejectedLimit(info: unknown): UsageLimitReading | undefined {
+  const value = asObject(info);
+  if (value?.status !== 'rejected') return undefined;
+  const resetsAt = epochSecondsToMs(value.resetsAt);
+  return {
+    window: value.rateLimitType === 'five_hour' ? 'five-hour' : value.rateLimitType === 'seven_day' ? 'weekly' : 'unknown',
+    ...(resetsAt !== undefined ? { resetsAt: new Date(resetsAt).toISOString() } : {}),
+  };
 }
 
 /** Tokens the request sent: what fills the context window. Output is not counted. */

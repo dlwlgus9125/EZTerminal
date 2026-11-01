@@ -56,6 +56,7 @@ import type {
 import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
+import { USAGE_LIMIT_ERROR, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
 import { nextPromptText, SUGGEST_TASK_CLAUDE_TOOL } from '../shared/turn-wrap-up';
 import {
   buildProviderProcessEnvironment,
@@ -64,7 +65,7 @@ import {
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
 import { providerTranscriptText } from './provider-transcript';
-import { claudeContextPercent, claudeInputTokens, claudeLimitsFromRateLimitInfo } from './agent-usage-readings';
+import { claudeContextPercent, claudeInputTokens, claudeLimitsFromRateLimitInfo, claudeRejectedLimit } from './agent-usage-readings';
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 5_000;
@@ -374,6 +375,8 @@ export interface ClaudeProviderAdapterOptions {
   readonly deltaCoalescer?: DeltaCoalescerOptions;
   /** Expose Claude Code's task tools (TaskCreate/TaskUpdate) to tool-enabled sessions. Defaults to true. */
   readonly enableTaskTools?: boolean;
+  /** Where a limit stands, from the session's own file (`recoverLimit`); without it nothing can be recovered. */
+  readonly readSessionLimit?: (input: { readonly workspaceRoot: string; readonly providerSessionId: string }) => Promise<UsageLimitReading | undefined>;
 }
 
 type TurnState = 'submitted' | 'completed' | 'interrupted' | 'failed';
@@ -475,6 +478,8 @@ interface SessionRecord {
   readonly turnsByUuid: Map<string, TurnRecord>;
   /** The turn the CLI is answering; only its first message carries user_message_uuid. */
   activeTurn?: TurnRecord;
+  /** `longRun`: what the last refusal said, until a turn ends well. A rejected event alone changes nothing. */
+  rejected?: UsageLimitReading;
   stream?: StreamState;
   readonly coalescer: DeltaCoalescer;
   readonly pendingApprovals: Map<string, PendingApproval>;
@@ -1173,6 +1178,25 @@ function orchestrationMcpServers(
   };
 }
 
+/** The code a usage limit's message and result carry. */
+const CLAUDE_USAGE_LIMIT_API_ERROR = 'usage_limit_reached';
+
+function resultUuids(message: JsonObject): readonly string[] {
+  const uuids: readonly unknown[] = Array.isArray(message.user_message_uuids) ? message.user_message_uuids : [message.user_message_uuid];
+  return uuids.filter((uuid): uuid is string => typeof uuid === 'string');
+}
+
+/**
+ * Whether a failed result is a usage limit: its own code, or with no code a refusal since the last good result. Any
+ * other code stays that error, and a bare 429 is the ordinary rate limit (approvals.md: "일반 429는 다른 경로").
+ */
+function resultLimit(session: Pick<SessionRecord, 'context' | 'rejected'>, message: JsonObject): ProviderUsageLimit | undefined {
+  if (!session.context.longRun) return undefined;
+  const code = asString(message.api_error);
+  if (code ? code !== CLAUDE_USAGE_LIMIT_API_ERROR : !session.rejected) return undefined;
+  return { window: 'unknown', ...session.rejected, kind: 'resettable' };
+}
+
 export class ClaudeProviderAdapter implements AgentProviderAdapter {
   readonly reviewMinimumVersion = CLAUDE_REVIEW_MINIMUM_VERSION;
   readonly wrapUp = { suggestions: 'native', recapWhileBlocked: true, minimumVersion: CLAUDE_WRAP_UP_MINIMUM_VERSION } as const;
@@ -1192,6 +1216,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly extensionCommand: typeof runNativeExtensionCommand;
   private readonly deltaCoalescerOptions: DeltaCoalescerOptions | undefined;
   private readonly enableTaskTools: boolean;
+  private readonly readSessionLimit: ClaudeProviderAdapterOptions['readSessionLimit'];
   private readonly discoveryControllers = new Set<AbortController>();
   private readonly discoveries = new Map<string, Promise<ProviderCapabilityCatalog>>();
   private readonly listeners = new Set<AgentProviderEventListener>();
@@ -1206,6 +1231,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   constructor(options: ClaudeProviderAdapterOptions = {}) {
     this.enablementStore = options.enablementStore ?? new MemoryClaudeProviderEnablementStore();
+    this.readSessionLimit = options.readSessionLimit;
     this.queryFactory = options.queryFactory ?? ((input) => query(input) as ClaudeQuerySession);
     this.providedQueryFactory = options.queryFactory !== undefined;
     this.extensionCommand = options.extensionCommand ?? runNativeExtensionCommand;
@@ -2260,6 +2286,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
   }
 
+  async recoverLimit(sessionId: string, providerSessionId: string): Promise<UsageLimitReading | undefined> {
+    const workspaceRoot = this.sessions.get(sessionId)?.context.workspaceRoot;
+    return workspaceRoot ? this.readSessionLimit?.({ workspaceRoot, providerSessionId }).catch(() => undefined) : undefined;
+  }
+
   private handleMessage(session: SessionRecord, message: SDKMessage): void {
     // command_lifecycle is not in the SDK's SDKMessage union, so switch on the raw type.
     const raw = message as unknown as JsonObject;
@@ -2287,10 +2318,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         const limits = claudeLimitsFromRateLimitInfo(info);
         if (limits) this.emit({ kind: 'usage', limits });
         if (info?.status === 'rejected') {
-          this.emitProviderError(
-            session.context.sessionId,
-            new ClaudeProviderError('CLAUDE_RATE_LIMITED', true),
-          );
+          if (session.context.longRun) {
+            session.rejected = claudeRejectedLimit(info);
+          } else {
+            this.emitProviderError(
+              session.context.sessionId,
+              new ClaudeProviderError('CLAUDE_RATE_LIMITED', true),
+            );
+          }
         }
         break;
       }
@@ -2423,6 +2458,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.recordMainUsage(session, message);
     const subagent = this.subagentFor(session, message);
     if (subagent === 'held') return;
+    const limited = session.context.longRun !== undefined && message.api_error === CLAUDE_USAGE_LIMIT_API_ERROR;
+    // The CLI's words for a limit: the turn's end says it (`handleResult`). A subagent's stay in its own rows.
+    if (limited && typeof message.parent_tool_use_id !== 'string') {
+      session.rejected = { window: 'unknown', ...session.rejected, ...claudeRejectedLimit(asObject(message.api_error_params)?.rate_limit_info) };
+      return;
+    }
     // A subagent's rows are its own: no parent turn, no parent stream, no parent task list.
     const turn = subagent ? undefined : this.turnForMessage(session, message);
     const providerMessage = asObject(message.message);
@@ -2489,7 +2530,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       }
     });
     const assistantError = asString(message.error);
-    if (assistantError) {
+    if (assistantError && !limited) {
       const classified = classifyClaudeProviderError(assistantError);
       this.emitProviderError(session.context.sessionId, classified);
     }
@@ -2617,6 +2658,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   private handleResult(session: SessionRecord, message: JsonObject): void {
+    // The CLI's own housekeeping (a task's notice) ends this way: the fallback below would end a running turn with it.
+    if (session.context.longRun && message.num_turns === 0 && !resultUuids(message).some((uuid) => session.turnsByUuid.has(uuid))) return;
     const turns = this.turnsForResult(session, message);
     this.closeStream(session, turns[0]);
     const terminalReason = asString(message.terminal_reason);
@@ -2631,7 +2674,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const errorValue = asString(message.error)
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
       ?? (isError ? asString(message.result) : null);
-    const classified = isError ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
+    const limit = isError ? resultLimit(session, message) : undefined;
+    const classified = isError && !limit ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
+    if (limit || !isError) session.rejected = undefined;
     this.emitReplyUsage(session, message);
     // A reviewer's answer is the turn's structured output: its last message, read like any answer.
     if (session.context.readOnlyReviewer && !classified && !interrupted && message.structured_output !== undefined && turns[0]) {
@@ -2643,6 +2688,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     for (const turn of turns) {
       turn.providerTurnId = asString(message.uuid) ?? turn.providerTurnId;
       if (interrupted) this.finishTurn(session, turn, 'interrupted');
+      else if (limit) this.finishTurn(session, turn, 'failed', undefined, limit);
       else if (classified) this.finishTurn(session, turn, 'failed', classified);
       else this.finishTurn(session, turn, 'completed');
     }
@@ -3020,11 +3066,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   private turnsForResult(session: SessionRecord, message: JsonObject): TurnRecord[] {
     const matched: TurnRecord[] = [];
-    const uuids = Array.isArray(message.user_message_uuids)
-      ? message.user_message_uuids
-      : [message.user_message_uuid];
-    for (const uuid of uuids) {
-      if (typeof uuid !== 'string') continue;
+    for (const uuid of resultUuids(message)) {
       const turn = session.turnsByUuid.get(uuid);
       if (turn && turn.state === 'submitted' && !matched.includes(turn)) matched.push(turn);
     }
@@ -3040,6 +3082,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     turn: TurnRecord,
     outcome: Exclude<TurnState, 'submitted'>,
     error?: ClaudeProviderError,
+    limit?: ProviderUsageLimit,
   ): void {
     if (turn.state !== 'submitted') return;
     turn.state = outcome;
@@ -3050,12 +3093,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       sessionId: session.context.sessionId,
       turnId: turn.turnId,
       outcome,
-      summary: outcome === 'completed'
-        ? 'Claude completed the turn.'
-        : outcome === 'interrupted'
-          ? 'Claude was interrupted.'
-          : error?.message ?? ERROR_MESSAGES.CLAUDE_PROVIDER_ERROR,
-      ...(error ? { errorCode: error.code } : {}),
+      ...(limit ? { errorCode: USAGE_LIMIT_ERROR, limit } : {
+        summary: outcome === 'completed'
+          ? 'Claude completed the turn.'
+          : outcome === 'interrupted'
+            ? 'Claude was interrupted.'
+            : error?.message ?? ERROR_MESSAGES.CLAUDE_PROVIDER_ERROR,
+        ...(error ? { errorCode: error.code } : {}),
+      }),
     });
   }
 

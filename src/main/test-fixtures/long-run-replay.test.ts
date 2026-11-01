@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 
+import type { AgentProviderEvent } from '../agent-provider-adapter';
 import {
   PROVIDER_CAPTURE_DIRECTORY, readProviderCaptureFixture, replayProviderFixture, type ProviderCaptureFixture,
 } from './provider-replay';
@@ -81,6 +82,54 @@ describe('what a Claude limit looks like', () => {
     const messages = sdkMessages(readProviderCaptureFixture('claude-limit-child'));
     const results = messages.filter((message) => message.type === 'result');
     expect(results[0]).toMatchObject({ is_error: true, api_error: 'usage_limit_reached' });
+  });
+});
+
+async function replayed(name: string, longRun = true) {
+  const events: AgentProviderEvent[] = [];
+  const golden = await replayProviderFixture(readProviderCaptureFixture(name), { ...(longRun ? { session: { longRun: true as const } } : {}), onEvent: (event) => events.push(event) });
+  const finished = events.filter((event) => event.kind === 'turn-finished');
+  return { events, golden, finished, errors: events.filter((event) => event.kind === 'provider-error'), states: events.flatMap((event) => (event.kind === 'session-state' ? [event.state] : [])) };
+}
+
+describe('a Claude limit through the adapter', () => {
+  it.each([
+    ['claude-limit-first', 'five-hour', true],
+    ['claude-limit-weekly', 'weekly', true],
+    ['claude-limit-no-reset', 'five-hour', false],
+    ['claude-limit-child', 'five-hour', true],
+  ] as const)('%s ends the turn with the limit: no error, no row of its words, the session usable', async (name, window, reset) => {
+    const { finished, errors, states, golden } = await replayed(name);
+    expect(finished).toHaveLength(1);
+    expect(finished[0]).toEqual({
+      kind: 'turn-finished', sessionId: 'replay-session', turnId: 'replay-turn-1', outcome: 'failed', errorCode: 'usage-limit',
+      limit: { kind: 'resettable', window, ...(reset ? { resetsAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u) } : {}) },
+    });
+    expect(errors).toEqual([]);
+    expect(states).not.toContain('failed');
+    expect(states.at(-1)).toBe('idle');
+    expect(golden.items.filter((item) => item.sessionId === 'replay-session' && item.kind === 'assistant-message' && /hit your/u.test(item.text))).toEqual([]);
+  });
+
+  it('keeps reading the usage the refusal carried', async () => {
+    const { events } = await replayed('claude-limit-first');
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'usage', limits: expect.objectContaining({ fiveHour: expect.objectContaining({ usedPercent: 100 }) }) }));
+  });
+
+  it('a subagent refused after its parent stopped raises no error against the conversation', async () => {
+    const { errors, golden } = await replayed('claude-limit-child');
+    expect(errors).toEqual([]);
+    expect(golden.items.filter((item) => item.kind === 'error')).toEqual([]);
+    // Its own transcript keeps its words: a subagent the AI runs has no card (D7).
+    expect(golden.items.filter((item) => item.sessionId !== 'replay-session' && /hit your/u.test(item.text))).toHaveLength(1);
+  });
+
+  it('below the measured version it classifies as it always did', async () => {
+    const { finished, errors, states } = await replayed('claude-limit-first', false);
+    expect(finished[0]).toMatchObject({ outcome: 'failed', errorCode: 'CLAUDE_PROVIDER_ERROR' });
+    expect(finished[0]).not.toHaveProperty('limit');
+    expect(errors.length).toBeGreaterThan(0);
+    expect(states).toContain('failed');
   });
 });
 

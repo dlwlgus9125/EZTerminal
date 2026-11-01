@@ -1,5 +1,6 @@
 import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatMessageContext } from '../shared/chat-message';
+import type { ProviderUsageLimit, UsageLimitReading } from '../shared/long-run';
 import type { AgentExtensionCommand, AgentPluginEntry, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type { AgentUsageLimitsReading } from '../shared/agent-usage';
 import type { SideQuestionExchange } from '../shared/agent-side-question';
@@ -53,6 +54,11 @@ export interface ProviderSessionContext {
    */
   readonly readOnlyReviewer?: true;
   readonly wrapUp?: ProviderWrapUpContext;
+  /**
+   * Long-run continuity (`long-run-v1`): a usage limit ends the turn with `turn-finished.limit` and leaves the session
+   * idle and usable. Absent, as on a provider older than `longRun.minimumVersion`, a limit classifies as any error does.
+   */
+  readonly longRun?: true;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
@@ -181,6 +187,8 @@ export type AgentProviderEvent =
       readonly outcome: 'completed' | 'interrupted' | 'failed';
       readonly summary?: string;
       readonly errorCode?: string;
+      /** A usage limit stopped this turn (`outcome: 'failed'`, `errorCode: USAGE_LIMIT_ERROR`): no error row, and the session stays usable. */
+      readonly limit?: ProviderUsageLimit;
     }
   | {
       readonly kind: 'approval-requested';
@@ -306,6 +314,13 @@ export interface AgentProviderAdapter {
    * Absent: this provider does not wrap up turns.
    */
   readonly wrapUp?: { readonly suggestions: 'native' | 'fork'; readonly recapWhileBlocked: boolean; readonly minimumVersion: string };
+  /**
+   * `long-run-v1`. `minimumVersion`: the version this was measured on; below it `ProviderSessionContext.longRun` stays
+   * absent. Read it through `AgentProviderRegistry.longRunCapability`. Absent: this provider does not run it.
+   */
+  readonly longRun?: { readonly minimumVersion: string };
+  /** Where the limit stands when a stop's own frames named no reset. Undefined when it cannot be told. Never rejects. */
+  recoverLimit?(sessionId: string, providerSessionId: string): Promise<UsageLimitReading | undefined>;
   /** Live switch for `native` suggestions; a session not launched eligible ignores it. Never rejects. */
   setPromptSuggestions?(sessionId: string, mode: PromptSuggestionMode): Promise<void>;
   /**

@@ -179,6 +179,7 @@ function makeAdapter(options: {
   readonly now?: () => Date;
   readonly enableTaskTools?: boolean;
   readonly extensionCommand?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['extensionCommand'];
+  readonly readSessionLimit?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['readSessionLimit'];
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
   readonly query: FakeClaudeQuery;
@@ -207,6 +208,7 @@ function makeAdapter(options: {
     },
     extensionCommand: options.extensionCommand ?? (async () => '[]'),
     historyReader: options.historyReader,
+    readSessionLimit: options.readSessionLimit,
     initializationTimeoutMs: 100,
     operationTimeoutMs: 100,
     shutdownTimeoutMs: options.shutdownTimeoutMs ?? 20,
@@ -1764,6 +1766,123 @@ describe('Claude usage', () => {
     ]);
     expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'provider-error', code: 'CLAUDE_RATE_LIMITED' }));
     await fixture.adapter.dispose();
+  });
+
+  describe('a usage limit, on a session that runs long-run continuity', () => {
+    const longRun = { ...context, longRun: true as const };
+    const rejected = (extra: Record<string, unknown> = {}) => ({
+      type: 'rate_limit_event', uuid: 'rl', session_id: providerSessionId,
+      rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', utilization: 1, resetsAt: 1_800_000_000, ...extra },
+    });
+    const refused = (clientUuid: string, extra: Record<string, unknown> = {}) => ({
+      type: 'result', subtype: 'success', uuid: 'result', session_id: providerSessionId, user_message_uuid: clientUuid, user_message_uuids: [clientUuid],
+      is_error: true, num_turns: 1, api_error: 'usage_limit_reached', api_error_status: 429, result: 'You hit your limit', ...extra,
+    });
+    const limitResult = { kind: 'resettable', window: 'five-hour', resetsAt: '2027-01-15T08:00:00.000Z' };
+    async function live(turnId: string) {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession(longRun);
+      const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+      await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId, commandId: `command-${turnId}`, prompt: 'Hi' });
+      return { fixture, clientUuid: (await inputIterator.next()).value!.uuid as string };
+    }
+    const finished = (fixture: ReturnType<typeof makeAdapter>) => fixture.events.filter((event) => event.kind === 'turn-finished');
+    const failures = (fixture: ReturnType<typeof makeAdapter>) => fixture.events.filter((event) => event.kind === 'provider-error' || (event.kind === 'session-state' && event.state === 'failed'));
+
+    it('a rejected event alone changes nothing but the reading', async () => {
+      const { fixture } = await live('turn-event');
+      fixture.query.emit(rejected());
+      await vi.waitFor(() => expect(fixture.events.some((event) => event.kind === 'usage')).toBe(true));
+      expect(failures(fixture)).toEqual([]);
+      expect(finished(fixture)).toEqual([]);
+      await fixture.adapter.dispose();
+    });
+
+    it('reads the window and the reset from the rejected event when the message has neither', async () => {
+      const { fixture, clientUuid } = await live('turn-from-event');
+      fixture.query.emit(rejected());
+      fixture.query.emit(refused(clientUuid));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      expect(finished(fixture)[0]).toMatchObject({ outcome: 'failed', errorCode: 'usage-limit', limit: limitResult });
+      expect(failures(fixture)).toEqual([]);
+      await fixture.adapter.dispose();
+    });
+
+    it('takes a rejected event as the limit when the result has no code', async () => {
+      const { fixture, clientUuid } = await live('turn-no-code');
+      fixture.query.emit(rejected());
+      fixture.query.emit(refused(clientUuid, { api_error: null, api_error_status: null }));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      expect(finished(fixture)[0]).toMatchObject({ errorCode: 'usage-limit' });
+      await fixture.adapter.dispose();
+    });
+
+    it('a plain 429 is not a limit: approvals.md keeps it on the error path', async () => {
+      const { fixture, clientUuid } = await live('turn-plain');
+      fixture.query.emit(refused(clientUuid, { api_error: null, api_error_status: 429, result: 'API Error: Request rejected (429)' }));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      expect(finished(fixture)[0]).toMatchObject({ outcome: 'failed', errorCode: 'CLAUDE_RATE_LIMITED' });
+      expect(finished(fixture)[0]).not.toHaveProperty('limit');
+      await fixture.adapter.dispose();
+    });
+
+    it('another provider error beside a rejected event stays that error', async () => {
+      const { fixture, clientUuid } = await live('turn-other');
+      fixture.query.emit(rejected());
+      fixture.query.emit(refused(clientUuid, { api_error: 'overloaded_error', api_error_status: 529, result: 'overloaded_error' }));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      expect(finished(fixture)[0]).toMatchObject({ outcome: 'failed', errorCode: 'CLAUDE_OVERLOADED' });
+      await fixture.adapter.dispose();
+    });
+
+    it('a completed result clears the rejected event: the next failure is its own', async () => {
+      const { fixture, clientUuid } = await live('turn-clear');
+      fixture.query.emit(rejected());
+      fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'ok', session_id: providerSessionId, user_message_uuid: clientUuid, user_message_uuids: [clientUuid], is_error: false, num_turns: 1 });
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+      await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-next', commandId: 'command-next', prompt: 'Again' });
+      const next = (await inputIterator.next()).value!.uuid as string;
+      fixture.query.emit(refused(next, { api_error: null, api_error_status: null, result: 'Something else broke' }));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(2));
+      expect(finished(fixture)[1]).toMatchObject({ outcome: 'failed', errorCode: 'CLAUDE_PROVIDER_ERROR' });
+      await fixture.adapter.dispose();
+    });
+
+    it('recovers a reset from the session file of a live session, and nothing for any other', async () => {
+      const reading = { window: 'five-hour' as const, resetsAt: '2027-01-15T08:00:00.000Z' };
+      const readSessionLimit = vi.fn(async () => reading);
+      const fixture = makeAdapter({ readSessionLimit });
+      await fixture.adapter.createSession(longRun);
+      await expect(fixture.adapter.recoverLimit('nobody', providerSessionId)).resolves.toBeUndefined();
+      expect(readSessionLimit).not.toHaveBeenCalled();
+      await expect(fixture.adapter.recoverLimit(context.sessionId, providerSessionId)).resolves.toEqual(reading);
+      expect(readSessionLimit).toHaveBeenCalledWith({ workspaceRoot: context.workspaceRoot, providerSessionId });
+      readSessionLimit.mockRejectedValueOnce(new Error('unreadable'));
+      await expect(fixture.adapter.recoverLimit(context.sessionId, providerSessionId)).resolves.toBeUndefined();
+      await fixture.adapter.dispose();
+    });
+
+    it('a Stop the person pressed wins over a limit', async () => {
+      const { fixture, clientUuid } = await live('turn-stopped');
+      fixture.query.interruptReceipt = { still_queued: [] };
+      await fixture.adapter.interrupt(context.sessionId, providerSessionId);
+      fixture.query.emit(rejected());
+      fixture.query.emit(refused(clientUuid, { terminal_reason: 'aborted_streaming' }));
+      await vi.waitFor(() => expect(finished(fixture)).toHaveLength(1));
+      expect(finished(fixture)[0]).toMatchObject({ outcome: 'interrupted' });
+      await fixture.adapter.dispose();
+    });
+
+    it('a result of no turns that names no message belongs to nothing, so the running turn goes on', async () => {
+      const { fixture } = await live('turn-running');
+      fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'notice', session_id: providerSessionId, is_error: false, num_turns: 0, origin: { kind: 'task-notification' } });
+      fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'notice-2', session_id: providerSessionId, is_error: true, num_turns: 0, result: 'nothing' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(finished(fixture)).toEqual([]);
+      expect(failures(fixture)).toEqual([]);
+      await fixture.adapter.dispose();
+    });
   });
 
   it('reports no context for a reply stopped before any answer', async () => {

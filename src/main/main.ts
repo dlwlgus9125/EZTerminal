@@ -163,7 +163,7 @@ import {
 import { ElectronUpdateHttpClient } from './app-update-network';
 import { AppUpdateService } from './app-update-service';
 import { AsyncMutationGate } from './async-mutation-gate';
-import { ClaudeHistoryAdapter } from './claude-history-adapter';
+import { ClaudeHistoryAdapter, readClaudeSessionLimit } from './claude-history-adapter';
 import { ClaudeProviderAdapter, compatibleClaudeExecutableVersion } from './claude-provider-adapter';
 import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { CodexAppServerClient } from './codex-app-server-client';
@@ -934,6 +934,7 @@ app.on('ready', async () => {
   });
   const claudeProviderAdapter = new ClaudeProviderAdapter({
     enablementStore: claudeEnablementStore,
+    readSessionLimit: (input) => readClaudeSessionLimit(input),
   });
   const conversationViewers = new ConversationViewers({
     // Popouts report through the main window's renderer, so it is the one window that answers.

@@ -164,7 +164,7 @@ export interface ProviderReplayOptions {
   /** Sees every adapter event, including ones the golden does not record (usage). */
   readonly onEvent?: (event: AgentProviderEvent) => void;
   /** Session context the runtime would add (a review loop reviewer: `readOnlyReviewer`, the plan preset). */
-  readonly session?: Partial<Pick<ProviderSessionContext, 'readOnlyReviewer' | 'managedExecution' | 'permissionPreset' | 'wrapUp' | 'orchestration'>>;
+  readonly session?: Partial<Pick<ProviderSessionContext, 'readOnlyReviewer' | 'managedExecution' | 'permissionPreset' | 'wrapUp' | 'orchestration' | 'longRun'>>;
   /** Sees the options of each Claude query the adapter opens. */
   readonly onClaudeQuery?: (options: Options) => void;
   /** Sees each request the Codex adapter makes, with its params. */

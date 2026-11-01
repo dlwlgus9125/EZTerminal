@@ -52,10 +52,14 @@ export const USAGE_LIMIT_PHASES = [
 ] as const;
 export type UsageLimitPhase = (typeof USAGE_LIMIT_PHASES)[number];
 
-/** What an adapter reports with a turn a limit stopped (`turn-finished`). `resetsAt` is what the provider said, if it did. */
-export interface ProviderUsageLimit {
+/** Which window is full and when it resets, as far as a provider said. `resetsAt` is absent when it did not. */
+export interface UsageLimitReading {
   readonly window: UsageLimitWindow;
   readonly resetsAt?: string;
+}
+
+/** What an adapter reports with a turn a limit stopped (`turn-finished`). */
+export interface ProviderUsageLimit extends UsageLimitReading {
   readonly kind: 'resettable' | 'not-included';
 }
 
@@ -125,6 +129,9 @@ export function resumeDue(limit: TurnUsageLimit, now: number): boolean {
 export function turnAutoResumeOff(limit: TurnUsageLimit): TurnUsageLimit {
   return limit.phase === 'waiting' || limit.phase === 'scheduled' || limit.phase === 'retrying' ? { ...limit, phase: 'off', offBy: 'setting' } : limit;
 }
+
+/** The `errorCode` of a turn a usage limit stopped: clients read a limited turn from it. */
+export const USAGE_LIMIT_ERROR = 'usage-limit';
 
 /** The one thing the app sends by itself. Measured: it is read once and the stopped prompt is not read twice. */
 export const RESUME_TEXT = 'Continue.';
