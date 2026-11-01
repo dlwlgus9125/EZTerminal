@@ -437,6 +437,18 @@ export function personSends(fixture: LongRunFixture, message: string, refused = 
   };
 }
 
+/** What cannot go into the running turn waits in the queue, which says why. */
+export function queueAside(fixture: LongRunFixture, text: string): LongRunFixture {
+  if (fixture.state === 'idle' || limitOf(fixture)) return fixture;
+  const sessionId = sessionOf(fixture);
+  const sequence = Math.max(...fixture.items.map((entry) => entry.sequence)) + 1;
+  return {
+    ...fixture, items: [...fixture.items, item(sequence, 'user-message', text, { turnId: 'turn-aside', sessionId })],
+    turns: [...fixture.turns, { ...turn('turn-aside', 'queued', at(9)), sessionId }],
+    fellBack: new Map([...(fixture.fellBack ?? []), ['turn-aside', 'not-plain' as const]]),
+  };
+}
+
 /** The setting went off: every schedule not yet sent is cancelled. */
 export function settingOff(fixture: LongRunFixture): LongRunFixture {
   const limit = limitOf(fixture);

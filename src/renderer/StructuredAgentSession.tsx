@@ -1372,6 +1372,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const valueRef = useRef(value);
   const draft = value.text;
   const attachments = value.attachments ?? [];
+  // 시안: only plain text was measured going into a running turn. Everything else queues, as it does today.
+  const plainDraft = attachments.length === 0 && !value.replyTo && !value.skills?.length && !draft.trimStart().startsWith('/');
+  const steerable = steerOnEnter && plainDraft;
   const updateDraft = (next: ChatComposerDraft): void => {
     valueRef.current = next;
     setValue(next);
@@ -1452,7 +1455,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     const prompt = draft.trim();
     if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
     if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
-    const mode = asked === 'send' && steerOnEnter ? 'steer' : asked;
+    const mode = asked === 'send' && steerable ? 'steer' : asked;
     const action = mode === 'interrupt' ? onInterruptAndSend : mode === 'steer' ? steer?.onSteer : onSend;
     if (!action) return;
     submittingRef.current = true;
@@ -1621,11 +1624,12 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   // onStop is offered only while the turn can be stopped, including while it waits for approval.
   const showStop = !hasDraft && onStop !== undefined;
   const hintText = disabledReason || sendDisabledReason ? undefined
+    : steerOnEnter && hasDraft && !plainDraft ? steerCopy.notPlain
     : statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined);
   // 시안: what Enter does and what sending costs are part of what the box is, so a screen reader hears them with it.
   const hintId = `${composerId}-hint`;
-  const sendKind = steerOnEnter ? 'steer' : busy ? 'queue' : 'send';
-  const sendLabel = steerOnEnter ? steerCopy.add : busy ? copy.queue : copy.send;
+  const sendKind = steerable ? 'steer' : busy || steerOnEnter ? 'queue' : 'send';
+  const sendLabel = steerable ? steerCopy.add : busy || steerOnEnter ? copy.queue : copy.send;
   const interruptButton = busy && onInterruptAndSend && hasDraft ? (
     <Button
       type="button"
@@ -1903,7 +1907,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               title={sendLabel}
               data-testid="structured-agent-send"
             >
-              {submitting === 'send' || (steerOnEnter && submitting === 'steer') ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="send" />}
+              {submitting === 'send' || submitting === 'steer' ? <Glyph name="spin" className="chat-spin" /> : <Glyph name="send" />}
               <span className="ez-ui-visually-hidden">{sendLabel}</span>
             </button>
           )}

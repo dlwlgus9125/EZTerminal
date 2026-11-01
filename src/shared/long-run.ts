@@ -133,7 +133,7 @@ export interface SteerLanding {
 }
 
 /** Why a message meant for the running turn went to the queue instead. */
-export type SteerFallback = 'review-turn' | 'compact-turn' | 'turn-ended';
+export type SteerFallback = 'review-turn' | 'compact-turn' | 'turn-ended' | 'not-plain';
 
 export interface LongRunSettings {
   /** 해제 예정 시각이 되면 자동으로 이어서 하기. */

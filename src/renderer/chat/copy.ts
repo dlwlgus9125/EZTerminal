@@ -389,7 +389,9 @@ const EN = {
         'review-turn': 'A review turn can’t take it, so it went to the queue.',
         'compact-turn': 'Compaction can’t take it, so it went to the queue.',
         'turn-ended': 'The turn had just ended, so it went to the queue.',
+        'not-plain': 'Only plain text can be added, so it went to the queue.',
       },
+      notPlain: 'Attachments, replies and / commands can’t be added yet, so they go to the queue.',
     },
   },
   /** Turn wrap-up (시안): the tasks the AI found outside its own work. Nothing runs until the person presses a button. */
@@ -842,7 +844,9 @@ const KO: typeof EN = {
         'review-turn': '검토 턴에는 끼워넣을 수 없어 대기열에 넣었습니다.',
         'compact-turn': '압축 중에는 끼워넣을 수 없어 대기열에 넣었습니다.',
         'turn-ended': '턴이 막 끝나 대기열에 넣었습니다.',
+        'not-plain': '글만 끼워넣을 수 있어 대기열에 넣었습니다.',
       },
+      notPlain: '첨부·답장·/ 명령은 아직 끼워넣을 수 없어 대기열에 넣습니다.',
     },
   },
   taskSuggestions: {

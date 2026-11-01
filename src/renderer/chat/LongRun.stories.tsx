@@ -8,6 +8,7 @@ import { MobileConversationReviewProvider } from '../../../mobile/src/MobileConv
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
+import type { ChatComposerDraft } from '../../shared/chat-message';
 import { resumeDue, type LongRunSettings } from '../../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY, type TurnWrapUpSettings } from '../../shared/turn-wrap-up';
 import type { CapabilityAccess, LongRunAccess, TurnWrapUpAccess } from '../capability-access';
@@ -24,7 +25,7 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
 import {
-  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, personSends, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
+  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
   type LongLanguage, type LongProvider, type LongRunFixture,
 } from './long-run/long-run-fixtures';
 import { limitStatus } from './long-run/long-run-presentation';
@@ -152,7 +153,7 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
   }, [args, landAfter, provider]);
   const onSend = useCallback(async (prompt: string): Promise<StructuredAgentUiResult> => {
     const result = await args.onSend(prompt);
-    setState((current) => personSends(current, prompt, personRefused));
+    setState((current) => personSends(queueAside(current, prompt), prompt, personRefused));
     return result;
   }, [args, personRefused]);
   const turnOff = useCallback(() => setState((current) => settingOff(current)), []);
@@ -207,9 +208,11 @@ interface ChatOptions {
   readonly child?: boolean;
   /** What the person sends before the reset is refused. */
   readonly personRefused?: boolean;
+  /** What is in the message box when the screen opens. */
+  readonly draft?: ChatComposerDraft;
 }
 
-function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false, personRefused = false }: ChatOptions & {
+function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false, personRefused = false, draft }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -221,12 +224,13 @@ function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', widt
   return (
     <Desk width={width} height={height}>
       <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, locale, args)} skin={skin}
-        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})} />
+        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})}
+        {...(draft ? { draftState: draft, supportsMessageContext: true } : {})} />
     </Desk>
   );
 }
 
-function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin = 'bubble', landAfter, child = false }: ChatOptions & {
+function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin = 'bubble', landAfter, child = false, draft }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -240,7 +244,8 @@ function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin 
   return (
     <Phone width={width} height={height}>
       <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, locale, args)} skin={skin} folders={undefined} onBack={fn()}
-        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})} />
+        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})}
+        {...(draft ? { draftState: draft, supportsMessageContext: true } : {})} />
     </Phone>
   );
 }
@@ -427,6 +432,27 @@ export const SteerUnconfirmed: Story = chat('steer-unconfirmed', (lang) => steer
   await expect(tray).toHaveTextContent('다시 보내면 두 번 읽을 수 있습니다');
   await expect(within(tray).queryByTestId('chat-steer-to-queue')).toBeNull();
 });
+const NOTES = { id: 'note-1', name: 'notes.txt', mimeType: 'text/plain', kind: 'text' as const, data: 'cart notes' };
+/** Only plain text was measured going in: the rest queues as it does today, and the box says so before it is sent. */
+function notPlain(id: string, draft: ChatComposerDraft, options: ChatOptions = {}): Story {
+  return chat(id, (lang) => steerStory(lang, 'busy'), { ...options, draft }, async ({ canvasElement }) => {
+    const hint = await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]');
+    await expect(hint).toHaveTextContent('첨부·답장·/ 명령은 아직 끼워넣을 수 없어 대기열에 넣습니다.');
+    await expect(await findIn(canvasElement, '[data-testid="structured-agent-send"]')).toHaveAttribute('data-kind', 'queue');
+  });
+}
+export const SteerNotPlainAttachment: Story = notPlain('steer-not-plain-attachment', { text: '이 메모도 같이 봐 줘.', attachments: [NOTES] });
+export const SteerNotPlainReply: Story = notPlain('steer-not-plain-reply', { text: '이 부분 다시 봐 줘.', replyTo: { messageId: 'm-1', text: '실패 세 개 가운데 둘은 cartTotal 루프가 원인입니다.' } });
+export const SteerNotPlainCommand: Story = notPlain('steer-not-plain-command', { text: '/compact' });
+/** Sent: it waits in the queue, which says why, and nothing went into the turn. */
+export const SteerNotPlainQueued: Story = chat('steer-not-plain-queued', (lang) => steerStory(lang, 'busy'), { draft: { text: '이 메모도 같이 봐 줘.', attachments: [NOTES] } }, async ({ canvasElement, args }) => {
+  (await composer(canvasElement)).focus();
+  await userEvent.keyboard('{Enter}');
+  await expect(args.onSend).toHaveBeenCalled();
+  await expect(args.onSteer).not.toHaveBeenCalled();
+  await expect(await findIn(canvasElement, '[data-testid="chat-queue-fallback"]')).toHaveTextContent('글만 끼워넣을 수 있어 대기열에 넣었습니다.');
+  await expect(canvasElement.querySelector(TRAY)).toBeNull();
+});
 /** The person stopped the turn with a message on its way. What became of it was never measured, so nothing claims either way, and the box is the way back. */
 export const SteerCaughtByStop: Story = chat('steer-caught-by-stop', (lang) => steerStory(lang, 'caught-stop'), {}, async ({ canvasElement }) => {
   const tray = await findIn(canvasElement, TRAY);
@@ -468,6 +494,7 @@ export const CliSteerLanded: Story = chat('cli-steer-landed', (lang) => steerSto
 });
 export const CliSteerBehindApproval: Story = chat('cli-steer-behind-approval', (lang) => steerStory(lang, 'behind-approval'), { skin: 'cli' }, showTray);
 export const CliSteerFellBack: Story = chat('cli-steer-fell-back', (lang) => steerStory(lang, 'review-turn'), { skin: 'cli', provider: 'codex' });
+export const CliSteerNotPlain: Story = notPlain('cli-steer-not-plain', { text: '/compact' }, { skin: 'cli' });
 export const CliSteerFailed: Story = chat('cli-steer-failed', (lang) => steerStory(lang, 'failed'), { skin: 'cli' }, showTray);
 
 // ── B. The usage limit card ────────────────────────────────────────────────────────────────────────────
@@ -898,6 +925,12 @@ export const PhoneSteerFailed360: Story = phone('phone-steer-failed', (lang) => 
 });
 export const PhoneSteerCaughtByLimit360: Story = phone('phone-steer-caught-limit', (lang) => steerStory(lang, 'caught-limit'), 360, 800, {}, async ({ canvasElement }) => {
   await thumbTargets(within(await findIn(canvasElement, TRAY)).getAllByRole('button'));
+});
+export const PhoneSteerNotPlain360: Story = phone('phone-steer-not-plain', (lang) => steerStory(lang, 'busy'), 360, 800, { draft: { text: '이 메모도 같이 봐 줘.', attachments: [NOTES] } }, async ({ canvasElement, args }) => {
+  await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('아직 끼워넣을 수 없어 대기열에 넣습니다');
+  await userEvent.click(await findIn(canvasElement, '[data-testid="structured-agent-send"]'));
+  await expect(args.onSteer).not.toHaveBeenCalled();
+  await expect(args.onSend).toHaveBeenCalled();
 });
 export const PhoneSteerFellBack360: Story = phone('phone-steer-fell-back', (lang) => steerStory(lang, 'review-turn'), 360, 800, { provider: 'codex' }, async ({ canvasElement }) => {
   await findIn(canvasElement, '[data-testid="chat-queue-fallback"]');

@@ -168,6 +168,48 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 이 턴에서 다시 씁니다');
   });
 
+  describe('only plain text goes into a running turn', () => {
+    const attachment = { id: 'a', name: 'notes.txt', mimeType: 'text/plain', kind: 'text' as const, data: 'x' };
+    const cases = [
+      ['an attachment', { draftState: { text: '이것도 봐 줘', attachments: [attachment] }, supportsMessageContext: true }],
+      ['a reply', { draftState: { text: '이 부분 말이야', replyTo: { messageId: 'm', text: '앞 글' } }, supportsMessageContext: true }],
+      ['a skill', { draftState: { text: '/deploy 해 줘', skills: [{ providerId: 'claude' as const, id: 's', invocation: '/deploy', name: 'deploy' }] } }],
+      ['a / command', { draftState: { text: '/compact' } }],
+    ] as const;
+
+    for (const [name, props] of cases) {
+      it(`${name} goes to the queue as it does today, and the box says so first`, async () => {
+        const running = steer();
+        const { send } = box({ steer: running, statusHint: 'Enter 끼워넣기', ...props });
+        expect(byId('structured-agent-send')?.getAttribute('data-kind')).toBe('queue');
+        expect(byId('structured-agent-send')?.getAttribute('aria-label')).toBe('메시지 대기열 추가');
+        expect(byId('structured-agent-composer-hint')?.textContent).toBe('첨부·답장·/ 명령은 아직 끼워넣을 수 없어 대기열에 넣습니다.');
+        // A / draft has the completion list open, and that list takes Enter: the send button is the same path.
+        if (props.draftState.text.startsWith('/compact')) await click(byId('structured-agent-send')!);
+        else await press({ key: 'Enter' });
+        expect(running.onSteer).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    it('goes back to the running turn as soon as the draft is plain text', () => {
+      box({ steer: steer(), statusHint: 'Enter 끼워넣기' });
+      type('/compact');
+      expect(byId('structured-agent-send')?.getAttribute('data-kind')).toBe('queue');
+      type('그 파일만');
+      expect(byId('structured-agent-send')?.getAttribute('data-kind')).toBe('steer');
+      expect(byId('structured-agent-composer-hint')?.textContent).toBe('Enter 끼워넣기');
+    });
+
+    it('on the phone the send button takes the same way', async () => {
+      const running = steer();
+      const { send } = box({ steer: running, variant: 'mobile', draftState: { text: '/compact' } });
+      await click(byId('structured-agent-send')!);
+      expect(running.onSteer).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('describes the box by what Enter does and what sending costs, the sentence shown under it', () => {
     box({ steer: steer(), statusHint: 'Enter 끼워넣기 · 쓰던 글은 버리고 다시 씁니다' });
     const ids = input().getAttribute('aria-describedby')?.split(' ') ?? [];
