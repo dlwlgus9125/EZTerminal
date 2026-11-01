@@ -144,7 +144,8 @@ const WRAP_UP_REPLIES = {
  * A usage limit (`long-run-v1`), framed as the real CLI against a stub (codex-limit-usage.ndjson, codex-limit-no-reset,
  * codex-limit-not-included). While `ezterminal-e2e-codex-limit.json` exists every conversation's turn is refused, as an
  * account's would be, until the spec removes it: `{ window, resetIn }` (seconds from the stop, since a reset already past
- * reads as a window that is over), or `{ kind: 'no-reset' | 'not-included' }`.
+ * reads as a window that is over), or `{ kind: 'no-reset' | 'not-included' }`. `afterWork`: the app's "Continue." writes
+ * a line first, so the limit stops work that resumed and opens a fresh stop instead of refusing the try.
  */
 const LIMIT_MESSAGES = {
   usage: 'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 1:43 PM.',
@@ -610,6 +611,14 @@ if (args.includes('--version')) {
             if (release && await holdTurn(turnId, () => fs.existsSync(release)) === 'interrupted') {
               write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
               return;
+            }
+            // Work the limit then stops: a resumed run that got somewhere, which the app counts as resumed.
+            if (inputText === 'Continue.' && accountLimit()?.afterWork) {
+              const item = { type: 'agentMessage', id: `${turnId}-progress`, text: 'Picked it up again.', phase: 'commentary' };
+              notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...item, text: '' } });
+              notify('item/agentMessage/delta', { threadId, turnId, itemId: item.id, delta: item.text });
+              notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item });
+              await sleep(200);
             }
             // After a hold, so a limit can stop a turn that ran.
             if (stopAtLimit(threadId, turnId, frame.params)) return;

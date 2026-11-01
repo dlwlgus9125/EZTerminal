@@ -25,7 +25,7 @@ const evidence = path.resolve('artifacts/long-run/e2e');
 mkdirSync(evidence, { recursive: true });
 
 type Timing = { readonly afterResetMs?: number; readonly retryAfterRefusalMs?: number; readonly lineGapMs?: number };
-type Limit = { readonly window: 'five-hour' | 'weekly'; readonly resetIn: number } | { readonly kind: 'no-reset' | 'not-included' };
+type Limit = { readonly window: 'five-hour' | 'weekly'; readonly resetIn: number; readonly afterWork?: boolean } | { readonly kind: 'no-reset' | 'not-included' };
 
 const HOURS = 3_600;
 
@@ -786,6 +786,37 @@ test('a weekly limit, a far reset and an unknown reset ask first; the amber foll
     await reaches(page, sessionId, 'resumed');
     expect(continues(profile)).toHaveLength(1);
     await expect(card.last()).toContainText(/The app sent “Continue\.” at \S/u);
+  });
+});
+
+test('a run that keeps stopping resumes itself three times in a row, then asks: the fourth goes only after a press', async () => {
+  test.setTimeout(180_000);
+  await withProject('limit-chain', { timing: { afterResetMs: 300, lineGapMs: 300 } }, async ({ page, profile, workspaceId }) => {
+    await draftIn(page, workspaceId);
+    const sessionId = await firstReply(page);
+    const session = sessionView(page, sessionId);
+
+    limitAccount(profile, { window: 'five-hour', resetIn: 1, afterWork: true });
+    await send(session, 'Fix every failing cart test.');
+    await reaches(page, sessionId, 'ask-reset', 60_000);
+    expect(continues(profile)).toHaveLength(3);
+    // Each stop keeps its card, as the record of what it became.
+    await expect(limitCard(session)).toHaveCount(4);
+    await expect(limitCard(session).last()).toContainText('It continued by itself 3 times in a row, so this time the app asks first.');
+    await expect(session.getByTestId('chat-limit-limit-schedule')).toBeVisible();
+    await asksThePerson(page, session, sessionId);
+    await page.screenshot({ path: path.join(evidence, 'limit-chain-asks.png') });
+
+    // Its time passes and nothing goes.
+    await waitPast(page, sessionId);
+    expect(continues(profile)).toHaveLength(3);
+    await expect(session.getByTestId('chat-app-sent')).toHaveCount(3);
+
+    // A person's press goes, and the app may go on by itself again.
+    liftLimit(profile);
+    await session.getByTestId('chat-limit-limit-schedule').click();
+    await reaches(page, sessionId, 'resumed', 30_000);
+    await expect.poll(() => continues(profile).length, { timeout: 10_000 }).toBe(4);
   });
 });
 

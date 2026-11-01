@@ -290,6 +290,7 @@ const UsageLimitPayloadSchema = z.object({
   failure: z.enum(USAGE_LIMIT_FAILURES).optional(),
   sendReason: z.enum(APP_SENT_REASONS).optional(),
   sentAt: ShortText.optional(),
+  chainEnded: z.literal(true).optional(),
 }).strict();
 
 /** The user row of a "Continue." the app sent: the row shows that text and says why it went out. */

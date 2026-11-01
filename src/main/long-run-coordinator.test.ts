@@ -35,6 +35,7 @@ const relation = (childSessionId: string, patch: Partial<DaemonAgentRelation> = 
 interface HarnessOptions {
   readonly jobs?: unknown;
   readonly steers?: unknown;
+  readonly autoResumes?: unknown;
   readonly reconcile?: AgentProviderAdapter['reconcile'];
   readonly settings?: LongRunSettings | undefined;
   readonly unattended?: boolean;
@@ -58,7 +59,7 @@ function harness(options: HarnessOptions = {}) {
   } as unknown as DaemonSnapshot };
   const rows: DaemonTranscriptItemInput[] = [];
   const order: string[] = [];
-  const saved: { jobs: Readonly<Record<string, LimitJobRecord>>; steers: Readonly<Record<string, SteerRecord>> } = { jobs: {}, steers: {} };
+  const saved: { jobs: Readonly<Record<string, LimitJobRecord>>; steers: Readonly<Record<string, SteerRecord>>; autoResumes: Readonly<Record<string, number>> } = { jobs: {}, steers: {}, autoResumes: {} };
   const listeners = new Set<(event: DaemonEvent) => void>();
   const events: unknown[] = [];
   const wakeQueuedTurns = vi.fn();
@@ -82,8 +83,8 @@ function harness(options: HarnessOptions = {}) {
     wakeQueuedTurns,
     commandExists: (commandId) => (options.commands ?? []).includes(commandId),
     store: {
-      load: async () => ({ jobs: options.jobs, steers: options.steers }),
-      save: async (state) => { order.push('file'); saved.jobs = state.jobs; saved.steers = state.steers; },
+      load: async () => ({ jobs: options.jobs, steers: options.steers, autoResumes: options.autoResumes }),
+      save: async (state) => { order.push('file'); saved.jobs = state.jobs; saved.steers = state.steers; saved.autoResumes = state.autoResumes; },
     },
     providers: {
       longRunCapability: () => (options.capability === false ? undefined : { minimumVersion: '1.0.0' }),
@@ -1046,6 +1047,167 @@ describe('the scheduler', () => {
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     await h.coordinator.settled();
   };
+
+  describe('a run that keeps stopping', () => {
+    const inAnHour = (): ProviderUsageLimit => ({ kind: 'resettable', window: 'five-hour', resetsAt: new Date(clock.ms + 3_600_000).toISOString() });
+    const stopAgain = async (h: ReturnType<typeof harness>, turnId: string, limit: ProviderUsageLimit = inAnHour()): Promise<void> => {
+      h.coordinator.limitStopped({ sessionId: 'chat', providerId: 'claude', turn: turn(turnId), limit, stoppedAt: now().toISOString() });
+      await h.coordinator.settled();
+    };
+    const card = (h: ReturnType<typeof harness>): LimitJobRecord => h.lastCard() as unknown as LimitJobRecord;
+    /** Its time comes, "Continue." goes and gets somewhere, and the limit stops the run again: a fresh stop, with its own schedule. */
+    const link = async (h: ReturnType<typeof harness>, name: string): Promise<void> => {
+      await at(Date.parse(card(h).resumeAt!));
+      await h.coordinator.settled();
+      sentTurn(h, { state: 'completed' });
+      await pass(h);
+      expect(h.lastCard()).toMatchObject({ phase: 'resumed' });
+      await stopAgain(h, name);
+    };
+    const press = async (h: ReturnType<typeof harness>, action: LimitAction): Promise<void> => {
+      const answer = h.coordinator.limitAction({ sessionId: 'chat', stopId: card(h).stopId, action });
+      expect(answer.ok).toBe(true);
+      if (answer.ok) await answer.afterCommit?.();
+      await h.coordinator.settled();
+    };
+    const chained = async (links: number, options: HarnessOptions = {}): Promise<ReturnType<typeof harness>> => {
+      const h = await waiting(options);
+      for (let index = 1; index <= links; index += 1) await link(h, `turn-chain-${String(index)}`);
+      return h;
+    };
+
+    it('three go by themselves; the fourth stop asks first and sends nothing, however long it stays', async () => {
+      const h = await chained(3);
+      expect(h.sent).toHaveLength(3);
+      expect(h.lastCard()).toMatchObject({ phase: 'ask-reset', chainEnded: true });
+      expect(card(h).resumeAt).toBeDefined();
+      await at(clock.ms + 48 * 3_600_000);
+      await h.coordinator.settled();
+      expect(h.sent).toHaveLength(3);
+    });
+
+    it('two in a row do not ask: the third stop still has its schedule', async () => {
+      const h = await chained(2);
+      expect(h.lastCard()).toMatchObject({ phase: 'waiting' });
+      expect(h.lastCard()).not.toHaveProperty('chainEnded');
+    });
+
+    it('a stop\'s later try is the same resume, not another one', async () => {
+      const h = await waiting();
+      await at(DUE);
+      await h.coordinator.settled();
+      h.coordinator.limitStopped({ sessionId: 'chat', providerId: 'claude', turn: sentTurn(h, { state: 'failed', errorCode: 'usage-limit' }), limit: inAnHour(), stoppedAt: now().toISOString() });
+      await h.coordinator.settled();
+      expect(h.lastCard()).toMatchObject({ phase: 'retrying' });
+      await at(Date.parse(card(h).retryAt!));
+      await h.coordinator.settled();
+      sentTurn(h, { state: 'completed' });
+      await pass(h);
+      expect(h.sent).toHaveLength(2);
+      expect(h.saved.autoResumes).toEqual({ chat: 1 });
+    });
+
+    it('a press starts the count again, and what it set going is the first of three', async () => {
+      const h = await chained(3);
+      await press(h, 'schedule');
+      expect(h.saved.autoResumes).toEqual({});
+      await at(Date.parse(card(h).resumeAt!));
+      await h.coordinator.settled();
+      expect(h.sent).toHaveLength(4);
+      expect(h.saved.autoResumes).toEqual({ chat: 1 });
+    });
+
+    it('a press does not count as a resume by itself', async () => {
+      const h = await waiting();
+      await press(h, 'try-now');
+      expect(h.sent).toHaveLength(1);
+      expect(h.saved.autoResumes).toEqual({});
+    });
+
+    it('a person\'s message starts the count again, with no card open too', async () => {
+      const h = await chained(1);
+      await at(Date.parse(card(h).resumeAt!));
+      await h.coordinator.settled();
+      sentTurn(h, { state: 'completed' });
+      await pass(h);
+      expect(h.saved.autoResumes).toEqual({ chat: 2 });
+      h.coordinator.personSent('chat', 'turn-person');
+      await h.coordinator.settled();
+      expect(h.saved.autoResumes).toEqual({});
+    });
+
+    it('a message put into a running turn is a person\'s message too', async () => {
+      const h = await chained(3);
+      await h.coordinator.steerSent({ id: 'steer', sessionId: 'chat', turnId: 'turn-chain-3', providerId: 'claude', text: 'only the cart', state: 'on-its-way', sentAt: STOPPED });
+      await h.coordinator.settled();
+      expect(h.saved.autoResumes).toEqual({});
+    });
+
+    it('the count is written ahead of the send and read back after a restart: the fourth still asks', async () => {
+      const seen: unknown[] = [];
+      const holder: { h?: ReturnType<typeof harness> } = {};
+      const h = await waiting({ execute: async (command) => {
+        seen.push(holder.h?.saved.autoResumes);
+        return { ok: true, status: 'applied', commandId: command.commandId, revision: 8 } as DaemonCommandReceipt;
+      } });
+      holder.h = h;
+      await at(DUE);
+      await h.coordinator.settled();
+      expect(seen).toEqual([{ chat: 1 }]);
+
+      const after = harness({ now, autoResumes: { chat: 3 } });
+      await after.coordinator.start();
+      await stopAgain(after, 'turn-after-restart');
+      expect(after.lastCard()).toMatchObject({ phase: 'ask-reset', chainEnded: true });
+      expect(after.saved.autoResumes).toEqual({ chat: 3 });
+      after.coordinator.dispose();
+    });
+
+    it('reads only whole counts of a known shape from the file', async () => {
+      const h = harness({ now, autoResumes: { chat: 'three', other: -1, half: 1.5, right: 2 } });
+      await h.coordinator.start();
+      await h.coordinator.settled();
+      expect(h.saved.autoResumes).toEqual({});
+      const list = harness({ now, autoResumes: [3] });
+      await list.coordinator.start();
+      await list.coordinator.settled();
+      expect(list.saved.autoResumes).toEqual({});
+      h.coordinator.dispose();
+      list.coordinator.dispose();
+    });
+
+    it('a conversation gone takes its count with it', async () => {
+      const h = await chained(1);
+      h.held.snapshot = { ...h.held.snapshot, sessions: [session('chat', { archivedAt: STOPPED })] };
+      h.emit({ kind: 'entity.archived', payload: { entityType: 'session', entityId: 'chat' } } as DaemonEvent);
+      await pass(h);
+      expect(h.saved.autoResumes).toEqual({});
+    });
+
+    it('the setting off and a weekly limit keep their own card: neither is the chain', async () => {
+      const off = harness({ now, autoResumes: { chat: 3 }, settings: { autoResume: false } });
+      await off.coordinator.start();
+      await stopAgain(off, 'turn-chain-off');
+      expect(off.lastCard()).toMatchObject({ phase: 'off', offBy: 'setting' });
+      expect(off.lastCard()).not.toHaveProperty('chainEnded');
+      off.coordinator.dispose();
+      const weekly = harness({ now, autoResumes: { chat: 3 } });
+      await weekly.coordinator.start();
+      await stopAgain(weekly, 'turn-weekly', { kind: 'resettable', window: 'weekly', resetsAt: inHours(40) });
+      expect(weekly.lastCard()).toMatchObject({ phase: 'ask-reset', window: 'weekly' });
+      expect(weekly.lastCard()).not.toHaveProperty('chainEnded');
+      weekly.coordinator.dispose();
+    });
+
+    it('a time that came back late from the provider counts the chain too', async () => {
+      const h = harness({ now, autoResumes: { chat: 3 }, recoverLimit: async () => ({ window: 'five-hour', resetsAt: RESET }) });
+      await h.coordinator.start();
+      await stopAgain(h, 'turn-1', { kind: 'resettable', window: 'five-hour' });
+      await pass(h);
+      expect(h.lastCard()).toMatchObject({ phase: 'ask-reset', chainEnded: true, resetsAt: RESET });
+      h.coordinator.dispose();
+    });
+  });
 
   it('sends "Continue." once at its time, and not a moment before', async () => {
     const h = await waiting();

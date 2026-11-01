@@ -1,4 +1,4 @@
-import type { OpenUsageLimit, SteerLanding, TurnUsageLimit, UsageLimitPhase } from '../../../shared/long-run';
+import { AUTO_RESUME_CHAIN, type OpenUsageLimit, type SteerLanding, type TurnUsageLimit, type UsageLimitPhase } from '../../../shared/long-run';
 import type { ChatLongRunAction } from '../ChatContext';
 import { formatClock, type ChatCopy } from '../copy';
 import type { ChatLocale } from '../model/summary';
@@ -151,7 +151,7 @@ export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'ask-reset':
       return {
         ...base, message: { text: resets },
-        notes: [note('why', limit.window === 'weekly' ? copy.askWeekly : copy.askFar, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
+        notes: [note('why', limit.chainEnded ? copy.askChain(AUTO_RESUME_CHAIN) : limit.window === 'weekly' ? copy.askWeekly : copy.askFar, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
         actions: [{ id: 'limit-schedule', primary: true }, leave],
       };
     case 'ask-unknown':

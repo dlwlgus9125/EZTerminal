@@ -53,6 +53,14 @@ describe('the usage limit card', () => {
     expect(limitView(limit('resumed'), en, 'en').message.text).toBe(en.sent(formatClock(RESUME, 'en')));
   });
 
+  it('says why a stop that could have gone by itself asks first, briefly, in both languages', () => {
+    const asked = (copy: typeof ko, locale: 'ko' | 'en'): readonly string[] => limitView(limit('ask-reset', { chainEnded: true }), copy, locale).notes.map((note) => note.text);
+    expect(asked(ko, 'ko')[0]).toBe('자동으로 3번 연달아 이어서 했습니다. 이번에는 먼저 묻습니다.');
+    expect(asked(en, 'en')[0]).toBe('It continued by itself 3 times in a row, so this time the app asks first.');
+    expect(limitView(limit('ask-reset', { chainEnded: true }), ko, 'ko').actions.map((action) => action.id)).toEqual(['limit-schedule', 'limit-leave']);
+    expect(limitView(limit('ask-reset'), ko, 'ko').notes[0]?.text).toBe(ko.askFar);
+  });
+
   it('only sends by itself from the states that say a time', () => {
     for (const phase of ['ask-reset', 'ask-unknown', 'ask-reopened', 'gave-up', 'off', 'left', 'cancelled', 'not-included', 'child'] as const) {
       const text = limitView(limit(phase), ko, 'ko').notes.map((note) => note.text).join(' ');

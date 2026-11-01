@@ -10,6 +10,7 @@ import {
   type DaemonTurn,
 } from '../shared/daemon-protocol';
 import {
+  AUTO_RESUME_CHAIN,
   LONG_RUN_PRINCIPAL,
   RESUME_TEXT,
   RESUME_TIMING,
@@ -224,6 +225,7 @@ function cardFields(job: Omit<UsageLimitPayload, 'v' | 'type'>): Omit<UsageLimit
     ...(job.failure ? { failure: job.failure } : {}),
     ...(job.sendReason ? { sendReason: job.sendReason } : {}),
     ...(job.sentAt ? { sentAt: job.sentAt } : {}),
+    ...(job.chainEnded ? { chainEnded: job.chainEnded } : {}),
   };
 }
 
@@ -279,10 +281,19 @@ function parseSteers(value: unknown): SteerRecord[] {
   });
 }
 
-/** Limit jobs and steers: the file a restart reads, so it need not read transcripts. */
+function parseAutoResumes(value: unknown): readonly (readonly [string, number])[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([sessionId, count]) => (
+    sessionId && Number.isInteger(count) && (count as number) > 0 ? [[sessionId, count as number] as const] : []
+  ));
+}
+
+/** Limit jobs, steers and the chain count: the file a restart reads, so it need not read transcripts. */
 export interface LongRunJobs {
   readonly jobs: Readonly<Record<string, LimitJobRecord>>;
   readonly steers: Readonly<Record<string, SteerRecord>>;
+  /** Resumes in a row with nobody there, by conversation. Outside the jobs: a resumed job is gone, and the count goes on. */
+  readonly autoResumes: Readonly<Record<string, number>>;
 }
 
 export interface LongRunCoordinatorOptions {
@@ -349,6 +360,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   private readonly steerRecords = new Map<string, SteerRecord>();
   /** Steers whose turn finished well: what they get before they stop holding the queue. */
   private readonly landingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Stops resumed in a row with nobody there, by conversation: a person's message or press starts it over. */
+  private readonly autoResumes = new Map<string, number>();
 
   constructor(private readonly options: LongRunCoordinatorOptions) {
     this.now = options.now ?? (() => new Date());
@@ -359,9 +372,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   load(): Promise<void> {
     this.loading ??= (async () => {
       try {
-        const { jobs, steers } = ((await this.options.store?.load()) ?? {}) as { readonly jobs?: unknown; readonly steers?: unknown };
+        const { jobs, steers, autoResumes } = ((await this.options.store?.load()) ?? {}) as { readonly jobs?: unknown; readonly steers?: unknown; readonly autoResumes?: unknown };
         for (const job of parseJobs(jobs)) this.jobs.set(job.stopId, job);
         for (const steer of parseSteers(steers)) this.steerRecords.set(steer.id, steer);
+        for (const [sessionId, count] of parseAutoResumes(autoResumes)) this.autoResumes.set(sessionId, count);
       } catch (error) {
         this.report('limit jobs load failed', error);
       }
@@ -395,6 +409,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       if (reopened) this.place(reopened);
       else this.write(job);
     }
+    this.dropCounts(snapshot);
     await this.tail;
     await this.saveJobs();
     this.arm();
@@ -474,6 +489,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
 
   steerSent(steer: SteerRecord): Promise<void> {
     this.steerRecords.set(steer.id, steer);
+    this.autoResumes.delete(steer.sessionId);
     this.writeSteers(steer.sessionId);
     return this.tail;
   }
@@ -611,6 +627,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   }
 
   personSent(sessionId: string, turnId: string): void {
+    this.personHere(sessionId);
     const job = this.jobOf(sessionId);
     if (this.disposed || !job || job.personTurnId || job.phase === 'resuming') return;
     if (job.phase === 'not-included') {
@@ -632,6 +649,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   private act(stopId: string, action: LimitAction): void {
     const job = this.jobs.get(stopId);
     if (this.disposed || !job) return;
+    this.personHere(job.sessionId);
     switch (action) {
       case 'try-now':
         void this.send(job, 'try-now');
@@ -656,6 +674,22 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       case 'leave':
         this.place({ ...job, phase: 'left' });
     }
+  }
+
+  /** Somebody is there: the app may go on by itself again. */
+  private personHere(sessionId: string): void {
+    if (this.autoResumes.delete(sessionId)) void this.queueSave();
+  }
+
+  /** What is left of a conversation archived or gone. True when something went. */
+  private dropCounts(snapshot: Pick<DaemonSnapshot, 'sessions'>): boolean {
+    let dropped = false;
+    for (const sessionId of [...this.autoResumes.keys()]) {
+      if (snapshot.sessions.some((session) => session.id === sessionId && session.archivedAt === undefined)) continue;
+      this.autoResumes.delete(sessionId);
+      dropped = true;
+    }
+    return dropped;
   }
 
   private applySettingOff(): void {
@@ -759,6 +793,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       this.place({ ...job, ...blocked });
       return;
     }
+    // A stop's later try is the same resume. Counted here, it reaches the file ahead of the send.
+    if (reason === 'scheduled-time' && job.phase !== 'retrying') this.autoResumes.set(job.sessionId, (this.autoResumes.get(job.sessionId) ?? 0) + 1);
     this.place({ ...job, phase: 'resuming', sendReason: reason, sentAt: this.now().toISOString(), sending: { commandId: this.sendId(job), reason, from: job.phase } });
     await this.tail;
     for (let tries = 0; tries < SEND_TRIES; tries += 1) {
@@ -848,13 +884,13 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     return { ...base, ...this.schedule(stop.limit, stop.sessionId, stop.turn, stop.stoppedAt) };
   }
 
-  /** D2: by itself only for a turn a person sent and a known reset within hours; every other stop asks first. */
+  /** D2: by itself only for a turn a person sent, a known reset within hours, and a run with somebody there lately; every other stop asks first. */
   private schedule(
     limit: UsageLimitReading,
     sessionId: string,
     turn: DaemonTurn | undefined,
     stoppedAt: string,
-  ): Pick<LimitJobRecord, 'phase' | 'resumeAt' | 'offBy'> {
+  ): Pick<LimitJobRecord, 'phase' | 'resumeAt' | 'offBy' | 'chainEnded'> {
     const stopped = Date.parse(stoppedAt);
     // A reset that has already passed is a stop right after it: the try still waits its own time.
     const resumeAt = limit.resetsAt ? { resumeAt: new Date(Math.max(Date.parse(limit.resetsAt), stopped) + this.timing.afterResetMs).toISOString() } : {};
@@ -862,7 +898,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     if (!settings || !turn || !resumesByItself(limit, stopped) || !this.options.allowed(sessionId, turn)) {
       return { phase: limit.resetsAt ? 'ask-reset' : 'ask-unknown', ...resumeAt };
     }
-    return settings.autoResume ? { phase: 'waiting', ...resumeAt } : { phase: 'off', offBy: 'setting', ...resumeAt };
+    if (!settings.autoResume) return { phase: 'off', offBy: 'setting', ...resumeAt };
+    return (this.autoResumes.get(sessionId) ?? 0) >= AUTO_RESUME_CHAIN ? { phase: 'ask-reset', chainEnded: true, ...resumeAt } : { phase: 'waiting', ...resumeAt };
   }
 
   /** One card per stop: a turn refused while it is open moves the card down to itself. */
@@ -974,14 +1011,15 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       this.jobs.delete(job.stopId);
       dropped = true;
     }
-    if (this.settleSteers(snapshot) || dropped) void this.queueSave();
+    const counts = this.dropCounts(snapshot);
+    if (this.settleSteers(snapshot) || dropped || counts) void this.queueSave();
     for (const job of [...this.jobs.values()]) this.advance(snapshot, job);
     this.newRows.clear();
   }
 
   private async saveJobs(): Promise<void> {
     try {
-      await this.options.store?.save({ jobs: Object.fromEntries(this.jobs), steers: Object.fromEntries(this.steerRecords) });
+      await this.options.store?.save({ jobs: Object.fromEntries(this.jobs), steers: Object.fromEntries(this.steerRecords), autoResumes: Object.fromEntries(this.autoResumes) });
     } catch (error) {
       this.report('limit jobs save failed', error);
     }

@@ -98,6 +98,8 @@ export interface TurnUsageLimit {
   readonly sendReason?: AppSentReason;
   /** The last send: when it went. `resumeAt` is only the schedule, and a press may have none. */
   readonly sentAt?: string;
+  /** `ask-reset`: this stop could have resumed by itself, but `AUTO_RESUME_CHAIN` resumes had gone in a row with nobody there. */
+  readonly chainEnded?: true;
 }
 
 /** An open limit as the snapshot carries it: the list and the feed read it, and have no transcript. */
@@ -121,6 +123,12 @@ export type LimitAction = (typeof LIMIT_ACTIONS)[number];
  * comes when a limit lifts. So `afterResetMs` is a try after the expected time, never a promise that it worked.
  */
 export const RESUME_TIMING = { afterResetMs: 2 * 60_000, retryAfterRefusalMs: 10 * 60_000, lineGapMs: 60_000, autoWithinMs: 6 * 3_600_000 } as const;
+
+/**
+ * Resumes in a row the app may make with nobody writing or pressing. A limit after resumed work is a fresh stop with its
+ * own schedule, so without this a run could chain unattended all week.
+ */
+export const AUTO_RESUME_CHAIN = 3;
 
 /** D2: the app tries by itself only for a known reset within 6 hours; weekly, later or unknown asks first. */
 export function resumesByItself(limit: Pick<TurnUsageLimit, 'window' | 'resetsAt'>, now: number): boolean {
