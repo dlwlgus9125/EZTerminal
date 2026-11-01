@@ -81,16 +81,13 @@ export async function submitConversationMessage(access: ConversationCommandAcces
   /** The host accepted it (before the escrow is settled), with the command id it was sent as. */
   readonly onAccepted?: (commandId: string) => void;
 }): Promise<StructuredAgentUiResult> {
-  const { recovery } = input;
-  if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
-  if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
-  return exclusively(recovery, async () => (await submitNow(access, { ...input, recovery })).result);
+  return submitPastRaces(access, input);
 }
 
 /**
- * Every streamed row moves the one revision a command must match, so a message sent while a turn runs loses that race as
- * a matter of course. A lost race recorded nothing and reached no provider: each attempt is safe, with a fresh command
- * id, because a repeated key would replay the stored refusal.
+ * Every streamed row moves the one revision a command must match, and so does what the host writes as a turn ends, so a
+ * message loses that race as a matter of course. A lost race recorded nothing and reached no provider: each attempt is
+ * safe, with a fresh command id, because a repeated key would replay the stored refusal.
  */
 const RACE_ATTEMPTS = 8;
 const RACE_PAUSE_MS = 50;

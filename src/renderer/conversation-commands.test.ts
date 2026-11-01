@@ -148,6 +148,17 @@ describe('steerConversationMessage', () => {
     return { access, chat, recovery, sent, onAccepted, send, queue, view };
   }
 
+  it('sends a plain message past a lost race too: a row landing as the person presses is no reason to show them a revision', async () => {
+    const run = await steering([(command) => refused(command, 'revision-conflict'), applied]);
+    await expect(submitConversationMessage(run.access, { sessionId: scope.sessionId, recovery: run.recovery, type: 'agent.submit', prompt: 'Go on.', onAccepted: run.onAccepted })).resolves.toEqual({ ok: true });
+    expect(run.sent).toHaveLength(2);
+    expect(run.sent[0]?.commandId).not.toBe(run.sent[1]?.commandId);
+    expect(run.sent[1]).toMatchObject({ type: 'agent.submit', payload: { prompt: 'Go on.' } });
+    expect(run.onAccepted).toHaveBeenCalledExactlyOnceWith(run.sent[1]!.commandId);
+    expect(run.recovery.getSnapshot().pendingSubmit).toBeUndefined();
+    run.view();
+  });
+
   it('queues what cannot go in as a message that says so, past a lost race', async () => {
     const run = await steering([(command) => refused(command, 'revision-conflict'), applied]);
     await expect(run.queue()).resolves.toEqual({ ok: true });
