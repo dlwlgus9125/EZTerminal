@@ -3252,6 +3252,10 @@ export class DaemonAgentRuntime {
         if (event.recoverable && turn && this.isInterruptPending(turn)) {
           return { mutations: transcript };
         }
+        // Nothing runs to doubt: no turn could ever clear `delivery-uncertain`, and only a person's send would get past it.
+        if (event.recoverable && (!turn || !ACTIVE_TURN_STATES.has(turn.state) || TERMINAL_SESSION_STATES.has(session.state))) {
+          return { mutations: transcript };
+        }
         const now = this.isoNow();
         if (!event.recoverable) {
           terminalTurnIds = snapshot.turns.filter((candidate) => (

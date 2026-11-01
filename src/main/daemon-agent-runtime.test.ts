@@ -5005,3 +5005,71 @@ describe('settings proposals (대화로 설정 바꾸기)', () => {
     }
   });
 });
+
+// Long-run §2: a stop with nothing running to doubt must not leave the conversation stuck.
+describe('a recoverable provider error with no running turn', () => {
+  const error: AgentProviderEvent = { kind: 'provider-error', sessionId: 'agent-1', code: 'CLAUDE_RATE_LIMITED', message: 'A side call was refused.', recoverable: true };
+  async function startedAgent(h: Awaited<ReturnType<typeof harness>>) {
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hello' });
+    await h.runtime.whenIdle();
+    return h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+  }
+  const stateOf = (h: Awaited<ReturnType<typeof harness>>) => {
+    const snapshot = h.router.getSnapshot();
+    return { agent: snapshot.agents.find((entry) => entry.sessionId === 'agent-1')?.state, session: snapshot.sessions.find((entry) => entry.id === 'agent-1')?.state };
+  };
+  const errorRows = (h: Awaited<ReturnType<typeof harness>>) => h.router.readTranscript('agent-1').filter((item) => item.kind === 'error' && item.text === 'A side call was refused.');
+
+  it('adds its row and leaves an idle conversation idle, so the next message still goes out', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'idle' });
+      await h.runtime.whenIdle();
+      const before = stateOf(h);
+      expect(before).toEqual({ agent: 'idle', session: 'idle' });
+
+      h.codex.emit(error);
+      await h.runtime.whenIdle();
+      expect(stateOf(h)).toEqual(before);
+      expect(errorRows(h)).toHaveLength(1);
+      expect(errorRows(h)[0]?.turnId).toBeUndefined();
+
+      vi.mocked(h.codex.submit).mockClear();
+      expect((await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Carry on.' })).ok).toBe(true);
+      await h.runtime.whenIdle();
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('adds its row and writes nothing over a failed conversation', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'failed', errorCode: 'CLAUDE_PROVIDER_ERROR' });
+      await h.runtime.whenIdle();
+      const before = stateOf(h);
+      expect(before).toEqual({ agent: 'error', session: 'failed' });
+
+      h.codex.emit(error);
+      await h.runtime.whenIdle();
+      expect(stateOf(h)).toEqual(before);
+      expect(errorRows(h)).toHaveLength(1);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('still doubts a turn that is running', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit(error);
+      await h.runtime.whenIdle();
+      expect(stateOf(h)).toEqual({ agent: 'delivery-uncertain', session: 'delivery-uncertain' });
+      expect(h.router.getSnapshot().turns.find((entry) => entry.id === turn.id)).toMatchObject({ state: 'delivery-uncertain', errorCode: 'CLAUDE_RATE_LIMITED' });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
