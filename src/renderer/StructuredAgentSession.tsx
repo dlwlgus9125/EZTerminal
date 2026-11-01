@@ -1620,6 +1620,10 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
   // onStop is offered only while the turn can be stopped, including while it waits for approval.
   const showStop = !hasDraft && onStop !== undefined;
+  const hintText = disabledReason || sendDisabledReason ? undefined
+    : statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined);
+  // 시안: what Enter does and what sending costs are part of what the box is, so a screen reader hears them with it.
+  const hintId = `${composerId}-hint`;
   const sendKind = steerOnEnter ? 'steer' : busy ? 'queue' : 'send';
   const sendLabel = steerOnEnter ? steerCopy.add : busy ? copy.queue : copy.send;
   const interruptButton = busy && onInterruptAndSend && hasDraft ? (
@@ -1686,6 +1690,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       }}
     >
       {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={steerToBox}
+        {...(steer.fellBack ? { fellBack: steer.fellBack } : {})}
         {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: steer.onToQueue } : {})} />}
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
@@ -1789,7 +1794,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
                 ? (ko ? '무엇이든 요청하세요 · @ 파일 참조 · / 명령' : 'Ask anything · @ to mention files · / for commands')
                 : copy.messagePlaceholder}
             disabled={disabled}
-            aria-describedby={[disabledReason ? disabledReasonId : '', ghost ? suggestionId : ''].filter(Boolean).join(' ') || undefined}
+            aria-describedby={[disabledReason ? disabledReasonId : '', ghost ? suggestionId : '', steer && hintText ? hintId : ''].filter(Boolean).join(' ') || undefined}
             onKeyDown={keyDown}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData.files);
@@ -1916,9 +1921,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         </p>
       )}
       {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
-      {!disabledReason && !sendDisabledReason && (statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined)) && (
-        <p className="structured-agent-composer__hint" data-testid="structured-agent-composer-hint">
-          {statusHint ?? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}`}
+      {hintText && (
+        <p {...(steer ? { id: hintId } : {})} className="structured-agent-composer__hint" data-testid="structured-agent-composer-hint">
+          {hintText}
         </p>
       )}
       {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}

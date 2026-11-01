@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import type { SteeredMessage } from '../../../shared/long-run';
+import type { SteeredMessage, SteerFallback } from '../../../shared/long-run';
 import { Button } from '../../ui/Button';
 import { Glyph, Led } from '../../ui/Glyph';
 import { useChatCopy, type ChatCopy } from '../copy';
@@ -67,9 +67,11 @@ function SteerText({ text }: { readonly text: string }): JSX.Element {
  * button here (neither AI drops a repeat for us): it can go to the queue or back to the box. It never takes the box or a
  * decision off the screen: its list is capped to a share of the panel and scrolls inside, and a short panel folds it.
  */
-export function SteerTray({ messages, codex, decisionOpen = false, onFocusDecision, onToQueue, onToBox }: {
+export function SteerTray({ messages, codex, fellBack, decisionOpen = false, onFocusDecision, onToQueue, onToBox }: {
   readonly messages: readonly SteeredMessage[];
   readonly codex: boolean;
+  /** Queued turns that were meant for the running one: each is announced once, with its reason. */
+  readonly fellBack?: ReadonlyMap<string, SteerFallback>;
   /** A decision waits above the box: on a short panel it has the room, so this stays one line. */
   readonly decisionOpen?: boolean;
   readonly onFocusDecision?: () => boolean;
@@ -84,6 +86,13 @@ export function SteerTray({ messages, codex, decisionOpen = false, onFocusDecisi
     known.current = new Map(messages.map((message) => [message.id, message.state]));
     if (changed) setAnnounced(changed.state === 'landed' ? copy.announceLanded : copy.announceHeld(steerStateText(changed, copy, codex)));
   }, [codex, copy, messages]);
+  const told = useRef(new Set(fellBack?.keys()));
+  useEffect(() => {
+    const fresh = [...(fellBack ?? [])].find(([turnId]) => !told.current.has(turnId));
+    if (!fresh) return;
+    told.current.add(fresh[0]);
+    setAnnounced(copy.fellBack[fresh[1]]);
+  }, [copy, fellBack]);
   const shown = messages.filter((message) => message.state !== 'landed');
   const [section, setSection] = useState<HTMLElement | null>(null);
   const panelHeight = usePanelHeight(section);

@@ -168,6 +168,32 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 이 턴에서 다시 씁니다');
   });
 
+  it('describes the box by what Enter does and what sending costs, the sentence shown under it', () => {
+    box({ steer: steer(), statusHint: 'Enter 끼워넣기 · 쓰던 글은 버리고 다시 씁니다' });
+    const ids = input().getAttribute('aria-describedby')?.split(' ') ?? [];
+    expect(ids.length).toBe(1);
+    const described = container.querySelector(`[id="${ids[0]!}"]`);
+    expect(described?.textContent).toBe('Enter 끼워넣기 · 쓰던 글은 버리고 다시 씁니다');
+    expect(described).toBe(byId('structured-agent-composer-hint'));
+  });
+
+  it('adds no description to a box without the long-run prop', () => {
+    box({ statusHint: '지금 바꾼 설정은 다음 요청부터 적용됩니다.' });
+    expect(input().hasAttribute('aria-describedby')).toBe(false);
+    expect(byId('structured-agent-composer-hint')?.hasAttribute('id')).toBe(false);
+  });
+
+  it('announces a move to the queue once, with its reason', () => {
+    const running = steer();
+    box({ steer: running });
+    expect(byId('chat-steer-announce')?.textContent).toBe('');
+    box({ steer: { ...running, fellBack: new Map([['turn-a', 'review-turn']]) } });
+    expect(byId('chat-steer-announce')?.textContent).toBe('검토 턴에는 끼워넣을 수 없어 대기열에 넣었습니다.');
+    const once = byId('chat-steer-announce')?.textContent;
+    box({ steer: { ...running, fellBack: new Map([['turn-a', 'review-turn']]) } });
+    expect(byId('chat-steer-announce')?.textContent).toBe(once);
+  });
+
   it('says a message was delivered only when the host says it landed, never because it left the list', () => {
     const held = { id: 'm', text: '그 파일만', state: 'on-its-way' as const, sentAt: '2026-11-01T05:50:00.000Z', behind: 'tool' as const };
     const running = steer({ messages: [held] });

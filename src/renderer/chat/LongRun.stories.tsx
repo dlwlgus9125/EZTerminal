@@ -288,11 +288,14 @@ function phone(id: string, make: (lang: LongLanguage) => LongRunFixture, width: 
 // ── A. An instruction into a running turn ──────────────────────────────────────────────────────────────
 /** A long tool runs. The empty box says what Enter does now (D1), and that it does not stop the turn. */
 export const BusyClaude: Story = chat('busy-claude', (lang) => steerStory(lang, 'busy'), {}, async ({ canvasElement }) => {
-  await expect(await composer(canvasElement)).toHaveAttribute('placeholder', '실행 중에 보낼 지시를 입력하세요 (Esc로 중단)');
+  const input = await composer(canvasElement);
+  await expect(input).toHaveAttribute('placeholder', '실행 중에 보낼 지시를 입력하세요 (Esc로 중단)');
+  await expect(input).toHaveAccessibleDescription(expect.stringContaining('Enter 끼워넣기') as unknown as string);
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('Enter 끼워넣기 · 도구가 끝나면 이 턴에, 글을 쓰는 중이면 그 글이 끝난 뒤 새 턴으로 들어갑니다 · Esc 멈춤');
 });
 /** Codex: text being written is dropped and redone, tools are not cut; the hint says so rather than promising otherwise. */
 export const BusyCodex: Story = chat('busy-codex', (lang) => steerStory(lang, 'busy'), { provider: 'codex' }, async ({ canvasElement }) => {
+  await expect(await composer(canvasElement)).toHaveAccessibleDescription(expect.stringContaining('글을 쓰는 중이면 버리고 다시 쓰고') as unknown as string);
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('이 턴에 들어갑니다. 글을 쓰는 중이면 버리고 다시 쓰고, 도구는 끊지 않습니다');
 });
 /** With a draft: 끊고 보내기 and the round button are two different things, and each says which. */
@@ -481,6 +484,7 @@ export const LimitWaiting: Story = chat('limit-waiting', (lang) => limitStory(la
   await expect(within(card).getByRole('button', { name: '지금 시도. 거절되면 거절된 턴이 대화에 그대로 남습니다.' })).toBeVisible();
   await expect(header(canvasElement)).toHaveTextContent(`한도 대기 · ${clockOf(RESUME_AT)}`);
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
+  await expect(await composer(canvasElement)).toHaveAccessibleDescription(expect.stringContaining('해제 예정 시각 전에 보낸 메시지는 거절되어') as unknown as string);
   await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('해제 예정 시각 전에 보낸 메시지는 거절되어 대화에 남고');
 });
 export const LimitWaitingCodex: Story = chat('limit-waiting-codex', (lang) => limitStory(lang, 'waiting', { provider: 'codex' }), { provider: 'codex' }, showCard);
@@ -867,6 +871,7 @@ export const PhoneBusyDraft360: Story = phone('phone-busy-360', (lang) => steerS
   const hint = await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]');
   await expect(hint).toHaveTextContent('보내기로 끼워넣기');
   await expect(hint).not.toHaveTextContent('Enter');
+  await expect(input).toHaveAccessibleDescription(expect.stringContaining('보내기로 끼워넣기') as unknown as string);
   const send = await findIn(canvasElement, '[data-testid="structured-agent-send"]');
   await thumbTargets([send, await findIn(canvasElement, '[data-testid="structured-agent-interrupt-send"]'), await findIn(canvasElement, '[data-testid="structured-agent-stop"]')]);
   // Its own row: the settings chips keep their words.
