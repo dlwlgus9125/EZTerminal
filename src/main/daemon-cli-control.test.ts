@@ -145,6 +145,22 @@ describe('DaemonCliControl', () => {
     expect(scoped).not.toHaveProperty('nextPromptSuggestions');
   });
 
+  it('keeps long-run state out of a project-scoped snapshot: a steer is a person\'s words, a limit is their conversation', async () => {
+    const { control, setSnapshot } = fixture();
+    setSnapshot({
+      ...snapshot(),
+      usageLimits: { 'session-elsewhere': { stopId: 'stop-elsewhere', turnId: 'turn-1', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z' } },
+      steers: { 'session-elsewhere': [{ id: 'steer-elsewhere', text: 'The other project says this.', state: 'on-its-way', sentAt: '2026-11-01T05:58:00.000Z' }] },
+      longRunSupport: { 'provider-elsewhere': true },
+    });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped).not.toHaveProperty('usageLimits');
+    expect(scoped).not.toHaveProperty('steers');
+    expect(scoped).not.toHaveProperty('longRunSupport');
+    const serialized = JSON.stringify(scoped);
+    for (const secret of ['The other project says this.', 'stop-elsewhere', 'steer-elsewhere', 'provider-elsewhere']) expect(serialized).not.toContain(secret);
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

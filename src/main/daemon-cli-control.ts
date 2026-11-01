@@ -389,6 +389,10 @@ export class DaemonCliControl {
     delete (rest as { sideQuestionSessionIds?: unknown }).sideQuestionSessionIds;
     delete (rest as { pendingAgentSettings?: unknown }).pendingAgentSettings;
     delete (rest as { nextPromptSuggestions?: unknown }).nextPromptSuggestions;
+    // A steer holds a person's words and a limit is their conversation, in any project: nothing a scoped agent reads.
+    delete (rest as { usageLimits?: unknown }).usageLimits;
+    delete (rest as { steers?: unknown }).steers;
+    delete (rest as { longRunSupport?: unknown }).longRunSupport;
     const scopedUsage = agentUsage
       ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
       : {};

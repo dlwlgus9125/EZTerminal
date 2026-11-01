@@ -13,11 +13,14 @@ export interface MobileOfflineChatCache {
 }
 const MAX_BYTES=8*1024*1024;
 const queues=new Map<string,Promise<void>>();
-/** Usage, live /btw availability and next-message guesses are shown only while connected: the phone keeps no copy. */
-const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds','nextPromptSuggestions']);
-const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined && snapshot.providerUsage === undefined && snapshot.sideQuestionSessionIds === undefined && snapshot.nextPromptSuggestions === undefined
-  ? snapshot
-  : Object.fromEntries(Object.entries(snapshot).filter(([key]) => !USAGE_KEYS.has(key))) as unknown as DaemonSnapshot;
+/**
+ * Usage, live /btw availability, next-message guesses and long-run state are shown only while connected: the phone
+ * keeps no copy. A steer holds the person's words, and the transcript's rows already tell what a limit did.
+ */
+const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds','nextPromptSuggestions','usageLimits','steers','longRunSupport']);
+const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => Object.keys(snapshot).some(key => USAGE_KEYS.has(key))
+  ? Object.fromEntries(Object.entries(snapshot).filter(([key]) => !USAGE_KEYS.has(key))) as unknown as DaemonSnapshot
+  : snapshot;
 const keyFor=(authority:string):string => {
   if (!/^sha256:[a-f0-9]{64}$/u.test(authority)) throw new Error('Invalid offline cache authority.');
   return `ezterminal-offline-chat-v1:${authority.slice(7)}`;
