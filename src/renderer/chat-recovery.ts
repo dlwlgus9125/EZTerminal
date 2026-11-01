@@ -1,6 +1,6 @@
 import type { ChatComposerDraft } from '../shared/chat-message';
 import {
-  ChatStateResultSchema, type ChatPendingCommand, type ChatSessionState, type ChatStateResult,
+  ChatStateResultSchema, pendingContext, pendingSubmitMode, type ChatPendingCommand, type ChatSessionState, type ChatStateResult,
   type ChatStateScope, type ChatStateSnapshot, type ChatStateWrite,
 } from '../shared/chat-state';
 
@@ -91,7 +91,7 @@ export class ChatRecoveryController {
     return this.enqueue(async () => {
       if (this.view.status !== 'ready') return { ok: false, message: this.view.message ?? 'Secure draft recovery is still loading.' };
       if (this.view.pendingSubmit) return { ok: false, message: 'Check the previous message delivery before sending again.', deliveryUncertain: true };
-      this.set({ ...this.view, pendingSubmit: { command, mode: command.type === 'agent.submit' ? 'send' : 'interrupt', recordedAt: new Date().toISOString() } });
+      this.set({ ...this.view, pendingSubmit: { command, mode: pendingSubmitMode(command), recordedAt: new Date().toISOString() } });
       this.sentComposition = { commandId: command.commandId, draft: composition ?? this.view.draft };
       const result = await this.persist();
       if (!result.ok) {
@@ -108,7 +108,8 @@ export class ChatRecoveryController {
       const pending = this.view.pendingSubmit;
       if (!pending || pending.command.commandId !== commandId) return { ok: false, message: 'The pending submission changed. Reload recovery data before continuing.', deliveryUncertain: true };
       if (this.view.status !== 'ready') return { ok: false, message: this.view.message ?? unavailable, deliveryUncertain: true };
-      const { prompt, context } = pending.command.payload;
+      const { prompt } = pending.command.payload;
+      const context = pendingContext(pending.command);
       const draft = this.view.draft;
       // Sent from here: only the exact composition sent is cleared. Settled after a restart: the stored draft
       // is compared with the message (the composition at send time is not kept across restarts).

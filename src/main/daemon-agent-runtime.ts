@@ -9,6 +9,7 @@ import {
   DAEMON_HARD_LIMITS,
   REVIEWER_SESSION_PREFIX,
   type DaemonAgent,
+  type DaemonApproval,
   type DaemonCommand,
   type DaemonCommandError,
   createDaemonCommand,
@@ -23,6 +24,7 @@ import {
 } from '../shared/daemon-protocol';
 import type {
   AgentProviderAdapter,
+  ProviderSteerResult,
   AgentProviderEvent,
   ProviderSessionContext,
   ProviderSessionHandle,
@@ -59,8 +61,8 @@ import type { HistoryResumeResult } from '../shared/conversation-history';
 import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 import { readTaskCard, taskStatusRowItem, type DaemonWrapUpHost } from './turn-wrap-up-coordinator';
-import type { DaemonLongRunHost } from './long-run-coordinator';
-import { LONG_RUN_PRINCIPAL, USAGE_LIMIT_ERROR } from '../shared/long-run';
+import { steerRowItem, type DaemonLongRunHost, type SteerRecord } from './long-run-coordinator';
+import { LONG_RUN_PRINCIPAL, USAGE_LIMIT_ERROR, type SteerFallback } from '../shared/long-run';
 import { suggestedTaskChildSessionId } from '../shared/turn-wrap-up';
 
 type AgentCommandType = Extract<DaemonCommandType,
@@ -69,6 +71,8 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.submit'
   | 'agent.interrupt-and-submit'
   | 'agent.interrupt'
+  | 'agent.steer'
+  | 'agent.steer-settle'
   | 'agent.queue'
   | 'agent.set-settings'
   | 'agent.cancel'
@@ -220,6 +224,12 @@ const ACTIVE_TURN_STATES = new Set<DaemonTurn['state']>([
   'blocked',
   'delivery-uncertain',
 ]);
+
+/** An agent that takes no new message. */
+const CLOSED_AGENT_STATES = new Set<DaemonAgent['state']>(['archived', 'done', 'interrupted', 'error']);
+
+/** A turn a message can go into. One in doubt, or being stopped, may not take it. */
+const STEERABLE_TURN_STATES = new Set<DaemonTurn['state']>(['submitting', 'working', 'blocked']);
 
 const TERMINAL_TURN_STATES = new Set<DaemonTurn['state']>([
   'completed',
@@ -471,6 +481,8 @@ export class DaemonAgentRuntime {
         this.runCommand(() => this.submit(command, context, true))
       ),
       'agent.interrupt': (command, context) => this.runCommand(() => this.interrupt(command, context)),
+      'agent.steer': (command, context) => this.runCommand(() => this.steer(command, context)),
+      'agent.steer-settle': (command, context) => this.runCommand(() => this.settleSteer(command, context)),
       'agent.queue': (command, context) => this.runCommand(() => this.manageQueue(command, context)),
       'agent.set-settings': (command, context) => this.runCommand(() => this.setSettings(command, context)),
       'agent.cancel': (command, context) => this.runCommand(() => this.cancel(command, context)),
@@ -1123,6 +1135,8 @@ export class DaemonAgentRuntime {
     if (longRunResume && (command.principal.kind !== 'cli' || command.principal.id !== LONG_RUN_PRINCIPAL)) {
       return commandError('invalid-command', 'Only the host resumes a conversation a limit stopped.');
     }
+    // Attachments, replies and commands were not measured in a running turn: the person's client says why this one queues.
+    const notSteered = command.type === 'agent.submit' && command.payload.notSteered === true && (command.principal.kind === 'desktop' || command.principal.kind === 'android');
     return this.queueTurn(command, context, {
       sessionId: command.payload.sessionId,
       prompt: command.payload.prompt,
@@ -1130,8 +1144,175 @@ export class DaemonAgentRuntime {
       ...(command.type === 'agent.submit' && command.payload.reportOf ? { reportOf: command.payload.reportOf } : {}),
       ...(wrapUpTask ? { payload: { v: 1, type: 'task-suggestion-send', ...wrapUpTask } } : {}),
       ...(longRunResume ? { payload: { v: 1, type: 'app-sent', ...longRunResume } } : {}),
+      ...(notSteered ? { payload: { v: 1, type: 'steer-queued', reason: 'not-plain' } } : {}),
       interruptFirst,
     });
+  }
+
+  /**
+   * A person's plain text for the running turn. It has every check a message has, because it may yet be one: nothing
+   * here commits a turn or a row. The provider hears of it only after the commit, and a steer that cannot go queues.
+   */
+  private async steer(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'agent.steer') return commandError('invalid-command', 'Unexpected steer command.');
+    if (command.principal.kind !== 'desktop' && command.principal.kind !== 'android') return commandError('invalid-command', 'Only a person writes into a running turn.');
+    const { sessionId, turnId, prompt } = command.payload;
+    if (sessionId.startsWith(REVIEWER_SESSION_PREFIX)) {
+      return commandError('invalid-state', 'This is a read-only review conversation. Fixes go to the conversation the review is for.');
+    }
+    if (this.options.preparedSessionSettings?.(sessionId)) {
+      return commandError('invalid-state', 'This conversation belongs to a frozen execution attempt. Use a new task or the execution retry controls for additional instructions.');
+    }
+    const snapshot = context.snapshot;
+    const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    const turn = agent?.currentTurnId === turnId ? snapshot.turns.find((entry) => entry.id === turnId) : undefined;
+    const provider = agent ? this.options.providers.enabledAdapter(snapshot, agent.providerId) : undefined;
+    const adapter = provider?.ok && provider.value.steer ? provider.value : undefined;
+    const plain = !session || !await this.hasStageContext(session);
+    const going = plain && turn && STEERABLE_TURN_STATES.has(turn.state) && agent?.providerSessionId && adapter && this.options.longRun?.sessionContext(sessionId);
+    const queued = await this.queueTurn(command, context, { sessionId, prompt, interruptFirst: false, payload: { v: 1, type: 'steer-queued', reason: plain ? 'turn-ended' : 'not-plain' } });
+    if (!queued.ok || !going) return queued;
+    const steer: SteerRecord = { id: command.commandId, sessionId, turnId, providerId: agent.providerId, text: prompt, state: 'on-its-way', sentAt: this.isoNow() };
+    const providerSessionId = agent.providerSessionId!;
+    return {
+      ok: true,
+      commit: { mutations: this.expiredSettingsProposals(snapshot, sessionId) },
+      afterCommit: () => {
+        const recorded = this.options.longRun?.steerSent(steer);
+        this.runBackground(`steer ${steer.id}`, async () => {
+          await recorded;
+          await this.deliverSteer(steer, adapter, providerSessionId);
+        });
+      },
+    };
+  }
+
+  /** A stage conversation's messages carry its saved references: not the plain text that was measured. */
+  private async hasStageContext(session: DaemonSession): Promise<boolean> {
+    try {
+      return Boolean(await this.options.conversationContext?.(session.projectId, session.id));
+    } catch {
+      return true;
+    }
+  }
+
+  private expiredSettingsProposals(snapshot: DaemonSnapshot, sessionId: string): DaemonStoreMutation[] {
+    const now = this.isoNow();
+    return snapshot.approvals
+      .filter((approval) => approval.sessionId === sessionId && approval.state === 'pending' && isSettingsProposalRequest(approval.providerRequestId))
+      .map((approval) => ({ kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, 'expired', now) }));
+  }
+
+  /** One provider call, and whatever it says stays said: nothing here repeats it. */
+  private async deliverSteer(steer: SteerRecord, adapter: AgentProviderAdapter, providerSessionId: string): Promise<void> {
+    const longRun = this.options.longRun!;
+    let result: ProviderSteerResult;
+    try {
+      result = await adapter.steer!({
+        sessionId: steer.sessionId,
+        providerSessionId,
+        turnId: steer.turnId,
+        newTurnId: stableId('turn', steer.id),
+        commandId: steer.id,
+        prompt: steer.text,
+      }, this.lifecycleAbortController.signal);
+    } catch (error) {
+      this.report(`steer ${steer.id}`, error);
+      longRun.steerMoved(steer.id, { state: 'unconfirmed' });
+      return;
+    }
+    switch (result.outcome) {
+      case 'accepted':
+        longRun.steerMoved(steer.id, { state: 'on-its-way', behind: result.behind });
+        return;
+      case 'failed':
+        longRun.steerMoved(steer.id, { state: 'failed', failure: 'disconnected' });
+        return;
+      case 'unconfirmed':
+        longRun.steerMoved(steer.id, { state: 'unconfirmed' });
+        return;
+      case 'refused':
+        await this.queueRefusedSteer(steer, result.reason);
+    }
+  }
+
+  /** It never reached the turn, so it is a queued message after all, under its own command. */
+  private async queueRefusedSteer(steer: SteerRecord, reason: Exclude<SteerFallback, 'not-plain'>): Promise<void> {
+    const longRun = this.options.longRun!;
+    let retire: (() => void) | undefined;
+    await this.transition((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === steer.sessionId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === steer.sessionId);
+      if (!session || !agent || TERMINAL_SESSION_STATES.has(session.state) || CLOSED_AGENT_STATES.has(agent.state)) return undefined;
+      const { proposals, mutations } = this.queuedTurn(snapshot, session, agent, {
+        commandId: steer.id,
+        enqueueSequence: snapshot.revision + 1,
+        byPerson: true,
+        prompt: steer.text,
+        payload: { v: 1, type: 'steer-queued', reason },
+        interruptFirst: false,
+      });
+      retire = () => this.retireProposals(agent, proposals);
+      return { mutations };
+    });
+    if (retire) {
+      retire();
+      longRun.steerGone(steer.id);
+    } else {
+      longRun.steerMoved(steer.id, { state: 'failed', failure: 'refused' });
+    }
+    this.queuePump();
+  }
+
+  /** A message that did not land, as the person decides. It is sent again only by being queued as a new message. */
+  private async settleSteer(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'agent.steer-settle') return commandError('invalid-command', 'Unexpected steer command.');
+    if (command.principal.kind !== 'desktop' && command.principal.kind !== 'android') return commandError('invalid-command', 'Only a person settles a message.');
+    const { sessionId, steerId, action } = command.payload;
+    const steer = this.options.longRun?.steerOf(steerId);
+    if (!steer || steer.sessionId !== sessionId) return commandError('not-found', 'This message is no longer waiting.');
+    if (steer.state !== 'failed' && steer.state !== 'unconfirmed') return commandError('invalid-state', 'This message is still on its way.');
+    if (action === 'box') return { ok: true, afterCommit: () => this.options.longRun?.steerGone(steerId) };
+    if (steer.state !== 'failed') return commandError('invalid-state', 'This message may have been read, so it does not go to the queue.');
+    const queued = await this.queueTurn(command, context, { sessionId, prompt: steer.text, interruptFirst: false });
+    return queued.ok ? { ...queued, afterCommit: () => { this.options.longRun?.steerGone(steerId); queued.afterCommit?.(); } } : queued;
+  }
+
+  /** What landed has its row at this sequence. A landing with no turn open is the next turn, which only this creates. */
+  private async landSteer(providerId: string, event: Extract<AgentProviderEvent, { kind: 'steer-landed' }>): Promise<void> {
+    const command = this.options.findCommand?.(event.commandId);
+    if (command?.type !== 'agent.steer' || command.payload.sessionId !== event.sessionId) return;
+    let landed = false;
+    await this.transition((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+      if (!session || !agent || agent.providerId !== providerId || session.state === 'archived') return undefined;
+      const known = snapshot.turns.some((entry) => entry.id === event.turnId && entry.sessionId === event.sessionId);
+      const startsTurn = event.newTurn === true && !known && !TERMINAL_SESSION_STATES.has(session.state);
+      const turnId = known || startsTurn ? event.turnId : command.payload.turnId;
+      const current = agent.currentTurnId ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId) : undefined;
+      const runs = startsTurn && !(current && ACTIVE_TURN_STATES.has(current.state));
+      const now = this.isoNow();
+      landed = true;
+      return { mutations: [
+        ...(startsTurn ? [{ kind: 'turn.upsert' as const, value: {
+          id: event.turnId, sessionId: event.sessionId, commandId: event.commandId, enqueueSequence: snapshot.revision + 1, state: 'working' as const, startedAt: now,
+        } }] : []),
+        ...(runs ? [
+          { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'working', currentTurnId: event.turnId }) },
+          { kind: 'session.upsert' as const, value: sessionInput(session, 'running') },
+        ] : []),
+        ...this.transcriptMutations([{
+          ...steerRowItem({ id: event.commandId, sessionId: event.sessionId, text: command.payload.prompt }, turnId, {
+            ...(event.rewritten ? { rewritten: true } : {}),
+            ...(event.newTurn ? { newTurn: true } : {}),
+          }),
+          createdAt: now,
+        }]),
+      ] };
+    });
+    if (landed) this.options.longRun?.steerGone(event.commandId);
   }
 
   /**
@@ -1197,7 +1378,7 @@ export class DaemonAgentRuntime {
         return commandError('invalid-command', 'The quoted message is unavailable or does not match this conversation.');
       }
     }
-    if (['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
+    if (CLOSED_AGENT_STATES.has(agent.state)) {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
     }
     let reportPayload: DaemonTranscriptItemInput['payload'];
@@ -1216,25 +1397,77 @@ export class DaemonAgentRuntime {
     }
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
+    const byPerson = command.principal.kind === 'desktop' || command.principal.kind === 'android';
+    const { turnId, currentTurn, hasActiveCurrentTurn, proposals, mutations } = this.queuedTurn(snapshot, session, agent, {
+      commandId: command.commandId,
+      enqueueSequence: command.expectedRevision + 1,
+      byPerson,
+      prompt: input.prompt,
+      context: messageContext,
+      payload: reportPayload ?? input.payload,
+      interruptFirst,
+    });
+    return {
+      ok: true,
+      commit: { mutations },
+      afterCommit: () => {
+        // Before the pump: its turn goes past a stop's hold.
+        if (byPerson) this.options.longRun?.personSent(session.id, turnId);
+        this.retireProposals(agent, proposals);
+        if (interruptFirst && currentTurn && hasActiveCurrentTurn && agent.providerSessionId) {
+          this.runBackground(
+            `interrupt Agent ${session.id}`,
+            () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
+          );
+        } else {
+          this.queuePump();
+        }
+      },
+    };
+  }
+
+  private retireProposals(agent: DaemonAgent, proposals: readonly DaemonApproval[]): void {
+    for (const approval of proposals) {
+      if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, async () => { await this.resolveProviderApproval(
+        agent.providerId, agent.sessionId, agent.providerSessionId!, approval.providerRequestId, 'deny'); });
+    }
+  }
+
+  /** The turn, the row and the count of a message queued in a conversation; what is out of date once it is. */
+  private queuedTurn(snapshot: DaemonSnapshot, session: DaemonSession, agent: DaemonAgent, input: {
+    readonly commandId: string;
+    readonly enqueueSequence: number;
+    readonly byPerson: boolean;
+    readonly prompt: string;
+    readonly context?: ChatMessageContext;
+    readonly payload?: DaemonTranscriptItemInput['payload'];
+    readonly interruptFirst: boolean;
+  }): {
+    readonly turnId: string;
+    readonly currentTurn: DaemonTurn | undefined;
+    readonly hasActiveCurrentTurn: boolean;
+    readonly proposals: readonly DaemonApproval[];
+    readonly mutations: DaemonStoreMutation[];
+  } {
+    const { interruptFirst, byPerson, context: messageContext } = input;
     const currentTurn = agent.currentTurnId
       ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
       : undefined;
     const hasActiveCurrentTurn = Boolean(currentTurn && ACTIVE_TURN_STATES.has(currentTurn.state));
-    const turnId = stableId('turn', command.commandId);
+    const turnId = stableId('turn', input.commandId);
     const now = this.isoNow();
     const proposals = snapshot.approvals.filter((approval) => (
       approval.sessionId === session.id && approval.state === 'pending' && approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX)
     ));
     // A settings proposal waits until the person writes again (then it is out of date), not for automations.
-    const byPerson = command.principal.kind === 'desktop' || command.principal.kind === 'android';
     const settingsProposals = byPerson ? snapshot.approvals.filter((approval) => (
       approval.sessionId === session.id && approval.state === 'pending' && isSettingsProposalRequest(approval.providerRequestId)
     )) : [];
     const mutations: DaemonStoreMutation[] = [{ kind: 'turn.upsert', value: {
       id: turnId,
       sessionId: session.id,
-      commandId: command.commandId,
-      enqueueSequence: command.expectedRevision + 1,
+      commandId: input.commandId,
+      enqueueSequence: input.enqueueSequence,
       state: 'queued',
     } }, ...[...proposals, ...settingsProposals].map((approval): DaemonStoreMutation => ({
       kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, 'expired', now),
@@ -1258,35 +1491,16 @@ export class DaemonAgentRuntime {
         ...this.userTranscript(
           session.id,
           turnId,
-          command.commandId,
+          input.commandId,
           input.prompt,
           now,
           messageContext,
           messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
         ),
-        ...(reportPayload ?? input.payload ? { payload: reportPayload ?? input.payload } : {}),
+        ...(input.payload ? { payload: input.payload } : {}),
       }]),
     );
-    return {
-      ok: true,
-      commit: { mutations },
-      afterCommit: () => {
-        // Before the pump: its turn goes past a stop's hold.
-        if (byPerson) this.options.longRun?.personSent(session.id, turnId);
-        for (const approval of proposals) {
-          if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, async () => { await this.resolveProviderApproval(
-            agent.providerId, session.id, agent.providerSessionId!, approval.providerRequestId, 'deny'); });
-        }
-        if (interruptFirst && currentTurn && hasActiveCurrentTurn && agent.providerSessionId) {
-          this.runBackground(
-            `interrupt Agent ${session.id}`,
-            () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
-          );
-        } else {
-          this.queuePump();
-        }
-      },
-    };
+    return { turnId, currentTurn, hasActiveCurrentTurn, proposals, mutations };
   }
 
   /** A button on a limit card: a person's, on either device. The coordinator owns what it does. */
@@ -3184,6 +3398,14 @@ export class DaemonAgentRuntime {
       await this.handleNativeSubagent(providerId, event);
       return;
     }
+    if (event.kind === 'steer-landed') {
+      await this.landSteer(providerId, event);
+      return;
+    }
+    if (event.kind === 'steer-unconfirmed') {
+      this.options.longRun?.steerMoved(event.commandId, { state: 'unconfirmed' });
+      return;
+    }
     if (event.kind === 'provider-error') {
       if (!event.sessionId) {
         this.report(`${providerId} provider error: ${event.code}`, new Error(event.message));
@@ -3949,7 +4171,7 @@ export class DaemonAgentRuntime {
       return command.payload.initialPrompt;
     }
     if (
-      (command?.type === 'agent.submit' || command?.type === 'agent.interrupt-and-submit')
+      (command?.type === 'agent.submit' || command?.type === 'agent.interrupt-and-submit' || command?.type === 'agent.steer')
       && command.payload.sessionId === turn.sessionId
     ) return command.payload.prompt;
 

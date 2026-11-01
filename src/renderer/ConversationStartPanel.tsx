@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { glyphIcon } from './ui/Glyph';
 import type { AgentTranscriptPage } from '../shared/agent-history';
 import type { ConversationEntry } from '../shared/conversation-history';
-import type { ChatStateScope, ChatStateSnapshot } from '../shared/chat-state';
+import { pendingContext, type ChatStateScope, type ChatStateSnapshot } from '../shared/chat-state';
 import { hasConversationDraft, importConversationDraft } from './conversation-draft-migration';
 import type { ConversationSettings } from '../shared/conversation-start';
 import type { DaemonSnapshot, DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
@@ -209,7 +209,8 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       const receipt = await access.sendCommand(pending.command);
       if (!receipt || !receipt.ok && receipt.error.code === 'delivery-uncertain') throw new Error(text('전송 상태를 확인하지 못했습니다. 연결 후 다시 확인하세요.', 'Delivery is still unconfirmed. Reconnect and check again.'));
       const draft = inheritedPending.state.draft;
-      const { prompt, context } = pending.command.payload;
+      const { prompt } = pending.command.payload;
+      const context = pendingContext(pending.command);
       const delivered = receipt.ok && draft.text.trim() === prompt && JSON.stringify(draft.attachments ?? []) === JSON.stringify(context?.attachments ?? [])
         && JSON.stringify(draft.replyTo) === JSON.stringify(context?.replyTo) && JSON.stringify(draft.skills ?? []) === JSON.stringify(context?.skills ?? []);
       const saved = await storage.chatStateWrite(inheritedPending.scope, { expectedRevision: inheritedPending.revision,

@@ -1,4 +1,5 @@
 import type { ChatMessageContext } from '../shared/chat-message';
+import type { ChatPendingCommand } from '../shared/chat-state';
 import {
   AGENT_SETTINGS_CAPABILITY,
   createDaemonCommand,
@@ -83,24 +84,64 @@ export async function submitConversationMessage(access: ConversationCommandAcces
   const { recovery } = input;
   if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
   if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
-  return exclusively(recovery, () => submitNow(access, { ...input, recovery }));
+  return exclusively(recovery, async () => (await submitNow(access, { ...input, recovery })).result);
+}
+
+/**
+ * Every streamed row moves the one revision a command must match, so a steer loses that race as a matter of course. A
+ * lost race recorded nothing and reached no provider: each attempt is safe, with a fresh command id, because a repeated
+ * key would replay the stored refusal.
+ */
+const STEER_ATTEMPTS = 8;
+const STEER_PAUSE_MS = 50;
+
+/** Send plain text into the running turn: escrowed as any message is, and the host queues it if it cannot go in. */
+export async function steerConversationMessage(access: ConversationCommandAccess, input: {
+  readonly sessionId: string;
+  readonly recovery: ChatRecoveryController | null;
+  readonly turnId: string;
+  readonly prompt: string;
+  readonly onAccepted?: (commandId: string) => void;
+}): Promise<StructuredAgentUiResult> {
+  const { recovery } = input;
+  if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
+  if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
+  return exclusively(recovery, async () => {
+    for (let attempt = 0; attempt < STEER_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => { setTimeout(resolve, STEER_PAUSE_MS); });
+      const { result, lostRace } = await submitNow(access, { ...input, recovery, type: 'agent.steer' });
+      if (!lostRace) return result;
+    }
+    return { ok: false, message: 'The conversation changed meanwhile. Try again.' };
+  });
 }
 
 async function submitNow(access: ConversationCommandAccess, input: {
   readonly sessionId: string;
   readonly recovery: ChatRecoveryController;
-  readonly type: 'agent.submit' | 'agent.interrupt-and-submit';
+  readonly type: ChatPendingCommand['type'];
   readonly prompt: string;
   readonly context?: ChatMessageContext;
+  readonly turnId?: string;
   readonly onAccepted?: (commandId: string) => void;
-}): Promise<StructuredAgentUiResult> {
-  const { sessionId, recovery, type, prompt, context } = input;
+}): Promise<{ readonly result: StructuredAgentUiResult; readonly lostRace?: true }> {
+  const { sessionId, recovery, type, prompt, context, turnId } = input;
   // The composition being sent, as it is now: an edit made while the snapshot is read must stay in the box.
   const composition = recovery.getSnapshot().draft;
   const authority = await access.latestSnapshot();
-  if (!authority) return { ok: false, message: UNAVAILABLE };
+  if (!authority) return { result: { ok: false, message: UNAVAILABLE } };
   const commandId = opaqueId('command');
-  const command = type === 'agent.submit'
+  const command: ChatPendingCommand = type === 'agent.steer'
+    ? createDaemonCommand({
+        commandId,
+        idempotencyKey: commandId,
+        expectedRevision: authority.revision,
+        issuedAt: new Date().toISOString(),
+        principal: access.principal ?? PRINCIPAL,
+        type,
+        payload: { sessionId, turnId: turnId!, prompt },
+      })
+    : type === 'agent.submit'
     ? createDaemonCommand({
         commandId,
         idempotencyKey: commandId,
@@ -120,15 +161,16 @@ async function submitNow(access: ConversationCommandAccess, input: {
         payload: { sessionId, prompt, ...(context ? { context } : {}) },
       });
   const prepared = await recovery.prepare(command, composition);
-  if (!prepared.ok) return prepared;
+  if (!prepared.ok) return { result: prepared };
   const receipt = await access.sendCommand(command);
   if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
-    return { ok: false, message: 'Message delivery could not be confirmed. Check delivery before sending again.', deliveryUncertain: true };
+    return { result: { ok: false, message: 'Message delivery could not be confirmed. Check delivery before sending again.', deliveryUncertain: true } };
   }
   const stored = await recovery.complete(command.commandId, receipt.ok);
   const result = resultOf(receipt);
   if (result.ok) input.onAccepted?.(commandId);
-  return stored.ok ? result : stored;
+  if (!stored.ok) return { result: stored };
+  return !receipt.ok && receipt.error.code === 'revision-conflict' ? { result, lostRace: true } : { result };
 }
 
 /** Resend the escrowed message once (idempotent on the host) and settle the escrow. */
@@ -145,7 +187,8 @@ export async function reconcileConversationSubmit(access: ConversationCommandAcc
     if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
       return { ok: false, message: 'Message delivery is still unconfirmed.', deliveryUncertain: true };
     }
-    if (receipt.ok) input.onAccepted?.(pending);
+    // A steer has no row to show until it lands.
+    if (receipt.ok && pending.type !== 'agent.steer') input.onAccepted?.(pending);
     const stored = await recovery.complete(pending.commandId, receipt.ok);
     return stored.ok ? resultOf(receipt) : stored;
   });

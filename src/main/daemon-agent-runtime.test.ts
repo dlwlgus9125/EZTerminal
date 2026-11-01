@@ -12,6 +12,7 @@ import {
 } from '../shared/daemon-protocol';
 import type {
   AgentProviderAdapter,
+  ProviderSteerResult,
   AgentProviderEvent,
   ProviderProbeResult,
 } from './agent-provider-adapter';
@@ -5092,6 +5093,10 @@ describe('a turn a usage limit stopped', () => {
     limitStopped: () => undefined,
     limitAction: () => ({ ok: true }),
     personSent: () => undefined,
+    steerSent: async () => undefined,
+    steerMoved: () => undefined,
+    steerGone: () => undefined,
+    steerOf: () => undefined,
     ...patch,
   });
   const agentOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!;
@@ -5306,6 +5311,373 @@ describe('a turn a usage limit stopped', () => {
       expect(await h.execute('agent.submit', { sessionId: 'no-such', prompt: 'Lost.' })).toMatchObject({ ok: false });
       expect(personSent).not.toHaveBeenCalled();
     } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  describe('a message into the running turn', () => {
+    const accepted = async (): Promise<ProviderSteerResult> => ({ outcome: 'accepted', behind: 'tool' });
+    const person = { kind: 'desktop', id: 'renderer' } as const;
+
+    /** The real coordinator behind the runtime, so the tray, the hold and the rows are the ones the app has. */
+    async function steering(options: { readonly steer?: AgentProviderAdapter['steer'] | null; readonly capability?: boolean; readonly conversationContext?: Parameters<typeof harness>[0] extends infer O ? O extends { conversationContext?: infer C } ? C : never : never } = {}) {
+      const ref: { current?: LongRunCoordinator } = {};
+      const longRun = new Proxy({} as DaemonLongRunHost, { get: (_target, key: keyof DaemonLongRunHost) => (...args: never[]) => (ref.current![key] as (...values: never[]) => unknown)(...args) });
+      const h = await harness({ longRun, canDispatchTurn: (turn) => ref.current?.canDispatchTurn(turn) ?? true, ...(options.conversationContext ? { conversationContext: options.conversationContext } : {}) });
+      const coordinator = new LongRunCoordinator({
+        getSnapshot: () => h.router.getSnapshot(),
+        applySystemCommit: (commit) => h.router.applySystemCommit(commit),
+        onEvent: (listener) => h.router.onEvent(listener),
+        execute: (command) => h.router.execute(command),
+        readTranscript: (sessionId, afterSequence, limit) => h.router.readTranscript(sessionId, afterSequence, limit),
+        wakeQueuedTurns: () => h.runtime.wakeQueuedTurns(),
+        commandExists: (commandId) => h.store.findCommand(commandId) !== undefined,
+        providers: { longRunCapability: () => (options.capability === false ? undefined : { minimumVersion: '1.0.0' }), enabledAdapter: (snapshot, providerId) => h.providers.enabledAdapter(snapshot, providerId) },
+        settings: () => ({ autoResume: true }),
+        allowed: () => true,
+        prepared: () => false,
+      });
+      ref.current = coordinator;
+      await coordinator.start();
+      const steer = vi.fn<NonNullable<AgentProviderAdapter['steer']>>(options.steer ?? accepted);
+      if (options.steer !== null) (h.codex as { steer?: AgentProviderAdapter['steer'] }).steer = steer;
+      const turn = await startedAgent(h);
+      const send = (prompt = 'Use the other file.', turnId = turn.id, principal: DaemonPrincipal = person) => h.execute('agent.steer', { sessionId: 'agent-1', turnId, prompt }, principal);
+      const settled = async (): Promise<void> => {
+        for (let pass = 0; pass < 4; pass += 1) {
+          await h.runtime.whenIdle();
+          await coordinator.settled();
+          await new Promise((resolve) => { setImmediate(resolve); });
+        }
+      };
+      const tray = () => coordinator.steers(h.router.getSnapshot())?.['agent-1'] ?? [];
+      const users = () => h.router.readTranscript('agent-1').filter((item) => item.kind === 'user-message');
+      const steerId = (): string => tray()[0]!.id;
+      const close = async (): Promise<void> => { coordinator.dispose(); await h.runtime.dispose(); await h.store.close(); };
+      return { h, coordinator, steer, turn, send, settled, tray, users, steerId, close };
+    }
+
+    it('goes to the provider once, after the commit, and until it lands it is no turn and no row', async () => {
+      const run = await steering();
+      try {
+        const rows = run.users().length;
+        expect(await run.send()).toMatchObject({ ok: true });
+        await run.settled();
+        const commandId = run.steerId();
+        expect(run.steer).toHaveBeenCalledExactlyOnceWith(
+          { sessionId: 'agent-1', providerSessionId: agentOf(run.h).providerSessionId, turnId: run.turn.id, newTurnId: expect.any(String), commandId, prompt: 'Use the other file.' },
+          expect.anything(),
+        );
+        expect(run.users()).toHaveLength(rows);
+        expect(run.h.router.getSnapshot().turns).toHaveLength(1);
+        expect(agentOf(run.h)).toMatchObject({ queuedTurnCount: 0, currentTurnId: run.turn.id });
+        expect(run.tray()).toEqual([expect.objectContaining({ text: 'Use the other file.', state: 'on-its-way', behind: 'tool' })]);
+      } finally { await run.close(); }
+    });
+
+    it('a repeated command replays its receipt: one provider call', async () => {
+      const run = await steering();
+      try {
+        const command = createDaemonCommand({ commandId: 'steer-same', idempotencyKey: 'steer-same', expectedRevision: run.h.router.getSnapshot().revision, issuedAt: '2026-09-04T10:00:00.000Z', principal: person, type: 'agent.steer', payload: { sessionId: 'agent-1', turnId: run.turn.id, prompt: 'Once.' } });
+        expect(await run.h.router.execute(command)).toMatchObject({ ok: true });
+        expect(await run.h.router.execute(command)).toMatchObject({ ok: true, status: 'replayed' });
+        await run.settled();
+        expect(run.steer).toHaveBeenCalledOnce();
+      } finally { await run.close(); }
+    });
+
+    it('a command that lost the revision race reaches nothing', async () => {
+      const run = await steering();
+      try {
+        const stale = createDaemonCommand({ commandId: 'steer-stale', idempotencyKey: 'steer-stale', expectedRevision: run.h.router.getSnapshot().revision - 1, issuedAt: '2026-09-04T10:00:00.000Z', principal: person, type: 'agent.steer', payload: { sessionId: 'agent-1', turnId: run.turn.id, prompt: 'Late.' } });
+        expect(await run.h.router.execute(stale)).toMatchObject({ ok: false, error: { code: 'revision-conflict' } });
+        await run.settled();
+        expect(run.steer).not.toHaveBeenCalled();
+        expect(run.tray()).toEqual([]);
+      } finally { await run.close(); }
+    });
+
+    it('landing writes the row where it happened, with what became of the text, and empties the tray', async () => {
+      const run = await steering();
+      try {
+        await run.send();
+        await run.settled();
+        const commandId = run.steerId();
+        const answer = { id: 'answer', sessionId: 'agent-1', turnId: run.turn.id, sequence: 1, kind: 'assistant-message', text: 'Working.', isDelta: false, isSensitive: false, createdAt: '2026-09-04T10:00:00.000Z' } as const;
+        run.h.codex.emit({ kind: 'transcript', item: answer });
+        run.h.codex.emit({ kind: 'steer-landed', sessionId: 'agent-1', commandId, turnId: run.turn.id, rewritten: true });
+        await run.settled();
+        const rows = run.h.router.readTranscript('agent-1');
+        expect(rows.at(-1)).toMatchObject({ kind: 'user-message', text: 'Use the other file.', turnId: run.turn.id, isSensitive: false, payload: { v: 1, type: 'steer', rewritten: true } });
+        expect(rows.at(-1)!.sequence).toBeGreaterThan(rows.find((item) => item.id === 'answer')!.sequence);
+        expect(run.tray()).toEqual([]);
+        expect(agentOf(run.h)).toMatchObject({ queuedTurnCount: 0, currentTurnId: run.turn.id });
+      } finally { await run.close(); }
+    });
+
+    it('a landing with no turn open becomes a turn of a person\'s, and the queue waits for it', async () => {
+      const run = await steering();
+      try {
+        await run.send();
+        await run.settled();
+        const commandId = run.steerId();
+        await run.h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Behind it.' });
+        vi.mocked(run.h.codex.submit).mockClear();
+        run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: run.turn.id, outcome: 'completed' });
+        await run.settled();
+        expect(run.h.codex.submit).not.toHaveBeenCalled();
+        expect(run.tray()).toHaveLength(1);
+
+        const newTurn = vi.mocked(run.steer).mock.lastCall![0].newTurnId;
+        run.h.codex.emit({ kind: 'steer-landed', sessionId: 'agent-1', commandId, turnId: newTurn, newTurn: true });
+        await run.settled();
+        const turn = run.h.router.getSnapshot().turns.find((entry) => entry.id === newTurn);
+        expect(turn).toMatchObject({ state: 'working', commandId, sessionId: 'agent-1' });
+        expect(turn?.startedAt).toBeDefined();
+        expect(agentOf(run.h)).toMatchObject({ currentTurnId: newTurn, state: 'working', queuedTurnCount: 1 });
+        expect(sessionOf(run.h).state).toBe('running');
+        expect(run.users().at(-1)).toMatchObject({ turnId: newTurn, payload: { v: 1, type: 'steer', newTurn: true } });
+        expect(run.h.codex.submit).not.toHaveBeenCalled();
+
+        run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: newTurn, outcome: 'completed' });
+        await run.settled();
+        expect(run.h.router.getSnapshot().turns.find((entry) => entry.id === newTurn)?.state).toBe('completed');
+        expect(run.h.codex.submit).toHaveBeenCalledOnce();
+        expect(vi.mocked(run.h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Behind it.' });
+      } finally { await run.close(); }
+    });
+
+    it('a landing while another turn already runs keeps that turn current, and loses no row', async () => {
+      const run = await steering();
+      try {
+        await run.send();
+        await run.settled();
+        const commandId = run.steerId();
+        const newTurn = vi.mocked(run.steer).mock.lastCall![0].newTurnId;
+        run.h.codex.emit({ kind: 'steer-landed', sessionId: 'agent-1', commandId, turnId: newTurn, newTurn: true });
+        await run.settled();
+        expect(agentOf(run.h).currentTurnId).toBe(run.turn.id);
+        expect(run.h.router.getSnapshot().turns.find((entry) => entry.id === newTurn)).toMatchObject({ state: 'working' });
+        expect(run.users().at(-1)).toMatchObject({ turnId: newTurn, payload: { v: 1, type: 'steer', newTurn: true } });
+        run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: newTurn, outcome: 'completed' });
+        await run.settled();
+        expect(agentOf(run.h).currentTurnId).toBe(run.turn.id);
+      } finally { await run.close(); }
+    });
+
+    it('landing outranks doubt: a message in doubt that turns up is a row', async () => {
+      const run = await steering();
+      try {
+        await run.send();
+        await run.settled();
+        const commandId = run.steerId();
+        run.h.codex.emit({ kind: 'steer-unconfirmed', sessionId: 'agent-1', commandId });
+        await run.settled();
+        expect(run.tray()).toEqual([expect.objectContaining({ state: 'unconfirmed' })]);
+        run.h.codex.emit({ kind: 'steer-landed', sessionId: 'agent-1', commandId, turnId: run.turn.id });
+        await run.settled();
+        expect(run.tray()).toEqual([]);
+        expect(run.users().at(-1)).toMatchObject({ payload: { v: 1, type: 'steer' } });
+      } finally { await run.close(); }
+    });
+
+    it.each(['review-turn', 'compact-turn', 'turn-ended'] as const)('refused for %s it joins the queue under the same command, and says why', async (reason) => {
+      const run = await steering({ steer: async () => ({ outcome: 'refused', reason }) });
+      try {
+        await run.send();
+        await run.settled();
+        expect(run.tray()).toEqual([]);
+        const queued = run.h.router.getSnapshot().turns.find((entry) => entry.id !== run.turn.id)!;
+        expect(queued).toMatchObject({ state: 'queued', sessionId: 'agent-1' });
+        expect(queued.commandId).toBe(vi.mocked(run.steer).mock.lastCall![0].commandId);
+        expect(agentOf(run.h)).toMatchObject({ queuedTurnCount: 1, currentTurnId: run.turn.id });
+        expect(run.users().at(-1)).toMatchObject({ turnId: queued.id, text: 'Use the other file.', payload: { v: 1, type: 'steer-queued', reason } });
+
+        vi.mocked(run.h.codex.submit).mockClear();
+        run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: run.turn.id, outcome: 'completed' });
+        await run.settled();
+        expect(run.h.codex.submit).toHaveBeenCalledOnce();
+        expect(vi.mocked(run.h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Use the other file.', turnId: queued.id, attended: true });
+      } finally { await run.close(); }
+    });
+
+    it('a refusal that finds the conversation gone keeps the words: it failed', async () => {
+      let refuse!: (result: ProviderSteerResult) => void;
+      const run = await steering({ steer: () => new Promise((resolve) => { refuse = resolve; }) });
+      try {
+        const sending = run.send();
+        await vi.waitFor(() => expect(run.steer).toHaveBeenCalled());
+        run.h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'failed' });
+        await vi.waitFor(() => expect(sessionOf(run.h).state).toBe('failed')).finally(() => refuse({ outcome: 'refused', reason: 'turn-ended' }));
+        await sending;
+        await run.settled();
+        expect(run.tray()).toEqual([expect.objectContaining({ state: 'failed', failure: 'refused' })]);
+      } finally { await run.close(); }
+    });
+
+    it('with no matching running turn it queues at once, and no provider hears of it', async () => {
+      const run = await steering();
+      try {
+        expect(await run.send('Too late.', 'turn-long-gone')).toMatchObject({ ok: true });
+        await run.settled();
+        expect(run.steer).not.toHaveBeenCalled();
+        expect(run.tray()).toEqual([]);
+        expect(run.users().at(-1)).toMatchObject({ text: 'Too late.', payload: { v: 1, type: 'steer-queued', reason: 'turn-ended' } });
+      } finally { await run.close(); }
+    });
+
+    it('an AI without steer, or a session not on this version, queues', async () => {
+      const none = await steering({ steer: null });
+      try {
+        expect(await none.send()).toMatchObject({ ok: true });
+        await none.settled();
+        expect(none.users().at(-1)).toMatchObject({ payload: { v: 1, type: 'steer-queued', reason: 'turn-ended' } });
+      } finally { await none.close(); }
+      const below = await steering({ capability: false });
+      try {
+        expect(await below.send()).toMatchObject({ ok: true });
+        await below.settled();
+        expect(below.steer).not.toHaveBeenCalled();
+        expect(below.users().at(-1)).toMatchObject({ payload: { v: 1, type: 'steer-queued', reason: 'turn-ended' } });
+      } finally { await below.close(); }
+    });
+
+    it('a stage conversation carries saved references, so its message is not plain and queues', async () => {
+      const workflow = { projectId: 'project-1', subprojectId: 'sub', nodeId: 'stage', graphRevision: 3, fingerprint: 'a'.repeat(64), title: 'Plan', document: 'Saved document', instructions: '', references: [] };
+      const run = await steering({ conversationContext: async () => workflow });
+      try {
+        expect(await run.send()).toMatchObject({ ok: true });
+        await run.settled();
+        expect(run.steer).not.toHaveBeenCalled();
+        expect(run.users().at(-1)).toMatchObject({ payload: { v: 1, type: 'steer-queued', reason: 'not-plain' } });
+      } finally { await run.close(); }
+    });
+
+    it('the provider failing says so and sends nothing again', async () => {
+      const run = await steering({ steer: async () => ({ outcome: 'failed' }) });
+      try {
+        await run.send();
+        await run.settled();
+        expect(run.tray()).toEqual([expect.objectContaining({ state: 'failed', failure: 'disconnected' })]);
+        expect(run.steer).toHaveBeenCalledOnce();
+      } finally { await run.close(); }
+    });
+
+    it('in doubt, or a provider that throws, is unconfirmed, and nothing goes again', async () => {
+      for (const steer of [async () => ({ outcome: 'unconfirmed' }) as const, async () => { throw new Error('gone'); }]) {
+        const run = await steering({ steer });
+        try {
+          await run.send();
+          await run.settled();
+          expect(run.tray()).toEqual([expect.objectContaining({ state: 'unconfirmed' })]);
+          expect(run.steer).toHaveBeenCalledOnce();
+        } finally { await run.close(); }
+      }
+    });
+
+    it('a limit or Stop first catches it; the queue behind is not held by it', async () => {
+      const run = await steering();
+      try {
+        await run.send();
+        await run.settled();
+        run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: run.turn.id, outcome: 'interrupted' });
+        await run.settled();
+        expect(run.tray()).toEqual([expect.objectContaining({ state: 'unconfirmed', caught: 'stop' })]);
+      } finally { await run.close(); }
+    });
+
+    it('is a person\'s: no agent or schedule writes into a turn', async () => {
+      const run = await steering();
+      try {
+        expect(await run.send('x', run.turn.id, { kind: 'cli', id: 'heartbeat' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+        expect(await run.send('x', run.turn.id, { kind: 'mcp', id: 'agent', sessionId: 'lead' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+        expect(run.steer).not.toHaveBeenCalled();
+        expect(await run.send('x', run.turn.id, { kind: 'android', id: 'phone' })).toMatchObject({ ok: true });
+      } finally { await run.close(); }
+    });
+
+    it('has every check a message has', async () => {
+      const run = await steering();
+      try {
+        expect(await run.h.execute('agent.steer', { sessionId: 'no-such', turnId: 't', prompt: 'x' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+        expect(await run.h.execute('agent.steer', { sessionId: 'review-1', turnId: 't', prompt: 'x' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+        expect(run.steer).not.toHaveBeenCalled();
+      } finally { await run.close(); }
+    });
+
+    describe('settling a message that did not land', () => {
+      const failed = async () => {
+        const run = await steering({ steer: async () => ({ outcome: 'failed' }) });
+        await run.send();
+        await run.settled();
+        return { run, steerId: run.steerId() };
+      };
+
+      it('to the queue, as a new message: a repeated uuid would vanish', async () => {
+        const { run, steerId } = await failed();
+        try {
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'queue' })).toMatchObject({ ok: true });
+          await run.settled();
+          expect(run.tray()).toEqual([]);
+          const queued = run.h.router.getSnapshot().turns.find((entry) => entry.id !== run.turn.id)!;
+          expect(queued.commandId).not.toBe(steerId);
+          expect(run.users().at(-1)).toMatchObject({ turnId: queued.id, text: 'Use the other file.' });
+          expect(run.users().at(-1)).not.toHaveProperty('payload');
+          vi.mocked(run.h.codex.submit).mockClear();
+          run.h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: run.turn.id, outcome: 'completed' });
+          await run.settled();
+          expect(vi.mocked(run.h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Use the other file.' });
+        } finally { await run.close(); }
+      });
+
+      it('back to the box: the record goes, and nothing is sent', async () => {
+        const { run, steerId } = await failed();
+        try {
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'box' })).toMatchObject({ ok: true });
+          await run.settled();
+          expect(run.tray()).toEqual([]);
+          expect(run.h.router.getSnapshot().turns).toHaveLength(1);
+        } finally { await run.close(); }
+      });
+
+      it('in doubt it may have been read, so it goes back to the box and not the queue', async () => {
+        const run = await steering({ steer: async () => ({ outcome: 'unconfirmed' }) });
+        try {
+          await run.send();
+          await run.settled();
+          const steerId = run.steerId();
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'queue' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'box' })).toMatchObject({ ok: true });
+        } finally { await run.close(); }
+      });
+
+      it('one still on its way cannot be taken back, and one unknown is not found', async () => {
+        const run = await steering();
+        try {
+          await run.send();
+          await run.settled();
+          const steerId = run.steerId();
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'box' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId: 'other', action: 'box' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-2', steerId, action: 'box' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+        } finally { await run.close(); }
+      });
+
+      it('is a person\'s too', async () => {
+        const { run, steerId } = await failed();
+        try {
+          expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'box' }, { kind: 'cli', id: 'heartbeat' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+        } finally { await run.close(); }
+      });
+    });
+
+    it('a message that cannot go in writes why on its queued row', async () => {
+      const run = await steering();
+      try {
+        expect(await run.h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'With a file.', notSteered: true })).toMatchObject({ ok: true });
+        expect(run.users().at(-1)).toMatchObject({ text: 'With a file.', payload: { v: 1, type: 'steer-queued', reason: 'not-plain' } });
+        expect(await run.h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'From a schedule.', notSteered: true }, { kind: 'cli', id: 'heartbeat' })).toMatchObject({ ok: true });
+        expect(run.users().at(-1)).not.toHaveProperty('payload');
+      } finally { await run.close(); }
+    });
   });
 
   it('keeps the empty final row that takes back text Codex dropped', async () => {

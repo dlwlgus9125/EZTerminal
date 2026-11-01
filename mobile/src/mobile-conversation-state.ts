@@ -1,7 +1,7 @@
 import { SecureStoragePlugin } from 'capacitor-secure-storage-plugin';
 import { z } from 'zod';
 import { ConversationEntrySchema, type ConversationEntry } from '../../src/shared/conversation-history';
-import { ChatStateSnapshotSchema, type ChatStateScope, type ChatStateResult, type ChatPendingCommand } from '../../src/shared/chat-state';
+import { ChatStateSnapshotSchema, pendingSubmitMode, type ChatStateScope, type ChatStateResult, type ChatPendingCommand } from '../../src/shared/chat-state';
 import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
 import { mobileAgentCreateAuthorityFingerprint, type SecureStorageLike } from './mobile-agent-create-recovery-store';
 import { MobileChatStateStore, type MobileChatStateStoreLike } from './mobile-chat-state-store';
@@ -37,7 +37,7 @@ export function mobileConversationState(
       if (!scope.kind) {
         const saved = await legacy.load({ authorityFingerprint: fingerprint, projectId: scope.projectId, sessionId: scope.sessionId });
         return { ok: true, snapshot: { version: 1, scope, revision: legacyRevisions.get(legacyKey(fingerprint, scope)) ?? 0, state: { draft: saved?.draft ?? { text: '' }, ...(saved?.pending ? {
-          pendingSubmit: { command: saved.pending as ChatPendingCommand, mode: saved.pending.type === 'agent.submit' ? 'send' as const : 'interrupt' as const, recordedAt: saved.pending.issuedAt },
+          pendingSubmit: { command: saved.pending as ChatPendingCommand, mode: pendingSubmitMode(saved.pending as ChatPendingCommand), recordedAt: saved.pending.issuedAt },
         } : {}) }, updatedAt: null } };
       }
       if ((await secure.getPlatform()).value !== 'android') throw new Error('Secure Android storage is unavailable.');

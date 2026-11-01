@@ -22,6 +22,8 @@ import {
   type LongRunSettings,
   type OpenUsageLimit,
   type ProviderUsageLimit,
+  type SteeredMessage,
+  type SteerLanding,
   type UsageLimitPhase,
   type UsageLimitReading,
 } from '../shared/long-run';
@@ -55,6 +57,13 @@ export interface DaemonLongRunHost {
   limitAction(payload: DaemonCommandPayloads['long-run.limit-action']): DaemonCommandExecutionResult;
   /** A person's message is in the conversation: nothing goes out for this stop now, and its turn tells how the stop ends. */
   personSent(sessionId: string, turnId: string): void;
+  /** On its way from now: the queue behind it holds at once, and it is in the file when this resolves. */
+  steerSent(steer: SteerRecord): Promise<void>;
+  /** What is known about it now. Landing is not in here: only `steerGone`, once its row is written. */
+  steerMoved(id: string, next: SteerProgress): void;
+  /** It has its place: a landed row, the queue, or back in the box. */
+  steerGone(id: string): void;
+  steerOf(id: string): SteerRecord | undefined;
 }
 
 /** One stop's card, as the jobs file keeps it: its row, plus what the host needs to carry on after a restart. */
@@ -75,6 +84,19 @@ export interface LimitJobRecord extends Omit<UsageLimitPayload, 'v' | 'type'> {
   readonly personTurnId?: string;
 }
 
+/** A message on its way into a running turn, as the jobs file keeps it. Its id is its command id. */
+export interface SteerRecord extends SteeredMessage {
+  readonly sessionId: string;
+  /** The turn it was meant for. */
+  readonly turnId: string;
+  readonly providerId: string;
+}
+
+export type SteerProgress =
+  | { readonly state: 'on-its-way'; readonly behind: NonNullable<SteeredMessage['behind']> }
+  | { readonly state: 'failed'; readonly failure: NonNullable<SteeredMessage['failure']> }
+  | { readonly state: 'unconfirmed' };
+
 /** Finished: the last row is the record, and nothing more can happen. */
 const FINISHED_PHASES = new Set<UsageLimitPhase>(['resumed', 'cancelled', 'not-included']);
 /** Still a card with 이어서 하기, but nothing waits on it: the queue goes on and the list shows nothing. */
@@ -85,6 +107,8 @@ const MANAGED_RESUME_PROVEN: ReadonlySet<string> = new Set();
 const RESUME_ATTEMPTS = 2;
 /** A send that keeps losing the revision race stops here, as a report-back does. */
 const SEND_TRIES = 3;
+/** Claude starts a steer right after a turn ends. If this passes with nothing, it stops holding the queue: it cannot be told. */
+const STEER_LANDING_GRACE_MS = 30_000;
 /** One timer, however far off the next time: each pass reads the clock, so a clock moved shows within this. */
 const SCHEDULER_CAP_MS = 60_000;
 /** What the timer waits at least, so a time already due cannot spin while something holds it back. */
@@ -192,6 +216,20 @@ function cardFields(job: Omit<UsageLimitPayload, 'v' | 'type'>): Omit<UsageLimit
   };
 }
 
+/** The row of a message that landed, written where it landed. The queue would have written the same id: one row, either way. */
+export function steerRowItem(steer: Pick<SteerRecord, 'id' | 'sessionId' | 'text'>, turnId: string, landing: Pick<SteerLanding, 'rewritten' | 'newTurn'>): DaemonTranscriptItemInput {
+  return {
+    id: stableId('message', steer.id, 'user'),
+    sessionId: steer.sessionId,
+    turnId,
+    kind: 'user-message',
+    text: steer.text,
+    isDelta: false,
+    isSensitive: false,
+    payload: { v: 1, type: 'steer', ...landing },
+  };
+}
+
 /** Accepts only the shape this build writes; anything else is dropped rather than trusted. */
 function parseJobs(value: unknown): LimitJobRecord[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
@@ -213,6 +251,29 @@ function parseJobs(value: unknown): LimitJobRecord[] {
   return records;
 }
 
+/** What a client sees of a steer: its words and where they are. */
+function steerView({ id, text, state, sentAt, behind, failure, caught }: SteerRecord): SteeredMessage {
+  return { id, text, state, sentAt, ...(behind ? { behind } : {}), ...(failure ? { failure } : {}), ...(caught ? { caught } : {}) };
+}
+
+/** A failed steer stays for the person; only these can be on the file. */
+const STORED_STEER_STATES = new Set<SteeredMessage['state']>(['on-its-way', 'failed', 'unconfirmed']);
+
+function parseSteers(value: unknown): SteerRecord[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.values(value as Record<string, unknown>).flatMap((entry): SteerRecord[] => {
+    const steer = entry as Partial<SteerRecord> | null;
+    const texts = [steer?.id, steer?.sessionId, steer?.turnId, steer?.providerId, steer?.text, steer?.sentAt];
+    return steer && texts.every((text) => typeof text === 'string' && text) && steer.state && STORED_STEER_STATES.has(steer.state) ? [steer as SteerRecord] : [];
+  });
+}
+
+/** Limit jobs and steers: the file a restart reads, so it need not read transcripts. */
+export interface LongRunJobs {
+  readonly jobs: Readonly<Record<string, LimitJobRecord>>;
+  readonly steers: Readonly<Record<string, SteerRecord>>;
+}
+
 export interface LongRunCoordinatorOptions {
   readonly getSnapshot: () => DaemonSnapshot;
   /** Evaluated under the command FIFO (the router's applySystemCommit). */
@@ -227,7 +288,7 @@ export interface LongRunCoordinatorOptions {
   /** Limit jobs: the schedule's authority, so a restart need not read transcripts. */
   readonly store?: {
     readonly load: () => Promise<unknown>;
-    readonly save: (jobs: Readonly<Record<string, LimitJobRecord>>) => Promise<void>;
+    readonly save: (state: LongRunJobs) => Promise<void>;
   };
   readonly providers: {
     longRunCapability(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): AgentProviderAdapter['longRun'];
@@ -270,6 +331,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   private notBefore = 0;
   /** The first row each session added since the last pass. */
   private readonly newRows = new Map<string, number>();
+  /** Messages on their way into running turns, by command id. They have no row until they land. */
+  private readonly steerRecords = new Map<string, SteerRecord>();
+  /** Steers whose turn finished well: what they get before they stop holding the queue. */
+  private readonly landingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly options: LongRunCoordinatorOptions) {
     this.now = options.now ?? (() => new Date());
@@ -279,7 +344,9 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   load(): Promise<void> {
     this.loading ??= (async () => {
       try {
-        for (const job of parseJobs(await this.options.store?.load())) this.jobs.set(job.stopId, job);
+        const { jobs, steers } = ((await this.options.store?.load()) ?? {}) as { readonly jobs?: unknown; readonly steers?: unknown };
+        for (const job of parseJobs(jobs)) this.jobs.set(job.stopId, job);
+        for (const steer of parseSteers(steers)) this.steerRecords.set(steer.id, steer);
       } catch (error) {
         this.report('limit jobs load failed', error);
       }
@@ -316,6 +383,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     await this.tail;
     await this.saveJobs();
     this.arm();
+    // Not awaited: a provider slow to answer must not hold up the start, and the queue holds until this has looked.
+    this.tail = this.tail.then(() => this.recoverSteers()).catch((error: unknown) => this.report('steer recovery', error));
   }
 
   dispose(): void {
@@ -324,6 +393,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     this.unsubscribe?.();
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    for (const timer of this.landingTimers.values()) clearTimeout(timer);
+    this.landingTimers.clear();
   }
 
   /** The PC woke: a sleep is not the app closed, so the schedule stands, and the first send gives the network a minute. */
@@ -332,9 +403,13 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     this.arm();
   }
 
-  /** Everything written so far has reached the file and the transcript. */
-  settled(): Promise<void> {
-    return this.tail;
+  /** Everything written so far has reached the file and the transcript, what those writes led to included. */
+  async settled(): Promise<void> {
+    let seen: Promise<void>;
+    do {
+      seen = this.tail;
+      await seen;
+    } while (seen !== this.tail);
   }
 
   sessionContext(sessionId: string): true | undefined {
@@ -344,8 +419,12 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     return this.options.allowed(sessionId) || this.managedChild(snapshot, sessionId) ? true : undefined;
   }
 
-  /** The turn may start: nothing behind an open stop does, except the send that resumes it and a person's own message. */
+  /**
+   * The turn may start: nothing behind an open stop does, except the send that resumes it and a person's own message.
+   * Nothing behind a steer does either: it may be about to become the next turn.
+   */
   canDispatchTurn(turn: Pick<DaemonTurn, 'id' | 'sessionId' | 'commandId'>): boolean {
+    if ([...this.steerRecords.values()].some((steer) => steer.sessionId === turn.sessionId && steer.state === 'on-its-way')) return false;
     const job = this.jobOf(turn.sessionId);
     return !job || !holds(job) || job.sending?.commandId === turn.commandId || job.personTurnId === turn.id;
   }
@@ -359,6 +438,126 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   usageLimits(snapshot: Pick<DaemonSnapshot, 'sessions'>): DaemonSnapshot['usageLimits'] {
     const open = [...this.jobs.values()].filter((job) => holds(job) && snapshot.sessions.some((session) => session.id === job.sessionId && session.archivedAt === undefined));
     return open.length ? Object.fromEntries(open.map((job) => [job.sessionId, this.view(job)])) : undefined;
+  }
+
+  /** What the snapshot carries, one list per conversation. Never stored; no scoped reader and no phone cache keeps it. */
+  steers(snapshot: Pick<DaemonSnapshot, 'sessions' | 'approvals'>): DaemonSnapshot['steers'] {
+    const lists = new Map<string, SteeredMessage[]>();
+    for (const steer of this.steerRecords.values()) {
+      const { sessionId, turnId } = steer;
+      if (!snapshot.sessions.some((session) => session.id === sessionId && session.archivedAt === undefined)) continue;
+      const held = steer.state === 'on-its-way' && snapshot.approvals.some((approval) => approval.sessionId === sessionId && approval.turnId === turnId && approval.state === 'pending');
+      lists.set(sessionId, [...(lists.get(sessionId) ?? []), { ...steerView(steer), ...(held ? { state: 'behind-approval' as const } : {}) }]);
+    }
+    return lists.size ? Object.fromEntries(lists) : undefined;
+  }
+
+  steerSent(steer: SteerRecord): Promise<void> {
+    this.steerRecords.set(steer.id, steer);
+    this.writeSteers(steer.sessionId);
+    return this.tail;
+  }
+
+  steerMoved(id: string, next: SteerProgress): void {
+    const steer = this.steerRecords.get(id);
+    if (this.disposed || !steer || (next.state === 'on-its-way' && steer.state !== 'on-its-way') || (next.state === 'unconfirmed' && steer.state === 'unconfirmed')) return;
+    const caught = next.state === 'unconfirmed' ? this.caughtBy(steer) : undefined;
+    this.steerRecords.set(id, { ...steer, ...next, ...(caught ? { caught } : {}) });
+    this.writeSteers(steer.sessionId);
+    if (next.state !== 'on-its-way') this.options.wakeQueuedTurns();
+  }
+
+  steerGone(id: string): void {
+    const steer = this.steerRecords.get(id);
+    if (this.disposed || !steer) return;
+    this.steerRecords.delete(id);
+    this.stopLandingTimer(id);
+    this.writeSteers(steer.sessionId);
+    this.options.wakeQueuedTurns();
+  }
+
+  steerOf(id: string): SteerRecord | undefined {
+    return this.steerRecords.get(id);
+  }
+
+  /** The file, then every client refetching the snapshot that shows it. */
+  private writeSteers(sessionId: string): void {
+    this.tail = this.tail.then(async () => {
+      await this.saveJobs();
+      await this.commit(() => ({ events: [{ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: sessionId } }] }));
+    }).catch((error: unknown) => this.report('steer write', error));
+  }
+
+  private caughtBy(steer: SteerRecord): SteeredMessage['caught'] {
+    const turn = this.options.getSnapshot().turns.find((entry) => entry.id === steer.turnId);
+    if (turn?.state === 'interrupted') return 'stop';
+    return turn?.state === 'failed' && turn.errorCode === USAGE_LIMIT_ERROR ? 'limit' : undefined;
+  }
+
+  private stopLandingTimer(id: string): void {
+    const timer = this.landingTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.landingTimers.delete(id);
+  }
+
+  /** A steer outlived its turn. Limit or Stop first: it stays in the session, so it cannot be told. A clean end: it may start next. */
+  private settleSteers(snapshot: DaemonSnapshot): boolean {
+    let dropped = false;
+    for (const steer of [...this.steerRecords.values()]) {
+      if (!snapshot.sessions.some((session) => session.id === steer.sessionId && session.archivedAt === undefined)) {
+        this.steerRecords.delete(steer.id);
+        this.stopLandingTimer(steer.id);
+        dropped = true;
+      } else if (steer.state === 'on-its-way') {
+        const turn = snapshot.turns.find((entry) => entry.id === steer.turnId);
+        if (turn?.state === 'completed') this.waitForLanding(steer.id);
+        else if (!turn || TERMINAL_TURN_STATES.has(turn.state)) this.steerMoved(steer.id, { state: 'unconfirmed' });
+      }
+    }
+    return dropped;
+  }
+
+  private waitForLanding(id: string): void {
+    if (this.landingTimers.has(id)) return;
+    const timer = setTimeout(() => {
+      this.landingTimers.delete(id);
+      this.steerMoved(id, { state: 'unconfirmed' });
+    }, STEER_LANDING_GRACE_MS);
+    timer.unref?.();
+    this.landingTimers.set(id, timer);
+  }
+
+  /** What the last run left: only the thread can say. Found, it is a row; otherwise it cannot be told, and nothing goes again. */
+  private async recoverSteers(): Promise<void> {
+    for (const steer of [...this.steerRecords.values()]) {
+      const snapshot = this.options.getSnapshot();
+      if (this.disposed) return;
+      if (!snapshot.sessions.some((session) => session.id === steer.sessionId && session.archivedAt === undefined)) {
+        this.steerRecords.delete(steer.id);
+        await this.saveJobs();
+      } else if (steer.state !== 'failed') {
+        if (await this.inThread(snapshot, steer)) {
+          await this.commit(() => ({ mutations: [{ kind: 'transcript.append', items: [{ ...steerRowItem(steer, steer.turnId, {}), createdAt: this.now().toISOString() }] }] }));
+          this.steerGone(steer.id);
+        } else {
+          this.steerMoved(steer.id, { state: 'unconfirmed' });
+        }
+      }
+    }
+  }
+
+  /** No `turnId` in the question: with one, the adapter takes it for a turn to recover. */
+  private async inThread(snapshot: DaemonSnapshot, steer: SteerRecord): Promise<boolean> {
+    const providerSessionId = snapshot.agents.find((agent) => agent.sessionId === steer.sessionId)?.providerSessionId;
+    const provider = this.options.providers.enabledAdapter(snapshot, steer.providerId);
+    if (!providerSessionId || !provider.ok) return false;
+    try {
+      const { commands } = await provider.value.reconcile({ sessionId: steer.sessionId, providerSessionId, unsettledCommands: [{ commandId: steer.id, idempotencyKey: steer.id, type: 'agent.steer' }] });
+      return commands.some((command) => command.commandId === steer.id && command.state === 'applied');
+    } catch (error) {
+      this.report(`steer recovery ${steer.id}`, error);
+      return false;
+    }
   }
 
   limitStopped(stop: LimitStop): void {
@@ -734,14 +933,14 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       this.jobs.delete(job.stopId);
       dropped = true;
     }
-    if (dropped) void this.queueSave();
+    if (this.settleSteers(snapshot) || dropped) void this.queueSave();
     for (const job of [...this.jobs.values()]) this.advance(snapshot, job);
     this.newRows.clear();
   }
 
   private async saveJobs(): Promise<void> {
     try {
-      await this.options.store?.save(Object.fromEntries(this.jobs));
+      await this.options.store?.save({ jobs: Object.fromEntries(this.jobs), steers: Object.fromEntries(this.steerRecords) });
     } catch (error) {
       this.report('limit jobs save failed', error);
     }

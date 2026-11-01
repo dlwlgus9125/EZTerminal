@@ -19,13 +19,15 @@ describe('long-run state in the snapshot', () => {
   const limit = { stopId: 'stop', turnId: 'turn', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T10:00:00.000Z' } as const;
 
   it('carries what the host holds, and nothing when it holds nothing', async () => {
-    const { router, store } = await runtime({ usageLimits: () => ({ chat: limit }), longRunSupport: () => ({ claude: true }) });
+    const steer = { id: 'steer-1', text: 'Use the other file.', state: 'on-its-way', sentAt: '2026-11-01T10:00:00.000Z' } as const;
+    const { router, store } = await runtime({ usageLimits: () => ({ chat: limit }), steers: () => ({ chat: [steer] }), longRunSupport: () => ({ claude: true }) });
     try {
-      expect(router.getSnapshot()).toMatchObject({ usageLimits: { chat: limit }, longRunSupport: { claude: true } });
+      expect(router.getSnapshot()).toMatchObject({ usageLimits: { chat: limit }, steers: { chat: [steer] }, longRunSupport: { claude: true } });
     } finally { await store.close(); }
-    const empty = await runtime({ usageLimits: () => undefined, longRunSupport: () => ({}) });
+    const empty = await runtime({ usageLimits: () => undefined, steers: () => undefined, longRunSupport: () => ({}) });
     try {
       expect(empty.router.getSnapshot()).not.toHaveProperty('usageLimits');
+      expect(empty.router.getSnapshot()).not.toHaveProperty('steers');
       expect(empty.router.getSnapshot()).not.toHaveProperty('longRunSupport');
     } finally { await empty.store.close(); }
   });

@@ -9,7 +9,7 @@ import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type { AgentProviderAdapter } from './agent-provider-adapter';
 import type { DaemonCommandExecutionResult } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
-import { limitRowItem, LongRunCoordinator, type LimitJobRecord } from './long-run-coordinator';
+import { limitRowItem, LongRunCoordinator, steerRowItem, type LimitJobRecord, type SteerRecord } from './long-run-coordinator';
 
 const STOPPED = '2026-11-01T10:00:00.000Z';
 const stoppedMs = Date.parse(STOPPED);
@@ -33,6 +33,8 @@ const relation = (childSessionId: string, patch: Partial<DaemonAgentRelation> = 
 
 interface HarnessOptions {
   readonly jobs?: unknown;
+  readonly steers?: unknown;
+  readonly reconcile?: AgentProviderAdapter['reconcile'];
   readonly settings?: LongRunSettings | undefined;
   readonly unattended?: boolean;
   readonly conversation?: boolean;
@@ -54,7 +56,7 @@ function harness(options: HarnessOptions = {}) {
   } as unknown as DaemonSnapshot };
   const rows: DaemonTranscriptItemInput[] = [];
   const order: string[] = [];
-  const saved: { jobs: Readonly<Record<string, LimitJobRecord>> } = { jobs: {} };
+  const saved: { jobs: Readonly<Record<string, LimitJobRecord>>; steers: Readonly<Record<string, SteerRecord>> } = { jobs: {}, steers: {} };
   const listeners = new Set<(event: DaemonEvent) => void>();
   const events: unknown[] = [];
   const wakeQueuedTurns = vi.fn();
@@ -78,12 +80,12 @@ function harness(options: HarnessOptions = {}) {
     wakeQueuedTurns,
     commandExists: (commandId) => (options.commands ?? []).includes(commandId),
     store: {
-      load: async () => options.jobs,
-      save: async (jobs) => { order.push('file'); saved.jobs = jobs; },
+      load: async () => ({ jobs: options.jobs, steers: options.steers }),
+      save: async (state) => { order.push('file'); saved.jobs = state.jobs; saved.steers = state.steers; },
     },
     providers: {
       longRunCapability: () => (options.capability === false ? undefined : { minimumVersion: '1.0.0' }),
-      enabledAdapter: () => (options.providerOff ? { ok: false, message: 'off' } : { ok: true, value: { recoverLimit: options.recoverLimit } as AgentProviderAdapter }),
+      enabledAdapter: () => (options.providerOff ? { ok: false, message: 'off' } : { ok: true, value: { recoverLimit: options.recoverLimit, reconcile: options.reconcile } as AgentProviderAdapter }),
     },
     settings: () => settings.current,
     allowed: (_sessionId, askedTurn) => (options.conversation !== false && !(askedTurn && options.unattended)),
@@ -731,6 +733,208 @@ describe('a person writes first', () => {
     await h.coordinator.start();
     expect(h.lastCard()).toMatchObject({ phase: 'waiting' });
     expect(Object.values(h.saved.jobs)[0]).not.toHaveProperty('personTurnId');
+  });
+});
+
+describe('a message on its way into a running turn', () => {
+  const steer = (patch: Partial<SteerRecord> = {}): SteerRecord => ({
+    id: 'steer-1', sessionId: 'chat', turnId: 'turn-running', providerId: 'claude', text: 'Use the other file.', state: 'on-its-way', sentAt: STOPPED, ...patch,
+  });
+  const runningTurn = turn('turn-running', { state: 'working', errorCode: undefined });
+  const started = async (options: HarnessOptions = {}) => {
+    const h = harness({ snapshot: { turns: [runningTurn] }, ...options });
+    await h.coordinator.start();
+    return h;
+  };
+  const finishTurn = (h: ReturnType<typeof harness>, patch: Partial<DaemonTurn>): void => {
+    h.held.snapshot = { ...h.held.snapshot, turns: [{ ...runningTurn, ...patch }] };
+    h.emit({ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: 'turn-running' } } as DaemonEvent);
+  };
+
+  it('is written to the file before the call that sends it may go', async () => {
+    const h = await started();
+    h.order.length = 0;
+    await h.coordinator.steerSent(steer());
+    expect(h.order[0]).toBe('file');
+    expect(h.saved.steers['steer-1']).toMatchObject({ text: 'Use the other file.', state: 'on-its-way', sessionId: 'chat' });
+    expect(h.events).toContainEqual({ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: 'chat' } });
+  });
+
+  it('the snapshot shows the person\'s words by session, and no more than a client needs', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    expect(h.coordinator.steers(h.held.snapshot)).toEqual({ chat: [{ id: 'steer-1', text: 'Use the other file.', state: 'on-its-way', sentAt: STOPPED }] });
+  });
+
+  it('with nothing on its way the snapshot carries nothing', async () => {
+    const h = await started();
+    expect(h.coordinator.steers(h.held.snapshot)).toBeUndefined();
+  });
+
+  it('an open approval is what holds it, and the snapshot says so', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    const approvals = [{ id: 'a', sessionId: 'chat', turnId: 'turn-running', state: 'pending' }] as unknown as DaemonApproval[];
+    expect(h.coordinator.steers({ ...h.held.snapshot, approvals })?.chat?.[0]).toMatchObject({ state: 'behind-approval' });
+    expect(Object.values(h.saved.steers)[0]).toMatchObject({ state: 'on-its-way' });
+  });
+
+  it('remembers what holds it once the provider says', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    h.coordinator.steerMoved('steer-1', { state: 'on-its-way', behind: 'text' });
+    expect(h.coordinator.steers(h.held.snapshot)?.chat?.[0]).toMatchObject({ state: 'on-its-way', behind: 'text' });
+  });
+
+  it('holds the queue behind it until it has gone somewhere', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    const queued = turn('turn-queued', { state: 'queued' });
+    expect(h.coordinator.canDispatchTurn(queued)).toBe(false);
+    expect(h.coordinator.canDispatchTurn(turn('turn-elsewhere', { sessionId: 'other', state: 'queued' }))).toBe(true);
+    h.wakeQueuedTurns.mockClear();
+    h.coordinator.steerGone('steer-1');
+    expect(h.coordinator.canDispatchTurn(queued)).toBe(true);
+    expect(h.wakeQueuedTurns).toHaveBeenCalled();
+    expect(h.coordinator.steerOf('steer-1')).toBeUndefined();
+    await h.coordinator.settled();
+    expect(h.saved.steers).toEqual({});
+  });
+
+  it('a message in doubt or failed waits for the person, not the queue', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    h.wakeQueuedTurns.mockClear();
+    h.coordinator.steerMoved('steer-1', { state: 'failed', failure: 'disconnected' });
+    expect(h.coordinator.canDispatchTurn(turn('turn-queued', { state: 'queued' }))).toBe(true);
+    expect(h.wakeQueuedTurns).toHaveBeenCalled();
+    expect(h.coordinator.steers(h.held.snapshot)?.chat?.[0]).toMatchObject({ state: 'failed', failure: 'disconnected' });
+  });
+
+  it('what the provider said late does not take back what was already decided', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    h.coordinator.steerMoved('steer-1', { state: 'unconfirmed' });
+    h.coordinator.steerMoved('steer-1', { state: 'on-its-way', behind: 'tool' });
+    expect(h.coordinator.steerOf('steer-1')).toMatchObject({ state: 'unconfirmed' });
+    expect(() => h.coordinator.steerMoved('steer-gone', { state: 'unconfirmed' })).not.toThrow();
+  });
+
+  it.each([
+    ['a limit', { state: 'failed', errorCode: 'usage-limit' }, 'limit'],
+    ['Stop', { state: 'interrupted', errorCode: undefined }, 'stop'],
+  ] as const)('%s first leaves it in doubt, and says what caught it', async (_name, patch, caught) => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    finishTurn(h, patch);
+    await vi.waitFor(() => expect(h.coordinator.steerOf('steer-1')).toMatchObject({ state: 'unconfirmed', caught }));
+    await h.coordinator.settled();
+    expect(h.saved.steers['steer-1']).toMatchObject({ state: 'unconfirmed', caught });
+    expect(h.coordinator.canDispatchTurn(turn('turn-queued', { state: 'queued' }))).toBe(true);
+  });
+
+  it('any other failure leaves it in doubt with no cause named', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    finishTurn(h, { state: 'failed', errorCode: 'provider-session-failed' });
+    await vi.waitFor(() => expect(h.coordinator.steerOf('steer-1')).toMatchObject({ state: 'unconfirmed' }));
+    expect(h.coordinator.steerOf('steer-1')).not.toHaveProperty('caught');
+  });
+
+  it('a turn that finished well leaves it on its way: Claude starts it next, as its own turn', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setImmediate'] });
+    try {
+      const h = await started();
+      await h.coordinator.steerSent(steer());
+      finishTurn(h, { state: 'completed' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.coordinator.steerOf('steer-1')).toMatchObject({ state: 'on-its-way' });
+      h.coordinator.steerGone('steer-1');
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(h.coordinator.steerOf('steer-1')).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('if nothing lands after the turn finished it stops holding the queue and says it cannot tell', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setImmediate'] });
+    try {
+      const h = await started();
+      await h.coordinator.steerSent(steer());
+      finishTurn(h, { state: 'completed' });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(h.coordinator.steerOf('steer-1')).toMatchObject({ state: 'unconfirmed' });
+      expect(h.coordinator.canDispatchTurn(turn('turn-queued', { state: 'queued' }))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a conversation archived takes it along', async () => {
+    const h = await started();
+    await h.coordinator.steerSent(steer());
+    h.held.snapshot = { ...h.held.snapshot, sessions: [session('chat', { archivedAt: STOPPED })] };
+    h.emit({ kind: 'entity.archived', payload: { entityType: 'session', entityId: 'chat' } } as DaemonEvent);
+    await vi.waitFor(() => expect(h.coordinator.steerOf('steer-1')).toBeUndefined());
+    await h.coordinator.settled();
+    expect(h.saved.steers).toEqual({});
+  });
+
+  describe('after a restart', () => {
+    const inThread = (state: 'applied' | 'not-applied' | 'delivery-uncertain') => vi.fn<NonNullable<HarnessOptions['reconcile']>>(async () => ({ commands: [{ commandId: 'steer-1', state }], transcriptItems: [] }));
+
+    it('asks for it by command, with no turn: a turn would be recovered', async () => {
+      const reconcile = inThread('applied');
+      const h = await started({ steers: { 'steer-1': steer() }, reconcile });
+      await h.coordinator.settled();
+      expect(reconcile).toHaveBeenCalledExactlyOnceWith({ sessionId: 'chat', providerSessionId: 'provider-chat', unsettledCommands: [{ commandId: 'steer-1', idempotencyKey: 'steer-1', type: 'agent.steer' }] });
+    });
+
+    it('found, it landed: the row is written and the record goes', async () => {
+      const h = await started({ steers: { 'steer-1': steer() }, reconcile: inThread('applied') });
+      await h.coordinator.settled();
+      expect(h.rows).toEqual([expect.objectContaining({ id: steerRowItem(steer(), 'turn-running', {}).id, kind: 'user-message', text: 'Use the other file.', turnId: 'turn-running', payload: { v: 1, type: 'steer' } })]);
+      expect(h.coordinator.steerOf('steer-1')).toBeUndefined();
+      expect(h.saved.steers).toEqual({});
+    });
+
+    it.each(['not-applied', 'delivery-uncertain'] as const)('%s, it cannot be told', async (state) => {
+      const h = await started({ steers: { 'steer-1': steer() }, reconcile: inThread(state) });
+      await h.coordinator.settled();
+      expect(h.rows).toEqual([]);
+      expect(h.saved.steers['steer-1']).toMatchObject({ state: 'unconfirmed' });
+    });
+
+    it('a read that fails, or an AI that is off, cannot tell either', async () => {
+      const failing = await started({ steers: { 'steer-1': steer() }, reconcile: async () => { throw new Error('no answer'); } });
+      await failing.coordinator.settled();
+      expect(failing.saved.steers['steer-1']).toMatchObject({ state: 'unconfirmed' });
+
+      const off = await started({ steers: { 'steer-1': steer() }, providerOff: true });
+      await off.coordinator.settled();
+      expect(off.saved.steers['steer-1']).toMatchObject({ state: 'unconfirmed' });
+    });
+
+    it('one left in doubt is looked for again; one that failed stands', async () => {
+      const doubt = await started({ steers: { 'steer-1': steer({ state: 'unconfirmed' }) }, reconcile: inThread('applied') });
+      await doubt.coordinator.settled();
+      expect(doubt.coordinator.steerOf('steer-1')).toBeUndefined();
+
+      const reconcile = inThread('applied');
+      const failed = await started({ steers: { 'steer-1': steer({ state: 'failed', failure: 'disconnected' }) }, reconcile });
+      await failed.coordinator.settled();
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(failed.coordinator.steerOf('steer-1')).toMatchObject({ state: 'failed', failure: 'disconnected' });
+    });
+
+    it('holds the queue from the first pass, before it has been looked for', async () => {
+      const h = harness({ steers: { 'steer-1': steer() }, snapshot: { turns: [runningTurn] } });
+      await h.coordinator.load();
+      expect(h.coordinator.canDispatchTurn(turn('turn-queued', { state: 'queued' }))).toBe(false);
+    });
+
+    it('forgets one whose conversation is gone, and drops what this build did not write', async () => {
+      const gone = await started({ steers: { 'steer-1': steer({ sessionId: 'gone' }), nonsense: { id: 'x' }, 'bad-state': steer({ state: 'landed' as never }) } });
+      await gone.coordinator.settled();
+      expect(gone.saved.steers).toEqual({});
+    });
   });
 });
 

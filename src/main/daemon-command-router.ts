@@ -66,6 +66,8 @@ export interface DaemonCommandRouterOptions {
   readonly nextPromptSuggestions?: (snapshot: DaemonSnapshot) => DaemonSnapshot['nextPromptSuggestions'];
   /** Each conversation's open limit (LongRunCoordinator.usageLimits); `long-run-v1`. */
   readonly usageLimits?: (snapshot: DaemonSnapshot) => DaemonSnapshot['usageLimits'];
+  /** Messages on their way into running turns, by session (LongRunCoordinator.steers); `long-run-v1`. */
+  readonly steers?: (snapshot: DaemonSnapshot) => DaemonSnapshot['steers'];
   /** Which AIs run long-run continuity now (LongRunCoordinator.support); `long-run-v1`. */
   readonly longRunSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['longRunSupport'];
 }
@@ -195,6 +197,7 @@ export class DaemonCommandRouter {
   private readonly reviewSupport: DaemonCommandRouterOptions['reviewSupport'];
   private readonly nextPromptSuggestions: DaemonCommandRouterOptions['nextPromptSuggestions'];
   private readonly usageLimits: DaemonCommandRouterOptions['usageLimits'];
+  private readonly steers: DaemonCommandRouterOptions['steers'];
   private readonly longRunSupport: DaemonCommandRouterOptions['longRunSupport'];
   private acceptingCommands = true;
 
@@ -211,6 +214,7 @@ export class DaemonCommandRouter {
     this.reviewSupport = options.reviewSupport;
     this.nextPromptSuggestions = options.nextPromptSuggestions;
     this.usageLimits = options.usageLimits;
+    this.steers = options.steers;
     this.longRunSupport = options.longRunSupport;
   }
 
@@ -223,6 +227,7 @@ export class DaemonCommandRouter {
     const reviewSupport = this.reviewSupport?.(snapshot);
     const nextPromptSuggestions = this.nextPromptSuggestions?.(snapshot);
     const usageLimits = this.usageLimits?.(snapshot);
+    const steers = this.steers?.(snapshot);
     const longRunSupport = this.longRunSupport?.(snapshot);
     return {
       ...snapshot,
@@ -233,6 +238,7 @@ export class DaemonCommandRouter {
       ...(reviewSupport && Object.keys(reviewSupport).length ? { reviewSupport } : {}),
       ...(nextPromptSuggestions ? { nextPromptSuggestions } : {}),
       ...(usageLimits ? { usageLimits } : {}),
+      ...(steers ? { steers } : {}),
       ...(longRunSupport && Object.keys(longRunSupport).length ? { longRunSupport } : {}),
     };
   }

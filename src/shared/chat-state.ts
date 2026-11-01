@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ChatAttachmentSchema, ChatReplyReferenceSchema, ChatSkillReferenceSchema, MAX_CHAT_ATTACHMENTS, validateChatMessageContext, type ChatComposerDraft } from './chat-message';
+import { ChatAttachmentSchema, ChatReplyReferenceSchema, ChatSkillReferenceSchema, MAX_CHAT_ATTACHMENTS, validateChatMessageContext, type ChatComposerDraft, type ChatMessageContext } from './chat-message';
 import { parseDaemonCommand, type DaemonCommand } from './daemon-protocol';
 import { ConversationStartSchema, ConversationSettingsSchema } from './conversation-start';
 import { ConversationReadResultSchema, type ConversationReadResult } from './conversation-history';
@@ -28,11 +28,18 @@ const ChatDraftContentSchema = z.object({
 
 export const ChatComposerDraftSchema = ChatDraftContentSchema.safeExtend({ parkedDraft: ChatDraftContentSchema.optional() });
 
-export type ChatPendingCommand = Extract<DaemonCommand, { type: 'agent.submit' | 'agent.interrupt-and-submit' }>;
+export type ChatPendingCommand = Extract<DaemonCommand, { type: 'agent.submit' | 'agent.interrupt-and-submit' | 'agent.steer' }>;
+export function pendingSubmitMode(command: Pick<ChatPendingCommand, 'type'>): 'send' | 'interrupt' | 'steer' {
+  return command.type === 'agent.submit' ? 'send' : command.type === 'agent.steer' ? 'steer' : 'interrupt';
+}
+/** A steer is plain text: it has none. */
+export function pendingContext(command: ChatPendingCommand): ChatMessageContext | undefined {
+  return command.type === 'agent.steer' ? undefined : command.payload.context;
+}
 const PendingCommandSchema = z.custom<ChatPendingCommand>((value) => {
   try {
     const command = parseDaemonCommand(value);
-    return (command.type === 'agent.submit' || command.type === 'agent.interrupt-and-submit') && (command.principal.kind === 'desktop' || command.principal.kind === 'android');
+    return (command.type === 'agent.submit' || command.type === 'agent.interrupt-and-submit' || command.type === 'agent.steer') && (command.principal.kind === 'desktop' || command.principal.kind === 'android');
   } catch { return false; }
 }, 'Only an exact chat submission envelope may be retained.');
 export const ChatSessionStateSchema = z.object({
@@ -44,11 +51,11 @@ export const ChatSessionStateSchema = z.object({
   view: z.object({ top: z.number().finite(), follow: z.boolean(), messageId: z.string().optional(), offset: z.number().finite().optional() }).strict().optional(),
   pendingSubmit: z.object({
     command: PendingCommandSchema,
-    mode: z.enum(['send', 'interrupt']),
+    mode: z.enum(['send', 'interrupt', 'steer']),
     recordedAt: z.string().datetime(),
   }).strict().optional(),
 }).strict().superRefine((value, context) => {
-  if (value.pendingSubmit && (value.pendingSubmit.mode === 'send') !== (value.pendingSubmit.command.type === 'agent.submit')) {
+  if (value.pendingSubmit && value.pendingSubmit.mode !== pendingSubmitMode(value.pendingSubmit.command)) {
     context.addIssue({ code: 'custom', message: 'Pending submit mode does not match its command.' });
   }
 });

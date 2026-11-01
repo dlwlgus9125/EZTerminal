@@ -1117,7 +1117,7 @@ app.on('ready', async () => {
     commandExists: (commandId) => daemonStore.findCommand(commandId) !== undefined,
     store: {
       load: async () => { await longRunJobsFile.init(); return longRunJobsFile.read(); },
-      save: (jobs) => longRunJobsFile.enqueue(() => longRunJobsFile.writeAtomic(JSON.stringify(jobs))),
+      save: (state) => longRunJobsFile.enqueue(() => longRunJobsFile.writeAtomic(JSON.stringify(state))),
     },
     providers: providerRegistry,
     settings: () => settingsRef.authority?.longRun(),
@@ -1211,6 +1211,7 @@ app.on('ready', async () => {
     reviewSupport: (snapshot) => reviewCoordinator.support(snapshot),
     nextPromptSuggestions: (snapshot) => turnWrapUpCoordinator.nextPromptSuggestions(snapshot),
     usageLimits: (snapshot) => longRunCoordinator.usageLimits(snapshot),
+    steers: (snapshot) => longRunCoordinator.steers(snapshot),
     longRunSupport: (snapshot) => longRunCoordinator.support(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
