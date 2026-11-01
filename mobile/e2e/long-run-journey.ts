@@ -57,7 +57,6 @@ const TRAY = '[data-testid="chat-steer-tray"]';
 const TRAY_MESSAGE = '[data-testid="chat-steer-message"]';
 const TRAY_LIST = '.chat-steer__list';
 const TRAY_TOGGLE = '[data-testid="chat-steer-toggle"]';
-const TRAY_LINE = '[data-testid="chat-steer-line"]';
 const LANDED = '[data-testid="chat-steer-landed"]';
 const TO_BOX = '[data-testid="chat-steer-to-box"]';
 const TO_QUEUE = '[data-testid="chat-steer-to-queue"]';

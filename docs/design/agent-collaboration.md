@@ -485,7 +485,7 @@ diff·파일·인용 블록 안의 글은 지시가 아닌 데이터라고 말�
 - `agent.steer {sessionId, turnId, prompt}`는 사람의 principal만 쓸 수 있고 `/` 명령은 거절한다. 턴이 아니라 기록이라서 `queuedTurnCount`·`currentTurnId`·`agent.queue`를 건드리지 않는다. 기록을 쓴 뒤 커밋 밖에서 provider를 부른다.
 - Claude는 `priority:'next'`로 넣는다(`now`는 쓰지 않는다: 끊고 보내기만 끊는다). Codex는 `turn/steer`이고 `clientUserMessageId`가 중복을 막아 주지 않으므로 앱이 command id당 한 번만 부른다.
 - 도착 판정은 Claude의 `command_lifecycle`·`result.user_message_uuids`, Codex의 `userMessage` 항목 `clientId`다. 그때 행이 생기며(`steer`) 그 자리가 실제 위치다. Claude가 글을 쓰던 중이면 새 턴이 된다. Codex가 글을 버리면 같은 `messageId`의 빈 행이 그 글을 대체한다.
-- 도착하지 않으면: `-32600`은 같은 command id로 대기열(`steer-queued`, 이유 있음). 전송 실패는 `thread/read`로 찾고, 못 찾으면 `failed`, 읽기도 실패하면 `unconfirmed`다. 한도나 멈춤이 먼저 오면 `unconfirmed`이고 다시 보내지 않는다. 30초가 지나도록 들어가지 않은 끼워넣기는 대기열을 붙잡지 않는다.
+- 도착하지 않으면: `-32600`은 같은 command id로 대기열(`steer-queued`, 이유 있음). 전송 실패는 `thread/read`로 찾고, 못 찾으면 `failed`, 읽기도 실패하면 `unconfirmed`다. 한도나 멈춤이 먼저 오면 `unconfirmed`이고 다시 보내지 않는다. 턴이 끝나고 30초가 지나도록 들어가지 않은 끼워넣기는 `unconfirmed`가 되어 대기열을 붙잡지 않는다.
 - 사람이 고르는 후속은 `agent.steer-settle`(`queue`는 `failed`에서만, `box`), 카드 동작은 `long-run.limit-action`이다. 둘 다 받지 못한 누름은 카드가 움직였다고 말한다. 잦은 수정 번호 충돌은 client의 재시도 고리가 받는다.
 
 ## Schedule, heartbeat와 local control
