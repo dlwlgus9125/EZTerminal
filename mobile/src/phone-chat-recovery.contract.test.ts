@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatRecoveryController } from '../../src/renderer/chat-recovery';
 import { retainChatRecovery, sharedChatRecovery } from '../../src/renderer/chat-recovery-registry';
-import { reconcileConversationSubmit, submitConversationMessage } from '../../src/renderer/conversation-commands';
+import { reconcileConversationSubmit, steerConversationMessage, submitConversationMessage } from '../../src/renderer/conversation-commands';
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../../src/shared/daemon-protocol';
 import { mobileAgentCreateAuthorityFingerprint, type SecureStorageLike } from './mobile-agent-create-recovery-store';
 import { MobileChatStateStore } from './mobile-chat-state-store';
@@ -89,6 +89,34 @@ describe('phone conversation draft on the shared recovery controller', () => {
     expect(send.mock.calls[1]![0]).toEqual(original);
     expect(after.getSnapshot().pendingSubmit).toBeUndefined();
     expect(after.getSnapshot().draft.text).toBe('new unsent draft');
+  });
+
+  it('escrows a message for the running turn in the secure store like any message, then sends it once', async () => {
+    const { open, send, commands } = setup();
+    const controller = await open();
+    controller.updateDraft({ text: '그 파일만' });
+    await controller.flush();
+    expect(await steerConversationMessage(commands, { sessionId: 'chat', recovery: controller, turnId: 'turn', prompt: '그 파일만' })).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toMatchObject({ type: 'agent.steer', principal: PHONE_PRINCIPAL, payload: { sessionId: 'chat', turnId: 'turn', prompt: '그 파일만' } });
+    expect(controller.getSnapshot()).toMatchObject({ status: 'ready', draft: { text: '' } });
+    expect(controller.getSnapshot().pendingSubmit).toBeUndefined();
+  });
+
+  it('keeps an unconfirmed message for the running turn across a restart and settles the exact command', async () => {
+    const { open, send, commands } = setup();
+    const before = await open();
+    before.updateDraft({ text: '그 파일만' });
+    await before.flush();
+    send.mockResolvedValueOnce(uncertain);
+    expect(await steerConversationMessage(commands, { sessionId: 'chat', recovery: before, turnId: 'turn', prompt: '그 파일만' })).toMatchObject({ ok: false, deliveryUncertain: true });
+    const original = send.mock.calls[0]![0];
+
+    const after = await open();
+    expect(after.getSnapshot().pendingSubmit).toMatchObject({ command: original, mode: 'steer' });
+    expect(await reconcileConversationSubmit(commands, { recovery: after })).toEqual({ ok: true });
+    expect(send.mock.calls[1]![0]).toEqual(original);
+    expect(after.getSnapshot().pendingSubmit).toBeUndefined();
   });
 
   it('does not send when the escrow cannot be saved, and reads storage again on retry', async () => {

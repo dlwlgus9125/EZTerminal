@@ -52,7 +52,7 @@ export function validateMobileChatRecord(value: unknown, scope: MobileChatScope)
   let pending: DaemonCommand | undefined;
   if (record.pending !== undefined) {
     const parsed = safeParseDaemonCommand(record.pending);
-    if (!parsed.success || !['agent.submit','agent.interrupt-and-submit'].includes(parsed.data.type)
+    if (!parsed.success || !['agent.submit','agent.interrupt-and-submit','agent.steer'].includes(parsed.data.type)
       || parsed.data.principal.kind !== 'android'
       || parsed.data.commandId !== parsed.data.idempotencyKey
       || !('sessionId' in parsed.data.payload) || parsed.data.payload.sessionId !== scope.sessionId) {
