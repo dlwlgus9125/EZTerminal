@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b5977f6388d91e6e1c6314197cb4f1cb9cef97aa999e3427e05cc5ee1a0fdc81",
+        "inputDigest": "sha256:2db2b97ec6047b60aa2bee6f4d5dd641221ece265bf42097b4c2692ab9083aad",
         "decision": "map-updated",
-        "reason": "Turn wrap-up: main builds a wrap-up coordinator, hands it to the provider runtime and the MCP tier, and starts it after the review coordinator; launches carry suggest_task and wrap-up context; the runtime adds handlers and card checks. Claims name them."
+        "reason": "Long-run continuity: main builds a long-run coordinator, gives it to the provider runtime and the queue gate, and loads it before the first pump; the snapshot carries limits and steers, adapters report both, and the claims say so."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:ffb65f13701bcd887aa3b465c29d34c6376acde775d73c182b9b515886114dca",
+        "inputDigest": "sha256:9b2e4079ca2d8b92fc9823133e70919b2f557698bc05328f16412544fb8c9286",
         "decision": "map-updated",
-        "reason": "Turn wrap-up: ordered authority startup now starts the wrap-up coordinator after the review coordinator and disposes it on failure; the startup claim says so, and the sibling claim on the same block is unchanged."
+        "reason": "Long-run continuity: ordered authority startup now loads and starts the long-run coordinator before ready; the startup claim says so, and the sibling claim on the same block is unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:58185cd78365c92a26c40651eb271addabc0c542a0f12cb57b1b3330f459b5e9",
+        "inputDigest": "sha256:611f9472d4563b87c5aa79c12da42fb34e45d3f5f0e3e8dc47c5d2b7855e666e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (turn wrap-up): the bridge adds a conversation-viewing capability and an in-memory message, and the protocol adds wrap-up commands and a host-memory suggestion field. The auth, session and transport flows the map claims are unchanged."
+        "reason": "Reviewed (long-run continuity): the protocol adds steer and limit commands and host-memory snapshot fields, kept from scoped readers and the offline cache; the auth, session and transport flows the map claims are unchanged and its anchors only moved."
       }
     },
     {
@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:386b3c034b4b5de98285f45fe5f47c80887c208b634a2ddb4f7316e0d8a97ab7",
+        "inputDigest": "sha256:c94f69665b57f1a51134151715f9e03799166c20cffa703ce96e4a9a86e451b2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (turn wrap-up): the conversation surface adds wrap-up cards; planning runs, delivery and the change review the map claims are unchanged and its anchors only moved."
+        "reason": "Reviewed (long-run continuity): the conversation header can take a limit's amber and the surface adds the tray and limit card; planning runs, delivery and the change review the map claims are unchanged."
       }
     },
     {
@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f307666d2a52f954f65543131cd69e8dc6706f22ad5de2440b79ddb4df25c6d2",
+        "inputDigest": "sha256:8d21d7f0738a5517cd079d88539d0759e9c93fd93b146f63e8204fd93406db66",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (turn wrap-up): the MCP server adds the suggest_task tier beside the workflow tools and one dispatch line in the anchored block; workflow tools, previews and runs read the same through the same host service."
+        "reason": "Reviewed (long-run continuity): adapters add limit and steer paths around the anchored blocks; workflow tools, previews and runs read the same through the same host services and the anchors only moved."
       }
     }
   ]
