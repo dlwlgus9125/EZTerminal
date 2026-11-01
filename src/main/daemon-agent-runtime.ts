@@ -1171,7 +1171,9 @@ export class DaemonAgentRuntime {
     const adapter = provider?.ok && provider.value.steer ? provider.value : undefined;
     const plain = !session || !await this.hasStageContext(session);
     const going = plain && turn && STEERABLE_TURN_STATES.has(turn.state) && agent?.providerSessionId && adapter && this.options.longRun?.sessionContext(sessionId);
-    const queued = await this.queueTurn(command, context, { sessionId, prompt, interruptFirst: false, payload: { v: 1, type: 'steer-queued', reason: plain ? 'turn-ended' : 'not-plain' } });
+    // What the row says of a message that cannot go in: at a limit no turn just ended, and sending has a cost.
+    const reason = !plain ? 'not-plain' : this.options.longRun?.limitOpen(sessionId) ? 'limit-open' : 'turn-ended';
+    const queued = await this.queueTurn(command, context, { sessionId, prompt, interruptFirst: false, payload: { v: 1, type: 'steer-queued', reason } });
     if (!queued.ok || !going) return queued;
     const steer: SteerRecord = { id: command.commandId, sessionId, turnId, providerId: agent.providerId, text: prompt, state: 'on-its-way', sentAt: this.isoNow() };
     const providerSessionId = agent.providerSessionId!;

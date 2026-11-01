@@ -22,6 +22,7 @@ import {
   CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM, fixOutcomesReview, inSession, otherAiReview, OTHER_REVIEW_ID, OUTCOMES_REVIEW_ID, withId,
 } from '../../src/renderer/chat/review/review-fixtures';
 import { cartStory, formatStory, inSession as wrapUpInSession, waitingStory, type WrapUpFixture } from '../../src/renderer/chat/wrap-up/wrap-up-fixtures';
+import { chatCopy } from '../../src/renderer/chat/copy';
 import { inLongSession, LIMIT_STOP, limitStory, openLimitOf } from '../../src/renderer/chat/long-run/long-run-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
@@ -2275,12 +2276,13 @@ describe('MobileAgentView long-run (long-run-v1)', () => {
     const fixture = limitStory('en', 'waiting', { provider: 'codex' });
     const moved = inLongSession(fixture, SESSION);
     const limit = openLimitOf(moved)!;
-    const { sendDaemonCommand } = await open({ working: false, items: moved.items, turns: [...moved.turns], overrides: { usageLimits: { [SESSION]: limit } }, refuse: 'This card has changed. Check it again.' });
+    const { sendDaemonCommand } = await open({ working: false, items: moved.items, turns: [...moved.turns], overrides: { usageLimits: { [SESSION]: limit } }, refuse: 'HOST TEXT' });
     await press('chat-limit-limit-auto-off');
     await until(() => {
       expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'long-run.limit-action', principal: ANDROID, payload: { sessionId: SESSION, stopId: LIMIT_STOP, action: 'auto-off' } }));
-      expect(testIds('structured-agent-wrap-up-error')[0]?.textContent).toContain('This card has changed. Check it again.');
+      expect(testIds('structured-agent-wrap-up-error')[0]?.textContent).toContain(chatCopy('en').longRun.limit.cardChanged);
     });
+    expect(testIds('structured-agent-wrap-up-error')[0]?.textContent).not.toContain('HOST TEXT');
   });
 
   it('has the card as a record on an older PC: no buttons', async () => {

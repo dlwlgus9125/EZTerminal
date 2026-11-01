@@ -443,7 +443,7 @@ describe('a provider\'s own next-prompt suggestion', () => {
 
   it('goes the moment a steer lands as the next turn, before the coordinator has looked', async () => {
     const longRun: DaemonLongRunHost = {
-      sessionContext: () => true, limitStopped: () => undefined, limitAction: () => ({ ok: true }), personSent: () => undefined,
+      sessionContext: () => true, limitStopped: () => undefined, limitAction: () => ({ ok: true }), personSent: () => undefined, limitOpen: () => false,
       steerSent: async () => undefined, steerMoved: () => undefined, steerGone: () => undefined, steerOf: () => undefined,
     };
     const h = await harness({ longRun });

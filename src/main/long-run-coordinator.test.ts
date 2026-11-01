@@ -535,7 +535,8 @@ describe('a person presses a card', () => {
     await done(h, press(h, action));
     await vi.waitFor(() => expect(h.sent).toHaveLength(1));
     expect(h.sent[0]).toMatchObject({ type: 'agent.submit', principal: { kind: 'cli', id: LONG_RUN_PRINCIPAL }, payload: { sessionId: 'chat', prompt: RESUME_TEXT, longRunResume: { stopId: 'stop-1', reason } } });
-    expect(h.lastCard()).toMatchObject({ phase: 'resuming' });
+    // The card says who started it and when: a press has no schedule of its own.
+    expect(h.lastCard()).toMatchObject({ phase: 'resuming', sendReason: reason, sentAt: expect.any(String) });
   });
 
   it('nothing goes out before the command that pressed it has committed', async () => {

@@ -342,7 +342,7 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
   const first: LongRunFixture = { ...base, items: [...items, limitRow(9, { ...limit, phase: 'waiting' })] };
   switch (phase) {
     case 'resuming':
-      return { ...withLimit(base, limit), state: 'working' };
+      return { ...withLimit(base, { ...limit, sendReason: options.reason ?? 'scheduled-time' }), state: 'working' };
     case 'resumed': {
       const sent = continueRow(10, 'turn-resume', RESUME_AT, 'completed', LONG_SESSION, options.reason);
       return withLimit(first, limit, [sent.row, item(11, 'assistant-message', text.afterResume, { turnId: 'turn-resume', createdAt: RESUME_AT })], [sent.turn]);
@@ -398,14 +398,14 @@ export function applyLongRunAction(fixture: LongRunFixture, action: ChatLongRunA
     case 'limit-unschedule': return phase('ask-reset');
     case 'limit-leave': return phase('left');
     case 'limit-try-now': {
-      if (!settled) return phase('resuming');
+      if (!settled) return withLimit(fixture, { ...limit, phase: 'resuming', sendReason: 'try-now' });
       const sent = continueRow(sequence, 'turn-tried', TRIED_AT, 'failed', sessionId, 'try-now');
       return withLimit(fixture, { ...limit, phase: 'waiting', turnId: 'turn-tried', triedAt: TRIED_AT }, [sent.row], [sent.turn]);
     }
     case 'limit-resume': {
-      if (!settled) return phase('resuming');
+      if (!settled) return withLimit(fixture, { ...limit, phase: 'resuming', sendReason: 'resume-pressed' });
       const sent = continueRow(sequence, 'turn-resume', PRESSED_AT, 'completed', sessionId, 'resume-pressed');
-      return withLimit(fixture, { ...limit, phase: 'resumed', resumeAt: PRESSED_AT }, [sent.row], [sent.turn]);
+      return withLimit(fixture, { ...limit, phase: 'resumed', sendReason: 'resume-pressed', sentAt: PRESSED_AT }, [sent.row], [sent.turn]);
     }
   }
 }

@@ -131,10 +131,10 @@ export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'scheduled':
       return { ...base, message: { text: resets }, notes: [note('plan', copy.resumesAtManual(clock(limit.resumeAt)), 'lead'), note('sends', copy.sends)], actions: [{ id: 'limit-unschedule' }] };
     case 'resuming':
-      return { ...base, message: { text: copy.sending }, notes: [], actions: [] };
+      return { ...base, message: { text: limit.sendReason ? copy.sending[limit.sendReason] : copy.sendingUnknown }, notes: [], actions: [] };
     case 'resumed':
       return {
-        ...base, message: { text: copy.sent(clock(limit.resumeAt)) },
+        ...base, message: { text: copy.sent(clock(limit.sentAt ?? limit.resumeAt)) },
         notes: [note('kept', copy.notResent)], actions: [],
       };
     case 'retrying':

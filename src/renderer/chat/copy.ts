@@ -306,7 +306,12 @@ const EN = {
       within: 'The expected reset is within 6 hours, so the app tries by itself.',
       line: (total: number, position: number): string => `${total} conversations get this in turn · this one is number ${position}`,
       lineNote: 'One every 60 seconds, the longest-stopped first. None waits for the one before it to finish.',
-      sending: 'The scheduled time has come. Sending “Continue.”…',
+      sending: {
+        'scheduled-time': 'The scheduled time has come. Sending “Continue.”…',
+        'try-now': 'You pressed Try now. Sending “Continue.”…',
+        'resume-pressed': 'You pressed Continue. Sending “Continue.”…',
+      },
+      sendingUnknown: 'Sending “Continue.”…',
       sent: (at: string): string => `The app sent “Continue.” at ${at}.`,
       notResent: 'Your stopped request was not sent again.',
       refused: (at: string): string => `“Continue.” was refused at ${at}. The expected reset has passed, but the limit still seems to hold.`,
@@ -355,6 +360,9 @@ const EN = {
       /** The composer while a clock runs. */
       composerHint: 'A message sent before the expected reset is refused and stays in the conversation, and sending cancels auto-resume.',
       triedNow: (at: string): string => `Try now was refused at ${at}. The refused turn stays in the conversation.`,
+      /** The host would not do what a button asked: the card moved on before the press reached it. */
+      cardChanged: 'This card moved on before your press reached it. Check where it stands now.',
+      cardNoAnswer: 'The app did not answer. Check the card before pressing again.',
     },
     appSent: {
       label: 'Sent by the app, not by you',
@@ -393,8 +401,10 @@ const EN = {
         'compact-turn': 'Compaction can’t take it, so it went to the queue.',
         'turn-ended': 'The turn had just ended, so it went to the queue.',
         'not-plain': 'Only plain text can be added, so it went to the queue.',
+        'limit-open': 'A usage limit stopped this conversation, so this goes as a new message. It cancels any scheduled resume, and before the reset it may be refused and stay in the conversation.',
       },
       notPlain: 'Attachments, replies and / commands can’t be added yet, so they go to the queue.',
+      messageChanged: 'This message moved on before your press reached it. Check where it stands now.',
     },
   },
   /** Turn wrap-up (시안): the tasks the AI found outside its own work. Nothing runs until the person presses a button. */
@@ -766,7 +776,12 @@ const KO: typeof EN = {
       within: '해제 예정 시각이 6시간 안이라 자동으로 시도합니다.',
       line: (total: number, position: number): string => `대화 ${total}개에 차례로 보냅니다 · 이 대화는 ${position}번째`,
       lineNote: '오래 멈춘 대화부터 60초 간격으로 보냅니다. 앞 대화가 끝나기를 기다리지 않습니다.',
-      sending: '예약 시각이 되어 "Continue."를 보내는 중입니다.',
+      sending: {
+        'scheduled-time': '예약 시각이 되어 "Continue."를 보내는 중입니다.',
+        'try-now': '지금 시도를 눌러 "Continue."를 보내는 중입니다.',
+        'resume-pressed': '이어서 하기를 눌러 "Continue."를 보내는 중입니다.',
+      },
+      sendingUnknown: '"Continue."를 보내는 중입니다.',
       sent: (at: string): string => `${at}에 앱이 "Continue."를 보냈습니다.`,
       notResent: '멈춘 요청은 다시 보내지 않았습니다.',
       refused: (at: string): string => `${at}에 보낸 "Continue."가 거절됐습니다. 해제 예정 시각이 지났지만 아직 한도인 것 같습니다.`,
@@ -813,6 +828,8 @@ const KO: typeof EN = {
       turnRefused: '한도로 거절됨',
       composerHint: '해제 예정 시각 전에 보낸 메시지는 거절되어 대화에 남고, 보내면 자동 재개가 취소됩니다.',
       triedNow: (at: string): string => `${at}의 지금 시도가 거절됐습니다. 거절된 턴이 대화에 남아 있습니다.`,
+      cardChanged: '누르기 전에 이 카드의 상태가 바뀌었습니다. 지금 상태를 확인해 주세요.',
+      cardNoAnswer: '앱이 응답하지 않았습니다. 카드를 확인한 뒤 다시 눌러 주세요.',
     },
     appSent: {
       label: '사람이 아니라 앱이 보낸 메시지',
@@ -851,8 +868,10 @@ const KO: typeof EN = {
         'compact-turn': '압축 중에는 끼워넣을 수 없어 대기열에 넣었습니다.',
         'turn-ended': '턴이 막 끝나 대기열에 넣었습니다.',
         'not-plain': '글만 끼워넣을 수 있어 대기열에 넣었습니다.',
+        'limit-open': '한도로 멈춘 대화라 새 메시지로 보냅니다. 예약된 자동 재개는 취소되고, 해제 전이면 거절되어 대화에 남을 수 있습니다.',
       },
       notPlain: '첨부·답장·/ 명령은 아직 끼워넣을 수 없어 대기열에 넣습니다.',
+      messageChanged: '누르기 전에 이 메시지의 상태가 바뀌었습니다. 지금 상태를 확인해 주세요.',
     },
   },
   taskSuggestions: {

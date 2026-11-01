@@ -5094,6 +5094,7 @@ describe('a turn a usage limit stopped', () => {
     limitStopped: () => undefined,
     limitAction: () => ({ ok: true }),
     personSent: () => undefined,
+    limitOpen: () => false,
     steerSent: async () => undefined,
     steerMoved: () => undefined,
     steerGone: () => undefined,
@@ -5524,6 +5525,18 @@ describe('a turn a usage limit stopped', () => {
         expect(run.steer).not.toHaveBeenCalled();
         expect(run.tray()).toEqual([]);
         expect(run.users().at(-1)).toMatchObject({ text: 'Too late.', payload: { v: 1, type: 'steer-queued', reason: 'turn-ended' } });
+      } finally { await run.close(); }
+    });
+
+    it('in a conversation a limit stopped it says what really happens, not that a turn just ended', async () => {
+      const run = await steering();
+      try {
+        run.h.codex.emit(limited(run.turn.id));
+        await run.settled();
+        expect(await run.send('Not yet.')).toMatchObject({ ok: true });
+        await run.settled();
+        expect(run.steer).not.toHaveBeenCalled();
+        expect(run.users().at(-1)).toMatchObject({ text: 'Not yet.', payload: { v: 1, type: 'steer-queued', reason: 'limit-open' } });
       } finally { await run.close(); }
     });
 

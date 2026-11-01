@@ -9,7 +9,7 @@ import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot, DaemonTranscr
 import { LONG_RUN_CAPABILITY, type SteeredMessage } from '../shared/long-run';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import type { ChatStateAccess } from './chat-recovery';
-import { formatClock } from './chat/copy';
+import { chatCopy, formatClock } from './chat/copy';
 import { inLongSession, LIMIT_STOP, limitStory, RESUME_AT } from './chat/long-run/long-run-fixtures';
 import { AppI18nProvider } from './i18n';
 import { clearRendererRecoveryState } from './renderer-recovery-state';
@@ -192,11 +192,12 @@ describe('the tray', () => {
 
   it('keeps it out of the box while the host still holds it', async () => {
     const { send } = mount({ snapshot: tray() });
-    send.mockImplementation(async (command) => ({ ok: false, status: 'rejected', commandId: command.commandId, revision: 3, error: { code: 'invalid-state', message: 'This message is still on its way.', retryable: false } }));
+    send.mockImplementation(async (command) => ({ ok: false, status: 'rejected', commandId: command.commandId, revision: 3, error: { code: 'invalid-state', message: 'HOST TEXT', retryable: false } }));
     await flush();
     await click('chat-steer-to-box');
     expect(input().value).toBe('');
-    expect(container.textContent).toContain('This message is still on its way.');
+    expect(container.textContent).toContain(chatCopy('en').longRun.steer.messageChanged);
+    expect(container.textContent).not.toContain('HOST TEXT');
   });
 });
 
@@ -218,12 +219,21 @@ describe('a limit card', () => {
     expect(commands(send)).toMatchObject([{ type: 'long-run.limit-action', payload: { sessionId: SESSION, stopId: LIMIT_STOP, action: 'auto-off' } }]);
   });
 
-  it('says what the host would not do', async () => {
+  it('says what the host would not do in the app\'s own words, never the host\'s', async () => {
     const { send } = mount(stopped());
-    send.mockImplementation(async (command) => ({ ok: false, status: 'rejected', commandId: command.commandId, revision: 3, error: { code: 'invalid-state', message: 'This card has changed. Check it again.', retryable: false } }));
+    send.mockImplementation(async (command) => ({ ok: false, status: 'rejected', commandId: command.commandId, revision: 3, error: { code: 'invalid-state', message: 'HOST TEXT', retryable: false } }));
     await flush();
     await click('chat-limit-limit-auto-off');
-    expect(byId('structured-agent-wrap-up-error')?.textContent).toContain('This card has changed. Check it again.');
+    expect(byId('structured-agent-wrap-up-error')?.textContent).toContain(chatCopy('en').longRun.limit.cardChanged);
+    expect(byId('structured-agent-wrap-up-error')?.textContent).not.toContain('HOST TEXT');
+  });
+
+  it('sends Enter as a new message while a clock runs: no turn runs to go into', async () => {
+    const { send } = mount(stopped());
+    await flush();
+    type('I will do it myself.');
+    await click('structured-agent-send');
+    expect(commands(send)).toMatchObject([{ type: 'agent.submit', payload: { prompt: 'I will do it myself.' } }]);
   });
 
   it('puts the clock in the header, in the same words as the list', async () => {

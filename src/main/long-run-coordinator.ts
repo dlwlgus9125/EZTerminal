@@ -57,6 +57,8 @@ export interface DaemonLongRunHost {
   limitAction(payload: DaemonCommandPayloads['long-run.limit-action']): DaemonCommandExecutionResult;
   /** A person's message is in the conversation: nothing goes out for this stop now, and its turn tells how the stop ends. */
   personSent(sessionId: string, turnId: string): void;
+  /** A limit has stopped this conversation, and nothing has moved it on yet. */
+  limitOpen(sessionId: string): boolean;
   /** On its way from now: the queue behind it holds at once, and it is in the file when this resolves. */
   steerSent(steer: SteerRecord): Promise<void>;
   /** What is known about it now. Landing is not in here: only `steerGone`, once its row is written. */
@@ -213,6 +215,8 @@ function cardFields(job: Omit<UsageLimitPayload, 'v' | 'type'>): Omit<UsageLimit
     ...(job.offBy ? { offBy: job.offBy } : {}),
     ...(job.childKind ? { childKind: job.childKind } : {}),
     ...(job.failure ? { failure: job.failure } : {}),
+    ...(job.sendReason ? { sendReason: job.sendReason } : {}),
+    ...(job.sentAt ? { sentAt: job.sentAt } : {}),
   };
 }
 
@@ -429,7 +433,6 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     return !job || !holds(job) || job.sending?.commandId === turn.commandId || job.personTurnId === turn.id;
   }
 
-  /** A limit has stopped this conversation, and nothing has moved it on yet. */
   limitOpen(sessionId: string): boolean {
     const job = this.jobOf(sessionId);
     return job !== undefined && holds(job);
@@ -724,7 +727,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       this.place({ ...job, ...blocked });
       return;
     }
-    this.place({ ...job, phase: 'resuming', sending: { commandId: this.sendId(job), reason, from: job.phase } });
+    this.place({ ...job, phase: 'resuming', sendReason: reason, sentAt: this.now().toISOString(), sending: { commandId: this.sendId(job), reason, from: job.phase } });
     await this.tail;
     for (let tries = 0; tries < SEND_TRIES; tries += 1) {
       const current = this.jobs.get(job.stopId);

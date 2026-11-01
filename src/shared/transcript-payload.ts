@@ -288,6 +288,8 @@ const UsageLimitPayloadSchema = z.object({
   offBy: z.enum(['card', 'setting']).optional(),
   childKind: z.enum(USAGE_LIMIT_CHILD_KINDS).optional(),
   failure: z.enum(USAGE_LIMIT_FAILURES).optional(),
+  sendReason: z.enum(APP_SENT_REASONS).optional(),
+  sentAt: ShortText.optional(),
 }).strict();
 
 /** The user row of a "Continue." the app sent: the row shows that text and says why it went out. */

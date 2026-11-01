@@ -94,6 +94,10 @@ export interface TurnUsageLimit {
   readonly childKind?: (typeof USAGE_LIMIT_CHILD_KINDS)[number];
   /** `failed`: why nothing went out, in the app's words. */
   readonly failure?: 'disconnected' | 'session-gone';
+  /** The last send: what started it, so a press never reads as the scheduled time. */
+  readonly sendReason?: AppSentReason;
+  /** The last send: when it went. `resumeAt` is only the schedule, and a press may have none. */
+  readonly sentAt?: string;
 }
 
 /** An open limit as the snapshot carries it: the list and the feed read it, and have no transcript. */
@@ -183,7 +187,7 @@ export interface SteerLanding {
 }
 
 /** Why a message meant for the running turn went to the queue instead. */
-export const STEER_FALLBACKS = ['review-turn', 'compact-turn', 'turn-ended', 'not-plain'] as const;
+export const STEER_FALLBACKS = ['review-turn', 'compact-turn', 'turn-ended', 'not-plain', 'limit-open'] as const;
 export type SteerFallback = (typeof STEER_FALLBACKS)[number];
 
 export interface LongRunSettings {

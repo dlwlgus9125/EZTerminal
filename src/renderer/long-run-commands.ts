@@ -46,17 +46,25 @@ export function longRunHost({ snapshot, sessionId, access, locale, onSteer, onQu
   const open = snapshot.usageLimits?.[sessionId];
   // A running turn speaks for itself, unless it is the send the card is waiting on.
   const speaks = open !== undefined && (turnId === undefined || open.phase === 'resuming');
-  const { statusLabel, ...header } = speaks ? limitHeader(open, chatCopy(locale).longRun.limit, locale) : { statusLabel: undefined };
-  const settle = async (message: SteeredMessage, action: 'queue' | 'box'): Promise<StructuredAgentUiResult> => (
-    uiResult(await sendCardCommand(access, 'agent.steer-settle', { sessionId, steerId: message.id, action }))
-  );
+  const copy = chatCopy(locale).longRun;
+  const { statusLabel, ...header } = speaks ? limitHeader(open, copy.limit, locale) : { statusLabel: undefined };
+  const settle = async (message: SteeredMessage, action: 'queue' | 'box'): Promise<StructuredAgentUiResult> => {
+    const answer = await sendCardCommand(access, 'agent.steer-settle', { sessionId, steerId: message.id, action });
+    return answer.kind === 'refused' ? { ok: false, message: copy.steer.messageChanged } : uiResult(answer);
+  };
+  // A card only offers what its state allows, so a refusal means it moved on. The host's reason is for logs, not this screen.
+  const press = async (stopId: string, action: LimitAction): Promise<StructuredAgentUiResult> => {
+    const answer = await sendCardCommand(access, 'long-run.limit-action', { sessionId, stopId, action });
+    if (answer.kind === 'ok') return { ok: true };
+    return { ok: false, message: answer.kind === 'refused' ? copy.limit.cardChanged : copy.limit.cardNoAnswer };
+  };
   const steers = agent !== undefined && snapshot.longRunSupport?.[agent.providerId] === true;
   return {
     ...(statusLabel ? { statusLabel } : {}),
     longRun: {
       ...(open ? { openLimit: open } : {}),
       ...header,
-      onAction: async ({ kind, stopId }) => uiResult(await sendCardCommand(access, 'long-run.limit-action', { sessionId, stopId, action: ACTIONS[kind] })),
+      onAction: ({ kind, stopId }) => press(stopId, ACTIONS[kind]),
       ...(steers ? {
         steer: {
           messages: snapshot.steers?.[sessionId] ?? NO_STEERS,

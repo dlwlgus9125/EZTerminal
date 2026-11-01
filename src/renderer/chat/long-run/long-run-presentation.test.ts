@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { RESUME_TEXT, type OpenUsageLimit, type UsageLimitPhase } from '../../../shared/long-run';
-import { chatCopy } from '../copy';
+import { chatCopy, formatClock } from '../copy';
 import { limitStatus, limitView } from './long-run-presentation';
 
 const ko = chatCopy('ko').longRun.limit;
@@ -29,6 +29,28 @@ describe('the usage limit card', () => {
     const view = limitView(limit('waiting'), ko, 'ko');
     expect(view.notes.map((note) => note.text)).toContain(ko.earlyRefused);
     expect(view.actions.find((action) => action.id === 'limit-try-now')?.ariaLabel).toBe(ko.tryNowLabel);
+  });
+
+  it('says who started a send: a press is never the scheduled time', () => {
+    expect(limitView(limit('resuming', { sendReason: 'scheduled-time' }), ko, 'ko').message.text).toContain('예약 시각');
+    for (const sendReason of ['try-now', 'resume-pressed'] as const) {
+      expect(limitView(limit('resuming', { sendReason }), ko, 'ko').message.text, sendReason).not.toContain('예약 시각');
+      expect(limitView(limit('resuming', { sendReason }), en, 'en').message.text, sendReason).not.toContain('scheduled');
+    }
+    expect(limitView(limit('resuming', { sendReason: 'resume-pressed' }), ko, 'ko').message.text).toContain('이어서 하기');
+    expect(limitView(limit('resuming', { sendReason: 'try-now' }), ko, 'ko').message.text).toContain('지금 시도');
+  });
+
+  it('names no reason it does not have', () => {
+    expect(limitView(limit('resuming'), ko, 'ko').message.text).not.toContain('예약 시각');
+    expect(limitView(limit('resuming'), en, 'en').message.text).not.toContain('scheduled');
+  });
+
+  it('says when it really went: a pressed send has no schedule of its own', () => {
+    const sentAt = '2026-11-01T09:30:00.000Z';
+    expect(limitView(limit('resumed', { resumeAt: undefined, sentAt }), en, 'en').message.text).toBe(en.sent(formatClock(sentAt, 'en')));
+    expect(limitView(limit('resumed', { sentAt }), en, 'en').message.text).toBe(en.sent(formatClock(sentAt, 'en')));
+    expect(limitView(limit('resumed'), en, 'en').message.text).toBe(en.sent(formatClock(RESUME, 'en')));
   });
 
   it('only sends by itself from the states that say a time', () => {
