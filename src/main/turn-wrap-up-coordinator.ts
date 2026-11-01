@@ -16,6 +16,7 @@ import {
   type DaemonTurn,
 } from '../shared/daemon-protocol';
 import { isStructuredDaemonAgentSession } from '../shared/daemon-session-visibility';
+import { resumedByHost } from '../shared/long-run';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import {
   parseTranscriptPayload,
@@ -70,7 +71,8 @@ function stableId(prefix: string, ...parts: readonly string[]): string {
  * The one rule for who gets turn wrap-up. A conversation a person sees directly and a child a person started
  * from a card qualify; reviewers, advisors, planning, scheduled and workflow sessions and every other child do
  * not. With `turnCommand` (the command that queued the turn; null when it cannot be told), the turn must be one
- * a person sent: no heartbeat, no child's report, no delegated first turn. Automatic calls need both answers.
+ * a person sent, or the "Continue." that picks one up: no heartbeat, no child's report, no delegated first turn.
+ * Automatic calls need both answers.
  */
 export function wrapUpAllowed(
   snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'agentRelations'>,
@@ -86,7 +88,7 @@ export function wrapUpAllowed(
   if (!settingsConversationAllowed({ ...snapshot, agentRelations }, sessionId, { prepared: options.prepared })) return false;
   const command = options.turnCommand;
   if (command === undefined) return true;
-  if (command?.principal.kind !== 'desktop' && command?.principal.kind !== 'android') return false;
+  if (!command || (command.principal.kind !== 'desktop' && command.principal.kind !== 'android' && !resumedByHost(command.principal))) return false;
   return !(command.type === 'agent.create' && command.payload.parentSessionId);
 }
 
@@ -327,6 +329,8 @@ export interface TurnWrapUpCoordinatorOptions {
   readonly allowed: (sessionId: string, turn?: DaemonTurn) => boolean;
   /** This session's running provider has `suggest_task` (a session's list is frozen at launch). */
   readonly toolListed: (sessionId: string) => boolean;
+  /** A usage limit has stopped this conversation: what a recap running then fails with. */
+  readonly limited?: (sessionId: string) => boolean;
   readonly now?: () => Date;
   readonly settleMs?: number;
   readonly predictionTimeoutMs?: number;
@@ -703,6 +707,7 @@ export class TurnWrapUpCoordinator implements DaemonWrapUpHost, WrapUpToolHost {
       clearTimeout(timeout);
     }
     if (this.disposed) return;
+    if (outcome.state === 'failed' && this.options.limited?.(record.sessionId)) outcome = { state: 'failed', failure: 'usage-limit' };
     await this.commit((snapshot) => {
       const session = snapshot.sessions.find((entry) => entry.id === record.sessionId);
       return session && session.archivedAt === undefined ? this.rowCommit(recapRowItem({ ...record, id: recapEndRowId(record), ...outcome })) : undefined;

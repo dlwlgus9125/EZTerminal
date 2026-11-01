@@ -21,6 +21,7 @@ import { DaemonCommandRouter } from './daemon-command-router';
 import { LongRunCoordinator, type DaemonLongRunHost, type LimitStop } from './long-run-coordinator';
 import { AgentProviderRegistry, createProviderReviewDigest } from './agent-provider-registry';
 import { MAX_TRANSCRIPT_BATCH_UTF8_BYTES, DaemonStore } from './daemon-store';
+import { wrapUpAllowed } from './turn-wrap-up-coordinator';
 
 const temporaryDirectories: string[] = [];
 
@@ -5318,7 +5319,7 @@ describe('a turn a usage limit stopped', () => {
     const person = { kind: 'desktop', id: 'renderer' } as const;
 
     /** The real coordinator behind the runtime, so the tray, the hold and the rows are the ones the app has. */
-    async function steering(options: { readonly steer?: AgentProviderAdapter['steer'] | null; readonly capability?: boolean; readonly conversationContext?: Parameters<typeof harness>[0] extends infer O ? O extends { conversationContext?: infer C } ? C : never : never } = {}) {
+    async function steering(options: { readonly steer?: AgentProviderAdapter['steer'] | null; readonly capability?: boolean; readonly realRule?: boolean; readonly conversationContext?: Parameters<typeof harness>[0] extends infer O ? O extends { conversationContext?: infer C } ? C : never : never } = {}) {
       const ref: { current?: LongRunCoordinator } = {};
       const longRun = new Proxy({} as DaemonLongRunHost, { get: (_target, key: keyof DaemonLongRunHost) => (...args: never[]) => (ref.current![key] as (...values: never[]) => unknown)(...args) });
       const h = await harness({ longRun, canDispatchTurn: (turn) => ref.current?.canDispatchTurn(turn) ?? true, ...(options.conversationContext ? { conversationContext: options.conversationContext } : {}) });
@@ -5332,7 +5333,9 @@ describe('a turn a usage limit stopped', () => {
         commandExists: (commandId) => h.store.findCommand(commandId) !== undefined,
         providers: { longRunCapability: () => (options.capability === false ? undefined : { minimumVersion: '1.0.0' }), enabledAdapter: (snapshot, providerId) => h.providers.enabledAdapter(snapshot, providerId) },
         settings: () => ({ autoResume: true }),
-        allowed: () => true,
+        allowed: options.realRule
+          ? (sessionId, askedTurn) => wrapUpAllowed(h.router.getSnapshot(), sessionId, { prepared: false, ...(askedTurn ? { turnCommand: h.store.findCommand(askedTurn.commandId)?.command ?? null } : {}) })
+          : () => true,
         prepared: () => false,
       });
       ref.current = coordinator;
@@ -5667,6 +5670,44 @@ describe('a turn a usage limit stopped', () => {
           expect(await run.h.execute('agent.steer-settle', { sessionId: 'agent-1', steerId, action: 'box' }, { kind: 'cli', id: 'heartbeat' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
         } finally { await run.close(); }
       });
+    });
+
+    it('a limit later in a resumed turn waits by itself: that turn counts as the person\'s', async () => {
+      const run = await steering({ realRule: true });
+      try {
+        const cards = () => run.h.router.readTranscript('agent-1').flatMap((item) => (item.payload?.type === 'usage-limit' ? [item.payload] : []));
+        run.h.codex.emit(limited(run.turn.id));
+        await run.settled();
+        expect(cards().at(-1)).toMatchObject({ phase: 'waiting' });
+        vi.mocked(run.h.codex.submit).mockClear();
+        await run.h.execute('long-run.limit-action', { sessionId: 'agent-1', stopId: cards().at(-1)!.stopId, action: 'try-now' });
+        await run.settled();
+        const resumed = run.h.router.getSnapshot().turns.find((entry) => entry.id !== run.turn.id)!;
+        expect(vi.mocked(run.h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Continue.', attended: true });
+        run.h.codex.emit({ kind: 'transcript', item: { id: 'answer', sessionId: 'agent-1', turnId: resumed.id, sequence: 1, kind: 'assistant-message', text: 'Carrying on.', isDelta: false, isSensitive: false, createdAt: '2026-09-04T10:00:00.000Z' } });
+        await vi.waitFor(() => expect(cards().at(-1)).toMatchObject({ phase: 'resumed' }));
+        await run.settled();
+        run.h.codex.emit(limited(resumed.id));
+        await run.settled();
+        expect(cards().at(-1)).toMatchObject({ phase: 'waiting', turnId: resumed.id });
+      } finally { await run.close(); }
+    });
+
+    it('a resumed turn in a child is not attended: nobody watches its plan questions', async () => {
+      const h = await harness();
+      try {
+        await h.enable(h.codex, 'codex');
+        await h.prepareWorkspace();
+        await h.execute('agent.create', { sessionId: 'lead', workspaceId: 'workspace-1', title: 'Lead', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Build it.' });
+        await h.execute('agent.create', { sessionId: 'child', workspaceId: 'workspace-1', title: 'Child', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Part of it.', parentSessionId: 'lead' });
+        const first = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'child')!;
+        h.codex.emit({ kind: 'turn-finished', sessionId: 'child', turnId: first.id, outcome: 'failed', errorCode: 'usage-limit', limit });
+        await h.runtime.whenIdle();
+        vi.mocked(h.codex.submit).mockClear();
+        await h.execute('agent.submit', { sessionId: 'child', prompt: 'Continue.', longRunResume: { stopId: 'stop-1', reason: 'resume-pressed' } }, { kind: 'cli', id: 'long-run-runtime' });
+        await h.runtime.whenIdle();
+        expect(vi.mocked(h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Continue.', attended: false });
+      } finally { await h.runtime.dispose(); await h.store.close(); }
     });
 
     it('a message that cannot go in writes why on its queued row', async () => {

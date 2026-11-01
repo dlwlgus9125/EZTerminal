@@ -62,7 +62,7 @@ import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } 
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 import { readTaskCard, taskStatusRowItem, type DaemonWrapUpHost } from './turn-wrap-up-coordinator';
 import { steerRowItem, type DaemonLongRunHost, type SteerRecord } from './long-run-coordinator';
-import { LONG_RUN_PRINCIPAL, USAGE_LIMIT_ERROR, type SteerFallback } from '../shared/long-run';
+import { LONG_RUN_PRINCIPAL, resumedByHost, USAGE_LIMIT_ERROR, type SteerFallback } from '../shared/long-run';
 import { suggestedTaskChildSessionId } from '../shared/turn-wrap-up';
 
 type AgentCommandType = Extract<DaemonCommandType,
@@ -4115,7 +4115,8 @@ export class DaemonAgentRuntime {
     const command = this.options.findCommand?.(turn.commandId);
     if (!command) return false;
     // A child's report arrives in its parent's conversation: a person watches it unless that parent is itself a child.
-    if (command.principal.id === REPORT_BACK_PRINCIPAL) {
+    // So does the app's own "Continue.": it picks up a person's turn in that person's conversation.
+    if (command.principal.id === REPORT_BACK_PRINCIPAL || resumedByHost(command.principal)) {
       return !this.options.getSnapshot().agentRelations.some((relation) => relation.childSessionId === turn.sessionId && relation.detachedAt === undefined);
     }
     if (command.principal.kind !== 'desktop' && command.principal.kind !== 'android') return false;

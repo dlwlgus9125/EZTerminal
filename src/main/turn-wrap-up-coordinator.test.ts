@@ -15,6 +15,7 @@ import {
   type PermissionPreset,
 } from '../shared/daemon-protocol';
 import type { ApprovalRequest } from '../shared/approval-request';
+import { LONG_RUN_PRINCIPAL } from '../shared/long-run';
 import { parseTranscriptPayload, type RecapPayload } from '../shared/transcript-payload';
 import { type ConversationViewingStatus } from '../shared/conversation-viewing';
 import {
@@ -28,11 +29,13 @@ import {
   type ProviderProbeResult,
   type ProviderSideQuestionAnswer,
   type ProviderSideQuestionInput,
+  type ProviderSteerResult,
 } from './agent-provider-adapter';
 import { AgentProviderRegistry, createProviderReviewDigest } from './agent-provider-registry';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
+import type { DaemonLongRunHost } from './long-run-coordinator';
 import { suggestionMode, TurnWrapUpCoordinator, turnWrapUpPauses, wrapUpAllowed, type RecapJobRecord } from './turn-wrap-up-coordinator';
 
 const temporaryDirectories: string[] = [];
@@ -51,6 +54,7 @@ const sent = (type: DaemonCommandType, payload: Record<string, unknown>, princip
 } as DaemonCommand);
 const AUTOMATION: DaemonPrincipal = { kind: 'cli', id: 'automation-runtime' };
 const REPORT_BACK: DaemonPrincipal = { kind: 'cli', id: 'report-back-runtime' };
+const RESUMED: DaemonPrincipal = { kind: 'cli', id: LONG_RUN_PRINCIPAL };
 
 function allowed(
   sessionId: string,
@@ -97,6 +101,19 @@ describe('wrapUpAllowed: the one rule, by session class', () => {
     const relations = [relation(cardChild)];
     expect(allowed(cardChild, { relations, turnCommand: sent('agent.create', { sessionId: cardChild, initialPrompt: 'Fix it.', parentSessionId: 'parent' }) })).toBe(false);
     expect(allowed(cardChild, { relations, turnCommand: sent('agent.submit', { sessionId: cardChild, prompt: 'Done.', reportOf: 'grandchild' }, REPORT_BACK) })).toBe(false);
+  });
+
+  it('counts the app\'s own "Continue." as the person\'s turn it picks up, and no other host send', () => {
+    const resumed = sent('agent.submit', { sessionId: 'chat', prompt: 'Continue.', longRunResume: { stopId: 'stop', reason: 'scheduled-time' } }, RESUMED);
+    expect(allowed('chat', { turnCommand: resumed })).toBe(true);
+    expect(allowed('chat', { turnCommand: sent('agent.submit', { sessionId: 'chat', prompt: 'x' }, { kind: 'mcp', id: LONG_RUN_PRINCIPAL, sessionId: 'lead' }) })).toBe(false);
+    expect(allowed('chat', { turnCommand: sent('agent.submit', { sessionId: 'chat', prompt: 'x' }, { kind: 'android', id: LONG_RUN_PRINCIPAL }) })).toBe(true);
+    expect(allowed('chat', { turnCommand: sent('agent.submit', { sessionId: 'chat', prompt: 'x' }, REPORT_BACK) })).toBe(false);
+  });
+
+  it('a resumed turn in a child an AI started stays refused', () => {
+    const resumed = sent('agent.submit', { sessionId: 'agent-1', prompt: 'Continue.' }, RESUMED);
+    expect(allowed('agent-1', { relations: [relation('agent-1')], turnCommand: resumed })).toBe(false);
   });
 
   it('refuses a managed child an AI started, even for a person\'s message', () => {
@@ -254,6 +271,8 @@ async function harness(options: {
   readonly viewing?: ConversationViewingStatus;
   readonly stored?: unknown;
   readonly recapTimeoutMs?: number;
+  readonly limited?: (sessionId: string) => boolean;
+  readonly longRun?: DaemonLongRunHost;
   readonly startLater?: boolean;
   readonly orchestration?: boolean;
   readonly toolListed?: boolean;
@@ -284,6 +303,7 @@ async function harness(options: {
     viewers: { status: () => viewing.status },
     store: { load: async () => saved, save: async (jobs) => { saved = jobs; } },
     ...(options.recapTimeoutMs ? { recapTimeoutMs: options.recapTimeoutMs } : {}),
+    ...(options.limited ? { limited: options.limited } : {}),
     providers,
     settings: () => settings.current,
     toolListed: () => options.toolListed ?? true,
@@ -304,6 +324,7 @@ async function harness(options: {
     findCommand: (commandId) => store.findCommand(commandId)?.command,
     executeCommand: (command) => routerRef.current!.execute(command),
     wrapUp: coordinator,
+    ...(options.longRun ? { longRun: options.longRun } : {}),
     ...(options.orchestration === false ? {} : { orchestrationForSession: () => ({ endpoint: 'http://127.0.0.1:1/mcp/chat', bearerToken: 'token' }) }),
     now,
     idFactory: (() => { let id = 0; return () => `runtime-id-${String(++id)}`; })(),
@@ -417,6 +438,34 @@ describe('a provider\'s own next-prompt suggestion', () => {
       await h.suggest(turnId);
       await until(() => events.includes('chat'), 'the announcement');
       stop();
+    } finally { await dispose(h); }
+  });
+
+  it('goes the moment a steer lands as the next turn, before the coordinator has looked', async () => {
+    const longRun: DaemonLongRunHost = {
+      sessionContext: () => true, limitStopped: () => undefined, limitAction: () => ({ ok: true }), personSent: () => undefined,
+      steerSent: async () => undefined, steerMoved: () => undefined, steerGone: () => undefined, steerOf: () => undefined,
+    };
+    const h = await harness({ longRun });
+    try {
+      await h.conversation('claude');
+      const steer = vi.fn(async (): Promise<ProviderSteerResult> => ({ outcome: 'accepted', behind: 'text' }));
+      (h.claude as { steer?: unknown }).steer = steer;
+      await h.execute('agent.submit', { sessionId: 'chat', prompt: 'Next.' });
+      const running = h.currentTurn('chat')!;
+      expect(await h.execute('agent.steer', { sessionId: 'chat', turnId: running, prompt: 'Also this.' })).toMatchObject({ ok: true });
+      const { commandId, newTurnId } = steer.mock.lastCall![0 as never] as unknown as { commandId: string; newTurnId: string };
+      await h.finishTurn(h.claude, 'chat');
+      await h.suggest(running);
+      await until(() => h.suggestion() !== undefined, 'the suggestion');
+      h.claude.emit({ kind: 'steer-landed', sessionId: 'chat', commandId, turnId: newTurnId, newTurn: true });
+      await h.runtime.whenIdle();
+      expect(h.currentTurn('chat')).toBe(newTurnId);
+      expect(h.suggestion()).toBeUndefined();
+      h.claude.emit({ kind: 'turn-finished', sessionId: 'chat', turnId: newTurnId, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      await h.suggest(newTurnId, 'Run them again.');
+      await until(() => h.suggestion()?.text === 'Run them again.', 'the next suggestion');
     } finally { await dispose(h); }
   });
 
@@ -1028,6 +1077,24 @@ Check the cart page.' });
       await until(() => h.recaps().at(-1)?.state === 'complete', 'the recap');
       expect(h.recaps().at(-1)!.text!.length).toBeLessThanOrEqual(TURN_RECAP_LIMITS.text);
       expect(h.recapRows().at(-1)!.text.length).toBeLessThanOrEqual(TURN_RECAP_LIMITS.text);
+    } finally { await dispose(h); }
+  });
+
+  it.each<[string, (ask: Ask) => void]>([
+    ['a provider failure', (ask) => { ask.reject(new ProviderSideQuestionError('failed')); }],
+    ['a blank answer', (ask) => { ask.resolve(answer('   ')); }],
+    ['a synthetic answer', (ask) => { ask.resolve(answer('You hit your limit.', true)); }],
+    ['a session that is gone', (ask) => { ask.reject(new ProviderSideQuestionError('not-live')); }],
+  ])('with a limit stop open, %s says the limit', async (_name, settle) => {
+    const open = { sessions: new Set<string>() };
+    const h = await harness({ viewing: 'unviewed', limited: (sessionId) => open.sessions.has(sessionId) });
+    try {
+      await h.conversation('claude');
+      await until(() => h.claude.asks.length === 1, 'the recap call');
+      open.sessions.add('chat');
+      settle(h.claude.asks[0]!);
+      await until(() => h.recaps().at(-1)?.state === 'failed', 'the card');
+      expect(h.recaps().at(-1)).toMatchObject({ state: 'failed', failure: 'usage-limit' });
     } finally { await dispose(h); }
   });
 

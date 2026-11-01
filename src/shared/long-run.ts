@@ -8,6 +8,11 @@ export const LONG_RUN_CAPABILITY = 'long-run-v1';
 /** The host's own principal when it sends "Continue.": the only one `agent.submit.longRunResume` is accepted from. */
 export const LONG_RUN_PRINCIPAL = 'long-run-runtime';
 
+/** The host's own "Continue.": it stands for the person's turn it picks up, for recaps and for the next stop. */
+export function resumedByHost(principal: { readonly kind: string; readonly id: string }): boolean {
+  return principal.kind === 'cli' && principal.id === LONG_RUN_PRINCIPAL;
+}
+
 /** The window that stopped a turn; `unknown` when the provider did not say which. */
 export const USAGE_LIMIT_WINDOWS = ['five-hour', 'weekly', 'unknown'] as const;
 export type UsageLimitWindow = (typeof USAGE_LIMIT_WINDOWS)[number];

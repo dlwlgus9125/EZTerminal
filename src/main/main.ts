@@ -1101,6 +1101,7 @@ app.on('ready', async () => {
       ...(turn ? { turnCommand: daemonStore.findCommand(turn.commandId)?.command ?? null } : {}),
     }),
     toolListed: (sessionId) => agentOrchestrationMcpServer.suggestTaskListed(sessionId),
+    limited: (sessionId) => longRunCoordinator.limitOpen(sessionId),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);

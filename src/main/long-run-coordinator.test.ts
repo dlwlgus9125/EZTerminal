@@ -298,6 +298,18 @@ describe('the queue behind a stop', () => {
   });
 });
 
+describe('whether a stop is open', () => {
+  it('holds for a stop that holds, and not for one let go or finished', async () => {
+    const h = harness({ jobs: { 'stop-1': job() } });
+    await h.coordinator.start();
+    expect(h.coordinator.limitOpen('chat')).toBe(true);
+    expect(h.coordinator.limitOpen('other')).toBe(false);
+    const left = harness({ jobs: { 'stop-1': job({ phase: 'left' }) } });
+    await left.coordinator.start();
+    expect(left.coordinator.limitOpen('chat')).toBe(false);
+  });
+});
+
 describe('what the snapshot carries', () => {
   it('open stops by conversation, without what only the host needs', async () => {
     const h = harness();

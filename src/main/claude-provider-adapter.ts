@@ -2380,7 +2380,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private handlePromptSuggestion(session: SessionRecord, message: JsonObject): void {
     const turn = session.lastFinishedTurn;
     const text = nextPromptText(asString(message.suggestion));
-    if (!turn || !text || [...session.turnsByCommand.values()].some((entry) => entry.state === 'submitted')) return;
+    // A steer about to start is the next turn: a guess at what follows this one is out of date as it arrives.
+    if (!turn || !text || session.steers.size > 0 || [...session.turnsByCommand.values()].some((entry) => entry.state === 'submitted')) return;
     session.lastFinishedTurn = undefined;
     this.emit({ kind: 'prompt-suggestion', sessionId: session.context.sessionId, turnId: turn.turnId, text });
   }

@@ -429,6 +429,12 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     return !job || !holds(job) || job.sending?.commandId === turn.commandId || job.personTurnId === turn.id;
   }
 
+  /** A limit has stopped this conversation, and nothing has moved it on yet. */
+  limitOpen(sessionId: string): boolean {
+    const job = this.jobOf(sessionId);
+    return job !== undefined && holds(job);
+  }
+
   /** Which AIs run this now, by provider id. */
   support(snapshot: Pick<DaemonSnapshot, 'providers'>): Readonly<Record<string, boolean>> {
     return Object.fromEntries(snapshot.providers.map((provider) => [provider.id, this.options.providers.longRunCapability(snapshot, provider.id) !== undefined]));

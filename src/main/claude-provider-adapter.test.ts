@@ -2478,6 +2478,22 @@ describe('a message put into a running turn', () => {
     await run.fixture.adapter.dispose();
   });
 
+  it('a suggestion for the turn that ended is dropped while a steer waits to start: it would answer the wrong message', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.result([run.promptUuid]);
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    run.fixture.query.emit({ type: 'prompt_suggestion', uuid: 'guess-1', session_id: providerSessionId, suggestion: 'Run the tests.' });
+    run.lifecycle(uuid, 'started');
+    run.result([uuid]);
+    run.fixture.query.emit({ type: 'prompt_suggestion', uuid: 'guess-2', session_id: providerSessionId, suggestion: 'Run them again.' });
+    await settled(() => expect(run.finished()).toHaveLength(2));
+    await settled(() => expect(run.fixture.events.filter((event) => event.kind === 'prompt-suggestion')).toEqual([
+      { kind: 'prompt-suggestion', sessionId: context.sessionId, turnId: 'turn-of-steer-1', text: 'Run them again.' },
+    ]));
+    await run.fixture.adapter.dispose();
+  });
+
   it('cancelled without started cannot be told: it may have been read', async () => {
     const run = await live();
     const { uuid } = await run.steer();
