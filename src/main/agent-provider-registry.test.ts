@@ -170,6 +170,19 @@ describe('AgentProviderRegistry', () => {
     expect(at('unknown')).toBeUndefined();
   });
 
+  it('runs long-run continuity only from the version it was measured on, and only for an AI that declares it', () => {
+    const longRun = { minimumVersion: '0.165.0' };
+    const registry = new AgentProviderRegistry([adapter({ longRun }), adapter({ providerId: 'plain' })]);
+    const at = (executableVersion: string, providerId = 'codex') => registry.longRunCapability({ providers: [{ id: providerId, executableVersion }] } as unknown as DaemonSnapshot, providerId);
+    expect(at('0.164.9')).toBeUndefined();
+    expect(at('0.165.0')).toBe(longRun);
+    expect(at('0.166.0')).toBe(longRun);
+    expect(at('0.166.0-alpha.1')).toBeUndefined();
+    expect(at('unknown')).toBeUndefined();
+    expect(at('9.0.0', 'plain')).toBeUndefined();
+    expect(at('9.0.0', 'unknown')).toBeUndefined();
+  });
+
   it('disposes every adapter and reports aggregate failures', async () => {
     const first = adapter({ providerId: 'first', dispose: vi.fn(async () => { throw new Error('first failed'); }) });
     const second = adapter({ providerId: 'second', dispose: vi.fn(async () => { throw new Error('second failed'); }) });

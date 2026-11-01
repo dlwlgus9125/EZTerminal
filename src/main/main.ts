@@ -136,6 +136,7 @@ import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { ReviewCoordinator } from './review-coordinator';
+import { LongRunCoordinator } from './long-run-coordinator';
 import { TurnWrapUpCoordinator, wrapUpAllowed } from './turn-wrap-up-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
 import { ConversationViewers, desktopViewingClient, installConversationViewingIpc } from './conversation-viewers';
@@ -1105,9 +1106,33 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
+  const longRunJobsFile = new JsonFile(app.getPath('userData'), 'long-run-jobs.json');
+  const longRunCoordinator: LongRunCoordinator = new LongRunCoordinator({
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    commandExists: (commandId) => daemonStore.findCommand(commandId) !== undefined,
+    store: {
+      load: async () => { await longRunJobsFile.init(); return longRunJobsFile.read(); },
+      save: (jobs) => longRunJobsFile.enqueue(() => longRunJobsFile.writeAtomic(JSON.stringify(jobs))),
+    },
+    providers: providerRegistry,
+    settings: () => settingsRef.authority?.longRun(),
+    allowed: (sessionId, turn) => wrapUpAllowed(daemonRouterRef.current!.getSnapshot(), sessionId, {
+      prepared: preparedHostSession(sessionId),
+      ...(turn ? { turnCommand: daemonStore.findCommand(turn.commandId)?.command ?? null } : {}),
+    }),
+    prepared: preparedHostSession,
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonAgentRuntime = new DaemonAgentRuntime({
     reviews: reviewCoordinator,
     wrapUp: turnWrapUpCoordinator,
+    longRun: longRunCoordinator,
     providers: providerRegistry,
     agentUsageStore: {
       load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
@@ -1134,7 +1159,9 @@ app.on('ready', async () => {
       // The planning AI is gone (I5-10): a session it left behind never dispatches.
       && !turn.sessionId.startsWith('planning-ai-')
       // A reviewer's turn waits for its prompt (the change, read once the reviewed turn ended).
-      && reviewCoordinator.canDispatchTurn(turn),
+      && reviewCoordinator.canDispatchTurn(turn)
+      // A queued turn behind a limit would only be refused, and stay in the session.
+      && longRunCoordinator.canDispatchTurn(turn),
     beforeProviderDispatch: (turn) => planningRuntimeRef.current?.beforeProviderDispatch(turn)
       ?? Promise.resolve(!/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId)),
     preparedSessionSettings: (sessionId) => planningRuntimeRef.current?.preparedSessionSettings(sessionId)
@@ -1181,6 +1208,8 @@ app.on('ready', async () => {
     pendingAgentSettings: (snapshot) => daemonAgentRuntime.pendingAgentSettings(snapshot),
     reviewSupport: (snapshot) => reviewCoordinator.support(snapshot),
     nextPromptSuggestions: (snapshot) => turnWrapUpCoordinator.nextPromptSuggestions(snapshot),
+    usageLimits: (snapshot) => longRunCoordinator.usageLimits(snapshot),
+    longRunSupport: (snapshot) => longRunCoordinator.support(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -1247,6 +1276,8 @@ app.on('ready', async () => {
       daemonAgentRuntime.beginShutdown();
       reviewCoordinator.dispose();
       turnWrapUpCoordinator.dispose();
+      longRunCoordinator.dispose();
+      longRunCoordinator.dispose();
     },
     stopAutomation: async () => {
       // The repeat schedule stops first: a launch it is sending still reaches a running execution side.
@@ -1470,6 +1501,7 @@ app.on('ready', async () => {
     },
     onChanged: (event) => {
       if (event.domains.includes('turn-wrap-up')) turnWrapUpCoordinator.settingsChanged();
+      if (event.domains.includes('long-run')) longRunCoordinator.settingsChanged();
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
         win.webContents.send('settings:changed', event);
@@ -2370,11 +2402,15 @@ app.on('ready', async () => {
         await agentOrchestrationMcpServer.stop();
         return daemonCommandRouter;
       }
+      // Before the runtime's first pump: a queue held across a restart is held from there.
+      await longRunCoordinator.load();
       await daemonAgentRuntime.start();
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await reviewCoordinator.start();
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await turnWrapUpCoordinator.start();
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
+      await longRunCoordinator.start();
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await daemonAutomationRuntime.start();
       if (daemonAuthorityShutdown.isStopping()) {

@@ -269,6 +269,20 @@ export class AgentProviderRegistry {
     return capability;
   }
 
+  /**
+   * Whether this provider runs long-run continuity (`long-run-v1`), with no launch side effects. Undefined when it does
+   * not, or when the reviewed executable is older than the version a limit and a steer were measured on.
+   */
+  longRunCapability(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): AgentProviderAdapter['longRun'] {
+    const capability = this.adapters.get(providerId)?.longRun;
+    const provider = snapshot.providers.find((candidate) => candidate.id === providerId);
+    if (!capability || !provider) return undefined;
+    const version = semanticVersion(provider.executableVersion);
+    const minimum = semanticVersion(capability.minimumVersion);
+    if (!version || !minimum || version.prerelease !== undefined || compareSemanticVersions(version, minimum) < 0) return undefined;
+    return capability;
+  }
+
   async listModels(
     snapshot: Pick<DaemonSnapshot, 'providers'>,
     providerId: string,

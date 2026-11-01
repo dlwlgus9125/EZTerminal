@@ -64,6 +64,10 @@ export interface DaemonCommandRouterOptions {
   readonly reviewSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['reviewSupport'];
   /** The AI's guess of the person's next message, per session (TurnWrapUpCoordinator.nextPromptSuggestions). */
   readonly nextPromptSuggestions?: (snapshot: DaemonSnapshot) => DaemonSnapshot['nextPromptSuggestions'];
+  /** Each conversation's open limit (LongRunCoordinator.usageLimits); `long-run-v1`. */
+  readonly usageLimits?: (snapshot: DaemonSnapshot) => DaemonSnapshot['usageLimits'];
+  /** Which AIs run long-run continuity now (LongRunCoordinator.support); `long-run-v1`. */
+  readonly longRunSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['longRunSupport'];
 }
 
 function commandError(
@@ -190,6 +194,8 @@ export class DaemonCommandRouter {
   private readonly sideQuestionSessions: DaemonCommandRouterOptions['sideQuestionSessions'];
   private readonly reviewSupport: DaemonCommandRouterOptions['reviewSupport'];
   private readonly nextPromptSuggestions: DaemonCommandRouterOptions['nextPromptSuggestions'];
+  private readonly usageLimits: DaemonCommandRouterOptions['usageLimits'];
+  private readonly longRunSupport: DaemonCommandRouterOptions['longRunSupport'];
   private acceptingCommands = true;
 
   constructor(
@@ -204,6 +210,8 @@ export class DaemonCommandRouter {
     this.pendingAgentSettings = options.pendingAgentSettings;
     this.reviewSupport = options.reviewSupport;
     this.nextPromptSuggestions = options.nextPromptSuggestions;
+    this.usageLimits = options.usageLimits;
+    this.longRunSupport = options.longRunSupport;
   }
 
   getSnapshot(): DaemonSnapshot {
@@ -214,6 +222,8 @@ export class DaemonCommandRouter {
     const pendingAgentSettings = this.pendingAgentSettings?.(snapshot);
     const reviewSupport = this.reviewSupport?.(snapshot);
     const nextPromptSuggestions = this.nextPromptSuggestions?.(snapshot);
+    const usageLimits = this.usageLimits?.(snapshot);
+    const longRunSupport = this.longRunSupport?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
@@ -222,6 +232,8 @@ export class DaemonCommandRouter {
       ...(pendingAgentSettings ? { pendingAgentSettings } : {}),
       ...(reviewSupport && Object.keys(reviewSupport).length ? { reviewSupport } : {}),
       ...(nextPromptSuggestions ? { nextPromptSuggestions } : {}),
+      ...(usageLimits ? { usageLimits } : {}),
+      ...(longRunSupport && Object.keys(longRunSupport).length ? { longRunSupport } : {}),
     };
   }
 

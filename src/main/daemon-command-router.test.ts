@@ -15,6 +15,22 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
+describe('long-run state in the snapshot', () => {
+  const limit = { stopId: 'stop', turnId: 'turn', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T10:00:00.000Z' } as const;
+
+  it('carries what the host holds, and nothing when it holds nothing', async () => {
+    const { router, store } = await runtime({ usageLimits: () => ({ chat: limit }), longRunSupport: () => ({ claude: true }) });
+    try {
+      expect(router.getSnapshot()).toMatchObject({ usageLimits: { chat: limit }, longRunSupport: { claude: true } });
+    } finally { await store.close(); }
+    const empty = await runtime({ usageLimits: () => undefined, longRunSupport: () => ({}) });
+    try {
+      expect(empty.router.getSnapshot()).not.toHaveProperty('usageLimits');
+      expect(empty.router.getSnapshot()).not.toHaveProperty('longRunSupport');
+    } finally { await empty.store.close(); }
+  });
+});
+
 async function runtime(options: ConstructorParameters<typeof DaemonCommandRouter>[1] = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-router-'));
   temporaryDirectories.push(directory);

@@ -126,7 +126,7 @@ export function resumeDue(limit: TurnUsageLimit, now: number): boolean {
 }
 
 /** The setting turned off: a schedule that has not gone out is cancelled and the card is left to the person. */
-export function turnAutoResumeOff(limit: TurnUsageLimit): TurnUsageLimit {
+export function turnAutoResumeOff<T extends TurnUsageLimit>(limit: T): T {
   return limit.phase === 'waiting' || limit.phase === 'scheduled' || limit.phase === 'retrying' ? { ...limit, phase: 'off', offBy: 'setting' } : limit;
 }
 
