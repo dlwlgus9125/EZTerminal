@@ -17,6 +17,7 @@ import type {
 } from './agent-provider-adapter';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
+import type { DaemonLongRunHost, LimitStop } from './long-run-coordinator';
 import { AgentProviderRegistry, createProviderReviewDigest } from './agent-provider-registry';
 import { MAX_TRANSCRIPT_BATCH_UTF8_BYTES, DaemonStore } from './daemon-store';
 
@@ -145,6 +146,8 @@ async function harness(options: {
   readonly phaseSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['phaseSettings'];
   readonly pendingSettingsStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['pendingSettingsStore'];
   readonly settingsProposals?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['settingsProposals'];
+  readonly longRun?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['longRun'];
+  readonly canDispatchTurn?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['canDispatchTurn'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -5070,6 +5073,118 @@ describe('a recoverable provider error with no running turn', () => {
       await h.runtime.whenIdle();
       expect(stateOf(h)).toEqual({ agent: 'delivery-uncertain', session: 'delivery-uncertain' });
       expect(h.router.getSnapshot().turns.find((entry) => entry.id === turn.id)).toMatchObject({ state: 'delivery-uncertain', errorCode: 'CLAUDE_RATE_LIMITED' });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
+
+// Long-run §2: a limit is a pause. The conversation stays usable, and the host decides what happens next.
+describe('a turn a usage limit stopped', () => {
+  const limit = { kind: 'resettable', window: 'five-hour', resetsAt: '2026-09-04T12:00:00.000Z' } as const;
+  async function startedAgent(h: Awaited<ReturnType<typeof harness>>) {
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hello' });
+    return h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+  }
+  const limited = (turnId: string): AgentProviderEvent => ({ kind: 'turn-finished', sessionId: 'agent-1', turnId, outcome: 'failed', errorCode: 'usage-limit', limit });
+  const agentOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!;
+  const sessionOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().sessions.find((session) => session.id === 'agent-1')!;
+
+  it('fails the turn, adds no error row, and leaves the conversation idle and usable', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().turns.find((entry) => entry.id === turn.id)).toMatchObject({ state: 'failed', errorCode: 'usage-limit' });
+      expect(agentOf(h)).toMatchObject({ state: 'idle', queuedTurnCount: 0 });
+      expect(agentOf(h).currentTurnId).toBeUndefined();
+      expect(sessionOf(h).state).toBe('idle');
+      expect(h.router.readTranscript('agent-1').filter((item) => item.kind === 'error' || item.kind === 'notice')).toEqual([]);
+
+      vi.mocked(h.codex.submit).mockClear();
+      expect((await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Continue.' })).ok).toBe(true);
+      await h.runtime.whenIdle();
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('tells the host once, and whatever it holds applies before the queue can move', async () => {
+    const stops: LimitStop[] = [];
+    let held = false;
+    const longRun: DaemonLongRunHost = { sessionContext: () => undefined, limitStopped: (stop) => { stops.push(stop); held = true; } };
+    const h = await harness({ longRun, canDispatchTurn: () => !held });
+    try {
+      const turn = await startedAgent(h);
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Waiting behind it.' });
+      const queued = h.router.getSnapshot().turns.find((entry) => entry.id !== turn.id)!;
+      vi.mocked(h.codex.submit).mockClear();
+
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      expect(stops).toEqual([{ sessionId: 'agent-1', providerId: 'codex', turn: expect.objectContaining({ id: turn.id }), limit, stoppedAt: '2026-09-04T10:00:00.000Z' }]);
+      expect(h.codex.submit).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().turns.find((entry) => entry.id === queued.id)?.state).toBe('queued');
+      expect(agentOf(h)).toMatchObject({ queuedTurnCount: 1 });
+      expect(sessionOf(h).state).toBe('idle');
+
+      held = false;
+      h.runtime.wakeQueuedTurns();
+      await h.runtime.whenIdle();
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('a limit on a turn that is not running tells the host nothing', async () => {
+    const limitStopped = vi.fn();
+    const h = await harness({ longRun: { sessionContext: () => undefined, limitStopped } });
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      expect(limitStopped).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('launches a session with long-run only when the host says so', async () => {
+    const eligible = new Set(['agent-1']);
+    const h = await harness({ longRun: { sessionContext: (sessionId) => (eligible.has(sessionId) ? true : undefined), limitStopped: () => undefined } });
+    try {
+      await startedAgent(h);
+      expect(h.codex.createSession).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'agent-1', longRun: true }), expect.anything());
+      await h.execute('agent.create', { sessionId: 'agent-2', workspaceId: 'workspace-1', title: 'Other', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hi' });
+      expect(vi.mocked(h.codex.createSession).mock.lastCall?.[0]).not.toHaveProperty('longRun');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('a delegated child stopped by a limit has not finished: it reports nothing now, and reports when it does', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'lead', workspaceId: 'workspace-1', title: 'Lead', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Build it.' });
+      const leadTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'lead')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'lead', turnId: leadTurn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      await h.execute('agent.create', { sessionId: 'helper', workspaceId: 'workspace-1', title: 'Helper', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Look.', parentSessionId: 'lead', reportBack: true });
+      const first = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'helper')!;
+      const answer = (id: string, turnId: string, text: string): AgentProviderEvent => ({ kind: 'transcript', item: { id, sessionId: 'helper', turnId, sequence: 1, kind: 'assistant-message', text, isDelta: false, isSensitive: false, createdAt: '2026-09-04T10:00:00.000Z' } });
+      const reports = () => h.router.readTranscript('lead').filter((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');
+      h.codex.emit(answer('partial', first.id, 'Half way there.'));
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'helper', turnId: first.id, outcome: 'failed', errorCode: 'usage-limit', limit });
+      await h.runtime.whenIdle();
+      expect(reports()).toEqual([]);
+
+      await h.execute('agent.submit', { sessionId: 'helper', prompt: 'Continue.' });
+      await h.runtime.whenIdle();
+      const second = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'helper' && turn.id !== first.id)!;
+      h.codex.emit(answer('whole', second.id, 'All done.'));
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'helper', turnId: second.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(reports()).toHaveLength(1);
+      expect(reports()[0]?.text).toContain('All done.');
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 });

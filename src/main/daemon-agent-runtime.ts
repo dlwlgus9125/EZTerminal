@@ -59,6 +59,8 @@ import type { HistoryResumeResult } from '../shared/conversation-history';
 import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } from '../shared/review-findings';
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 import { readTaskCard, taskStatusRowItem, type DaemonWrapUpHost } from './turn-wrap-up-coordinator';
+import type { DaemonLongRunHost } from './long-run-coordinator';
+import { USAGE_LIMIT_ERROR } from '../shared/long-run';
 import { suggestedTaskChildSessionId } from '../shared/turn-wrap-up';
 
 type AgentCommandType = Extract<DaemonCommandType,
@@ -95,6 +97,8 @@ export interface DaemonAgentRuntimeOptions {
   readonly reviews?: DaemonReviewHost;
   /** Turn wrap-up (`turn-wrap-up-v1`): what the host does beyond the turn itself; without it a turn ends as it always did. */
   readonly wrapUp?: DaemonWrapUpHost;
+  /** Long-run continuity (`long-run-v1`): who sessions launch with it, and what follows a limit. */
+  readonly longRun?: DaemonLongRunHost;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -2362,6 +2366,7 @@ export class DaemonAgentRuntime {
       workspaceId,
       workspaceRoot,
       ...prepared,
+      ...(this.options.longRun?.sessionContext(sessionId) ? { longRun: true as const } : {}),
       // A tool-free planning proposal reads no files, so it gets no extra folders either.
       ...(additionalRoots?.length && !prepared?.toolsDisabled ? { additionalRoots } : {}),
       ...(model ? { model } : {}),
@@ -2410,7 +2415,7 @@ export class DaemonAgentRuntime {
     if (!this.options.executeCommand) return undefined;
     // Once: only the child's first finished turn reports (a finished turn never finishes again).
     if (snapshot.turns.some((turn) => turn.sessionId === child.id && turn.id !== finishedTurnId
-      && (turn.state === 'completed' || turn.state === 'failed'))) return undefined;
+      && (turn.state === 'completed' || (turn.state === 'failed' && turn.errorCode !== USAGE_LIMIT_ERROR)))) return undefined;
     if (!reportBackRequested(this.options.readTranscript, child.id, parent.id)) return undefined;
     const agent = snapshot.agents.find((entry) => entry.sessionId === parent.id);
     if (
@@ -2991,6 +2996,8 @@ export class DaemonAgentRuntime {
         ) return undefined;
         const failed = event.outcome === 'failed';
         const interrupted = event.outcome === 'interrupted';
+        // A limit is a pause: the session stays usable, and the host decides what follows.
+        const broken = failed && !event.limit;
         const now = this.isoNow();
         releasedCurrent = agent.currentTurnId === turn.id;
         const hasQueuedSuccessor = releasedCurrent && agent.queuedTurnCount > 0;
@@ -3009,7 +3016,8 @@ export class DaemonAgentRuntime {
         const parentSummary = boundedChildSummary(answer);
         const reportText = boundedChildSummary(answer, MAX_REPORT_LENGTH)
           ?.concat((answer?.trim().length ?? 0) > MAX_REPORT_LENGTH ? '\n\n(…cut here; the full answer is in the subagent conversation.)' : '');
-        const reportPlan = parent && reportText && !interrupted
+        // A child a limit stopped has not finished: its report would be refused too, and it reports when it does.
+        const reportPlan = parent && reportText && !interrupted && !event.limit
           ? this.reportBackPlan(snapshot, parent, session, turn.id, failed, reportText)
           : undefined;
         const summaryRow = parentSummary && parent && parent.state !== 'archived' ? {
@@ -3022,6 +3030,8 @@ export class DaemonAgentRuntime {
           relatedSessionId: event.sessionId,
         } : undefined;
         report = reportPlan && summaryRow ? { plan: reportPlan, summaryRow } : undefined;
+        // Here, in the planner: the pump can run as soon as this commits, and the hold must already stand.
+        if (event.limit && releasedCurrent) this.options.longRun?.limitStopped({ sessionId: event.sessionId, providerId, turn, limit: event.limit, stoppedAt: now });
         return { mutations: [
           { kind: 'turn.upsert', value: turnInput(turn, {
             state: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
@@ -3033,12 +3043,12 @@ export class DaemonAgentRuntime {
             { kind: 'agent.upsert' as const, value: agentInput(agent, {
               state: hasQueuedSuccessor
                 ? 'queued'
-                : failed ? 'error' : agent.queuedTurnCount > 0 ? 'queued' : 'idle',
+                : broken ? 'error' : agent.queuedTurnCount > 0 ? 'queued' : 'idle',
               currentTurnId: undefined,
             }) },
             { kind: 'session.upsert' as const, value: sessionInput(
               session,
-              hasQueuedSuccessor ? 'idle' : failed ? 'failed' : 'idle',
+              hasQueuedSuccessor ? 'idle' : broken ? 'failed' : 'idle',
             ) },
           ] : []),
           ...(resultSummary ? this.transcriptMutations([{
