@@ -15,6 +15,7 @@ import { conversationQueue } from '../../src/renderer/conversation-queue';
 import { createCapabilityAccess } from '../../src/renderer/capability-access';
 import { structuredAgentModelOptions } from '../../src/renderer/structured-agent-create';
 import { reviewHost } from '../../src/renderer/review-commands';
+import { longRunHost } from '../../src/renderer/long-run-commands';
 import { turnWrapUpHost, useWrapUpPending } from '../../src/renderer/turn-wrap-up-commands';
 import { useProviderModelCatalogs } from '../../src/renderer/use-provider-models';
 import {
@@ -92,7 +93,7 @@ import { useChatRecovery } from '../../src/renderer/use-chat-recovery';
 import { noteConversationViewed } from '../../src/renderer/conversation-views';
 import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
 import { ChatRecoveryNotice } from '../../src/renderer/ChatRecoveryNotice';
-import { reconcileConversationSubmit, submitConversationMessage } from '../../src/renderer/conversation-commands';
+import { queueConversationMessage, reconcileConversationSubmit, steerConversationMessage, submitConversationMessage } from '../../src/renderer/conversation-commands';
 import type { ChatComposerDraft } from '../../src/renderer/chat-view-state';
 import { MobileOfflineChatCacheStore } from './mobile-offline-chat-cache';
 import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
@@ -1375,24 +1376,28 @@ export function MobileAgentView({
     }
     seededCapabilityDrafts.current.add(created.sessionId);
   }, [pendingCreatedAgent, selectedDaemonSession?.id, secureChatEnabled, chatRecovery.controller, chatRecovery.view]);
-  /** Send through the draft's escrow (never twice, never on reconnect); without secure storage, send directly. */
-  const sendChat=async (
-    sessionId:string,
-    type:'agent.submit' | 'agent.interrupt-and-submit',
-    prompt:string,
-    context:ChatMessageContext | undefined,
+  /** Through the draft's escrow (never twice, never on reconnect); without secure storage, send directly. */
+  const escrowedChat=async (
+    send:(commands:NonNullable<typeof chatCommands>) => Promise<StructuredAgentUiResult>,
     direct:() => Promise<StructuredAgentUiResult>,
   ):Promise<StructuredAgentUiResult> => {
     if (!secureChatEnabled || !chatCommands) return direct();
     setChatSending(true);
     try {
-      const result=await submitConversationMessage(chatCommands, { sessionId, recovery: chatRecovery.controller, type, prompt, ...(context ? { context } : {}) });
+      const result=await send(chatCommands);
       if (!result.ok && result.deliveryUncertain) {
         return { ...result, message: language === 'ko' ? '전송 결과를 확인할 수 없습니다. 초안을 보존했습니다. 연결과 기기 저장 상태를 확인하세요.' : 'Delivery is unconfirmed. Your draft was retained. Check the connection and secure storage.' };
       }
       return result;
     } finally { setChatSending(false); }
   };
+  const sendChat=(
+    sessionId:string,
+    type:'agent.submit' | 'agent.interrupt-and-submit',
+    prompt:string,
+    context:ChatMessageContext | undefined,
+    direct:() => Promise<StructuredAgentUiResult>,
+  ):Promise<StructuredAgentUiResult> => escrowedChat((commands) => submitConversationMessage(commands, { sessionId, recovery: chatRecovery.controller, type, prompt, ...(context ? { context } : {}) }), direct);
 
   // The conversation last looked at on this phone: the terminal's AI input sends there by default.
   useEffect(() => { if (selectedDaemonSessionId) noteConversationViewed(selectedDaemonSessionId); }, [selectedDaemonSessionId]);
@@ -1568,6 +1573,23 @@ export function MobileAgentView({
       ...wrapUpPending,
       ...(repository !== undefined ? { repository } : {}),
     }) : undefined;
+    // long-run-v1: the send button in a running turn, the tray and the limit card's buttons go to the PC the same way. No
+    // settings here: the switch is the PC's. An older PC keeps today's box.
+    const steerSession = selectedDaemonSession.id;
+    const longRun = !providerOwned && !archivedHistory && !disconnected && chatCommands ? longRunHost({
+      snapshot: daemonRuntimeState.snapshot ?? null,
+      sessionId: steerSession,
+      access: chatCommands,
+      locale: language,
+      onSteer: (turnId, prompt) => escrowedChat(
+        (commands) => steerConversationMessage(commands, { sessionId: steerSession, recovery: chatRecovery.controller, turnId, prompt }),
+        () => dispatchDaemonCommand(createDaemonCommand({ ...buildCommandBase(), type: 'agent.steer', payload: { sessionId: steerSession, turnId, prompt } })),
+      ),
+      onQueue: (prompt, context) => escrowedChat(
+        (commands) => queueConversationMessage(commands, { sessionId: steerSession, recovery: chatRecovery.controller, prompt, ...(context ? { context } : {}) }),
+        () => dispatchDaemonCommand(createDaemonCommand({ ...buildCommandBase(), type: 'agent.submit', payload: { sessionId: steerSession, prompt, ...(context ? { context } : {}), notSteered: true } })),
+      ),
+    }) : undefined;
     return (<>
       <MobileStructuredAgentSession
         capabilityClient={capabilityClient}
@@ -1699,6 +1721,8 @@ export function MobileAgentView({
         onOpenRelatedSession={selectSession}
         {...(reviews ? { reviewStart: reviews.reviewStart, onReviewAction: reviews.onReviewAction } : {})}
         {...(wrapUp ? { wrapUp } : {})}
+        {...(longRun ? { longRun: longRun.longRun } : {})}
+        {...(longRun?.statusLabel ? { statusLabel: longRun.statusLabel } : {})}
         {...(canCancel ? {
           onCancel: () => dispatchDaemonCommand(createDaemonCommand({
             ...buildCommandBase(),

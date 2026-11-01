@@ -22,6 +22,7 @@ import {
   CODEX_AUTH, CODEX_CART, CODEX_DISCOUNT, CODEX_FORMAT, CODEX_ITEM, fixOutcomesReview, inSession, otherAiReview, OTHER_REVIEW_ID, OUTCOMES_REVIEW_ID, withId,
 } from '../../src/renderer/chat/review/review-fixtures';
 import { cartStory, formatStory, inSession as wrapUpInSession, waitingStory, type WrapUpFixture } from '../../src/renderer/chat/wrap-up/wrap-up-fixtures';
+import { inLongSession, LIMIT_STOP, limitStory, openLimitOf } from '../../src/renderer/chat/long-run/long-run-fixtures';
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileAgentView, type UncertainAgentCreate } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -2171,6 +2172,128 @@ describe('MobileAgentView turn wrap-up (turn-wrap-up-v1)', () => {
     await until(() => { expect(testIds('chat-recap-line')[0]).toBeDefined(); });
     expect(testIds('chat-recap-line')[0]!.querySelector('button')).toBeNull();
     expect(testIds('chat-recap-line')[0]!.textContent).toContain('Couldn’t write a recap');
+  });
+});
+
+describe('MobileAgentView long-run (long-run-v1)', () => {
+  const noop = {
+    onBack: () => undefined,
+    onFocusSession: () => undefined,
+    onSendFollowup: async () => ({ ok: true }) as const,
+    agentCreateRecovery: readyRecoveryController(),
+  };
+  const SESSION = 'structured-session-1';
+  const ANDROID = { kind: 'android', id: 'mobile-agent-ui' };
+  const FAILED = { id: 'steer-1', text: 'That file only.', state: 'failed' as const, failure: 'refused' as const, sentAt: DAEMON_TIMESTAMP };
+
+  async function open(options: { readonly capabilities?: readonly string[]; readonly working?: boolean; readonly overrides?: Partial<DaemonSnapshot>; readonly items?: readonly DaemonTranscriptItem[]; readonly turns?: DaemonSnapshot['turns']; readonly refuse?: string } = {}) {
+    const items = (options.items ?? []).map((entry, index) => ({ ...entry, sequence: index + 1, id: `long-item-${String(index + 1)}` }));
+    const working = options.working !== false;
+    const base = daemonSnapshotOf();
+    const authority = daemonSnapshotOf({
+      capabilities: [...(options.capabilities ?? ['long-run-v1'])], longRunSupport: { codex: true },
+      agents: base.agents.map((agent) => (agent.sessionId === SESSION ? { ...agent, state: working ? 'working' as const : 'idle' as const, ...(working ? { currentTurnId: 'turn-run' } : {}) } : agent)),
+      turns: [...(options.turns ?? (working ? [{ id: 'turn-run', sessionId: SESSION, commandId: 'c', state: 'working' as const, startedAt: DAEMON_TIMESTAMP, revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP }] : []))],
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: items.length, itemCount: items.length }],
+      ...options.overrides,
+    });
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => (options.refuse
+      ? { ok: false as const, status: 'rejected' as const, commandId: command.commandId, revision: 9, error: { code: 'invalid-state' as const, message: options.refuse, retryable: false } }
+      : { ok: true as const, status: 'applied' as const, commandId: command.commandId, revision: 9, eventSequence: 13 }));
+    const transport = {
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => authority,
+      getDaemonTranscript: vi.fn(async (_sessionId: string, afterSequence = 0) => items.filter((entry) => entry.sequence > afterSequence)),
+      sendDaemonCommand,
+      setDaemonEventsSubscribed: vi.fn(async () => undefined),
+      onDaemonEvent: vi.fn(() => () => undefined),
+    } as unknown as WsEzTerminalTransport;
+    const records = new Map<string, MobileChatRecord>();
+    const chatStateStore = {
+      load: async (scope: MobileChatRecord['scope']) => records.get(`${scope.projectId}/${scope.sessionId}`) ?? null,
+      save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
+    };
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport} chatStateStore={chatStateStore} initialSessionId={SESSION} {...noop} />);
+    await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    return { sendDaemonCommand };
+  }
+
+  const type = (text: string): void => {
+    const input = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  const press = async (id: string): Promise<void> => {
+    await until(() => { expect(testIds(id)[0]).toBeDefined(); });
+    await act(async () => { testIds(id)[0]!.click(); await Promise.resolve(); });
+  };
+
+  it('keeps today\'s box on an older PC: the send button queues', async () => {
+    const { sendDaemonCommand } = await open({ capabilities: [] });
+    type('That file only.');
+    await press('structured-agent-send');
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent.submit' })); });
+  });
+
+  it('puts a message into the running turn from the send button, as the phone', async () => {
+    const { sendDaemonCommand } = await open();
+    type('That file only.');
+    await until(() => { expect(testIds('structured-agent-send')[0]?.getAttribute('data-kind')).toBe('steer'); });
+    await press('structured-agent-send');
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'agent.steer', principal: ANDROID, expectedRevision: 8, payload: { sessionId: SESSION, turnId: 'turn-run', prompt: 'That file only.' },
+      }));
+    });
+    expect(sendDaemonCommand).toHaveBeenCalledOnce();
+  });
+
+  it('sends a `/` command through the queue, which says why', async () => {
+    const { sendDaemonCommand } = await open();
+    type('/compact');
+    await press('structured-agent-send');
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent.submit', payload: expect.objectContaining({ prompt: '/compact', notSteered: true }) as unknown })); });
+  });
+
+  it('keeps 끊고 보내기 separate: it stops the turn', async () => {
+    const { sendDaemonCommand } = await open();
+    type('Stop, do this first.');
+    await press('structured-agent-interrupt-send');
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent.interrupt-and-submit' })); });
+  });
+
+  it('shows the tray and settles a failed message on the PC', async () => {
+    const { sendDaemonCommand } = await open({ overrides: { steers: { [SESSION]: [FAILED] } } });
+    await until(() => { expect(testIds('chat-steer-tray')[0]?.textContent).toContain('That file only.'); });
+    await press('chat-steer-to-queue');
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent.steer-settle', principal: ANDROID, payload: { sessionId: SESSION, steerId: FAILED.id, action: 'queue' } })); });
+  });
+
+  it('runs the same card as the desktop, and says what the PC would not do', async () => {
+    const fixture = limitStory('en', 'waiting', { provider: 'codex' });
+    const moved = inLongSession(fixture, SESSION);
+    const limit = openLimitOf(moved)!;
+    const { sendDaemonCommand } = await open({ working: false, items: moved.items, turns: [...moved.turns], overrides: { usageLimits: { [SESSION]: limit } }, refuse: 'This card has changed. Check it again.' });
+    await press('chat-limit-limit-auto-off');
+    await until(() => {
+      expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'long-run.limit-action', principal: ANDROID, payload: { sessionId: SESSION, stopId: LIMIT_STOP, action: 'auto-off' } }));
+      expect(testIds('structured-agent-wrap-up-error')[0]?.textContent).toContain('This card has changed. Check it again.');
+    });
+  });
+
+  it('has the card as a record on an older PC: no buttons', async () => {
+    const moved = inLongSession(limitStory('en', 'waiting', { provider: 'codex' }), SESSION);
+    await open({ capabilities: [], working: false, items: moved.items, turns: [...moved.turns] });
+    await until(() => { expect(testIds('chat-usage-limit-card')[0]).toBeDefined(); });
+    expect(testIds('chat-limit-limit-auto-off')).toHaveLength(0);
+  });
+
+  it('says the clock in the header', async () => {
+    const moved = inLongSession(limitStory('en', 'waiting', { provider: 'codex' }), SESSION);
+    await open({ working: false, items: moved.items, turns: [...moved.turns], overrides: { usageLimits: { [SESSION]: openLimitOf(moved)! } } });
+    await until(() => { expect(container.querySelector('.structured-agent-state')?.textContent).toContain('Limit wait'); });
   });
 });
 
