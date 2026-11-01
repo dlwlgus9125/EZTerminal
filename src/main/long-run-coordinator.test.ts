@@ -4,9 +4,10 @@ import {
   type DaemonAgent, type DaemonAgentRelation, type DaemonApproval, type DaemonCommand, type DaemonCommandReceipt, type DaemonEvent, type DaemonSession, type DaemonSnapshot,
   type DaemonTranscriptItem, type DaemonTurn,
 } from '../shared/daemon-protocol';
-import { LONG_RUN_PRINCIPAL, RESUME_TEXT, RESUME_TIMING, type LongRunSettings, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
+import { LONG_RUN_PRINCIPAL, RESUME_TEXT, RESUME_TIMING, type LimitAction, type LongRunSettings, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type { AgentProviderAdapter } from './agent-provider-adapter';
+import type { DaemonCommandExecutionResult } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
 import { limitRowItem, LongRunCoordinator, type LimitJobRecord } from './long-run-coordinator';
 
@@ -181,7 +182,7 @@ describe('a stop becomes a card', () => {
   it('a plan without this AI gets a card and nothing more: it holds nothing and stays in no file', async () => {
     const h = harness();
     h.stop({ kind: 'not-included', window: 'unknown' });
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'other' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'other' })).toBe(true);
     await h.coordinator.settled();
     expect(h.lastCard()).toMatchObject({ phase: 'not-included' });
     expect(h.saved.jobs).toEqual({});
@@ -194,7 +195,7 @@ describe('a stop becomes a card', () => {
     await h.coordinator.settled();
     expect(h.lastCard()).toMatchObject({ phase: 'child', childKind: 'managed' });
     expect(h.saved.jobs).toEqual({});
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'other' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'other' })).toBe(true);
   });
 
   it('a session that is neither gets no card', async () => {
@@ -271,27 +272,27 @@ describe('the queue behind a stop', () => {
   it('holds from the moment the runtime hands the stop over, before anything is written', () => {
     const h = harness();
     h.stop();
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(false);
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'elsewhere', commandId: 'queued' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'elsewhere', commandId: 'queued' })).toBe(true);
   });
 
   it('lets the send that resumes it through', async () => {
     const h = harness({ jobs: { 'stop-1': job({ phase: 'resuming', sending: { commandId: 'send-1', reason: 'scheduled-time', from: 'waiting' } }) } });
     await h.coordinator.load();
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'send-1' })).toBe(true);
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'other' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'send-1' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'other' })).toBe(false);
   });
 
   it('holds across a restart from the first pass: loading is enough', async () => {
     const h = harness({ jobs: { 'stop-1': job() } });
     await h.coordinator.load();
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(false);
   });
 
   it('a card that was left holds nothing', async () => {
     const h = harness({ jobs: { 'stop-1': job({ phase: 'left', resumeAt: undefined }) } });
     await h.coordinator.load();
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(true);
   });
 });
 
@@ -471,7 +472,7 @@ describe('after a restart', () => {
     h.held.snapshot = { ...h.held.snapshot, sessions: [session('chat', { archivedAt: STOPPED })] };
     for (const listener of h.listeners) listener({ kind: 'entity.archived', payload: { entityType: 'session', entityId: 'chat' } } as DaemonEvent);
     await vi.waitFor(() => expect(h.saved.jobs).toEqual({}));
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(true);
   });
 
   it('a load that fails starts empty, and tells', async () => {
@@ -486,6 +487,250 @@ describe('after a restart', () => {
     });
     await coordinator.start();
     expect(reportError).toHaveBeenCalledWith('limit jobs load failed', expect.any(Error));
+  });
+});
+
+describe('a person presses a card', () => {
+  const press = (h: ReturnType<typeof harness>, action: LimitAction, stopId = 'stop-1', sessionId = 'chat') => h.coordinator.limitAction({ sessionId, stopId, action });
+  const done = async (h: ReturnType<typeof harness>, result: DaemonCommandExecutionResult): Promise<void> => {
+    expect(result.ok).toBe(true);
+    if (result.ok) result.afterCommit?.();
+    await h.coordinator.settled();
+  };
+  const started = async (patch: Partial<LimitJobRecord>, options: HarnessOptions = {}) => {
+    const h = harness({ jobs: { 'stop-1': job(patch) }, ...options });
+    await h.coordinator.start();
+    return h;
+  };
+
+  it.each([
+    ['try-now', { phase: 'waiting' }, 'try-now'],
+    ['resume', { phase: 'ask-unknown' }, 'resume-pressed'],
+    ['resume', { phase: 'gave-up', attempt: 2 }, 'resume-pressed'],
+    ['resume', { phase: 'ask-reopened' }, 'resume-pressed'],
+    ['resume', { phase: 'off', offBy: 'setting' }, 'resume-pressed'],
+    ['resume', { phase: 'off', offBy: 'card' }, 'resume-pressed'],
+    ['resume', { phase: 'left' }, 'resume-pressed'],
+    ['resume', { phase: 'person-refused' }, 'resume-pressed'],
+    ['resume', { phase: 'failed', failure: 'disconnected' }, 'resume-pressed'],
+    ['resume', { phase: 'unconfirmed' }, 'resume-pressed'],
+    ['resume', { phase: 'skipped' }, 'resume-pressed'],
+    ['resume', { phase: 'child', childKind: 'managed-supported' }, 'resume-pressed'],
+  ] as const)('%s from %o sends "Continue." with the reason it went out', async (action, patch, reason) => {
+    const h = await started(patch);
+    await done(h, press(h, action));
+    await vi.waitFor(() => expect(h.sent).toHaveLength(1));
+    expect(h.sent[0]).toMatchObject({ type: 'agent.submit', principal: { kind: 'cli', id: LONG_RUN_PRINCIPAL }, payload: { sessionId: 'chat', prompt: RESUME_TEXT, longRunResume: { stopId: 'stop-1', reason } } });
+    expect(h.lastCard()).toMatchObject({ phase: 'resuming' });
+  });
+
+  it('nothing goes out before the command that pressed it has committed', async () => {
+    const h = await started({ phase: 'waiting' });
+    const result = press(h, 'try-now');
+    await h.coordinator.settled();
+    expect(h.sent).toEqual([]);
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting' });
+    await done(h, result);
+    await vi.waitFor(() => expect(h.sent).toHaveLength(1));
+  });
+
+  it('a refused 지금 시도 keeps its clock, spends no attempt and says when', async () => {
+    const h = await started({ phase: 'waiting' });
+    await done(h, press(h, 'try-now'));
+    await vi.waitFor(() => expect(h.sent).toHaveLength(1));
+    h.coordinator.limitStopped({ sessionId: 'chat', providerId: 'claude', turn: turn('turn-2', { commandId: h.sent[0]!.commandId }), limit: fiveHour, stoppedAt: inHours(1) });
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting', turnId: 'turn-2', resumeAt: RESUME, triedAt: inHours(1) });
+    expect(Object.values(h.saved.jobs)[0]).toMatchObject({ attempt: 0 });
+  });
+
+  it('자동 끄기 turns this card off, and only this card', async () => {
+    const h = await started({ phase: 'waiting' });
+    await done(h, press(h, 'auto-off'));
+    expect(h.lastCard()).toMatchObject({ phase: 'off', offBy: 'card' });
+  });
+
+  it('자동 끄기 stops a retry too', async () => {
+    const h = await started({ phase: 'retrying', retryAt: inHours(1), refusedAt: STOPPED });
+    await done(h, press(h, 'auto-off'));
+    expect(h.lastCard()).toMatchObject({ phase: 'off', offBy: 'card' });
+  });
+
+  it('turning this card back on waits again, and forgets it was off', async () => {
+    const h = await started({ phase: 'off', offBy: 'card' });
+    await done(h, press(h, 'auto-on'));
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting', resumeAt: RESUME });
+    expect(h.lastCard()).not.toHaveProperty('offBy');
+  });
+
+  it('turning a card back on while Settings has it off stays off, by Settings', async () => {
+    const h = await started({ phase: 'off', offBy: 'card' }, { settings: { autoResume: false } });
+    await done(h, press(h, 'auto-on'));
+    expect(h.lastCard()).toMatchObject({ phase: 'off', offBy: 'setting' });
+  });
+
+  it('그때 이어서 하기 waits for the time, however far off; taking it back asks again', async () => {
+    const h = await started({ phase: 'ask-reset', window: 'weekly' });
+    await done(h, press(h, 'schedule'));
+    expect(h.lastCard()).toMatchObject({ phase: 'scheduled', resumeAt: RESUME });
+    await done(h, press(h, 'unschedule'));
+    expect(h.lastCard()).toMatchObject({ phase: 'ask-reset', resumeAt: RESUME });
+  });
+
+  it('asking for a time with the Settings switch off leaves it off', async () => {
+    const h = await started({ phase: 'ask-reset', window: 'weekly' }, { settings: { autoResume: false } });
+    await done(h, press(h, 'schedule'));
+    expect(h.lastCard()).toMatchObject({ phase: 'off', offBy: 'setting' });
+  });
+
+  it('그대로 두기 lets go of the queue and keeps the card', async () => {
+    const h = await started({ phase: 'ask-unknown' });
+    await done(h, press(h, 'leave'));
+    expect(h.lastCard()).toMatchObject({ phase: 'left' });
+    expect(h.wakeQueuedTurns).toHaveBeenCalled();
+    expect(h.coordinator.canDispatchTurn(turn('turn-2', { state: 'queued' }))).toBe(true);
+    expect(Object.keys(h.saved.jobs)).toEqual(['stop-1']);
+  });
+
+  it.each([
+    ['try-now', { phase: 'ask-reset' }], ['try-now', { phase: 'resuming' }], ['resume', { phase: 'waiting' }], ['resume', { phase: 'ask-reset' }], ['resume', { phase: 'resuming' }], ['resume', { phase: 'scheduled' }],
+    ['auto-off', { phase: 'ask-reset' }], ['auto-on', { phase: 'off', offBy: 'setting' }], ['auto-on', { phase: 'waiting' }], ['schedule', { phase: 'waiting' }], ['unschedule', { phase: 'waiting' }], ['leave', { phase: 'waiting' }], ['leave', { phase: 'resuming' }],
+  ] as const)('%s from %o is not on that card', async (action, patch) => {
+    const h = await started(patch);
+    expect(press(h, action)).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+    expect(h.sent).toEqual([]);
+  });
+
+  it('a card that is gone or belongs to another conversation is not found', async () => {
+    const h = await started({ phase: 'waiting' });
+    expect(press(h, 'try-now', 'stop-elsewhere')).toMatchObject({ ok: false, error: { code: 'not-found' } });
+    expect(press(h, 'try-now', 'stop-1', 'other')).toMatchObject({ ok: false, error: { code: 'not-found' } });
+  });
+
+  it('no button works once a person wrote first', async () => {
+    const h = await started({ phase: 'waiting' });
+    h.coordinator.personSent('chat', 'turn-person');
+    expect(press(h, 'try-now')).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+  });
+});
+
+describe('a person writes first', () => {
+  const started = async (patch: Partial<LimitJobRecord> = {}, options: HarnessOptions = {}) => {
+    const h = harness({ jobs: { 'stop-1': job(patch) }, ...options });
+    await h.coordinator.start();
+    return h;
+  };
+  const personTurn = (patch: Partial<DaemonTurn> = {}): DaemonTurn => turn('turn-person', { commandId: 'command-person', state: 'working', errorCode: undefined, ...patch });
+  const running = (h: ReturnType<typeof harness>, patch: Partial<DaemonTurn> = {}): void => {
+    h.held.snapshot = { ...h.held.snapshot, turns: [turn('turn-1'), personTurn(patch)] };
+    h.emit({ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: 'turn-person' } } as DaemonEvent);
+  };
+
+  it('closes the schedule: the time comes and nothing goes out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setImmediate'] });
+    try {
+      const clock = { now: inHours(1) };
+      const h = await started({}, { now: () => new Date(clock.now) });
+      h.coordinator.personSent('chat', 'turn-person');
+      clock.now = inHours(3);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(h.sent).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('is written ahead: a restart still knows', async () => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    await h.coordinator.settled();
+    expect(Object.values(h.saved.jobs)[0]).toMatchObject({ personTurnId: 'turn-person' });
+  });
+
+  it('lets only that turn past the hold', async () => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    expect(h.coordinator.canDispatchTurn(personTurn({ state: 'queued' }))).toBe(true);
+    expect(h.coordinator.canDispatchTurn(turn('turn-older', { state: 'queued' }))).toBe(false);
+  });
+
+  it('a limit on it says so and keeps the message; the card can still continue', async () => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    h.coordinator.limitStopped({ sessionId: 'chat', providerId: 'claude', turn: personTurn({ state: 'failed' }), limit: { ...fiveHour, resetsAt: inHours(3) }, stoppedAt: inHours(1) });
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'person-refused', turnId: 'turn-person', resetsAt: inHours(3) });
+    expect(Object.values(h.saved.jobs)[0]).not.toHaveProperty('personTurnId');
+    expect(h.coordinator.canDispatchTurn(turn('turn-older', { state: 'queued' }))).toBe(true);
+  });
+
+  it('a first answer closes the card: the limit let it through', async () => {
+    const rows: DaemonTranscriptItem[] = [];
+    const h = await started({}, { transcript: () => rows });
+    h.coordinator.personSent('chat', 'turn-person');
+    rows.push({ id: 'row', sessionId: 'chat', turnId: 'turn-person', sequence: 9, kind: 'assistant-message', text: 'Yes.', isDelta: false, isSensitive: true, createdAt: STOPPED });
+    h.held.snapshot = { ...h.held.snapshot, turns: [turn('turn-1'), personTurn()] };
+    h.emit({ kind: 'transcript.appended', payload: { sessionId: 'chat', fromSequence: 9, toSequence: 9 } } as DaemonEvent);
+    await vi.waitFor(() => expect(h.lastCard()).toMatchObject({ phase: 'cancelled' }));
+    await h.coordinator.settled();
+    expect(h.saved.jobs).toEqual({});
+  });
+
+  it.each(['completed', 'interrupted'] as const)('its turn %s: the card closes', async (state) => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    running(h, { state });
+    await vi.waitFor(() => expect(h.lastCard()).toMatchObject({ phase: 'cancelled' }));
+    await h.coordinator.settled();
+    expect(h.saved.jobs).toEqual({});
+    expect(h.wakeQueuedTurns).toHaveBeenCalled();
+  });
+
+  it('a turn still running changes nothing yet', async () => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    running(h);
+    await new Promise((resolve) => { setImmediate(resolve); });
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting' });
+  });
+
+  it('a "Continue." on its way is not overtaken: its outcome decides', async () => {
+    const h = await started({ phase: 'resuming', sending: { commandId: 'send-1', reason: 'scheduled-time', from: 'waiting' } }, { commands: ['send-1'], snapshot: { turns: [turn('turn-1'), turn('turn-2', { commandId: 'send-1', state: 'working', errorCode: undefined })] } });
+    h.coordinator.personSent('chat', 'turn-person');
+    await h.coordinator.settled();
+    expect(Object.values(h.saved.jobs)[0]).not.toHaveProperty('personTurnId');
+  });
+
+  it('a "Continue." in doubt gives way to the person: the card closes on their turn', async () => {
+    const h = await started({ phase: 'unconfirmed', sending: { commandId: 'send-1', reason: 'scheduled-time', from: 'waiting' } }, { commands: ['send-1'], snapshot: { turns: [turn('turn-1'), turn('turn-2', { commandId: 'send-1', state: 'delivery-uncertain', errorCode: undefined })] } });
+    h.coordinator.personSent('chat', 'turn-person');
+    running(h, { state: 'completed' });
+    await vi.waitFor(() => expect(h.lastCard()).toMatchObject({ phase: 'cancelled' }));
+  });
+
+  it('a second message waits behind the first and changes nothing', async () => {
+    const h = await started();
+    h.coordinator.personSent('chat', 'turn-person');
+    h.coordinator.personSent('chat', 'turn-next');
+    await h.coordinator.settled();
+    expect(Object.values(h.saved.jobs)[0]).toMatchObject({ personTurnId: 'turn-person' });
+  });
+
+  it('after a restart a turn the limit refused says so, and one that finished closes the card', async () => {
+    const refused = harness({ jobs: { 'stop-1': job({ personTurnId: 'turn-person' }) }, snapshot: { turns: [personTurn({ state: 'failed', errorCode: 'usage-limit' })] } });
+    await refused.coordinator.start();
+    expect(refused.lastCard()).toMatchObject({ phase: 'person-refused', turnId: 'turn-person' });
+
+    const finished = harness({ jobs: { 'stop-1': job({ personTurnId: 'turn-person' }) }, snapshot: { turns: [personTurn({ state: 'completed' })] } });
+    await finished.coordinator.start();
+    expect(finished.lastCard()).toMatchObject({ phase: 'cancelled' });
+    expect(finished.saved.jobs).toEqual({});
+  });
+
+  it('after a restart a turn that never reached the host leaves the schedule as it was', async () => {
+    const h = harness({ jobs: { 'stop-1': job({ personTurnId: 'turn-person' }) } });
+    await h.coordinator.start();
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting' });
+    expect(Object.values(h.saved.jobs)[0]).not.toHaveProperty('personTurnId');
   });
 });
 
@@ -560,8 +805,8 @@ describe('the scheduler', () => {
     const h = await waiting();
     await at(DUE);
     await h.coordinator.settled();
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: h.sent[0]!.commandId })).toBe(true);
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: h.sent[0]!.commandId })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(false);
   });
 
   it('sends nothing until the setting has loaded', async () => {
@@ -604,12 +849,12 @@ describe('the scheduler', () => {
 
   it('a held queue goes instead of "Continue.": the refused prompt stays in the session', async () => {
     const h = await waiting({ snapshot: { turns: [turn('turn-1'), turn('queued', { state: 'queued', errorCode: undefined })] } });
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'command-queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'command-queued' })).toBe(false);
     await at(DUE);
     await h.coordinator.settled();
     expect(h.sent).toEqual([]);
     expect(h.lastCard()).toMatchObject({ phase: 'cancelled' });
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'command-queued' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'command-queued' })).toBe(true);
     expect(h.wakeQueuedTurns).toHaveBeenCalled();
   });
 
@@ -688,7 +933,7 @@ describe('the scheduler', () => {
     expect(h.lastCard()).toMatchObject({ phase: 'gave-up', refusedAt: retryAt });
     await at(Date.parse(retryAt) + 3_600_000);
     expect(h.sent).toHaveLength(2);
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(false);
   });
 
   it('a refused 지금 시도 keeps the clock and spends no attempt', async () => {
@@ -722,7 +967,7 @@ describe('the scheduler', () => {
     await pass(h);
     expect(h.lastCard()).toMatchObject({ phase: 'resumed' });
     expect(h.saved.jobs).toEqual({});
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(true);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(true);
     expect(h.wakeQueuedTurns).toHaveBeenCalled();
   });
 
@@ -742,7 +987,7 @@ describe('the scheduler', () => {
     sentTurn(h, { state: 'delivery-uncertain' });
     await pass(h);
     expect(h.lastCard()).toMatchObject({ phase: 'unconfirmed' });
-    expect(h.coordinator.canDispatchTurn({ sessionId: 'chat', commandId: 'queued' })).toBe(false);
+    expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'queued' })).toBe(false);
     sentTurn(h, { state: 'completed' });
     await pass(h);
     expect(h.lastCard()).toMatchObject({ phase: 'resumed' });

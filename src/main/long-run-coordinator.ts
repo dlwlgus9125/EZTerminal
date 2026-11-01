@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   createDaemonCommand,
   type DaemonCommand,
+  type DaemonCommandPayloads,
   type DaemonCommandReceipt,
   type DaemonEvent,
   type DaemonSnapshot,
@@ -17,6 +18,7 @@ import {
   turnAutoResumeOff,
   USAGE_LIMIT_ERROR,
   type AppSentReason,
+  type LimitAction,
   type LongRunSettings,
   type OpenUsageLimit,
   type ProviderUsageLimit,
@@ -25,7 +27,7 @@ import {
 } from '../shared/long-run';
 import { parseTranscriptPayload, type UsageLimitPayload } from '../shared/transcript-payload';
 import type { AgentProviderAdapter } from './agent-provider-adapter';
-import type { DaemonSystemTransitionPlanner } from './daemon-command-router';
+import type { DaemonCommandExecutionResult, DaemonSystemTransitionPlanner } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
 import type { TranscriptReader } from './managed-child-transcript';
 import { conversationBusy } from './review-coordinator';
@@ -49,6 +51,10 @@ export interface DaemonLongRunHost {
    * applies before the pump can claim the next one.
    */
   limitStopped(stop: LimitStop): void;
+  /** Under the FIFO, before anything is committed: whether the press stands. What it does runs in `afterCommit`. */
+  limitAction(payload: DaemonCommandPayloads['long-run.limit-action']): DaemonCommandExecutionResult;
+  /** A person's message is in the conversation: nothing goes out for this stop now, and its turn tells how the stop ends. */
+  personSent(sessionId: string, turnId: string): void;
 }
 
 /** One stop's card, as the jobs file keeps it: its row, plus what the host needs to carry on after a restart. */
@@ -65,6 +71,8 @@ export interface LimitJobRecord extends Omit<UsageLimitPayload, 'v' | 'type'> {
     /** The phase it was sent from: a refused 지금 시도 goes back to it, keeping its clock. */
     readonly from: UsageLimitPhase;
   };
+  /** A person wrote before the app sent: the schedule is closed, and this turn alone goes past the hold. */
+  readonly personTurnId?: string;
 }
 
 /** Finished: the last row is the record, and nothing more can happen. */
@@ -83,14 +91,38 @@ const SCHEDULER_CAP_MS = 60_000;
 const SCHEDULER_FLOOR_MS = 1_000;
 /** The rows that prove the AI took it up. */
 const ANSWER_KINDS = new Set(['assistant-message', 'tool-call']);
+const TERMINAL_TURN_STATES = new Set<DaemonTurn['state']>(['completed', 'interrupted', 'failed']);
+/** The card's buttons, by the phases that offer them. Anything else is a card out of date. */
+const ACTION_PHASES: Readonly<Record<LimitAction, ReadonlySet<UsageLimitPhase>>> = {
+  'try-now': new Set(['waiting']),
+  resume: new Set(['gave-up', 'ask-unknown', 'ask-reopened', 'off', 'left', 'person-refused', 'unconfirmed', 'skipped', 'child', 'failed']),
+  'auto-off': new Set(['waiting', 'retrying']),
+  'auto-on': new Set(['off']),
+  schedule: new Set(['ask-reset']),
+  unschedule: new Set(['scheduled']),
+  leave: new Set(['gave-up', 'ask-reset', 'ask-unknown', 'ask-reopened', 'unconfirmed', 'skipped']),
+};
 
 const finished = (job: LimitJobRecord): boolean => FINISHED_PHASES.has(job.phase) || (job.phase === 'child' && job.childKind === 'managed');
 const holds = (job: LimitJobRecord): boolean => !finished(job) && !RELEASED_PHASES.has(job.phase);
 
 /** When a job's clock says to send, if it waits on one. */
 function dueAt(job: LimitJobRecord): number | undefined {
+  if (job.personTurnId) return undefined;
   const clock = job.phase === 'retrying' ? job.retryAt : job.phase === 'waiting' || job.phase === 'scheduled' ? job.resumeAt : undefined;
   return clock === undefined ? undefined : Date.parse(clock);
+}
+
+function without(job: LimitJobRecord, key: 'personTurnId' | 'sending' | 'offBy'): LimitJobRecord {
+  const copy = { ...job };
+  delete copy[key];
+  return copy;
+}
+
+/** What a person's turn made of the stop, once it can tell. A limit on a live turn comes through `limitStopped`, under the FIFO. */
+function personOutcome(job: LimitJobRecord, turn: DaemonTurn): LimitJobRecord | undefined {
+  if (turn.state === 'failed' && turn.errorCode === USAGE_LIMIT_ERROR) return { ...without(job, 'personTurnId'), turnId: turn.id, phase: 'person-refused' };
+  return TERMINAL_TURN_STATES.has(turn.state) ? { ...without(job, 'personTurnId'), phase: 'cancelled' } : undefined;
 }
 
 const oldestFirst = (left: LimitJobRecord, right: LimitJobRecord): number => left.stoppedAt.localeCompare(right.stoppedAt) || left.stopId.localeCompare(right.stopId);
@@ -166,13 +198,17 @@ function parseJobs(value: unknown): LimitJobRecord[] {
   const records: LimitJobRecord[] = [];
   for (const entry of Object.values(value as Record<string, unknown>)) {
     if (!entry || typeof entry !== 'object') continue;
-    const { sessionId, attempt, revision, sending, ...card } = entry as Record<string, unknown>;
+    const { sessionId, attempt, revision, sending, personTurnId, ...card } = entry as Record<string, unknown>;
     if (typeof sessionId !== 'string' || !sessionId || !Number.isInteger(attempt) || !Number.isInteger(revision)) continue;
     const payload = parseTranscriptPayload({ v: 1, type: 'usage-limit', ...card });
     if (payload?.type !== 'usage-limit') continue;
     const send = sending as LimitJobRecord['sending'] | undefined;
     const validSend = typeof send?.commandId === 'string' && typeof send.reason === 'string' && typeof send.from === 'string';
-    records.push({ ...cardFields(payload), sessionId, attempt: attempt as number, revision: revision as number, ...(validSend ? { sending: send } : {}) });
+    records.push({
+      ...cardFields(payload), sessionId, attempt: attempt as number, revision: revision as number,
+      ...(validSend ? { sending: send } : {}),
+      ...(typeof personTurnId === 'string' ? { personTurnId } : {}),
+    });
   }
   return records;
 }
@@ -258,7 +294,8 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     this.unsubscribe = this.options.onEvent((event) => {
       if (event.kind === 'transcript.appended') {
         const { sessionId, fromSequence } = event.payload;
-        if (this.jobOf(sessionId)?.sending) this.newRows.set(sessionId, Math.min(this.newRows.get(sessionId) ?? fromSequence, fromSequence));
+        const job = this.jobOf(sessionId);
+        if (job?.sending || job?.personTurnId) this.newRows.set(sessionId, Math.min(this.newRows.get(sessionId) ?? fromSequence, fromSequence));
       } else if (event.kind !== 'entity.archived' && !(event.kind === 'entity.upserted' && event.payload.entityType === 'turn')) {
         return;
       }
@@ -307,10 +344,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     return this.options.allowed(sessionId) || this.managedChild(snapshot, sessionId) ? true : undefined;
   }
 
-  /** The turn may start: nothing behind an open stop does, except the send that resumes it. */
-  canDispatchTurn(turn: Pick<DaemonTurn, 'sessionId' | 'commandId'>): boolean {
+  /** The turn may start: nothing behind an open stop does, except the send that resumes it and a person's own message. */
+  canDispatchTurn(turn: Pick<DaemonTurn, 'id' | 'sessionId' | 'commandId'>): boolean {
     const job = this.jobOf(turn.sessionId);
-    return !job || !holds(job) || job.sending?.commandId === turn.commandId;
+    return !job || !holds(job) || job.sending?.commandId === turn.commandId || job.personTurnId === turn.id;
   }
 
   /** Which AIs run this now, by provider id. */
@@ -327,6 +364,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   limitStopped(stop: LimitStop): void {
     if (this.disposed) return;
     const open = this.jobOf(stop.sessionId);
+    if (open?.personTurnId === stop.turn.id) {
+      this.place({ ...this.moved(without(open, 'personTurnId'), stop), phase: 'person-refused' });
+      return;
+    }
     if (open?.sending?.commandId === stop.turn.commandId) {
       this.place(this.refused(open, stop.turn.id, stop.stoppedAt, stop.limit));
       return;
@@ -342,10 +383,55 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     if (placed.phase === 'ask-unknown') void this.recover(placed);
   }
 
+  limitAction({ sessionId, stopId, action }: DaemonCommandPayloads['long-run.limit-action']): DaemonCommandExecutionResult {
+    const job = this.jobs.get(stopId);
+    if (!job || job.sessionId !== sessionId) return { ok: false, error: { code: 'not-found', message: 'This card is no longer open.', retryable: false } };
+    const offered = ACTION_PHASES[action].has(job.phase) && !job.personTurnId && (action !== 'auto-on' || job.offBy === 'card');
+    if (!offered) return { ok: false, error: { code: 'invalid-state', message: 'This card has changed. Check it again.', retryable: false } };
+    return { ok: true, afterCommit: () => this.act(stopId, action) };
+  }
+
+  personSent(sessionId: string, turnId: string): void {
+    const job = this.jobOf(sessionId);
+    if (this.disposed || !job || job.personTurnId || job.phase === 'resuming') return;
+    this.jobs.set(job.stopId, { ...without(job, 'sending'), personTurnId: turnId });
+    void this.queueSave();
+    this.arm();
+  }
+
   /** The Settings switch went off: what has not gone out is cancelled, and turning it on restores nothing. */
   settingsChanged(): void {
     if (this.disposed || !this.unsubscribe || this.options.settings()?.autoResume !== false) return;
     this.applySettingOff();
+  }
+
+  private act(stopId: string, action: LimitAction): void {
+    const job = this.jobs.get(stopId);
+    if (this.disposed || !job) return;
+    switch (action) {
+      case 'try-now':
+        void this.send(job, 'try-now');
+        return;
+      case 'resume':
+        void this.send(job, 'resume-pressed');
+        return;
+      case 'auto-off':
+        this.place({ ...job, phase: 'off', offBy: 'card' });
+        return;
+      case 'auto-on': {
+        const turn = this.options.getSnapshot().turns.find((entry) => entry.id === job.turnId);
+        this.place({ ...without(job, 'offBy'), ...this.schedule({ window: job.window, ...(job.resetsAt ? { resetsAt: job.resetsAt } : {}) }, job.sessionId, turn, job.stoppedAt) });
+        return;
+      }
+      case 'schedule':
+        this.place(this.options.settings()?.autoResume === false ? turnAutoResumeOff({ ...job, phase: 'scheduled' }) : { ...job, phase: 'scheduled' });
+        return;
+      case 'unschedule':
+        this.place({ ...job, phase: 'ask-reset' });
+        return;
+      case 'leave':
+        this.place({ ...job, phase: 'left' });
+    }
   }
 
   private applySettingOff(): void {
@@ -408,7 +494,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     const nowMs = this.now().getTime();
     if (nowMs < this.notBefore) return;
     const lined = new Set<string>();
-    for (const job of [...this.jobs.values()].filter((entry) => resumeDue(entry, nowMs)).sort(oldestFirst)) {
+    for (const job of [...this.jobs.values()].filter((entry) => dueAt(entry) !== undefined && resumeDue(entry, nowMs)).sort(oldestFirst)) {
       if (lined.has(job.providerId)) continue;
       lined.add(job.providerId);
       const last = this.lastSend.get(job.providerId);
@@ -483,11 +569,14 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   /** What the send became, read from its turn. A limit on it comes through `limitStopped`, under the FIFO. */
   private advance(snapshot: DaemonSnapshot, job: LimitJobRecord): void {
     const commandId = job.sending?.commandId;
-    const turn = commandId ? snapshot.turns.find((entry) => entry.commandId === commandId) : undefined;
+    const turn = snapshot.turns.find((entry) => (job.personTurnId ? entry.id === job.personTurnId : commandId !== undefined && entry.commandId === commandId));
     if (!turn) return;
     const from = this.newRows.get(job.sessionId);
     const answered = from !== undefined && this.options.readTranscript(job.sessionId, from - 1, 2_000).some((item) => item.turnId === turn.id && ANSWER_KINDS.has(item.kind));
-    if (answered || turn.state === 'completed' || turn.state === 'interrupted') {
+    if (job.personTurnId) {
+      const outcome = personOutcome(job, turn) ?? (answered ? { ...without(job, 'personTurnId'), phase: 'cancelled' as const } : undefined);
+      if (outcome) this.place(outcome);
+    } else if (answered || turn.state === 'completed' || turn.state === 'interrupted') {
       this.settleSend(job.stopId, { phase: 'resumed' });
     } else if (turn.state === 'failed' && turn.errorCode !== USAGE_LIMIT_ERROR) {
       // Never started: nothing went out. Anything later may have reached the AI.
@@ -554,8 +643,15 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   }
 
   /** D5, and what became of a send the last run left unanswered. Undefined: it stands as it is. */
-  private reopened(snapshot: DaemonSnapshot, job: LimitJobRecord): LimitJobRecord | undefined {
+  private reopened(snapshot: DaemonSnapshot, stored: LimitJobRecord): LimitJobRecord | undefined {
     const settings = this.options.settings();
+    const personTurn = stored.personTurnId ? snapshot.turns.find((entry) => entry.id === stored.personTurnId) : undefined;
+    if (personTurn) return personOutcome(stored, personTurn);
+    if (stored.personTurnId) {
+      const job = without(stored, 'personTurnId');
+      return this.reopened(snapshot, job) ?? job;
+    }
+    const job = stored;
     if (job.sending) {
       const { sending, ...rest } = job;
       const turn = snapshot.turns.find((entry) => entry.commandId === sending.commandId);

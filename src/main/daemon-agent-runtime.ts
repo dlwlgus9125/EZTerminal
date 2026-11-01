@@ -75,6 +75,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.archive'
   | 'agent.detach'
   | 'agent.release'
+  | 'long-run.limit-action'
   | 'review.start'
   | 'review.fix'
   | 'review.resolve'
@@ -476,6 +477,7 @@ export class DaemonAgentRuntime {
       'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
       'agent.detach': (command, context) => this.runCommand(() => this.detach(command, context)),
       'agent.release': (command, context) => this.runCommand(() => this.release(command, context)),
+      'long-run.limit-action': (command) => this.runCommand(() => this.limitAction(command)),
       'review.start': (command, context) => this.runCommand(() => this.startReview(command, context)),
       'review.fix': (command, context) => this.runCommand(() => this.fixReview(command, context)),
       'review.resolve': (command, context) => this.runCommand(() => this.resolveReview(command, context)),
@@ -1269,6 +1271,8 @@ export class DaemonAgentRuntime {
       ok: true,
       commit: { mutations },
       afterCommit: () => {
+        // Before the pump: its turn goes past a stop's hold.
+        if (byPerson) this.options.longRun?.personSent(session.id, turnId);
         for (const approval of proposals) {
           if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, async () => { await this.resolveProviderApproval(
             agent.providerId, session.id, agent.providerSessionId!, approval.providerRequestId, 'deny'); });
@@ -1283,6 +1287,13 @@ export class DaemonAgentRuntime {
         }
       },
     };
+  }
+
+  /** A button on a limit card: a person's, on either device. The coordinator owns what it does. */
+  private limitAction(command: DaemonCommand): DaemonCommandExecutionResult {
+    if (command.type !== 'long-run.limit-action') return commandError('invalid-command', 'Unexpected limit command.');
+    if (command.principal.kind !== 'desktop' && command.principal.kind !== 'android') return commandError('invalid-command', 'Only a person answers a limit card.');
+    return this.options.longRun?.limitAction(command.payload) ?? commandError('not-found', 'This card is no longer open.');
   }
 
   /** Runs under the same command/store gate as dispatch, so a taken turn cannot start. */

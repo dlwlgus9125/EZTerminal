@@ -5087,6 +5087,13 @@ describe('a turn a usage limit stopped', () => {
     return h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
   }
   const limited = (turnId: string): AgentProviderEvent => ({ kind: 'turn-finished', sessionId: 'agent-1', turnId, outcome: 'failed', errorCode: 'usage-limit', limit });
+  const longRunHost = (patch: Partial<DaemonLongRunHost> = {}): DaemonLongRunHost => ({
+    sessionContext: () => undefined,
+    limitStopped: () => undefined,
+    limitAction: () => ({ ok: true }),
+    personSent: () => undefined,
+    ...patch,
+  });
   const agentOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!;
   const sessionOf = (h: Awaited<ReturnType<typeof harness>>) => h.router.getSnapshot().sessions.find((session) => session.id === 'agent-1')!;
 
@@ -5112,7 +5119,7 @@ describe('a turn a usage limit stopped', () => {
   it('tells the host once, and whatever it holds applies before the queue can move', async () => {
     const stops: LimitStop[] = [];
     let held = false;
-    const longRun: DaemonLongRunHost = { sessionContext: () => undefined, limitStopped: (stop) => { stops.push(stop); held = true; } };
+    const longRun = longRunHost({ limitStopped: (stop) => { stops.push(stop); held = true; } });
     const h = await harness({ longRun, canDispatchTurn: () => !held });
     try {
       const turn = await startedAgent(h);
@@ -5137,7 +5144,7 @@ describe('a turn a usage limit stopped', () => {
 
   it('a limit on a turn that is not running tells the host nothing', async () => {
     const limitStopped = vi.fn();
-    const h = await harness({ longRun: { sessionContext: () => undefined, limitStopped } });
+    const h = await harness({ longRun: longRunHost({ limitStopped }) });
     try {
       const turn = await startedAgent(h);
       h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
@@ -5175,7 +5182,7 @@ describe('a turn a usage limit stopped', () => {
     const coordinatorRef: { current?: LongRunCoordinator } = {};
     const h = await harness({
       now,
-      longRun: { sessionContext: () => true, limitStopped: (stop) => coordinatorRef.current!.limitStopped(stop) },
+      longRun: longRunHost({ sessionContext: () => true, limitStopped: (stop) => coordinatorRef.current!.limitStopped(stop), personSent: (sessionId, turnId) => coordinatorRef.current!.personSent(sessionId, turnId) }),
       canDispatchTurn: (turn) => coordinatorRef.current?.canDispatchTurn(turn) ?? true,
     });
     const coordinator = new LongRunCoordinator({
@@ -5243,9 +5250,67 @@ describe('a turn a usage limit stopped', () => {
     }
   });
 
+  it('hands a press on a card to the host, a person\'s alone, and acts only once it committed', async () => {
+    const done = vi.fn();
+    const limitAction = vi.fn<DaemonLongRunHost['limitAction']>(() => ({ ok: true, afterCommit: done }));
+    const h = await harness({ longRun: longRunHost({ limitAction }) });
+    try {
+      await startedAgent(h);
+      const press = (principal: DaemonPrincipal) => h.execute('long-run.limit-action', { sessionId: 'agent-1', stopId: 'stop-1', action: 'try-now' }, principal);
+      expect(await press({ kind: 'cli', id: 'long-run-runtime' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      expect(await press({ kind: 'mcp', id: 'agent', sessionId: 'lead' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(limitAction).not.toHaveBeenCalled();
+      expect(await press({ kind: 'android', id: 'phone' })).toMatchObject({ ok: true });
+      expect(limitAction).toHaveBeenCalledWith({ sessionId: 'agent-1', stopId: 'stop-1', action: 'try-now' });
+      expect(done).toHaveBeenCalledOnce();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('passes on what the host says about a card that does not stand', async () => {
+    const h = await harness({ longRun: longRunHost({ limitAction: () => ({ ok: false, error: { code: 'invalid-state', message: 'Changed.', retryable: false } }) }) });
+    try {
+      await startedAgent(h);
+      expect(await h.execute('long-run.limit-action', { sessionId: 'agent-1', stopId: 'stop-1', action: 'leave' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('tells the host of a person\'s message once it committed, before the pump can look', async () => {
+    const order: string[] = [];
+    const personSent = vi.fn((_sessionId: string, turnId: string) => { order.push(`person ${turnId}`); });
+    const h = await harness({ longRun: longRunHost({ personSent }), canDispatchTurn: (turn) => { order.push(`pump ${turn.id}`); return true; } });
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      personSent.mockClear();
+      order.length = 0;
+      expect((await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Go on.' })).ok).toBe(true);
+      await h.runtime.whenIdle();
+      const sent = h.router.getSnapshot().turns.find((entry) => entry.id !== turn.id)!;
+      expect(personSent).toHaveBeenCalledExactlyOnceWith('agent-1', sent.id);
+      expect(order[0]).toBe(`person ${sent.id}`);
+      expect(order).toContain(`pump ${sent.id}`);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('a message no person sent does not close a schedule, and neither does one refused', async () => {
+    const personSent = vi.fn();
+    const h = await harness({ longRun: longRunHost({ personSent }) });
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      personSent.mockClear();
+      expect(await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Continue.', longRunResume: { stopId: 'stop-1', reason: 'scheduled-time' } }, { kind: 'cli', id: 'long-run-runtime' })).toMatchObject({ ok: true });
+      expect(await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'From a schedule.' }, { kind: 'cli', id: 'heartbeat' })).toMatchObject({ ok: true });
+      expect(await h.execute('agent.submit', { sessionId: 'no-such', prompt: 'Lost.' })).toMatchObject({ ok: false });
+      expect(personSent).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
   it('launches a session with long-run only when the host says so', async () => {
     const eligible = new Set(['agent-1']);
-    const h = await harness({ longRun: { sessionContext: (sessionId) => (eligible.has(sessionId) ? true : undefined), limitStopped: () => undefined } });
+    const h = await harness({ longRun: longRunHost({ sessionContext: (sessionId) => (eligible.has(sessionId) ? true : undefined) }) });
     try {
       await startedAgent(h);
       expect(h.codex.createSession).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'agent-1', longRun: true }), expect.anything());
