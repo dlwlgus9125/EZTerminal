@@ -143,9 +143,16 @@ export function FileExplorerPanel({
   // never legitimately overlap; a plain ref (not state) is enough since this
   // only needs to block a second call, not drive any visible UI.
   const mutatingRef = useRef(false);
+  // What the person typed outranks a listing already on its way when they typed it. A navigation started after the
+  // typing resets this, so it takes the box back.
+  const typedSinceLoadRef = useRef(false);
+  const showPath = useCallback((path: string): void => {
+    if (!typedSinceLoadRef.current) setPathInput(path);
+  }, []);
 
   const loadPath = useCallback(async (path: string): Promise<void> => {
     const generation = navigationGate.begin();
+    typedSinceLoadRef.current = false;
     const previousPath = currentPathRef.current;
     setBinaryNotice(null);
     setError(null);
@@ -155,12 +162,12 @@ export function FileExplorerPanel({
     setPendingNavigation(null);
     if (!result) {
       setError(t('common.unavailable'));
-      setPathInput(previousPath ?? '');
+      showPath(previousPath ?? '');
       return;
     }
     if (!result.ok) {
       setError(result.error);
-      setPathInput(previousPath ?? '');
+      showPath(previousPath ?? '');
       return;
     }
     setError(null);
@@ -169,11 +176,12 @@ export function FileExplorerPanel({
     currentPathRef.current = result.path;
     setParent(result.parent);
     setEntries(result.entries);
-    setPathInput(result.path);
-  }, [capabilities, navigationGate, t]);
+    showPath(result.path);
+  }, [capabilities, navigationGate, showPath, t]);
 
   const loadRoots = useCallback(async (): Promise<void> => {
     const generation = navigationGate.begin();
+    typedSinceLoadRef.current = false;
     const previousPath = currentPathRef.current;
     setBinaryNotice(null);
     setError(null);
@@ -183,7 +191,7 @@ export function FileExplorerPanel({
     setPendingNavigation(null);
     if (!roots) {
       setError(t('common.unavailable'));
-      setPathInput(previousPath ?? '');
+      showPath(previousPath ?? '');
       return;
     }
     setError(null);
@@ -191,11 +199,11 @@ export function FileExplorerPanel({
     setCurrentPath(null);
     currentPathRef.current = null;
     setParent(null);
-    setPathInput('');
+    showPath('');
     setEntries(
       roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })),
     );
-  }, [capabilities, navigationGate, t]);
+  }, [capabilities, navigationGate, showPath, t]);
 
   // Best-effort snapshot ONLY at open — no live cwd following (locked requirement).
   useEffect(() => {
@@ -532,7 +540,10 @@ export function FileExplorerPanel({
         <input
           className="file-breadcrumb-full"
           value={pathInput}
-          onChange={(e) => setPathInput(e.target.value)}
+          onChange={(e) => {
+            typedSinceLoadRef.current = true;
+            setPathInput(e.target.value);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void loadPath(pathInput);
           }}

@@ -69,6 +69,13 @@ async function flush(): Promise<void> {
   });
 }
 
+function typeInto(input: HTMLInputElement, value: string): void {
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 function openContextMenu(row: HTMLButtonElement): void {
   act(() => {
     row.dispatchEvent(new MouseEvent('contextmenu', {
@@ -239,6 +246,54 @@ describe('FileExplorerPanel navigation and previews', () => {
       .toBe('C:\\workspace\\fast');
     expect(container.textContent).toContain('fast-result.txt');
     expect(container.textContent).not.toContain('slow-result.txt');
+  });
+
+  it('keeps a path typed while the opening listing is on its way, then goes there on Enter', async () => {
+    const opening = deferred<FileListResult>();
+    listFiles.mockImplementationOnce(() => opening.promise);
+    await renderPanel();
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-path-input"]')!;
+
+    typeInto(input, 'C:\\elsewhere');
+    opening.resolve(listing([file('opening.txt')]));
+    await flush();
+
+    expect(input.value).toBe('C:\\elsewhere');
+    expect(container.textContent).toContain('opening.txt');
+
+    listFiles.mockResolvedValue(listing([file('elsewhere.txt')], 'C:\\elsewhere'));
+    press(input, 'Enter');
+    await flush();
+
+    expect(listFiles).toHaveBeenLastCalledWith('C:\\elsewhere');
+    expect(input.value).toBe('C:\\elsewhere');
+    expect(container.textContent).toContain('elsewhere.txt');
+  });
+
+  it('keeps a typed path when the listing on its way fails', async () => {
+    const opening = deferred<FileListResult>();
+    listFiles.mockImplementationOnce(() => opening.promise);
+    await renderPanel();
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-path-input"]')!;
+
+    typeInto(input, 'C:\\elsewhere');
+    opening.resolve({ ok: false, error: 'denied' });
+    await flush();
+
+    expect(input.value).toBe('C:\\elsewhere');
+    expect(container.querySelector('[data-testid="file-error"]')?.textContent).toBe('denied');
+  });
+
+  it('gives the box back to a navigation started after the typing', async () => {
+    await renderPanel();
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-path-input"]')!;
+    typeInto(input, 'C:\\abandoned');
+
+    listFiles.mockResolvedValue(listing([], 'C:\\workspace\\subdir'));
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="file-entry"]')!.click());
+    await flush();
+
+    expect(input.value).toBe('C:\\workspace\\subdir');
   });
 
   it('windows a directory that exceeds the bounded DOM threshold', async () => {
