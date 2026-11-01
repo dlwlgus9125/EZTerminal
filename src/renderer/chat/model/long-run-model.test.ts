@@ -73,6 +73,15 @@ describe('long-run rows in the chat model', () => {
     expect(fixture.turns.find((turn) => turn.id === first?.turnId)?.state).toBe('completed');
   });
 
+  it('drops text Codex threw away when an empty final row replaces it', () => {
+    const row = { sessionId: 's', turnId: 't', messageId: 'm', kind: 'assistant-message' as const, isSensitive: true, createdAt: '2026-11-01T00:00:00.000Z' };
+    const { rows } = buildChatModel({ items: [
+      { ...row, id: 'delta', sequence: 1, text: 'Half an answ', isDelta: true },
+      { ...row, id: 'dropped', sequence: 2, text: '', isDelta: false },
+    ], turns: [] });
+    expect(rows.filter((entry) => entry.kind === 'assistant')).toEqual([]);
+  });
+
   it('holds a message that has not landed out of the transcript', () => {
     const fixture = steerStory('ko', 'on-its-way');
     const text = fixture.steered?.[0]?.text;

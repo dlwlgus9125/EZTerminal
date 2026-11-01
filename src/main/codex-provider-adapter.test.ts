@@ -3197,3 +3197,171 @@ describe('Codex reviewer conversation (review loop)', () => {
     await adapter.dispose();
   });
 });
+
+// Frame orders from the probe (artifacts/long-run-probe, Codex 0.165.0): the message being written is dropped unfinished (steer:text, real:text),
+// one finished before the steer's item stays (steer:between), and every refusal is -32600.
+describe('a message put into a running turn', () => {
+  const steerInput = { sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1', newTurnId: 'turn-of-steer-1', commandId: 'steer-1', prompt: 'Use the other file.' };
+  const notFound = (message: string, data: unknown = null) => new CodexJsonRpcError('turn/steer', -32600, message, data);
+
+  async function runningTurn(options: { readonly steer?: () => Promise<unknown>; readonly read?: () => Promise<unknown>; readonly hold?: Promise<unknown> } = {}) {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-6-astra' };
+      if (method === 'turn/start') return options.hold ?? { turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } };
+      if (method === 'turn/steer') return options.steer ? options.steer() : { turnId: 'provider-turn-1' };
+      if (method === 'thread/read' && options.read) return options.read();
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-09-04T03:00:00.000Z'), deltaCoalescer: { schedule: () => undefined, cancel: () => undefined } });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession({ ...context(), longRun: true });
+    const submitting = adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1', commandId: 'command-1', prompt: 'Work' });
+    if (!options.hold) await submitting;
+    const notify = (method: string, params: Record<string, unknown>): Promise<void> => connection.emitNotification(method, { threadId: 'thread-1', turnId: 'provider-turn-1', ...params });
+    const userMessage = (clientId: string) => ({ id: `user-${clientId}`, type: 'userMessage', clientId, content: [{ type: 'text', text: 'Use the other file.' }] });
+    const landed = () => events.filter((event) => event.kind === 'steer-landed');
+    const rows = () => events.flatMap((event) => (event.kind === 'transcript' ? [event.item] : []));
+    const steerRequests = () => connection.requests.filter((request) => request.method === 'turn/steer');
+    return { adapter, connection, events, submitting, notify, userMessage, landed, rows, steerRequests };
+  }
+
+  it('sends turn/steer for the running provider turn, under the command id', async () => {
+    const run = await runningTurn();
+    expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'accepted', behind: 'tool' });
+    expect(run.steerRequests()[0]?.params).toEqual({
+      threadId: 'thread-1', expectedTurnId: 'provider-turn-1', clientUserMessageId: 'steer-1', input: [{ type: 'text', text: 'Use the other file.', text_elements: [] }],
+    });
+  });
+
+  it('lands on the item with its clientId, in the same turn, and its echo adds no row', async () => {
+    const run = await runningTurn();
+    await run.adapter.steer(steerInput);
+    await run.notify('item/started', { item: run.userMessage('steer-1') });
+    await run.notify('item/completed', { item: run.userMessage('steer-1') });
+    expect(run.landed()).toEqual([{ kind: 'steer-landed', sessionId: 'session-1', commandId: 'steer-1', turnId: 'local-turn-1' }]);
+    expect(run.rows()).toEqual([]);
+  });
+
+  it('a person\'s own message with no steer behind it lands nothing', async () => {
+    const run = await runningTurn();
+    await run.notify('item/started', { item: run.userMessage('command-1') });
+    expect(run.landed()).toEqual([]);
+  });
+
+  it('text being written is dropped: the same message gets an empty final row, and the steer says it was rewritten', async () => {
+    const run = await runningTurn();
+    await run.notify('item/started', { item: { id: 'msg_44', type: 'agentMessage', text: '' } });
+    await run.notify('item/agentMessage/delta', { itemId: 'msg_44', delta: 'Half an answ' });
+    expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'accepted', behind: 'text' });
+    await run.notify('item/started', { item: run.userMessage('steer-1') });
+    expect(run.landed()).toEqual([expect.objectContaining({ commandId: 'steer-1', rewritten: true })]);
+    const [delta, final] = run.rows();
+    expect(delta).toMatchObject({ kind: 'assistant-message', text: 'Half an answ', isDelta: true });
+    expect(final).toMatchObject({ kind: 'assistant-message', text: '', isDelta: false, isSensitive: true, messageId: delta?.messageId, turnId: 'local-turn-1' });
+    expect(final?.sequence).toBeGreaterThan(delta?.sequence ?? 0);
+  });
+
+  it('what was dropped does not come back with the turn', async () => {
+    const run = await runningTurn();
+    await run.notify('item/agentMessage/delta', { itemId: 'msg_44', delta: 'Half' });
+    await run.adapter.steer(steerInput);
+    await run.notify('item/started', { item: run.userMessage('steer-1') });
+    const count = run.rows().length;
+    await run.notify('item/completed', { item: { id: 'msg_44', type: 'agentMessage', text: 'Half an answer' } });
+    await run.connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'completed', items: [{ id: 'msg_44', type: 'agentMessage', text: 'Half an answer' }], error: null } });
+    expect(run.rows().slice(count).filter((item) => item.text.includes('Half'))).toEqual([]);
+  });
+
+  it('a message that finished before the steer\'s item stays', async () => {
+    const run = await runningTurn();
+    await run.notify('item/agentMessage/delta', { itemId: 'msg_64', delta: 'Done.' });
+    await run.adapter.steer(steerInput);
+    await run.notify('item/completed', { item: { id: 'msg_64', type: 'agentMessage', text: 'Done.' } });
+    await run.notify('item/started', { item: run.userMessage('steer-1') });
+    expect(run.landed()[0]).not.toHaveProperty('rewritten');
+    expect(run.rows().at(-1)).toMatchObject({ text: 'Done.', isDelta: false });
+  });
+
+  it('counts a steer named only by the finished turn, before the turn ends', async () => {
+    const run = await runningTurn();
+    await run.adapter.steer(steerInput);
+    await run.connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'completed', items: [run.userMessage('steer-1')], error: null } });
+    const kinds = run.events.map((event) => event.kind);
+    expect(kinds.indexOf('steer-landed')).toBeGreaterThanOrEqual(0);
+    expect(kinds.indexOf('steer-landed')).toBeLessThan(kinds.indexOf('turn-finished'));
+    expect(run.landed()).toHaveLength(1);
+  });
+
+  it.each([
+    ['a stale turn id', notFound('expected active turn id x but found y'), 'turn-ended'],
+    ['no turn', notFound('no active turn to steer'), 'turn-ended'],
+    ['a review', notFound('cannot steer a review turn', { codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'review' } } }), 'review-turn'],
+    ['a compaction', notFound('cannot steer a compact turn', { codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'compact' } } }), 'compact-turn'],
+  ])('%s is refused, so the host can queue it', async (_name, error, reason) => {
+    const run = await runningTurn({ steer: async () => { throw error; } });
+    expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'refused', reason });
+  });
+
+  it('with no turn running, or another one, it is refused without asking', async () => {
+    const run = await runningTurn();
+    expect(await run.adapter.steer({ ...steerInput, turnId: 'another-turn' })).toEqual({ outcome: 'refused', reason: 'turn-ended' });
+    await run.connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'completed', items: [], error: null } });
+    expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'refused', reason: 'turn-ended' });
+    expect(run.steerRequests()).toEqual([]);
+  });
+
+  it('waits for the provider turn id of a turn that is still starting', async () => {
+    let respond!: (value: unknown) => void;
+    const run = await runningTurn({ hold: new Promise((resolve) => { respond = resolve; }) });
+    const steering = run.adapter.steer(steerInput);
+    await new Promise((resolve) => { setTimeout(resolve, 60); });
+    expect(run.steerRequests()).toEqual([]);
+    respond({ turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } });
+    await run.submitting;
+    expect(await steering).toMatchObject({ outcome: 'accepted' });
+    expect(run.steerRequests()[0]?.params).toMatchObject({ expectedTurnId: 'provider-turn-1' });
+  });
+
+  it('gives up on a turn that never says its id, and refuses', async () => {
+    vi.useFakeTimers();
+    try {
+      const run = await runningTurn({ hold: new Promise(() => undefined) });
+      const steering = run.adapter.steer(steerInput);
+      await vi.advanceTimersByTimeAsync(5_100);
+      expect(await steering).toEqual({ outcome: 'refused', reason: 'turn-ended' });
+      expect(run.steerRequests()).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  describe('when the request itself failed', () => {
+    const lost = async (): Promise<never> => { throw new Error('app server crashed'); };
+    const thread = (items: readonly unknown[]) => ({ thread: { id: 'thread-1', turns: [{ id: 'provider-turn-1', status: 'inProgress', items }] } });
+
+    it('looks for the item first: found, it landed, and nothing is sent again', async () => {
+      const run = await runningTurn({ steer: lost, read: async () => thread([{ id: 'user-steer-1', type: 'userMessage', clientId: 'steer-1' }]) });
+      expect(await run.adapter.steer(steerInput)).toMatchObject({ outcome: 'accepted' });
+      expect(run.landed()).toEqual([expect.objectContaining({ commandId: 'steer-1', turnId: 'local-turn-1' })]);
+      expect(run.steerRequests()).toHaveLength(1);
+    });
+
+    it('not found, it failed: the thread does not have it', async () => {
+      const run = await runningTurn({ steer: lost, read: async () => thread([]) });
+      expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'failed' });
+      expect(run.steerRequests()).toHaveLength(1);
+    });
+
+    it('a read that fails too cannot tell', async () => {
+      const run = await runningTurn({ steer: lost, read: lost });
+      expect(await run.adapter.steer(steerInput)).toEqual({ outcome: 'unconfirmed' });
+    });
+
+    it('an item that turns up after all still lands', async () => {
+      const run = await runningTurn({ steer: lost, read: lost });
+      await run.adapter.steer(steerInput);
+      await run.notify('item/started', { item: run.userMessage('steer-1') });
+      expect(run.landed()).toHaveLength(1);
+    });
+  });
+});

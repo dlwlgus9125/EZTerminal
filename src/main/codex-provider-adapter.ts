@@ -37,6 +37,8 @@ import type {
   ProviderReviewFailure,
   ProviderReviewForkInput,
   ProviderReviewForkResult,
+  ProviderSteerInput,
+  ProviderSteerResult,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
 import { ProviderReviewError, ProviderSideQuestionError, REVIEW_READ_ONLY_UNVERIFIED } from './agent-provider-adapter';
@@ -117,6 +119,11 @@ type PreResponseLifecycleEvent =
 /** Status and error frames of a limit arrive within 25 ms of `turn/completed` (the probes); this is well past that. */
 const SYSTEM_ERROR_WAIT_MS = 2_000;
 const USAGE_LIMIT_ERROR_INFO = 'usageLimitExceeded';
+/** How Codex refuses a steer, every way it does: a stale id, no turn, a turn that takes none. */
+const CODEX_INVALID_REQUEST = -32600;
+/** A steer can reach a turn before `turn/start` has answered: its id comes within this, or the turn counts as ended. */
+const STEER_TURN_WAIT_MS = 5_000;
+const STEER_TURN_POLL_MS = 25;
 
 interface PreResponseLifecycleRecord {
   started?: Extract<PreResponseLifecycleEvent, { readonly kind: 'started' }>;
@@ -189,6 +196,10 @@ interface SessionState {
   readonly startedItems: Map<string, StartedItem>;
   /** The runtime already persisted these prompts, so Codex's echo of them is dropped. */
   readonly submittedCommandIds: Set<string>;
+  /** Steers not yet seen in the thread: command id, and the turn each was meant for. */
+  readonly steers: Map<string, string>;
+  /** The message being written, once it has text. A steer's item ending it unfinished means Codex dropped that text. */
+  openMessage?: { readonly providerTurnId: string; readonly itemId: string };
   readonly planRevisions: Map<string, number>;
   /**
    * Set on the shadow state of a sub-agent thread: its rows belong to that
@@ -285,6 +296,12 @@ function requireObjectResult(method: string, value: unknown): JsonObject {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** Why Codex took no steer: a review or a compaction takes none, and anything else means the turn has moved on. */
+function steerRefusal(data: unknown): 'review-turn' | 'compact-turn' | 'turn-ended' {
+  const kind = asObject(asObject(asObject(data)?.codexErrorInfo)?.activeTurnNotSteerable)?.turnKind;
+  return kind === 'review' ? 'review-turn' : kind === 'compact' ? 'compact-turn' : 'turn-ended';
 }
 
 function asArray(value: unknown): readonly unknown[] {
@@ -1405,10 +1422,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       commandId: input.commandId,
       startedEmitted: false,
     };
-    state.submittedCommandIds.add(input.commandId);
-    if (state.submittedCommandIds.size > MAX_SUBMITTED_COMMANDS) {
-      state.submittedCommandIds.delete(state.submittedCommandIds.values().next().value as string);
-    }
+    this.rememberSubmitted(state, input.commandId);
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
     try {
       const collaborationMode = await this.collaborationModeFor(state, input);
@@ -1526,6 +1540,105 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       });
       throw error;
     }
+  }
+
+  private rememberSubmitted(state: SessionState, commandId: string): void {
+    state.submittedCommandIds.add(commandId);
+    if (state.submittedCommandIds.size > MAX_SUBMITTED_COMMANDS) {
+      state.submittedCommandIds.delete(state.submittedCommandIds.values().next().value as string);
+    }
+  }
+
+  /**
+   * `turn/steer`: a tool keeps running and an approval stays open, while text being written is dropped and asked for again
+   * in the same turn. `clientUserMessageId` does not dedupe, so nothing here ever repeats it: a request that failed first
+   * looks for the item.
+   */
+  async steer(input: ProviderSteerInput, signal?: AbortSignal): Promise<ProviderSteerResult> {
+    this.assertActive();
+    const state = this.sessions.get(input.sessionId);
+    if (!state || state.providerSessionId !== input.providerSessionId) return { outcome: 'failed' };
+    const providerTurnId = await this.confirmedTurn(state, input.turnId);
+    if (!providerTurnId) return { outcome: 'refused', reason: 'turn-ended' };
+    this.rememberSubmitted(state, input.commandId);
+    state.steers.set(input.commandId, input.turnId);
+    try {
+      await this.requireConnection().request('turn/steer', {
+        threadId: input.providerSessionId,
+        expectedTurnId: providerTurnId,
+        clientUserMessageId: input.commandId,
+        input: [{ type: 'text', text: input.prompt, text_elements: [] }],
+      }, { signal });
+      return { outcome: 'accepted', behind: state.openMessage ? 'text' : 'tool' };
+    } catch (error) {
+      if (error instanceof CodexJsonRpcError && error.code === CODEX_INVALID_REQUEST) {
+        state.steers.delete(input.commandId);
+        return { outcome: 'refused', reason: steerRefusal(error.data) };
+      }
+      return this.steerInDoubt(state, input.commandId, signal);
+    }
+  }
+
+  /** The provider's id of the running turn, once the response to `turn/start` has given it. */
+  private async confirmedTurn(state: SessionState, turnId: string): Promise<string | undefined> {
+    const active = state.activeTurn;
+    if (active?.localTurnId !== turnId) return undefined;
+    const deadline = Date.now() + STEER_TURN_WAIT_MS;
+    while (state.activeTurn === active && !active.providerTurnId && Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, STEER_TURN_POLL_MS); });
+    }
+    return state.activeTurn === active ? active.providerTurnId : undefined;
+  }
+
+  /** The thread says whether it arrived. An item that turns up after this still lands, whatever was said here. */
+  private async steerInDoubt(state: SessionState, commandId: string, signal?: AbortSignal): Promise<ProviderSteerResult> {
+    let turns: readonly unknown[];
+    try {
+      await this.ensureConnection(signal);
+      const result = asObject(await this.requireConnection().request('thread/read', { threadId: state.providerSessionId, includeTurns: true }, { signal }));
+      const thread = asObject(result?.thread);
+      if (asString(thread?.id) !== state.providerSessionId) return { outcome: 'unconfirmed' };
+      turns = asArray(thread?.turns);
+    } catch {
+      return { outcome: 'unconfirmed' };
+    }
+    for (const value of turns) {
+      const turn = asObject(value);
+      const item = asArray(turn?.items).map(asObject).find((entry) => entry?.type === 'userMessage' && entry.clientId === commandId);
+      const providerTurnId = asString(turn?.id);
+      if (item && providerTurnId) this.landSteer(state, providerTurnId, item);
+    }
+    return state.steers.has(commandId) ? { outcome: 'failed' } : { outcome: 'accepted', behind: 'tool' };
+  }
+
+  private landSteer(state: SessionState, providerTurnId: string, item: JsonObject): void {
+    const commandId = asString(item.clientId);
+    const turnId = commandId ? state.steers.get(commandId) : undefined;
+    if (!commandId || !turnId) return;
+    state.steers.delete(commandId);
+    const dropped = state.openMessage?.providerTurnId === providerTurnId ? state.openMessage : undefined;
+    if (dropped) this.dropOpenMessage(state, dropped);
+    this.emit({ kind: 'steer-landed', sessionId: state.sessionId, commandId, turnId: this.localTurnId(state.sessionId, providerTurnId) ?? turnId, ...(dropped ? { rewritten: true as const } : {}) });
+  }
+
+  /** Its deltas are stored and it will never complete: an empty final row replaces them, and the item stays closed. */
+  private dropOpenMessage(state: SessionState, open: NonNullable<SessionState['openMessage']>): void {
+    state.openMessage = undefined;
+    const { providerTurnId, itemId } = open;
+    state.completedItemKeys.add(`${providerTurnId}:${itemId}:agentMessage`);
+    const turnId = this.localTurnId(state.sessionId, providerTurnId);
+    this.emitTranscript(state, {
+      id: opaqueId('codex_item', state.sessionId, providerTurnId, itemId, 'dropped'),
+      messageId: opaqueId('codex_message', state.sessionId, providerTurnId, itemId),
+      sessionId: state.sessionId,
+      ...(turnId ? { turnId } : {}),
+      sequence: this.nextSequence(state),
+      kind: 'assistant-message',
+      text: '',
+      isDelta: false,
+      isSensitive: true,
+      createdAt: this.isoNow(),
+    });
   }
 
   interrupt(sessionId: string, providerSessionId: string): Promise<void> {
@@ -2632,6 +2745,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       deltas: new DeltaCoalescer((item) => this.emitTranscript(state, item), this.deltaCoalescer),
       startedItems: new Map(),
       submittedCommandIds: new Set(),
+      steers: new Map(),
       planRevisions: new Map(),
       subagentOf: threadId,
       subagentParent: parent,
@@ -2951,6 +3065,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.endSystemErrorWait(state);
     if (state.activeTurn === matchingActive) {
       state.activeTurn = undefined;
+      state.openMessage = undefined;
       this.clearPreResponseLifecycle(state);
     }
     this.emit({
@@ -2999,6 +3114,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const itemId = asString(item?.id);
     const itemType = asString(item?.type);
     if (!providerTurnId || !item || !itemId || !itemType) return;
+    if (itemType === 'userMessage') this.landSteer(state, providerTurnId, item);
+    if (itemType === 'agentMessage' && completed && state.openMessage?.itemId === itemId) state.openMessage = undefined;
     if (itemType === 'collabAgentToolCall' || itemType === 'subAgentActivity') {
       this.emitNativeSubagents(state, item, completed);
     }
@@ -3104,6 +3221,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const providerTurnId = asString(params.turnId);
     const providerItemId = asString(params.itemId);
     if (!delta || !providerTurnId || !providerItemId) return;
+    if (kind === 'assistant-message') state.openMessage = { providerTurnId, itemId: providerItemId };
     const messageId = opaqueId('codex_message', state.sessionId, providerTurnId, providerItemId);
     const turnId = this.localTurnId(state.sessionId, providerTurnId);
     const createdAt = this.isoNow();
@@ -3437,6 +3555,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       deltas: new DeltaCoalescer((item) => this.emit({ kind: 'transcript', item }), this.deltaCoalescer),
       startedItems: new Map(),
       submittedCommandIds: new Set(),
+      steers: new Map(),
       planRevisions: new Map(),
     };
     this.sessions.set(context.sessionId, state);

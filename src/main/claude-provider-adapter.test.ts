@@ -2366,3 +2366,172 @@ describe('Claude review fork (review loop)', () => {
     await fixture.adapter.dispose();
   });
 });
+
+// Frame orders from the probe (artifacts/long-run-probe, Claude 2.1.312): steer:tool:next folds, steer:end:next and steer:text:next start a turn.
+describe('a message put into a running turn', () => {
+  const longRun = { ...context, longRun: true as const };
+  const steerInput = (commandId: string) => ({
+    sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', newTurnId: `turn-of-${commandId}`, commandId, prompt: 'Use the other file.',
+  });
+
+  async function live() {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession(longRun);
+    const input = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', commandId: 'command-1', prompt: 'Work' });
+    const promptUuid = (await input.next()).value!.uuid as string;
+    const steer = async (commandId = 'steer-1') => {
+      const result = await fixture.adapter.steer(steerInput(commandId));
+      const sent = (await input.next()).value as SDKUserMessage & { readonly priority?: string };
+      return { result, sent, uuid: sent.uuid as string };
+    };
+    const lifecycle = (uuid: string, state: string) => fixture.query.emit({ type: 'command_lifecycle', command_uuid: uuid, state });
+    const result = (uuids: readonly string[], extra: Record<string, unknown> = {}) => fixture.query.emit({
+      type: 'result', subtype: 'success', uuid: `result-${uuids[0]!}`, session_id: providerSessionId, user_message_uuid: uuids[0], user_message_uuids: uuids,
+      is_error: false, num_turns: 1, terminal_reason: 'completed', ...extra,
+    });
+    const landed = () => fixture.events.filter((event) => event.kind === 'steer-landed');
+    const unconfirmed = () => fixture.events.filter((event) => event.kind === 'steer-unconfirmed');
+    const finished = () => fixture.events.filter((event) => event.kind === 'turn-finished');
+    return { fixture, input, promptUuid, steer, lifecycle, result, landed, unconfirmed, finished };
+  }
+  const settled = (check: () => void) => vi.waitFor(check);
+
+  it('goes with next, under the command\'s uuid, as plain text, and starts no turn', async () => {
+    const run = await live();
+    const before = run.fixture.events.length;
+    const { result, sent } = await run.steer();
+    expect(result).toEqual({ outcome: 'accepted', behind: 'tool' });
+    expect(sent).toMatchObject({ type: 'user', priority: 'next', parent_tool_use_id: null, session_id: providerSessionId, message: { role: 'user', content: 'Use the other file.' } });
+    expect(sent.uuid).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(run.fixture.events.slice(before)).toEqual([]);
+    await run.fixture.adapter.dispose();
+  });
+
+  it('says text holds it while Claude is writing', async () => {
+    const run = await live();
+    run.fixture.query.emit({ type: 'stream_event', session_id: providerSessionId, parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg-1' } } });
+    await settled(() => expect(run.fixture.events.length).toBeGreaterThan(0));
+    await new Promise((resolve) => { setImmediate(resolve); });
+    expect((await run.steer()).result).toEqual({ outcome: 'accepted', behind: 'text' });
+    await run.fixture.adapter.dispose();
+  });
+
+  it('folds at the tool boundary: started while the turn is open lands in it, and one result ends one turn', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.lifecycle(uuid, 'queued');
+    run.lifecycle(uuid, 'started');
+    await settled(() => expect(run.landed()).toEqual([{ kind: 'steer-landed', sessionId: context.sessionId, commandId: 'steer-1', turnId: 'turn-1' }]));
+    run.lifecycle(uuid, 'completed');
+    run.result([run.promptUuid, uuid], { num_turns: 2 });
+    run.lifecycle(run.promptUuid, 'completed');
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    expect(run.finished()[0]).toMatchObject({ turnId: 'turn-1', outcome: 'completed' });
+    expect(run.landed()).toHaveLength(1);
+    await run.fixture.adapter.dispose();
+  });
+
+  it('starts its own turn when the turn ended first, and the host learns that turn from the landing', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.lifecycle(uuid, 'queued');
+    run.result([run.promptUuid]);
+    run.lifecycle(run.promptUuid, 'completed');
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    run.lifecycle(uuid, 'started');
+    await settled(() => expect(run.landed()).toEqual([{ kind: 'steer-landed', sessionId: context.sessionId, commandId: 'steer-1', turnId: 'turn-of-steer-1', newTurn: true }]));
+    run.fixture.query.emit({ type: 'assistant', uuid: 'a-1', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg-2', role: 'assistant', content: [{ type: 'text', text: 'Using it.' }] } });
+    run.result([uuid]);
+    run.lifecycle(uuid, 'completed');
+    await settled(() => expect(run.finished()).toHaveLength(2));
+    expect(run.finished()[1]).toMatchObject({ turnId: 'turn-of-steer-1', outcome: 'completed' });
+    const rows = run.fixture.events.flatMap((event) => (event.kind === 'transcript' ? [event.item] : []));
+    expect(rows.find((item) => item.kind === 'assistant-message')).toMatchObject({ text: 'Using it.', turnId: 'turn-of-steer-1' });
+    const states = run.fixture.events.flatMap((event) => (event.kind === 'session-state' ? [event.state] : []));
+    expect(states.at(-1)).toBe('idle');
+    expect(states.at(-2)).toBe('working');
+    await run.fixture.adapter.dispose();
+  });
+
+  it('takes the result as landing when no lifecycle frame came, before the turn it joined ends', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.result([run.promptUuid, uuid], { num_turns: 2 });
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    const kinds = run.fixture.events.map((event) => event.kind);
+    expect(kinds.indexOf('steer-landed')).toBeLessThan(kinds.indexOf('turn-finished'));
+    expect(run.landed()[0]).toMatchObject({ turnId: 'turn-1' });
+    expect(run.landed()[0]).not.toHaveProperty('newTurn');
+    await run.fixture.adapter.dispose();
+  });
+
+  it('a result that names a steer no turn is open for ends the steer\'s own turn', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.result([run.promptUuid]);
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    run.result([uuid]);
+    await settled(() => expect(run.finished()).toHaveLength(2));
+    expect(run.landed()).toEqual([expect.objectContaining({ turnId: 'turn-of-steer-1', newTurn: true })]);
+    expect(run.finished()[1]).toMatchObject({ turnId: 'turn-of-steer-1' });
+    await run.fixture.adapter.dispose();
+  });
+
+  it('cancelled without started cannot be told: it may have been read', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.lifecycle(uuid, 'queued');
+    run.lifecycle(uuid, 'cancelled');
+    await settled(() => expect(run.unconfirmed()).toEqual([{ kind: 'steer-unconfirmed', sessionId: context.sessionId, commandId: 'steer-1' }]));
+    expect(run.landed()).toEqual([]);
+    await run.fixture.adapter.dispose();
+  });
+
+  it('cancelled after started changes nothing: it landed', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.lifecycle(uuid, 'started');
+    run.lifecycle(uuid, 'cancelled');
+    run.lifecycle(uuid, 'started');
+    await settled(() => expect(run.landed()).toHaveLength(1));
+    await new Promise((resolve) => { setImmediate(resolve); });
+    expect(run.unconfirmed()).toEqual([]);
+    expect(run.landed()).toHaveLength(1);
+    await run.fixture.adapter.dispose();
+  });
+
+  it('a limit ending the turn first lands nothing: the adapter does not guess', async () => {
+    const run = await live();
+    const { uuid } = await run.steer();
+    run.fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'refused', session_id: providerSessionId, user_message_uuid: run.promptUuid, user_message_uuids: [run.promptUuid], is_error: true, num_turns: 1, api_error: 'usage_limit_reached', api_error_status: 429, result: 'You hit your limit' });
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    expect(run.landed()).toEqual([]);
+    run.lifecycle(uuid, 'started');
+    await settled(() => expect(run.landed()).toEqual([expect.objectContaining({ newTurn: true })]));
+    await run.fixture.adapter.dispose();
+  });
+
+  it('with no turn open it is refused and nothing goes in, so the host can queue it', async () => {
+    const run = await live();
+    run.result([run.promptUuid]);
+    await settled(() => expect(run.finished()).toHaveLength(1));
+    expect(await run.fixture.adapter.steer(steerInput('steer-1'))).toEqual({ outcome: 'refused', reason: 'turn-ended' });
+    run.lifecycle(run.promptUuid, 'completed');
+    await run.fixture.adapter.dispose();
+  });
+
+  it('asked twice for one command it goes in once', async () => {
+    const run = await live();
+    const first = await run.steer();
+    expect(await run.fixture.adapter.steer(steerInput('steer-1'))).toMatchObject({ outcome: 'accepted' });
+    expect((await run.steer('steer-2')).uuid).not.toBe(first.uuid);
+    await run.fixture.adapter.dispose();
+  });
+
+  it('a session that is gone fails: nothing went in', async () => {
+    const run = await live();
+    await run.fixture.adapter.dispose();
+    expect(await run.fixture.adapter.steer(steerInput('steer-1'))).toEqual({ outcome: 'failed' });
+  });
+});

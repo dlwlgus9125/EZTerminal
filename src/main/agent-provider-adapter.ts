@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatMessageContext } from '../shared/chat-message';
-import type { ProviderUsageLimit, UsageLimitReading } from '../shared/long-run';
+import type { ProviderUsageLimit, SteerFallback, UsageLimitReading } from '../shared/long-run';
 import type { AgentExtensionCommand, AgentPluginEntry, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type { AgentUsageLimitsReading } from '../shared/agent-usage';
 import type { SideQuestionExchange } from '../shared/agent-side-question';
@@ -117,6 +117,28 @@ export interface ProviderSubmitInput {
   readonly promptSuggestions?: PromptSuggestionMode;
 }
 
+/** A person's plain text for a running turn. Its command id is the message's identity at the provider. */
+export interface ProviderSteerInput {
+  readonly sessionId: string;
+  readonly providerSessionId: string;
+  /** The turn it was meant for. */
+  readonly turnId: string;
+  /** The turn it becomes if that one ends first (Claude: a turn writing its last text), as the host will know it. */
+  readonly newTurnId: string;
+  readonly commandId: string;
+  readonly prompt: string;
+}
+
+export type ProviderSteerResult =
+  /** The provider has it; `steer-landed` says when it is in. `behind`: what it waits for until then. */
+  | { readonly outcome: 'accepted'; readonly behind: 'tool' | 'text' }
+  /** It never reached the provider's turn: the host queues it. */
+  | { readonly outcome: 'refused'; readonly reason: Exclude<SteerFallback, 'not-plain'> }
+  /** The provider does not have it. */
+  | { readonly outcome: 'failed' }
+  /** It cannot be told. Never sent again by itself: neither provider drops a repeat for us. */
+  | { readonly outcome: 'unconfirmed' };
+
 export type AgentProviderTurnScope =
   | {
       readonly turnId: string;
@@ -230,6 +252,22 @@ export type AgentProviderEvent =
       readonly recoverable: boolean;
     }
   | {
+      /** The provider confirmed it took a steer in. `newTurn`: it became `turnId`, a turn the host does not have yet. */
+      readonly kind: 'steer-landed';
+      readonly sessionId: string;
+      readonly commandId: string;
+      readonly turnId: string;
+      readonly newTurn?: true;
+      /** What was being written was dropped and is asked for again. */
+      readonly rewritten?: true;
+    }
+  | {
+      /** The provider dropped a steer without saying it was read: it may have been. */
+      readonly kind: 'steer-unconfirmed';
+      readonly sessionId: string;
+      readonly commandId: string;
+    }
+  | {
       /** Sent before that reply's `turn-finished`; kept in memory only. */
       readonly kind: 'usage';
       /** Set when this conversation finished a reply; absent for an account-wide limits change. */
@@ -278,6 +316,8 @@ export interface AgentProviderAdapter {
   ): Promise<ProviderSessionHandle>;
 
   submit(input: ProviderSubmitInput, signal?: AbortSignal): Promise<void>;
+  /** `long-run-v1`: into the running turn, never interrupting it. Absent: the host queues instead. Never sends twice. */
+  steer?(input: ProviderSteerInput, signal?: AbortSignal): Promise<ProviderSteerResult>;
   interrupt(sessionId: string, providerSessionId: string): Promise<void>;
   setSettings(input: {
     readonly sessionId: string;

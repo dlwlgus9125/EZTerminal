@@ -51,6 +51,8 @@ import type {
   ProviderSideQuestionInput,
   ProviderReviewForkInput,
   ProviderReviewForkResult,
+  ProviderSteerInput,
+  ProviderSteerResult,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
 import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider-adapter';
@@ -480,6 +482,8 @@ interface SessionRecord {
   activeTurn?: TurnRecord;
   /** `longRun`: what the last refusal said, until a turn ends well. A rejected event alone changes nothing. */
   rejected?: UsageLimitReading;
+  /** Steers sent and not yet started, by uuid. They are no turn until they must be one. */
+  readonly steers: Map<string, { readonly commandId: string; readonly newTurnId: string }>;
   stream?: StreamState;
   readonly coalescer: DeltaCoalescer;
   readonly pendingApprovals: Map<string, PendingApproval>;
@@ -1692,6 +1696,34 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
   }
 
+  /**
+   * `next` folds in at the next tool boundary, or starts a turn once the text being written ends; it interrupts nothing.
+   * `now` would, so it stays with 끊고 보내기. The uuid must not repeat: the CLI drops a repeated one in silence.
+   */
+  async steer(input: ProviderSteerInput): Promise<ProviderSteerResult> {
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.disposed || session.handle.providerSessionId !== input.providerSessionId) return { outcome: 'failed' };
+    const behind = session.stream ? 'text' : 'tool';
+    const uuid = deterministicCommandUuid(input.commandId);
+    if (session.steers.has(uuid)) return { outcome: 'accepted', behind };
+    if (!this.openTurn(session)) return { outcome: 'refused', reason: 'turn-ended' };
+    session.steers.set(uuid, { commandId: input.commandId, newTurnId: input.newTurnId });
+    try {
+      session.input.push({
+        type: 'user',
+        message: { role: 'user', content: input.prompt },
+        parent_tool_use_id: null,
+        uuid: uuid as SDKUserMessage['uuid'],
+        session_id: input.providerSessionId,
+        priority: 'next',
+      });
+    } catch {
+      session.steers.delete(uuid);
+      return { outcome: 'failed' };
+    }
+    return { outcome: 'accepted', behind };
+  }
+
   async interrupt(sessionId: string, providerSessionId: string): Promise<void> {
     const session = this.session(sessionId, providerSessionId);
     const unsettled = [...session.turnsByCommand.values()].filter((turn) => turn.state === 'submitted');
@@ -2144,6 +2176,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       streamPromise: Promise.resolve(),
       turnsByCommand: new Map(),
       turnsByUuid: new Map(),
+      steers: new Map(),
       coalescer: new DeltaCoalescer((item) => this.recordTranscript(session, item), this.deltaCoalescerOptions),
       pendingApprovals: new Map(),
       toolCalls: new Map(),
@@ -2352,8 +2385,44 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.emit({ kind: 'prompt-suggestion', sessionId: session.context.sessionId, turnId: turn.turnId, text });
   }
 
+  private openTurn(session: SessionRecord): TurnRecord | undefined {
+    return session.activeTurn?.state === 'submitted'
+      ? session.activeTurn
+      : [...session.turnsByCommand.values()].find((turn) => turn.state === 'submitted');
+  }
+
+  /** Only `started`, or the uuid in a `result`, says the CLI took it. With a turn open it folds in; otherwise it is a turn. */
+  private landSteer(session: SessionRecord, uuid: string): void {
+    const steer = session.steers.get(uuid);
+    if (!steer) return;
+    session.steers.delete(uuid);
+    const { sessionId } = session.context;
+    const open = this.openTurn(session);
+    if (open) {
+      this.emit({ kind: 'steer-landed', sessionId, commandId: steer.commandId, turnId: open.turnId });
+      return;
+    }
+    const turn: TurnRecord = { turnId: steer.newTurnId, commandId: steer.commandId, clientUuid: uuid, attended: true, state: 'submitted', interruptRequested: false };
+    session.turnsByCommand.set(steer.commandId, turn);
+    session.turnsByUuid.set(uuid, turn);
+    session.activeTurn = turn;
+    this.emit({ kind: 'steer-landed', sessionId, commandId: steer.commandId, turnId: turn.turnId, newTurn: true });
+    this.emit({ kind: 'session-state', sessionId, state: 'working' });
+  }
+
   private handleCommandLifecycle(session: SessionRecord, message: JsonObject): void {
     const uuid = asString(message.command_uuid);
+    if (uuid && session.steers.has(uuid)) {
+      if (message.state === 'started' || message.state === 'completed') {
+        this.landSteer(session, uuid);
+      } else if (message.state === 'cancelled') {
+        // Not the same as unread: a refused turn's folded message was read.
+        const steer = session.steers.get(uuid)!;
+        session.steers.delete(uuid);
+        this.emit({ kind: 'steer-unconfirmed', sessionId: session.context.sessionId, commandId: steer.commandId });
+      }
+      return;
+    }
     const turn = uuid ? session.turnsByUuid.get(uuid) : undefined;
     if (!turn) return;
     if (message.state === 'started') session.activeTurn = turn;
@@ -2658,6 +2727,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   private handleResult(session: SessionRecord, message: JsonObject): void {
+    for (const uuid of resultUuids(message)) this.landSteer(session, uuid);
     // The CLI's own housekeeping (a task's notice) ends this way: the fallback below would end a running turn with it.
     if (session.context.longRun && message.num_turns === 0 && !resultUuids(message).some((uuid) => session.turnsByUuid.has(uuid))) return;
     const turns = this.turnsForResult(session, message);

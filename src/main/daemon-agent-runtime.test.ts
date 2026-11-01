@@ -5308,6 +5308,18 @@ describe('a turn a usage limit stopped', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
+  it('keeps the empty final row that takes back text Codex dropped', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      const row = { sessionId: 'agent-1', turnId: turn.id, messageId: 'message-1', kind: 'assistant-message', isSensitive: true, createdAt: '2026-09-04T10:00:00.000Z' } as const;
+      h.codex.emit({ kind: 'transcript', item: { ...row, id: 'delta', sequence: 1, text: 'Half an answ', isDelta: true } });
+      h.codex.emit({ kind: 'transcript', item: { ...row, id: 'dropped', sequence: 2, text: '', isDelta: false } });
+      await h.runtime.whenIdle();
+      expect(h.router.readTranscript('agent-1').filter((item) => item.messageId === 'message-1').map((item) => item.text)).toEqual(['Half an answ', '']);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
   it('launches a session with long-run only when the host says so', async () => {
     const eligible = new Set(['agent-1']);
     const h = await harness({ longRun: longRunHost({ sessionContext: (sessionId) => (eligible.has(sessionId) ? true : undefined) }) });
