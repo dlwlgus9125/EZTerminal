@@ -434,6 +434,14 @@ describe('after a restart', () => {
     expect(h.lastCard()).toMatchObject({ phase: 'unconfirmed' });
   });
 
+  it('a send already in doubt adds nothing at each later restart', async () => {
+    const unconfirmed = { ...resuming, phase: 'unconfirmed' as const };
+    const h = harness({ ...sent({ state: 'delivery-uncertain', errorCode: undefined }), jobs: { 'stop-1': unconfirmed } });
+    await h.coordinator.start();
+    expect(h.rows.map((row) => row.id)).toEqual([limitRowItem(unconfirmed).id]);
+    expect(Object.values(h.saved.jobs)[0]).toMatchObject({ phase: 'unconfirmed', revision: unconfirmed.revision, sending });
+  });
+
   it('a send still running stands', async () => {
     const h = harness(sent({ state: 'working', errorCode: undefined }));
     await h.coordinator.start();

@@ -561,7 +561,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       const turn = snapshot.turns.find((entry) => entry.commandId === sending.commandId);
       if (!turn || !this.options.commandExists(sending.commandId)) return { ...rest, phase: 'ask-reopened' };
       if (turn.state === 'failed' && turn.errorCode === USAGE_LIMIT_ERROR) return this.refused(job, turn.id, turn.finishedAt ?? this.now().toISOString());
-      if (turn.state === 'delivery-uncertain') return { ...job, phase: 'unconfirmed' };
+      if (turn.state === 'delivery-uncertain') return job.phase === 'unconfirmed' ? undefined : { ...job, phase: 'unconfirmed' };
       return turn.state === 'completed' || turn.state === 'interrupted' || turn.state === 'failed' ? { ...rest, phase: 'resumed' } : undefined;
     }
     const due = dueAt(job);
