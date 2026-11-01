@@ -140,6 +140,43 @@ const WRAP_UP_REPLIES = {
   recap: 'I answered with the fixture reply.\nNothing else changed; check the reply.',
 };
 
+/**
+ * A usage limit (`long-run-v1`), framed as the real CLI against a stub (codex-limit-usage.ndjson, codex-limit-no-reset,
+ * codex-limit-not-included). While `ezterminal-e2e-codex-limit.json` exists every conversation's turn is refused, as an
+ * account's would be, until the spec removes it: `{ window, resetIn }` (seconds from the stop, since a reset already past
+ * reads as a window that is over), or `{ kind: 'no-reset' | 'not-included' }`.
+ */
+const LIMIT_MESSAGES = {
+  usage: 'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 1:43 PM.',
+  'no-reset': 'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again later.',
+  'not-included': 'To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.',
+};
+
+function accountLimit() {
+  try {
+    return JSON.parse(controlText('ezterminal-e2e-codex-limit.json', 'null'));
+  } catch {
+    return null;
+  }
+}
+
+/** The window the limit filled, by its length: `primary` is not always five hours. */
+function fullRateLimits(limit) {
+  if (!limit?.window) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    limitId: 'codex',
+    primary: { usedPercent: 100, windowDurationMins: limit.window === 'weekly' ? 10080 : 300, resetsAt: now + limit.resetIn },
+    secondary: limit.window === 'weekly' ? null : { usedPercent: 30, windowDurationMins: 10080, resetsAt: now + (3 * 24 * 60 * 60) },
+  };
+}
+
+/** One line of a log beside the version file. */
+function logLine(name, entry) {
+  const file = controlFile(name);
+  if (file) fs.appendFileSync(file, `${JSON.stringify({ at: Date.now(), ...entry })}\n`);
+}
+
 /** The text a turn's input carries. */
 function inputTextOf(input) {
   return (Array.isArray(input) ? input : []).map((entry) => (typeof entry === 'string' ? entry : entry?.text ?? '')).join('\n');
@@ -205,7 +242,16 @@ if (args.includes('--version')) {
   const threadCwds = new Map();
   /** /btw forks: their turns answer at once and never touch the conversation's input record. */
   const forkThreads = new Set();
-  const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+  /** The turn each conversation runs now: what `turn/steer` checks its `expectedTurnId` against. */
+  const activeTurns = new Map();
+  /** Turns an approval holds open: a steer lands only after the answer. */
+  const approvalTurns = new Set();
+  /** Steers on their way, by turn: a turn lets them land before it ends. */
+  const landings = new Map();
+  const write = (message) => {
+    if (message.method === 'turn/completed' && activeTurns.get(message.params?.threadId) === message.params?.turn?.id) activeTurns.delete(message.params.threadId);
+    process.stdout.write(`${JSON.stringify(message)}\n`);
+  };
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
   /** Requests this fixture sent the client (an approval), answered by id. */
   const serverRequests = new Map();
@@ -227,6 +273,38 @@ if (args.includes('--version')) {
     timer = setInterval(() => { if (isReleased()) finish('released'); }, 50);
   });
   const notify = (method, params) => write({ jsonrpc: '2.0', method, params });
+
+  /** The frames of a turn the account's limit refuses; false when no limit stands. */
+  const stopAtLimit = (threadId, turnId, params) => {
+    const limit = accountLimit();
+    if (!limit) return false;
+    const userMessage = { type: 'userMessage', id: `${turnId}-user`, clientId: params?.clientUserMessageId ?? null, content: params?.input ?? [] };
+    notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: userMessage });
+    notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: userMessage });
+    const rateLimits = fullRateLimits(limit);
+    if (rateLimits) notify('account/rateLimits/updated', { rateLimits });
+    const error = { message: LIMIT_MESSAGES[limit.kind ?? 'usage'], codexErrorInfo: 'usageLimitExceeded', additionalDetails: null, misalignment: null };
+    notify('thread/status/changed', { threadId, status: { type: 'systemError' } });
+    notify('error', { error, willRetry: false, threadId, turnId });
+    notify('turn/completed', { threadId, turn: { id: turnId, items: [], status: 'failed', error } });
+    return true;
+  };
+
+  /**
+   * A steer lands at the turn's next boundary, as a `userMessage` item with its `clientId`: after an open approval's
+   * answer, and after `…-hold-steer` goes, which stands for a tool that runs on. A turn that ends first never takes it.
+   */
+  const landSteer = async (threadId, turnId, params) => {
+    const hold = controlFile('ezterminal-e2e-codex-hold-steer');
+    const held = () => approvalTurns.has(turnId) || (hold !== undefined && fs.existsSync(hold));
+    while (activeTurns.get(threadId) === turnId && held()) await sleep(25);
+    if (activeTurns.get(threadId) !== turnId) return;
+    const item = { type: 'userMessage', id: `${turnId}-steer-${params?.clientUserMessageId}`, clientId: params?.clientUserMessageId ?? null, content: params?.input ?? [] };
+    logLine('ezterminal-e2e-codex-landed.jsonl', { threadId, turnId, clientId: item.clientId });
+    notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item });
+    notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item });
+  };
+
   /**
    * A same-AI review on a fork (clientUserMessageId `review:…`), framed as the real app-server's
    * (codex-review-fork-json.ndjson): its user message, one final-answer message streamed as JSON, usage,
@@ -501,9 +579,10 @@ if (args.includes('--version')) {
           }
           const turnSequence = ++nextTurn;
           const turnId = `fixture-turn-${turnSequence}`;
+          activeTurns.set(threadId, turnId);
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));
           if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-turns.jsonl'),
-            `${JSON.stringify({ threadId, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null, effort: frame.params?.effort ?? null, additionalContext: frame.params?.additionalContext ?? null, input: JSON.stringify(frame.params?.input ?? null).slice(0, 4000) })}\n`);
+            `${JSON.stringify({ at: Date.now(), threadId, turnId, text: inputTextOf(frame.params?.input).slice(0, 4000), runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null, effort: frame.params?.effort ?? null, additionalContext: frame.params?.additionalContext ?? null, input: JSON.stringify(frame.params?.input ?? null).slice(0, 4000) })}\n`);
           respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
           setTimeout(async () => {
             write({
@@ -520,11 +599,23 @@ if (args.includes('--version')) {
                 suggested = `Suggested ${String(await suggestTasks(threadId, turnId, turnSequence, suggestionList))} tasks.`;
               } catch (reason) { suggested = `Suggest fixture failed: ${String(reason)}`; }
             }
+            // Text under way when a steer comes: Codex drops it and asks again, in the same turn.
+            if (inputText.includes('EZTERMINAL_E2E_WRITING')) {
+              notify('item/agentMessage/delta', { threadId, turnId, itemId: `fixture-writing-${turnSequence}`, delta: 'Half a thought that a steer drops' });
+            }
             // A turn the spec keeps running (`EZTERMINAL_E2E_HOLD:<token>`) until it writes the token's release
             // file; stopped meanwhile, it ends interrupted with nothing said.
             const hold = /EZTERMINAL_E2E_HOLD:([\w-]+)/u.exec(inputText)?.[1];
             const release = hold ? controlFile(`ezterminal-e2e-codex-release-${hold}`) : undefined;
             if (release && await holdTurn(turnId, () => fs.existsSync(release)) === 'interrupted') {
+              write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
+              return;
+            }
+            // After a hold, so a limit can stop a turn that ran.
+            if (stopAtLimit(threadId, turnId, frame.params)) return;
+            // The app's "Continue." under way, while `…-hold-continue` exists: what the card says as it goes.
+            const holdContinue = inputText === 'Continue.' ? controlFile('ezterminal-e2e-codex-hold-continue') : undefined;
+            if (holdContinue && await holdTurn(turnId, () => !fs.existsSync(holdContinue)) === 'interrupted') {
               write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
               return;
             }
@@ -669,13 +760,16 @@ if (args.includes('--version')) {
             if (inputText.includes('EZTERMINAL_E2E_APPROVAL')) {
               const requestId = `fixture-approval-${turnSequence}`;
               const answer = new Promise((resolve) => serverRequests.set(requestId, resolve));
+              approvalTurns.add(turnId);
               write({ jsonrpc: '2.0', id: requestId, method: 'item/commandExecution/requestApproval', params: {
                 threadId, turnId, itemId: `fixture-command-${turnSequence}`, command: 'pnpm --dir mobile test', cwd: threadCwds.get(threadId) ?? null,
                 reason: 'Run the phone tests',
               } });
               const decision = (await answer)?.decision;
+              approvalTurns.delete(turnId);
               responseText = `Approval answered: ${typeof decision === 'string' ? decision : JSON.stringify(decision)}`;
             }
+            await Promise.all(landings.get(turnId) ?? []);
             // Chat profiler: stream a fixed-length reply in timed deltas, ending with a sentinel.
             // The reviewer answers instantly, in the same burst as its turn/start response: the
             // adapter must still keep the reply on its turn (pre-response item buffering).
@@ -735,12 +829,42 @@ if (args.includes('--version')) {
         }
         case 'account/rateLimits/read':
           // This account has only a weekly window, like the one the captures came from.
-          respond(frame, { rateLimits: {
+          respond(frame, { rateLimits: fullRateLimits(accountLimit()) ?? {
             limitId: 'codex',
             primary: { usedPercent: usedPercent(), windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
             secondary: null,
           } });
           break;
+        case 'turn/steer': {
+          // Refused as the real app-server refuses: always -32600. A review or compaction says which, a stale id does not.
+          const threadId = frame.params?.threadId;
+          const running = activeTurns.get(threadId);
+          const refusal = controlText('ezterminal-e2e-codex-steer-refusal.txt', '').trim();
+          const stale = refusal === 'stale' || !running || running !== frame.params?.expectedTurnId;
+          const kind = stale ? undefined : refusal || undefined;
+          logLine('ezterminal-e2e-codex-steers.jsonl', { threadId, turnId: running ?? null, expectedTurnId: frame.params?.expectedTurnId ?? null, clientUserMessageId: frame.params?.clientUserMessageId ?? null, text: inputTextOf(frame.params?.input), outcome: stale ? 'stale' : kind ?? 'accepted' });
+          if (stale || kind) {
+            write({ jsonrpc: '2.0', id: frame.id, error: stale
+              ? { code: -32600, message: `expected active turn id \`${String(frame.params?.expectedTurnId)}\` but found \`${String(running)}\`` }
+              : { code: -32600, message: `cannot steer a ${kind} turn`, data: { codexErrorInfo: { activeTurnNotSteerable: { turnKind: kind } } } } });
+            break;
+          }
+          respond(frame, { turnId: running });
+          landings.set(running, [...(landings.get(running) ?? []), landSteer(threadId, running, frame.params)]);
+          break;
+        }
+        case 'thread/read': {
+          // Only what a restart looks for: the steers that landed, by `clientId`. Anything else this fixture cannot answer.
+          const threadId = frame.params?.threadId;
+          const file = controlFile('ezterminal-e2e-codex-landed.jsonl');
+          const landed = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)).filter((entry) => entry.threadId === threadId) : [];
+          if (landed.length === 0) {
+            write({ jsonrpc: '2.0', id: frame.id, error: { code: -32601, message: 'Unsupported fixture method: thread/read' } });
+            break;
+          }
+          respond(frame, { thread: { id: threadId, turns: landed.map((entry) => ({ id: entry.turnId, status: 'inProgress', items: [{ type: 'userMessage', id: `${entry.turnId}-steer`, clientId: entry.clientId }] })) } });
+          break;
+        }
         case 'thread/unsubscribe':
           // Records which threads the app released (an e2e checks /clear releases the old one).
           if (process.env.TMPDIR) {
@@ -753,6 +877,7 @@ if (args.includes('--version')) {
           break;
         case 'turn/interrupt':
           // A held turn (or review) ends interrupted, as a stopped turn does.
+          logLine('ezterminal-e2e-codex-interrupts.jsonl', { threadId: frame.params?.threadId ?? null, turnId: frame.params?.turnId ?? null });
           heldTurns.get(frame.params?.turnId)?.('interrupted');
           respond(frame, {});
           break;

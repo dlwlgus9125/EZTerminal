@@ -137,6 +137,7 @@ import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import { AgentAdvisor } from './agent-advisor';
 import { ReviewCoordinator } from './review-coordinator';
 import { LongRunCoordinator } from './long-run-coordinator';
+import { e2eResumeTiming } from './long-run-timing';
 import { TurnWrapUpCoordinator, wrapUpAllowed } from './turn-wrap-up-coordinator';
 import { SettingsAuthority, installSettingsChangesIpc, settingsConversationAllowed, type SettingsPerson } from './settings-authority';
 import { ConversationViewers, desktopViewingClient, installConversationViewingIpc } from './conversation-viewers';
@@ -1108,6 +1109,7 @@ app.on('ready', async () => {
     },
   });
   const longRunJobsFile = new JsonFile(app.getPath('userData'), 'long-run-jobs.json');
+  const longRunTiming = e2eResumeTiming(app.isPackaged, process.env.EZTERMINAL_E2E_LONG_RUN_TIMING);
   const longRunCoordinator: LongRunCoordinator = new LongRunCoordinator({
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
@@ -1127,6 +1129,7 @@ app.on('ready', async () => {
       ...(turn ? { turnCommand: daemonStore.findCommand(turn.commandId)?.command ?? null } : {}),
     }),
     prepared: preparedHostSession,
+    ...(longRunTiming ? { timing: longRunTiming } : {}),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);

@@ -10,6 +10,7 @@ import type { AgentProviderAdapter } from './agent-provider-adapter';
 import type { DaemonCommandExecutionResult } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
 import { limitRowItem, LongRunCoordinator, steerRowItem, type LimitJobRecord, type SteerRecord } from './long-run-coordinator';
+import type { ResumeTiming } from './long-run-timing';
 
 const STOPPED = '2026-11-01T10:00:00.000Z';
 const stoppedMs = Date.parse(STOPPED);
@@ -43,6 +44,7 @@ interface HarnessOptions {
   readonly capability?: boolean;
   readonly commands?: readonly string[];
   readonly now?: () => Date;
+  readonly timing?: ResumeTiming;
   readonly snapshot?: Partial<DaemonSnapshot>;
   readonly execute?: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   readonly providerOff?: boolean;
@@ -91,6 +93,7 @@ function harness(options: HarnessOptions = {}) {
     allowed: (_sessionId, askedTurn) => (options.conversation !== false && !(askedTurn && options.unattended)),
     prepared: () => options.prepared === true,
     now: options.now ?? (() => new Date(stoppedMs)),
+    ...(options.timing ? { timing: options.timing } : {}),
   });
   const stop = (limit: ProviderUsageLimit = fiveHour, id = 'turn-1', sessionId = 'chat'): void => {
     coordinator.limitStopped({ sessionId, providerId: 'claude', turn: turn(id, { sessionId }), limit, stoppedAt: STOPPED });
@@ -416,6 +419,13 @@ describe('after a restart', () => {
   const sending = { commandId: 'send-1', reason: 'scheduled-time', from: 'waiting' } as const;
   const resuming = job({ phase: 'resuming', sending });
   const sent = (patch: Partial<DaemonTurn>) => ({ jobs: { 'stop-1': resuming }, commands: ['send-1'], now: at(inHours(3)), snapshot: { turns: [turn('turn-1'), turn('turn-2', { commandId: 'send-1', ...patch })] } });
+
+  it('waits what it is told to, when a spec shortens the waits', async () => {
+    const h = harness({ timing: { afterResetMs: 1_000, retryAfterRefusalMs: 2_000, lineGapMs: 3_000 } });
+    h.stop();
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'waiting', resumeAt: new Date(Date.parse(RESET) + 1_000).toISOString() });
+  });
 
   it('a send that never reached the host asks', async () => {
     const h = harness({ jobs: { 'stop-1': resuming }, now: at(inHours(3)) });

@@ -31,6 +31,7 @@ import { parseTranscriptPayload, type UsageLimitPayload } from '../shared/transc
 import type { AgentProviderAdapter } from './agent-provider-adapter';
 import type { DaemonCommandExecutionResult, DaemonSystemTransitionPlanner } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
+import type { ResumeTiming } from './long-run-timing';
 import type { TranscriptReader } from './managed-child-transcript';
 import { conversationBusy } from './review-coordinator';
 import { stoppingApproval } from './turn-wrap-up-coordinator';
@@ -305,6 +306,8 @@ export interface LongRunCoordinatorOptions {
   /** A session the host prepared (workflow, reviewer, planning): it stays out of all this. */
   readonly prepared: (sessionId: string) => boolean;
   readonly now?: () => Date;
+  /** The waits, when not the decided ones: only a spec shortens them (long-run-timing.ts). */
+  readonly timing?: ResumeTiming;
   readonly reportError?: (context: string, error: unknown) => void;
 }
 
@@ -320,6 +323,7 @@ export interface LongRunCoordinatorOptions {
  */
 export class LongRunCoordinator implements DaemonLongRunHost {
   private readonly now: () => Date;
+  private readonly timing: ResumeTiming;
   /** Open stops, by id; at most one per conversation, since a refused turn moves the card down. */
   private readonly jobs = new Map<string, LimitJobRecord>();
   private loading: Promise<void> | undefined;
@@ -342,6 +346,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
 
   constructor(private readonly options: LongRunCoordinatorOptions) {
     this.now = options.now ?? (() => new Date());
+    this.timing = options.timing ?? RESUME_TIMING;
   }
 
   /** Before the runtime's pump: a queue held across a restart must be held from its first pass. */
@@ -403,7 +408,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
 
   /** The PC woke: a sleep is not the app closed, so the schedule stands, and the first send gives the network a minute. */
   wake(): void {
-    this.notBefore = this.now().getTime() + RESUME_TIMING.lineGapMs;
+    this.notBefore = this.now().getTime() + this.timing.lineGapMs;
     this.arm();
   }
 
@@ -670,7 +675,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     if (due === undefined) return undefined;
     const peers = [...this.jobs.values()].filter((other) => {
       const theirs = dueAt(other);
-      return other.providerId === job.providerId && theirs !== undefined && Math.abs(theirs - due) <= RESUME_TIMING.lineGapMs;
+      return other.providerId === job.providerId && theirs !== undefined && Math.abs(theirs - due) <= this.timing.lineGapMs;
     }).sort(oldestFirst);
     return peers.length > 1 ? { position: peers.findIndex((other) => other.stopId === job.stopId) + 1, total: peers.length } : undefined;
   }
@@ -706,7 +711,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       if (lined.has(job.providerId)) continue;
       lined.add(job.providerId);
       const last = this.lastSend.get(job.providerId);
-      if (last !== undefined && nowMs - last < RESUME_TIMING.lineGapMs) continue;
+      if (last !== undefined && nowMs - last < this.timing.lineGapMs) continue;
       this.lastSend.set(job.providerId, nowMs);
       void this.send(job, 'scheduled-time');
     }
@@ -825,7 +830,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   ): Pick<LimitJobRecord, 'phase' | 'resumeAt' | 'offBy'> {
     const stopped = Date.parse(stoppedAt);
     // A reset that has already passed is a stop right after it: the try still waits its own time.
-    const resumeAt = limit.resetsAt ? { resumeAt: new Date(Math.max(Date.parse(limit.resetsAt), stopped) + RESUME_TIMING.afterResetMs).toISOString() } : {};
+    const resumeAt = limit.resetsAt ? { resumeAt: new Date(Math.max(Date.parse(limit.resetsAt), stopped) + this.timing.afterResetMs).toISOString() } : {};
     const settings = this.options.settings();
     if (!settings || !turn || !resumesByItself(limit, stopped) || !this.options.allowed(sessionId, turn)) {
       return { phase: limit.resetsAt ? 'ask-reset' : 'ask-unknown', ...resumeAt };
@@ -847,7 +852,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     const attempt = job.attempt + 1;
     return attempt >= RESUME_ATTEMPTS
       ? { ...rest, ...reading, turnId, attempt, phase: 'gave-up', refusedAt }
-      : { ...rest, ...reading, turnId, attempt, phase: 'retrying', refusedAt, retryAt: new Date(Date.parse(refusedAt) + RESUME_TIMING.retryAfterRefusalMs).toISOString() };
+      : { ...rest, ...reading, turnId, attempt, phase: 'retrying', refusedAt, retryAt: new Date(Date.parse(refusedAt) + this.timing.retryAfterRefusalMs).toISOString() };
   }
 
   /** D5, and what became of a send the last run left unanswered. Undefined: it stands as it is. */
