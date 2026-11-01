@@ -37,7 +37,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createReviewRepo } from './review-probe-repo.mjs';
 import {
-  DUMMY_OPENAI_KEY, SLOW_SERVER, SLOW_TOOL, clip, codexRolloutFacts, credentialAudit, gate, marker, startDenyProxy, startResponsesStub, startSlowToolServer,
+  DUMMY_OPENAI_KEY, SLOW_SERVER, SLOW_TOOL, clip, codexLimitBody as limitBody, codexLimitHeaders as limitHeaders, codexRolloutFacts, credentialAudit, gate, marker,
+  startDenyProxy, startResponsesStub, startSlowToolServer,
 } from './long-run-probe-kit.mjs';
 import { CODEX_ENVIRONMENT_VARIABLES, delay, errorText, log, number, providerEnvironment, ratio, withTimeout, writeReport } from './wrap-up-probe-kit.mjs';
 
@@ -294,22 +295,6 @@ const serverFacts = (server) => ({
   rateLimits: server.rateLimits, usage: server.usage,
   stream: server.log.map(({ atMs, kind, ...rest }) => `${atMs} ${kind} ${JSON.stringify(rest)}`.replace(/ \{\}$/u, '')),
 });
-
-const limitBody = (kind, resetsAt) => {
-  if (kind === 'usage') return { error: { type: 'usage_limit_reached', message: 'The usage limit has been reached', plan_type: 'plus', resets_at: resetsAt } };
-  if (kind === 'usage-no-reset') return { error: { type: 'usage_limit_reached', message: 'The usage limit has been reached', plan_type: 'plus' } };
-  if (kind === 'not-included') return { error: { type: 'usage_not_included', message: 'Upgrade to use this', plan_type: 'free' } };
-  return { error: { type: 'rate_limit_exceeded', code: 'rate_limit_exceeded', message: 'Rate limit reached. Please try again in 1s.' } };
-};
-
-/** The rate-limit headers a real response carries: primary is the 5-hour window, secondary the week. */
-function limitHeaders({ primaryUsed = 20, secondaryUsed = 30, primaryResetAt, secondaryResetAt }) {
-  return {
-    'x-codex-active-limit': 'codex',
-    'x-codex-primary-used-percent': String(primaryUsed), 'x-codex-primary-window-minutes': '300', 'x-codex-primary-reset-at': String(primaryResetAt),
-    'x-codex-secondary-used-percent': String(secondaryUsed), 'x-codex-secondary-window-minutes': '10080', 'x-codex-secondary-reset-at': String(secondaryResetAt),
-  };
-}
 
 function limitPlan() {
   const now = Math.floor(Date.now() / 1000);

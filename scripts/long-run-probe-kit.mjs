@@ -157,6 +157,23 @@ export function rejectedHeaders({ claim = 'five_hour', fiveHourResetAt, sevenDay
   };
 }
 
+/** What Codex's server answers at a limit: `usage`, `usage-no-reset`, `not-included`, or a plain rate limit. */
+export const codexLimitBody = (kind, resetsAt) => {
+  if (kind === 'usage') return { error: { type: 'usage_limit_reached', message: 'The usage limit has been reached', plan_type: 'plus', resets_at: resetsAt } };
+  if (kind === 'usage-no-reset') return { error: { type: 'usage_limit_reached', message: 'The usage limit has been reached', plan_type: 'plus' } };
+  if (kind === 'not-included') return { error: { type: 'usage_not_included', message: 'Upgrade to use this', plan_type: 'free' } };
+  return { error: { type: 'rate_limit_exceeded', code: 'rate_limit_exceeded', message: 'Rate limit reached. Please try again in 1s.' } };
+};
+
+/** The rate-limit headers a real response carries: primary is the 5-hour window, secondary the week. */
+export function codexLimitHeaders({ primaryUsed = 20, secondaryUsed = 30, primaryResetAt, secondaryResetAt }) {
+  return {
+    'x-codex-active-limit': 'codex',
+    'x-codex-primary-used-percent': String(primaryUsed), 'x-codex-primary-window-minutes': '300', 'x-codex-primary-reset-at': String(primaryResetAt),
+    'x-codex-secondary-used-percent': String(secondaryUsed), 'x-codex-secondary-window-minutes': '10080', 'x-codex-secondary-reset-at': String(secondaryResetAt),
+  };
+}
+
 export const RATE_LIMIT_BODY = {
   type: 'error',
   error: { type: 'rate_limit_error', message: "This request would exceed your account's rate limit. Please try again later." },

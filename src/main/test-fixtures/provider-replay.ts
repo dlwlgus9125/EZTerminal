@@ -74,6 +74,8 @@ export interface ProviderCaptureMeta {
   readonly model?: string;
   readonly aborted?: string;
   readonly error?: string;
+  /** The real CLI against the probes' loopback stub, not a real provider: what a limit looks like. */
+  readonly server?: 'stub';
 }
 
 export interface JsonRpcFrame {

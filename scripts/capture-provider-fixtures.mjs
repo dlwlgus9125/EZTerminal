@@ -38,6 +38,12 @@
  *   predict-fork, recap-fork  Codex's next-message and recap forks (the /btw shape), recorded like
  *                      review-fork: the conversation runs first, unrecorded.
  *
+ * Limit scenarios (approvals.md "장시간 연속성"): the real CLI against the probes' loopback stub, because no real limit
+ * was ever seen. They spend nothing: dummy credentials, CLAUDE_CONFIG_DIR, HOME and CODEX_HOME below --scratch, every
+ * other host refused by a proxy. `meta.server: 'stub'` marks them, so nobody reads one as a real recording.
+ *   limit-first, limit-weekly, limit-no-reset, limit-child   Claude's refused call, weekly, without a reset, a subagent's.
+ *   limit-usage, limit-no-reset, limit-not-included          Codex's refused call, without a reset, a plan without it.
+ *
  * Run:
  *   node scripts/capture-provider-fixtures.mjs --scratch <dir> \
  *     --provider claude|codex|all --scenario <name>|all
@@ -49,6 +55,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  allowedHeaders, codexLimitBody, codexLimitHeaders, credentialAudit, DUMMY_OAUTH_TOKEN, DUMMY_OPENAI_KEY, RATE_LIMIT_BODY, rejectedHeaders, startAnthropicStub,
+  startDenyProxy, startResponsesStub,
+} from './long-run-probe-kit.mjs';
 import { createReviewRepo, hostSuppliedDiff, REVIEW_FINDINGS_JSON_SCHEMA } from './review-probe-repo.mjs';
 import {
   CODEX_SIDE_QUESTION_INSTRUCTION, PREDICT_INSTRUCTION, PROMPTS, RECAP_INSTRUCTION, startSuggestionServer,
@@ -423,7 +433,66 @@ const SCENARIOS = [
     codexFork: SIDE_FORK,
     codex: () => 'decline',
   },
+  { name: 'limit-first', providers: ['claude'], prompt: 'Please look at src/app.ts.', stub: {} },
+  { name: 'limit-weekly', providers: ['claude'], prompt: 'Please look at src/app.ts.', stub: { claim: 'seven_day' } },
+  { name: 'limit-no-reset', prompt: 'Please look at src/app.ts.', stub: { noReset: true, kind: 'usage-no-reset' } },
+  {
+    name: 'limit-child',
+    providers: ['claude'],
+    prompt: 'Use a helper on src/app.ts.',
+    stub: { afterFirstCall: { kind: 'tool', name: 'Agent', input: { description: 'Look at the app', prompt: 'Read src/app.ts and report.', subagent_type: 'general-purpose' }, text: 'Starting a helper.' } },
+  },
+  { name: 'limit-usage', providers: ['codex'], prompt: 'Please look at src/app.ts.', stub: { kind: 'usage' } },
+  { name: 'limit-not-included', providers: ['codex'], prompt: 'Please look at src/app.ts.', stub: { kind: 'not-included' } },
 ];
+
+/** A refused Claude call, as the subscriber path sees it. `noReset` drops every header that names a time. */
+function claudeRefusal({ claim, noReset = false }, { fiveHourResetAt, sevenDayResetAt }) {
+  const headers = rejectedHeaders({ claim, fiveHourResetAt, sevenDayResetAt });
+  if (noReset) for (const name of ['anthropic-ratelimit-unified-reset', 'anthropic-ratelimit-unified-5h-reset', 'anthropic-ratelimit-unified-7d-reset', 'retry-after']) delete headers[name];
+  return { kind: 'raw', status: 429, headers, body: RATE_LIMIT_BODY };
+}
+
+/** Runs the scenario's server below `scratch`; `environment` is all the CLI gets beyond the OS. */
+async function startLimitServer(provider, scenario, scratch) {
+  const proxy = await startDenyProxy();
+  const home = path.join(scratch, `${provider}-${scenario.name}-home`);
+  await fs.mkdir(path.join(home, '.claude'), { recursive: true });
+  const now = Math.floor(Date.now() / 1000);
+  const resets = { fiveHourResetAt: now + 7_200, sevenDayResetAt: now + 259_200 };
+  const shared = { HOME: home, USERPROFILE: home, HOMEPATH: home, HTTP_PROXY: proxy.url, HTTPS_PROXY: proxy.url, NO_PROXY: '127.0.0.1,localhost', TZ: 'UTC' };
+  let stub;
+  let environment;
+  if (provider === 'claude') {
+    stub = await startAnthropicStub({ dummies: [DUMMY_OAUTH_TOKEN] });
+    await fs.writeFile(path.join(home, '.claude', '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.312' }));
+    const route = stub.route(scenario.name, { headers: allowedHeaders(resets) });
+    const refused = claudeRefusal(scenario.stub, resets);
+    const limit = () => refused;
+    if (scenario.stub.afterFirstCall) route.steps.push(scenario.stub.afterFirstCall, (_entry, current) => { current.limit = limit; return refused; });
+    else route.limit = limit;
+    environment = { ...shared, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ANTHROPIC_BASE_URL: route.url, CLAUDE_CODE_OAUTH_TOKEN: DUMMY_OAUTH_TOKEN };
+  } else {
+    stub = await startResponsesStub({ dummies: [DUMMY_OPENAI_KEY] });
+    const times = { primaryResetAt: resets.fiveHourResetAt, secondaryResetAt: resets.sevenDayResetAt };
+    const route = stub.route(scenario.name, { headers: codexLimitHeaders(times) });
+    const refused = { kind: 'raw', status: 429, headers: codexLimitHeaders({ ...times, primaryUsed: 100 }), body: codexLimitBody(scenario.stub.kind, times.primaryResetAt) };
+    route.limit = () => refused;
+    await fs.writeFile(path.join(home, 'config.toml'), [
+      'model = "gpt-stub"', 'model_provider = "stub"', '[model_providers.stub]', 'name = "Stub"', `base_url = "${route.url}"`, 'wire_api = "responses"', 'env_key = "LONG_RUN_STUB_KEY"', '',
+    ].join('\n'));
+    environment = { ...shared, CODEX_HOME: home, LONG_RUN_STUB_KEY: DUMMY_OPENAI_KEY };
+  }
+  return {
+    environment,
+    close: async () => {
+      const dummyOnly = credentialAudit(stub.requests);
+      await stub.close();
+      await proxy.close();
+      return dummyOnly;
+    },
+  };
+}
 
 function parseArguments(argv) {
   const options = { provider: 'all', scenario: 'all', out: path.join(root, 'test', 'fixtures', 'provider-capture') };
@@ -573,6 +642,8 @@ function createSanitizer({ workspace, captureRoot }) {
     [new RegExp(escapeRegExp(workspace.replace(/[^A-Za-z0-9]/gu, '-')), 'giu'), '<WORKSPACE_KEY>'],
     [pathPattern(home), '<HOME>'],
     [new RegExp(`\\b${escapeRegExp(os.hostname())}\\b`, 'giu'), '<HOST>'],
+    // A limit's message names the reset in the PC's own zone.
+    [new RegExp(escapeRegExp(Intl.DateTimeFormat().resolvedOptions().timeZone), 'gu'), '<TIME_ZONE>'],
     // git/GitHub handles that extend the account name (e.g. user1234).
     [new RegExp(`${escapeRegExp(user)}[A-Za-z0-9]*`, 'giu'), '<USER>'],
   ];
@@ -808,9 +879,10 @@ async function captureClaude(scenario, context) {
     forwardSubagentText: true,
     agentProgressSummaries: true,
     persistSession: false,
-    env: providerEnvironment(CLAUDE_ENVIRONMENT_VARIABLES, {
+    env: providerEnvironment(context.limitServer ? ['PATH'] : CLAUDE_ENVIRONMENT_VARIABLES, {
       CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2',
       ...environment,
+      ...context.limitServer?.environment,
     }),
     settingSources: [],
     settings: { plansDirectory: '.claude-plans' },
@@ -1023,7 +1095,7 @@ async function captureCodex(scenario, context) {
   const { recorder, workspace } = context;
   const child = spawn(process.execPath, [context.codexScript, 'app-server'], {
     cwd: workspace,
-    env: providerEnvironment(CODEX_ENVIRONMENT_VARIABLES),
+    env: providerEnvironment(context.limitServer ? ['PATH'] : CODEX_ENVIRONMENT_VARIABLES, context.limitServer?.environment),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -1262,6 +1334,10 @@ async function captureOne(provider, scenario, options, versions) {
   };
   const suggestions = scenario.suggestTool ? await startSuggestionServer() : undefined;
   if (suggestions) context.suggestEndpoint = suggestions.endpoint(provider, { alwaysLoadMeta: true });
+  if (scenario.stub) {
+    context.limitServer = await startLimitServer(provider, scenario, captureRoot);
+    meta.server = 'stub';
+  }
   const started = Date.now();
   let failure;
   try {
@@ -1277,6 +1353,8 @@ async function captureOne(provider, scenario, options, versions) {
     failure = error;
   } finally {
     await suggestions?.close();
+    const audit = await context.limitServer?.close();
+    if (audit && audit.notDummy !== 0) failure ??= new Error(`The stub saw ${String(audit.notDummy)} credentials that were not dummies.`);
   }
   const sanitize = createSanitizer({ workspace, captureRoot });
   sanitizeDeltaStreams(recorder.lines, sanitize.text);
