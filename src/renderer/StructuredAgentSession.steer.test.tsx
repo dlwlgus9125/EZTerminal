@@ -78,6 +78,20 @@ describe('the busy message box', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('asks for nothing while a message is on its way: the escrow empties the box before the answer comes', async () => {
+    let answer: (result: { readonly ok: true }) => void = () => undefined;
+    const onSteer = vi.fn(() => new Promise<{ readonly ok: true }>((resolve) => { answer = resolve; }));
+    const running = { running: true, onSteer } as unknown as ComposerSteer;
+    box({ steer: running, draftState: { text: '그 파일만' } });
+    await click(byId('structured-agent-send')!);
+    expect(onSteer).toHaveBeenCalledWith('그 파일만');
+    box({ steer: running, draftState: { text: '' } });
+    expect(input().value).toBe('');
+    expect(container.textContent).not.toContain('계속하려면 항목을 선택하세요.');
+    await act(async () => { answer({ ok: true }); await Promise.resolve(); });
+    expect(container.textContent).not.toContain('계속하려면 항목을 선택하세요.');
+  });
+
   it('keeps a message out of the box until the host has let it go, and says why not', async () => {
     const held = { id: 'm', text: '그 파일만', state: 'failed' as const, sentAt: '2026-11-01T05:50:00.000Z', failure: 'disconnected' as const };
     const onToBox = vi.fn(async () => ({ ok: false as const, message: '아직 가는 중입니다.' }));

@@ -1453,9 +1453,10 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const deliver = async (asked: 'send' | 'interrupt'): Promise<void> => {
     if (disabled || completion.composing.current) return;
     if (completion.runAppCommand()) return;
-    setAttempted(true);
     setError(null);
     const prompt = draft.trim();
+    // Only a press that found nothing: the escrow empties the box of a message on its way, well before its answer comes.
+    setAttempted(!prompt && attachments.length === 0);
     if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
     if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
     const mode = asked === 'send' && steerable ? 'steer' : asked;
