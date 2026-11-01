@@ -50,6 +50,19 @@ describe('a conversation a limit stopped', () => {
     expect(row(limited({}, 's-notify'), 's-notify')).toMatchObject({ state: 'approval' });
   });
 
+  it('still asks with a message held behind it: nothing runs, so the person is told', () => {
+    const snapshot = limited({ phase: 'ask-reset', window: 'weekly' });
+    const held = { ...snapshot, agents: snapshot.agents.map((agent) => (agent.sessionId === 's-font' ? { ...agent, state: 'queued' as const, queuedTurnCount: 1 } : agent)) };
+    expect(row(held)).toMatchObject({ state: 'limit-ask', lamp: 'amber' });
+    expect(waitingItems(held, 'p-ez').some((entry) => entry.kind === 'usage-limit')).toBe(true);
+  });
+
+  it('leaves a queued conversation with no limit as it was', () => {
+    const snapshot = shellSnapshot();
+    const queued = { ...snapshot, agents: snapshot.agents.map((agent) => (agent.sessionId === 's-font' ? { ...agent, state: 'queued' as const } : agent)) };
+    expect(row(queued)).toMatchObject({ state: 'working' });
+  });
+
   it('stays out of other projects, and of archived conversations', () => {
     const snapshot = limited({ phase: 'ask-reset' });
     expect(waitingItems(snapshot, 'p-garnet').some((entry) => entry.kind === 'usage-limit')).toBe(false);

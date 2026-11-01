@@ -1218,7 +1218,7 @@ export interface ComposerSteer {
   /** On their way, held or failed: a landed message is a transcript row. */
   readonly messages?: readonly SteeredMessage[];
   /** The newest landed row in the transcript. */
-  readonly landedRow?: string;
+  readonly landedRow?: { readonly id: string; readonly createdAt: string };
   /** Each is the host's to allow: until it has, the message stays where it is. */
   readonly onToQueue?: (message: SteeredMessage) => Promise<StructuredAgentUiResult>;
   readonly onToBox?: (message: SteeredMessage) => Promise<StructuredAgentUiResult>;
@@ -2775,7 +2775,7 @@ export function StructuredAgentSessionPanel({
   const longRunSteer = longRun?.steer;
   const landedRow = useMemo(() => {
     if (!longRunSteer) return undefined;
-    for (let index = items.length - 1; index >= 0; index -= 1) if (items[index]!.payload?.type === 'steer') return items[index]!.id;
+    for (let index = items.length - 1; index >= 0; index -= 1) if (items[index]!.payload?.type === 'steer') return items[index];
     return undefined;
   }, [items, longRunSteer]);
   const steerRunning = longRunSteer !== undefined && longRunSteer.noTurn !== true && turnCurrent;

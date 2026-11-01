@@ -269,7 +269,7 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')).toBeNull();
     expect(byId('chat-steer-announce')?.textContent).toBe('');
     box({ steer: { ...running, messages: [held] } });
-    box({ steer: { ...running, messages: [], landedRow: 'row-1' } });
+    box({ steer: { ...running, messages: [], landedRow: { id: 'row-1', createdAt: '2026-11-01T05:51:00.000Z' } } });
     expect(byId('chat-steer-announce')?.textContent).toBe('메시지가 전달됐습니다.');
     // A landed one is a transcript row by now, not a line above the box.
     expect(byId('chat-steer-tray')).toBeNull();
@@ -278,8 +278,17 @@ describe('the busy message box', () => {
   it('says nothing of old landed rows a transcript brings in as it loads', () => {
     const running = steer();
     box({ steer: running });
-    box({ steer: { ...running, landedRow: 'row-old' } });
+    box({ steer: { ...running, landedRow: { id: 'row-old', createdAt: '2026-11-01T05:51:00.000Z' } } });
     expect(byId('chat-steer-announce')?.textContent).toBe('');
+  });
+
+  it('says nothing of an older landed row while a newer message is still on its way', () => {
+    const held = { id: 'm', text: '그 파일만', state: 'on-its-way' as const, sentAt: '2026-11-01T05:50:00.000Z', behind: 'tool' as const };
+    const running = steer({ messages: [held] });
+    box({ steer: running });
+    box({ steer: { ...running, landedRow: { id: 'row-older', createdAt: '2026-11-01T05:40:00.000Z' } } });
+    expect(byId('chat-steer-announce')?.textContent).toBe('');
+    expect(byId('chat-steer-tray')).not.toBeNull();
   });
 
   it('says what a stop or a limit left unknown, and offers no resend', () => {

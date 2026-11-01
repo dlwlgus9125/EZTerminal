@@ -71,8 +71,8 @@ export function SteerTray({ messages, codex, fellBack, landedRow, decisionOpen =
   readonly codex: boolean;
   /** Queued turns that were meant for the running one: each is announced once, with its reason. */
   readonly fellBack?: ReadonlyMap<string, SteerFallback>;
-  /** The newest landed row in the transcript: a new one is the host confirming a message arrived. */
-  readonly landedRow?: string;
+  /** The newest landed row in the transcript: one newer than a message held here is the host confirming it arrived. */
+  readonly landedRow?: { readonly id: string; readonly createdAt: string };
   /** A decision waits above the box: on a short panel it has the room, so this stays one line. */
   readonly decisionOpen?: boolean;
   readonly onFocusDecision?: () => boolean;
@@ -87,17 +87,17 @@ export function SteerTray({ messages, codex, fellBack, landedRow, decisionOpen =
     known.current = new Map(messages.map((message) => [message.id, message.state]));
     if (changed) setAnnounced(copy.announceHeld(steerStateText(changed, copy, codex)));
   }, [codex, copy, messages]);
-  // Only a message this tray held: a transcript still loading brings old rows in too.
-  const landedSeen = useRef(landedRow);
-  const expecting = useRef(false);
+  // A transcript still loading brings old rows in too: only one newer than what this tray held says anything.
+  const landedSeen = useRef(landedRow?.id);
+  const heldSince = useRef<string>();
   useEffect(() => {
-    if (messages.length > 0) expecting.current = true;
-    if (landedRow === landedSeen.current) return;
-    landedSeen.current = landedRow;
-    if (!expecting.current) return;
-    expecting.current = messages.length > 0;
+    for (const { sentAt } of messages) if (!heldSince.current || sentAt < heldSince.current) heldSince.current = sentAt;
+    if (landedRow?.id === landedSeen.current) return;
+    landedSeen.current = landedRow?.id;
+    if (!landedRow || !heldSince.current || landedRow.createdAt < heldSince.current) return;
+    if (messages.length === 0) heldSince.current = undefined;
     setAnnounced(copy.announceLanded);
-  }, [copy, landedRow, messages.length]);
+  }, [copy, landedRow, messages]);
   const told = useRef(new Set(fellBack?.keys()));
   useEffect(() => {
     const fresh = [...(fellBack ?? [])].find(([turnId]) => !told.current.has(turnId));

@@ -230,7 +230,7 @@ const nextSequence = (fixture: LongRunFixture): number => Math.max(...fixture.it
 export function acceptSteer(fixture: LongRunFixture, text: string, id: string): LongRunFixture {
   const held = fixture.approvals?.some((entry) => entry.state === 'pending') === true;
   const behind = fixture.items.at(-1)?.isDelta ? 'text' as const : 'tool' as const;
-  const message: SteeredMessage = { id, text, state: held ? 'behind-approval' : 'on-its-way', sentAt: at(9), ...(held ? {} : { behind }) };
+  const message: SteeredMessage = { id, text, state: held ? 'behind-approval' : 'on-its-way', sentAt: at(nextSequence(fixture)), ...(held ? {} : { behind }) };
   return { ...fixture, steered: [...(fixture.steered ?? []), message] };
 }
 

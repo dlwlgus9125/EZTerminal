@@ -81,6 +81,8 @@ export interface LiveFlow {
 }
 
 const WORKING = new Set(['starting', 'queued', 'working']);
+/** What outranks a limit. A message held in the queue behind the stop does not: nothing is running. */
+const RUNNING = new Set(['starting', 'working']);
 
 function lampOf(state: ConversationState): Lamp {
   switch (state) {
@@ -130,7 +132,7 @@ export function projectConversations(
     const limit = snapshot.usageLimits?.[sessionId];
     const state: ConversationState = waits.some((approval) => approval.request?.kind === 'question') ? 'question'
       : waits.length > 0 || agent.state === 'blocked' ? 'approval'
-        : WORKING.has(agent.state) ? 'working'
+        : (limit ? RUNNING : WORKING).has(agent.state) ? 'working'
           : (limit ? limitState(limit) : undefined)
             ?? (agent.state === 'error' || agent.state === 'delivery-uncertain' ? 'failed'
               : agent.state === 'interrupted' ? 'stopped'
@@ -164,7 +166,7 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
   const limits = Object.entries(snapshot.usageLimits ?? {}).flatMap(([sessionId, limit]): WaitingItem[] => {
     const session = sessions.get(sessionId);
     const agent = agents.get(sessionId);
-    if (limitStanding(limit) !== 'asks' || !session || !agent || WORKING.has(agent.state) || session.archivedAt || (projectId && session.projectId !== projectId)) return [];
+    if (limitStanding(limit) !== 'asks' || !session || !agent || RUNNING.has(agent.state) || session.archivedAt || (projectId && session.projectId !== projectId)) return [];
     return [{ approvalId: limit.stopId, sessionId, title: session.title, providerId: limit.providerId, kind: 'usage-limit', detail: '', at: limit.stoppedAt, asks: 'answer', limit }];
   });
   const approvals = snapshot.approvals
