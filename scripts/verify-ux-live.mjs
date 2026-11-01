@@ -25,6 +25,13 @@
  * --tap watches the real providers from outside the product (scripts/live-provider-tap.cjs): Claude's api_request
  * telemetry and Codex's JSON-RPC stream, in <output>/tap. The turn wrap-up scenarios need it.
  * --no-pause starts with 한도 근처 멈춤 off; --force-pause writes a 95% reading and keeps real ones from replacing it.
+ *
+ * --stub runs the real app and the real CLIs against loopback stubs of both APIs (scripts/live-limit-stub.cjs): a scratch
+ * home, a dummy credential, a deny-and-log proxy for anything else. Nothing here reaches a provider, and the verdict fails
+ * if a request presented anything but the dummy. That is the only way to a usage limit on demand.
+ * --timing=<json> shortens the long-run waits (EZTERMINAL_E2E_LONG_RUN_TIMING); without it they are the real 2 and 10 minutes.
+ * A profile folder may be created empty: nothing of the real profile is read, and the isolated profile gets the Claude
+ * enablement a person would have given.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -32,6 +39,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
 import { liveReportVerdict } from './live-report-verdict.mjs';
+import {
+  DUMMY_OAUTH_TOKEN, DUMMY_OPENAI_KEY, RATE_LIMIT_BODY, SLOW_SERVER, SLOW_TOOL, allowedHeaders, claudeSessionFacts, claudeSessionFile, codexLimitBody, codexLimitHeaders,
+  codexRolloutFacts, credentialAudit, rejectedHeaders, startAnthropicStub, startDenyProxy, startResponsesStub, startSlowToolServer,
+} from './long-run-probe-kit.mjs';
 import { createReviewRepo, EXPECTED_ANCHORS, repoFingerprint, sameFingerprint } from './review-probe-repo.mjs';
 import { claudeCalls, claudeRequests, claudeStream, claudeTurnStarts, codexForks, codexTurns, startTelemetry, tapRecords } from './wrap-up-live-measures.mjs';
 
@@ -46,6 +57,8 @@ const only = rest.filter((arg) => !arg.startsWith('--'));
 const allowSkips = rest.includes('--allow-skips');
 const enableProviders = rest.includes('--enable-providers');
 const tapProviders = rest.includes('--tap');
+const stubProviders = rest.includes('--stub');
+const resumeTiming = rest.find((arg) => arg.startsWith('--timing='))?.slice('--timing='.length);
 if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: verify-ux-live.mjs <stage> [scenario...]');
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 if (!existsSync(profile)) throw new Error(`Run capture-ux-overhaul.mjs ${stage} first: ${profile} is missing.`);
@@ -263,6 +276,10 @@ const ALL_SCENARIOS = [
   // Upgrade: seeded by the build before this feature (--entry), continued by this one, twice with a restart between.
   { name: 'existing-seed', run: (page, project, report) => runExistingSeed(page, report) },
   { name: 'existing-continue', run: (page, project, report) => runExistingContinue(page, report) },
+  // Long-run continuity (long-run-v1): a limit through the stubs (--stub --tap).
+  { name: 'claude-limit-resume', longRun: true, run: (page, project, report) => runLimitResume(page, report, 'claude') },
+  { name: 'codex-limit-resume', longRun: true, run: (page, project, report) => runLimitResume(page, report, 'codex') },
+  ...longRunScenarios().map(({ name, run }) => ({ name, longRun: true, run: (page, _project, report) => run(page, report) })),
 ];
 const SCENARIOS = ALL_SCENARIOS.filter((scenario) => only.length === 0 || only.includes(scenario.name));
 const unknownScenarios = only.filter((name) => !ALL_SCENARIOS.some((scenario) => scenario.name === name));
@@ -1177,12 +1194,12 @@ async function closeSideTabs(page) {
 }
 
 /** A conversation that has answered once (a same-AI review forks its provider session). */
-async function startConversation(page, { providerId, projectId, workspaceId, root, title, permissionPreset, initialPrompt }) {
+async function startConversation(page, { providerId, projectId, workspaceId, root, title, permissionPreset, initialPrompt, model, reasoningEffort }) {
   const ready = await poll(() => snapshot(page), (snap) => snap.providers.some((entry) => entry.id === providerId && entry.enabled && entry.health === 'ready'), 90_000, `${providerId} ready`).then(() => true, () => false);
   if (!ready) throw new Error(`${providerId} is not enabled and ready`);
   const sessionId = `ux-live-review-${providerId}-${Date.now().toString(36)}`;
   const created = await command(page, 'agent.create', {
-    sessionId, workspaceId, title, providerId, permissionPreset,
+    sessionId, workspaceId, title, providerId, permissionPreset, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}),
     // No tools in the first turn: this PC's Codex shell commands hang under the workspace-write sandbox.
     initialPrompt: initialPrompt ?? '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
   });
@@ -2998,6 +3015,1110 @@ async function runExistingContinue(page, report) {
   if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
 }
 
+// ── Long-run continuity (long-run-v1) ────────────────────────────────────────
+// Bundle 3. A limit cannot be had on demand, so a real limit never ran: `--stub` scenarios run the real app and the real
+// CLIs against loopback stubs that answer as the probes measured. Facts come from the stubs' own request logs and the
+// tap; "nothing went out" is counted where it would have landed. A real AI runs the steering scenarios, with no stub.
+
+const HOUR = 3_600;
+const RESUME_TEXT = 'Continue.';
+const REVIEW_TURN_WORD = 'EZLIVE-REVIEW-TURN';
+const holdFile = path.join(output, 'hold-turn-completed');
+const SLOW_TOOL_NAME = { claude: `mcp__${SLOW_SERVER}__${SLOW_TOOL}` };
+/** Side calls of bundle 2: the stub answers them apart, so they never use up a scripted step of the conversation. */
+const SIDE_CALL = /SUGGESTION MODE|most likely next message|Recap for the person/u;
+let stubWorld;
+let slowTools;
+let slowEndpoint;
+
+/** Stubs of both APIs, a scratch home the app and the CLIs run in, and the switches a scenario moves. */
+async function startStubWorld() {
+  const home = path.join(output, 'stub-home');
+  const claudeConfig = path.join(home, '.claude');
+  const codexHome = path.join(home, '.codex');
+  mkdirSync(claudeConfig, { recursive: true });
+  mkdirSync(codexHome, { recursive: true });
+  writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.312' }));
+  const proxy = await startDenyProxy();
+  const now = Math.floor(Date.now() / 1000);
+  const anthropic = await startAnthropicStub({ dummies: [DUMMY_OAUTH_TOKEN] });
+  const responses = await startResponsesStub({ dummies: [DUMMY_OPENAI_KEY] });
+  const world = { proxy, close: async () => { await Promise.all([anthropic.close(), responses.close(), proxy.close()]); } };
+  world.claude = { limit: null };
+  world.claude.route = anthropic.route('claude', {
+    keepText: true, markers: {}, headers: allowedHeaders({ fiveHourResetAt: now + 4 * HOUR, sevenDayResetAt: now + 72 * HOUR }),
+    isMain: (_entry, body) => !SIDE_CALL.test(JSON.stringify(body.messages?.at(-1) ?? '')),
+    limit: (entry) => world.claude.limit?.(entry) ?? null,
+  });
+  world.codex = { limit: null };
+  world.codex.route = responses.route('codex', {
+    markers: { continue: RESUME_TEXT }, headers: codexLimitHeaders({ primaryResetAt: now + 4 * HOUR, secondaryResetAt: now + 72 * HOUR }),
+    isSide: (_entry, body) => SIDE_CALL.test(JSON.stringify(body.input ?? '')),
+    limit: (entry) => world.codex.limit?.(entry) ?? null,
+  });
+  writeFileSync(path.join(codexHome, 'config.toml'), [
+    'model = "gpt-stub"', 'model_provider = "stub"', '[model_providers.stub]', 'name = "Stub"', `base_url = "${world.codex.route.url}"`, 'wire_api = "responses"', 'env_key = "LONG_RUN_STUB_KEY"', '',
+  ].join('\n'));
+  // The app itself runs in the scratch home; the proxy variables pass the product's allow-list, the rest come at spawn.
+  world.launchEnvironment = {
+    HOME: home, USERPROFILE: home, HOMEPATH: home, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeConfig,
+    HTTP_PROXY: proxy.url, HTTPS_PROXY: proxy.url, NO_PROXY: '127.0.0.1,localhost',
+    EZ_LIVE_STUB_ENV: JSON.stringify({
+      HOME: home, USERPROFILE: home, HOMEPATH: home, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeConfig,
+      ANTHROPIC_BASE_URL: world.claude.route.url, CLAUDE_CODE_OAUTH_TOKEN: DUMMY_OAUTH_TOKEN, LONG_RUN_STUB_KEY: DUMMY_OPENAI_KEY,
+      HTTP_PROXY: proxy.url, HTTPS_PROXY: proxy.url, NO_PROXY: '127.0.0.1,localhost',
+    }),
+  };
+  return world;
+}
+
+function requireStub() {
+  requireTap();
+  if (!stubWorld) throw new Error('This scenario needs --stub.');
+}
+
+const NO_RESET_HEADERS = ['anthropic-ratelimit-unified-reset', 'anthropic-ratelimit-unified-5h-reset', 'anthropic-ratelimit-unified-7d-reset', 'retry-after'];
+
+/** The answer of an account at its limit, as each API gives it. `kind`: usage, no-reset, not-included. */
+function refusalOf(providerId, { window = 'five-hour', resetIn = 30, kind = 'usage' }) {
+  const now = Math.floor(Date.now() / 1000);
+  const weekly = window === 'weekly';
+  const fiveHourResetAt = weekly ? now + 3 * HOUR : now + resetIn;
+  const sevenDayResetAt = weekly ? now + resetIn : now + 72 * HOUR;
+  if (providerId === 'claude') {
+    const headers = rejectedHeaders({ claim: weekly ? 'seven_day' : 'five_hour', fiveHourResetAt, sevenDayResetAt });
+    if (kind === 'no-reset') for (const name of NO_RESET_HEADERS) delete headers[name];
+    return { status: 429, headers, body: RATE_LIMIT_BODY };
+  }
+  const headers = codexLimitHeaders({ primaryUsed: weekly ? 40 : 100, secondaryUsed: weekly ? 100 : 30, primaryResetAt: fiveHourResetAt, secondaryResetAt: sevenDayResetAt });
+  // The headers would give Codex a reset of their own, and it would say so.
+  if (kind === 'no-reset') for (const name of ['x-codex-primary-reset-at', 'x-codex-secondary-reset-at']) delete headers[name];
+  const body = codexLimitBody(kind === 'usage' ? 'usage' : kind === 'no-reset' ? 'usage-no-reset' : 'not-included', weekly ? sevenDayResetAt : fiveHourResetAt);
+  return { status: 429, headers, body };
+}
+
+/** The account refuses every call of this AI, `only` narrowing it to some requests, until `liftLimit`. */
+function limitAccount(providerId, options = {}) {
+  const refused = refusalOf(providerId, options);
+  stubWorld[providerId].limit = (entry) => (!options.only || options.only(entry) ? refused : null);
+}
+const liftLimit = (providerId) => { stubWorld[providerId].limit = null; };
+const stubRequests = (providerId, since = 0) => stubWorld[providerId].route.requests.filter((entry) => entry.at >= since);
+
+/** The CLI ends a request with its own system lines, and folds a refused prompt and what follows into one user message. */
+const lastUserText = (entry) => entry.messages?.filter((message) => message.role === 'user').at(-1)?.blocks.filter((block) => block.type === 'text').at(-1)?.text?.trim();
+
+const markerCount = (entry, key) => (entry?.messages ?? entry?.input ?? []).flatMap((item) => item.blocks ?? [item]).filter((part) => part.markers?.includes(key)).length;
+
+/** One request per "Continue." that reached the API: the last thing the person's side said. */
+function continueSends(providerId, since = 0) {
+  return stubRequests(providerId, since).filter((entry) => {
+    if (providerId === 'claude') return entry.main && lastUserText(entry) === RESUME_TEXT;
+    const last = entry.input?.at(-1);
+    return last?.role === 'user' && last.markers?.includes('continue') && last.chars <= RESUME_TEXT.length + 2;
+  });
+}
+
+const limitRows = (items) => items.filter((item) => item.payload?.type === 'usage-limit');
+const latestCard = async (page, sessionId) => limitRows(await transcriptOf(page, sessionId)).at(-1)?.payload;
+const cardOn = (panel) => panel.getByTestId('chat-usage-limit-card');
+
+/** The card once its newest row is in one of `phases`; the phase it had if that never comes. */
+async function cardAt(page, sessionId, phases, timeoutMs = 45_000) {
+  const wanted = [phases].flat();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const card = await latestCard(page, sessionId);
+    if (wanted.includes(card?.phase)) return card;
+    if (Date.now() > deadline) {
+      const turns = turnsOfSession(await snapshot(page), sessionId).map((turn) => `${turn.state}${turn.errorCode ? `:${turn.errorCode}` : ''}`);
+      throw new Error(`card ${card?.phase ?? 'missing'}, not ${wanted.join('/')}; turns ${turns.join(',')}`);
+    }
+    await wait(300);
+  }
+}
+
+/** A conversation on its own cart kit, answered once, with the slow tool at hand (Claude reads it from the scratch repo). */
+async function longRunConversation(page, providerId, key, { preset = 'standard', prompt, model, reasoningEffort } = {}) {
+  requireTap();
+  // A scenario that threw left its limit and its script behind.
+  if (stubWorld) {
+    liftLimit(providerId);
+    stubWorld[providerId].route.steps.length = 0;
+    delete stubWorld[providerId].route.markers.note;
+  }
+  await clearDock(page);
+  const project = await cartProject(page, key);
+  writeFileSync(path.join(project.root, '.mcp.json'), JSON.stringify({ mcpServers: { [SLOW_SERVER]: { type: 'http', url: slowEndpoint.url, headers: { Authorization: `Bearer ${slowEndpoint.token}` } } } }));
+  mkdirSync(path.join(project.root, '.claude'), { recursive: true });
+  writeFileSync(path.join(project.root, '.claude', 'settings.local.json'), JSON.stringify({ enabledMcpjsonServers: [SLOW_SERVER], permissions: { allow: [SLOW_TOOL_NAME.claude] } }));
+  return startConversation(page, {
+    providerId, projectId: project.projectId, workspaceId: project.workspaceId, root: project.root, title: `${key} · ${providerLabel(providerId)}`,
+    permissionPreset: preset, model, reasoningEffort, initialPrompt: prompt ?? '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 장바구니 코드를 볼 거야.',
+  });
+}
+
+/** What every stop must be: a pause. The conversation stays usable, the turn says why, and no error row is written. */
+async function stopProblems(page, panel, sessionId) {
+  const problems = [];
+  const snap = await snapshot(page);
+  const stopped = turnsOfSession(snap, sessionId).at(-1);
+  if (stopped?.state !== 'failed' || stopped.errorCode !== 'usage-limit') problems.push(`the stopped turn is ${stopped?.state}/${stopped?.errorCode}`);
+  const agent = agentOf(snap, sessionId);
+  const session = snap.sessions.find((entry) => entry.id === sessionId);
+  if (agent?.state !== 'idle' || session?.state !== 'idle') problems.push(`agent ${agent?.state}, session ${session?.state}`);
+  const items = await transcriptOf(page, sessionId);
+  const errors = items.filter((item) => item.kind === 'error');
+  if (errors.length) problems.push(`error rows: ${errors.map((item) => item.text.slice(0, 100)).join(' | ')}`);
+  const refusedText = items.filter((item) => item.kind === 'assistant-message' && /limit|한도|resets/iu.test(item.text ?? ''));
+  if (refusedText.length) problems.push(`the refusal reached the conversation as an answer: ${refusedText[0].text.slice(0, 100)}`);
+  if (await cardOn(panel).count() !== 1) problems.push(`${await cardOn(panel).count()} cards on screen`);
+  if (!await panel.getByTestId('structured-agent-composer-input').isEnabled()) problems.push('the composer is disabled');
+  return problems;
+}
+
+/** Past the card's time and a little more, so a send the app should not make would have shown. */
+async function waitPast(card, extraMs = 5_000) {
+  await wait(Math.max(0, Date.parse(card.resumeAt ?? card.resetsAt) - Date.now()) + extraMs);
+}
+
+const finishProblems = (name, problems, report, facts) => {
+  report.push({ scenario: name, ...facts, problems });
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+};
+
+/** One crop of the surface in Matrix, the draft's theme, in the skin it is in. */
+async function shootMatrix(page, name, report, crop) {
+  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  const applyTheme = (value) => page.evaluate((next) => { document.documentElement.setAttribute('data-theme', next); window.dispatchEvent(new Event('ez:theme')); }, value);
+  const shots = [];
+  try {
+    await applyTheme('matrix');
+    await wait(700);
+    await page.screenshot({ path: path.join(output, `${name}.png`) });
+    shots.push(`${name}.png`);
+    if (crop && await crop.count()) {
+      await crop.last().screenshot({ path: path.join(output, `${name}-crop.png`) });
+      shots.push(`${name}-crop.png`);
+    }
+  } finally {
+    await applyTheme(theme);
+  }
+  report.push({ shot: name, files: shots });
+}
+
+/** A stop, the time passing, "Continue." once, and the work finishing: the person's words are not sent again. */
+async function runLimitResume(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-resume`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const since = Date.now();
+  const words = `장바구니 테스트를 전부 고쳐 줘 ${since.toString(36)}`;
+  limitAccount(providerId, { resetIn: 20 });
+  await say(page, panel, sessionId, words);
+  const stoppedAt = Date.now();
+  const card = await cardAt(page, sessionId, 'waiting');
+  const problems = await stopProblems(page, panel, sessionId);
+  const dueMs = Date.parse(card.resumeAt) - Date.parse(card.resetsAt);
+  await shootMatrix(page, `${name}-waiting`, report, cardOn(panel));
+  if (continueSends(providerId, since).length) problems.push('"Continue." went before the time');
+  await wait(Math.max(0, Date.parse(card.resetsAt) - Date.now()));
+  liftLimit(providerId);
+  const after = await cardAt(page, sessionId, 'resumed', Date.parse(card.resumeAt) - Date.now() + 90_000);
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the resumed turn finishing');
+  await shootMatrix(page, `${name}-resumed`, report, cardOn(panel));
+  await wait(3_000);
+  const sends = continueSends(providerId, since);
+  const items = await transcriptOf(page, sessionId);
+  const person = items.filter((item) => item.kind === 'user-message' && item.text === words);
+  const appSent = items.filter((item) => item.payload?.type === 'app-sent');
+  if (sends.length !== 1) problems.push(`"Continue." reached the API ${sends.length} times`);
+  if (person.length !== 1) problems.push(`the person's words are ${person.length} rows`);
+  if (appSent.length !== 1) problems.push(`${appSent.length} app-sent rows`);
+  const turns = turnsOfSession(await snapshot(page), sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`);
+  finishProblems(name, problems, report, {
+    sessionId, card, after, dueMs, turns, stoppedInMs: stoppedAt - since, sendAt: sends[0]?.at, lateByMs: sends[0] ? sends[0].at - Date.parse(card.resumeAt) : null,
+    requests: stubRequests(providerId, since).map((entry) => ({ at: entry.at - since, main: entry.main ?? null, answer: entry.answer ?? null })),
+  });
+}
+
+const TIMING = { afterResetMs: 120_000, retryAfterRefusalMs: 600_000, lineGapMs: 60_000, ...JSON.parse(resumeTiming ?? '{}') };
+const untilMs = (iso) => Math.max(0, Date.parse(iso) - Date.now());
+const limitButton = (panel, action) => panel.getByTestId(`chat-limit-limit-${action}`);
+const liveRow = (page, sessionId) => page.locator(`[data-testid="shell-live-row"][data-session="${sessionId}"]`);
+
+/** A conversation stopped by a limit on the person's message; `phase` is where this limit's card must land. */
+async function stoppedConversation(page, providerId, name, limit, phase = 'waiting') {
+  requireStub();
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const since = Date.now();
+  const words = `장바구니 테스트를 전부 고쳐 줘 ${since.toString(36)}`;
+  limitAccount(providerId, limit);
+  await say(page, panel, sessionId, words);
+  const card = await cardAt(page, sessionId, phase);
+  return { conversation, sessionId, panel, since, words, card, problems: await stopProblems(page, panel, sessionId) };
+}
+
+/** Nothing in `sends`, or the count says how many: "nothing went out" comes from the stub's log. */
+const noSends = (providerId, since, problems, when) => {
+  const sends = continueSends(providerId, since);
+  if (sends.length) problems.push(`"Continue." reached the API ${sends.length} times ${when}`);
+};
+
+/** It waits on a person: amber in the list and a line in 나를 기다리는 것. At this width the list folds to a strip, so it is opened as a person opens it. */
+async function askProblems(page, sessionId, asks) {
+  const problems = [];
+  const folded = await page.getByTestId('shell-live-strip').count() > 0;
+  if (folded) {
+    await page.getByTestId('shell-strip-unfold').click();
+    await page.getByTestId('shell-live-overlay').waitFor({ timeout: 5_000 });
+  }
+  const row = liveRow(page, sessionId);
+  const need = await row.count() ? await row.getAttribute('data-need') : 'no row';
+  if (asks ? need !== 'true' : need === 'true') problems.push(`the list row says data-need=${need}`);
+  const waiting = await page.getByTestId('shell-live-waiting').count();
+  if ((waiting > 0) !== asks) problems.push(`나를 기다리는 것 has ${waiting} entries`);
+  if (folded) {
+    await page.locator('.ez-shell-live-overlay__scrim').click();
+    await page.getByTestId('shell-live-overlay').waitFor({ state: 'hidden', timeout: 5_000 });
+  }
+  return problems;
+}
+
+/** Refused at the time, once more after the wait, then it stops and asks; a press goes through the same send. */
+async function runLimitRefusedTwice(page, report, providerId) {
+  const name = `${providerId}-limit-refused-twice`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { resetIn: 3 });
+  const retrying = await cardAt(page, sessionId, 'retrying', untilMs(card.resumeAt) + 90_000);
+  const refusedOnce = Date.now();
+  await shootMatrix(page, `${name}-retrying`, report, cardOn(panel));
+  problems.push(...await askProblems(page, sessionId, false));
+  const gaveUp = await cardAt(page, sessionId, 'gave-up', untilMs(retrying.retryAt) + 90_000);
+  await shootMatrix(page, `${name}-gave-up`, report, cardOn(panel));
+  await wait(800);
+  problems.push(...await askProblems(page, sessionId, true));
+  const twice = continueSends(providerId, since);
+  if (twice.length !== 2) problems.push(`${twice.length} tries, not 2`);
+  const gapMs = twice.length === 2 ? twice[1].at - twice[0].at : null;
+  if (gapMs !== null && (gapMs < TIMING.retryAfterRefusalMs - 500 || gapMs > TIMING.retryAfterRefusalMs + 70_000)) problems.push(`the tries are ${gapMs} ms apart`);
+  await wait(Math.min(TIMING.retryAfterRefusalMs + 5_000, 90_000));
+  if (continueSends(providerId, since).length !== 2) problems.push('a third try went by itself');
+  if (await cardOn(panel).count() !== 1) problems.push(`${await cardOn(panel).count()} cards after two refusals`);
+  liftLimit(providerId);
+  await limitButton(panel, 'resume').click();
+  const pressed = await cardAt(page, sessionId, 'resumed');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 5), 60_000, 'the pressed turn finishing');
+  await shootMatrix(page, `${name}-pressed`, report, panel.getByTestId('chat-app-sent'));
+  const all = continueSends(providerId, since);
+  if (all.length !== 3) problems.push(`${all.length} sends after the press`);
+  if (pressed.sendReason === 'scheduled-time') problems.push('a press reads as the scheduled time');
+  finishProblems(name, problems, report, { sessionId, card, retrying, gaveUp, pressed, gapMs, refusedOnceAt: refusedOnce - since, turns: turnsOfSession(await snapshot(page), sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`) });
+}
+
+async function runLimitNoReset(page, report, providerId) {
+  const name = `${providerId}-limit-no-reset`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { kind: 'no-reset' }, ['ask-unknown']);
+  await wait(1_500);
+  const settled = await latestCard(page, sessionId);
+  await shootMatrix(page, `${name}-asks`, report, cardOn(panel));
+  problems.push(...await askProblems(page, sessionId, true));
+  await wait(TIMING.afterResetMs + 6_000);
+  noSends(providerId, since, problems, 'with no reset known');
+  liftLimit(providerId);
+  await limitButton(panel, 'resume').click();
+  const resumed = await cardAt(page, sessionId, 'resumed');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the pressed turn finishing');
+  if (continueSends(providerId, since).length !== 1) problems.push('the press did not send once');
+  finishProblems(name, problems, report, { sessionId, card, settled, resumed });
+}
+
+async function runLimitWeekly(page, report, providerId) {
+  const name = `${providerId}-limit-weekly`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { window: 'weekly', resetIn: 2 * 24 * HOUR }, 'ask-reset');
+  if (card.window !== 'weekly') problems.push(`window ${card.window}`);
+  await shootMatrix(page, `${name}-asks`, report, cardOn(panel));
+  problems.push(...await askProblems(page, sessionId, true));
+  await limitButton(panel, 'schedule').click();
+  await cardAt(page, sessionId, 'scheduled');
+  await wait(600);
+  await shootMatrix(page, `${name}-scheduled`, report, cardOn(panel));
+  problems.push(...await askProblems(page, sessionId, false));
+  await limitButton(panel, 'unschedule').click();
+  await cardAt(page, sessionId, 'ask-reset');
+  await limitButton(panel, 'leave').click();
+  await cardAt(page, sessionId, 'left');
+  await wait(600);
+  problems.push(...await askProblems(page, sessionId, false));
+  noSends(providerId, since, problems, 'on a weekly limit');
+  liftLimit(providerId);
+  await say(page, panel, sessionId, '한도가 풀렸어. 이어서 해 줘.');
+  const closed = await cardAt(page, sessionId, 'cancelled');
+  finishProblems(name, problems, report, { sessionId, card, closed });
+}
+
+async function runLimitNotIncluded(page, report) {
+  const name = 'codex-limit-not-included';
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, 'codex', name, { kind: 'not-included' }, 'not-included');
+  await shootMatrix(page, `${name}-card`, report, cardOn(panel));
+  if (await cardOn(panel).getByRole('button').count()) problems.push('a card with nothing to wait for has buttons');
+  problems.push(...await askProblems(page, sessionId, false));
+  await wait(TIMING.afterResetMs + 4_000);
+  noSends('codex', since, problems, 'on a plan without Codex');
+  liftLimit('codex');
+  finishProblems(name, problems, report, { sessionId, card });
+}
+
+async function runLimitCardOff(page, report, providerId) {
+  const name = `${providerId}-limit-auto-off`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { resetIn: 6 });
+  await limitButton(panel, 'auto-off').click();
+  const off = await cardAt(page, sessionId, 'off');
+  await shootMatrix(page, `${name}-off`, report, cardOn(panel));
+  await wait(untilMs(card.resetsAt));
+  liftLimit(providerId);
+  await waitPast(card, 12_000);
+  noSends(providerId, since, problems, 'after 자동 재개 끄기');
+  const later = await latestCard(page, sessionId);
+  if (later?.phase !== 'off') problems.push(`the card moved to ${later?.phase}`);
+  if (await limitButton(panel, 'resume').count() !== 1) problems.push('no 이어서 하기 on the card');
+  finishProblems(name, problems, report, { sessionId, card, off, sendsAfter: 0 });
+}
+
+async function setAutoResume(page, on) {
+  await page.getByTestId('btn-toggle-settings').click();
+  await page.getByTestId('settings-category-agents').click();
+  const toggle = page.getByTestId('long-run-auto-resume');
+  await toggle.scrollIntoViewIfNeeded();
+  await toggle.setChecked(on);
+  await wait(500);
+  await page.getByTestId('btn-toggle-settings').click();
+  await wait(400);
+}
+
+/** The setting off cancels what has not gone out, and a new stop while it is off schedules nothing; on again restores nothing. */
+async function runLimitSettingOff(page, report, providerId) {
+  const name = `${providerId}-limit-setting-off`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { resetIn: 10 });
+  try {
+    await setAutoResume(page, false);
+    const off = await cardAt(page, sessionId, 'off');
+    if (off.offBy !== 'setting') problems.push(`offBy ${off.offBy}`);
+    await setAutoResume(page, true);
+    await shootMatrix(page, `${name}-off`, report, cardOn(panel));
+    await wait(untilMs(card.resetsAt));
+    liftLimit(providerId);
+    await waitPast(card, 12_000);
+    noSends(providerId, since, problems, 'after the setting went off');
+    if ((await latestCard(page, sessionId))?.phase !== 'off') problems.push('on again brought the schedule back');
+
+    // A refused message moves an open card; only one that gets through closes it, and the next limit is a stop of its own.
+    await ensureOnScreen(page, await reshow(page, sessionId));
+    await say(page, panel, sessionId, '한도가 풀렸어.');
+    await cardAt(page, sessionId, 'cancelled');
+    await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 30_000, 'the message that closes the stop');
+
+    await setAutoResume(page, false);
+    const second = Date.now();
+    limitAccount(providerId, { resetIn: 6 });
+    await ensureOnScreen(page, await reshow(page, sessionId));
+    await say(page, panel, sessionId, `설정을 끈 채로 멈춘 턴 ${second.toString(36)}`);
+    const off2 = await cardAt(page, sessionId, 'off');
+    if (off2.stopId === off.stopId && off2.offBy !== 'setting') problems.push('a new stop with the setting off keeps the old card');
+    await wait(untilMs(off2.resetsAt ?? new Date().toISOString()));
+    liftLimit(providerId);
+    await wait(TIMING.afterResetMs + 10_000);
+    noSends(providerId, second, problems, 'with the setting off');
+    finishProblems(name, problems, report, { sessionId, card, off, off2 });
+  } finally {
+    liftLimit(providerId);
+    await setAutoResume(page, true).catch(() => undefined);
+  }
+}
+
+/** The tab of a conversation a scenario already holds, found again by id. */
+async function reshow(page, sessionId) {
+  const snap = await snapshot(page);
+  const session = snap.sessions.find((entry) => entry.id === sessionId);
+  const workspace = snap.workspaces.find((entry) => entry.id === session.workspaceId);
+  return { sessionId, panelId: `agent-session-${SESSION_PREFIX}${sessionId}`, title: session.title, projectId: workspace.projectId };
+}
+
+/** A person writes before the app: refused, it stays and auto-resume is off; through, the stop is over. Either way no send. */
+async function runLimitPersonFirst(page, report, providerId) {
+  const name = `${providerId}-limit-person-first`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { resetIn: 8 });
+  const words = '할인은 내가 직접 고칠게.';
+  await say(page, panel, sessionId, words);
+  const refused = await cardAt(page, sessionId, 'person-refused');
+  await shootMatrix(page, `${name}-refused`, report, cardOn(panel));
+  await wait(untilMs(card.resetsAt));
+  liftLimit(providerId);
+  await waitPast(card, 12_000);
+  noSends(providerId, since, problems, 'after a refused message');
+  if ((await latestCard(page, sessionId))?.phase !== 'person-refused') problems.push('the card moved on by itself');
+  const reachedOnce = stubRequests(providerId, since).filter((entry) => (providerId === 'claude' ? entry.main && lastUserText(entry) === words : entry.input?.at(-1)?.chars === words.length)).length;
+  if (reachedOnce !== 1) problems.push(`the refused message reached the API ${reachedOnce} times`);
+
+  // Only a message that gets through closes a stop; the next limit is then a stop of its own.
+  await say(page, panel, sessionId, '한도가 풀렸어.');
+  await cardAt(page, sessionId, 'cancelled');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 4), 30_000, 'the message that closes the stop');
+  const second = Date.now();
+  limitAccount(providerId, { resetIn: 8 });
+  await say(page, panel, sessionId, `나머지도 고쳐 줘 ${second.toString(36)}`);
+  const secondCard = await cardAt(page, sessionId, 'waiting');
+  liftLimit(providerId);
+  await say(page, panel, sessionId, '테스트만 돌려 줘.');
+  const cancelled = await cardAt(page, sessionId, 'cancelled');
+  await waitPast(secondCard, 10_000);
+  noSends(providerId, second, problems, 'after a message that got through');
+  finishProblems(name, problems, report, { sessionId, card, refused, secondCard, cancelled, reachedOnce });
+}
+
+const approvalStep = (providerId, root) => (providerId === 'claude'
+  ? { kind: 'tool', name: 'Write', input: { file_path: path.join(root, 'notes.md'), content: 'ok\n' } }
+  : { kind: 'call', name: 'exec_command', arguments: { cmd: 'node -e "console.log(42)"', sandbox_permissions: 'require_escalated', justification: '샌드박스에서 멈춤' } });
+const slowStep = (providerId, seconds) => (providerId === 'claude'
+  ? { kind: 'tool', name: SLOW_TOOL_NAME.claude, input: { seconds } }
+  : { kind: 'call', name: SLOW_TOOL, namespace: `mcp__${SLOW_SERVER}`, arguments: { seconds } });
+
+const pendingApproval = (snap, sessionId) => snap.approvals.find((entry) => entry.state === 'pending' && entry.sessionId === sessionId);
+
+/** An approval is open when the limit comes. The stop shows only once it is answered; the card goes on the turn that was waiting. */
+async function runLimitApprovalOpen(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-approval-open`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId, root } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  stubWorld[providerId].route.steps.push(approvalStep(providerId, root));
+  await say(page, panel, sessionId, '노트를 남겨 줘.');
+  await poll(() => snapshot(page), (snap) => Boolean(pendingApproval(snap, sessionId)), 60_000, 'the approval');
+  limitAccount(providerId, { resetIn: 10 });
+  await wait(3_000);
+  const during = await latestCard(page, sessionId);
+  if (during) problems.push(`a card (${during.phase}) came while the approval was open`);
+  await panel.locator('[data-dock-primary]').click();
+  const card = await cardAt(page, sessionId, 'waiting');
+  problems.push(...await stopProblems(page, panel, sessionId));
+  await shootMatrix(page, `${name}-waiting`, report, cardOn(panel));
+  await wait(untilMs(card.resetsAt));
+  liftLimit(providerId);
+  await cardAt(page, sessionId, 'resumed', untilMs(card.resumeAt) + 90_000);
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the resumed turn finishing');
+  if (continueSends(providerId, since).length !== 1) problems.push(`${continueSends(providerId, since).length} sends`);
+  finishProblems(name, problems, report, { sessionId, card });
+}
+
+/** Two conversations, the same reset: sent in the order they stopped, a real minute apart, and the second does not wait. */
+async function runLimitTwoConversations(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-two-conversations`;
+  const first = await longRunConversation(page, providerId, `${name}-a`, { prompt: '도구는 쓰지 말고 첫째 대화라고만 답해 줘.' });
+  const second = await longRunConversation(page, providerId, `${name}-b`, { prompt: '도구는 쓰지 말고 둘째 대화라고만 답해 줘.' });
+  const { route } = stubWorld[providerId];
+  const [markA, markB] = ['첫째 대화', '둘째 대화'];
+  route.markers.a = markA;
+  route.markers.b = markB;
+  const problems = [];
+  const since = Date.now();
+  limitAccount(providerId, { resetIn: 25 });
+  let panel = await ensureOnScreen(page, first);
+  await say(page, panel, first.sessionId, '멈출 첫째 일');
+  const cardA = await cardAt(page, first.sessionId, 'waiting');
+  panel = await ensureOnScreen(page, second);
+  await say(page, panel, second.sessionId, '멈출 둘째 일');
+  const cardB = await cardAt(page, second.sessionId, 'waiting');
+  await wait(800);
+  const line = (await snapshot(page)).usageLimits?.[second.sessionId]?.line;
+  if (line?.position !== 2 || line?.total !== 2) problems.push(`the second's line is ${JSON.stringify(line)}`);
+  await shootMatrix(page, `${name}-line`, report, cardOn(panel));
+  await wait(untilMs(cardA.resetsAt));
+  liftLimit(providerId);
+  await cardAt(page, first.sessionId, 'resumed', untilMs(cardA.resumeAt) + 90_000);
+  // The first's own turn is scripted to run on past the second's send: the line never waits for a result.
+  await cardAt(page, second.sessionId, 'resumed', TIMING.lineGapMs + 90_000);
+  const sends = continueSends(providerId, since);
+  const whose = sends.map((entry) => (markerCount(entry, 'a') ? 'a' : markerCount(entry, 'b') ? 'b' : '?'));
+  const gapMs = sends.length === 2 ? sends[1].at - sends[0].at : null;
+  if (sends.length !== 2) problems.push(`${sends.length} sends`);
+  if (whose.join() !== 'a,b') problems.push(`sent in the order ${whose}`);
+  if (gapMs !== null && (gapMs < TIMING.lineGapMs - 2_000 || gapMs > TIMING.lineGapMs + 62_000)) problems.push(`${gapMs} ms apart`);
+  delete route.markers.a;
+  delete route.markers.b;
+  finishProblems(name, problems, report, { first: first.sessionId, second: second.sessionId, cardA, cardB, line, gapMs, whose });
+}
+
+/**
+ * A managed child at the limit: a card that says so, no send by itself, and the parent is not stopped. Whether a person can
+ * carry it on is the design's open question ("managed-supported waits on the live scenario"), so this asks it by hand.
+ */
+async function runLimitChild(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-child`;
+  const before = (await snapshot(page)).runtime.orchestrationToolsEnabled;
+  if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: true });
+  try {
+    const parent = await longRunConversation(page, providerId, name);
+    const panel = await ensureOnScreen(page, parent);
+    const { route } = stubWorld[providerId];
+    const childWords = `자식 작업 ${Date.now().toString(36)}`;
+    route.markers.child = childWords;
+    const problems = [];
+    const since = Date.now();
+    const input = { providerId, permissionPreset: 'plan', prompt: childWords, title: '자식', reportBack: true };
+    route.steps.push(providerId === 'claude'
+      ? { kind: 'tool', name: 'mcp__ezterminal_orchestration__create_agent', input }
+      : { kind: 'call', name: 'create_agent', namespace: 'mcp__ezterminal_orchestration', arguments: input });
+    limitAccount(providerId, { resetIn: 8, only: (entry) => markerCount(entry, 'child') > 0 });
+    await say(page, panel, parent.sessionId, '자식에게 맡겨 줘.');
+    const snap = await poll(async () => {
+      const current = await snapshot(page);
+      for (const approval of current.approvals.filter((entry) => entry.state === 'pending' && entry.sessionId === parent.sessionId)) await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
+      return current;
+    }, (current) => current.agentRelations.some((relation) => relation.parentSessionId === parent.sessionId), 60_000, 'the child');
+    const relation = snap.agentRelations.find((entry) => entry.parentSessionId === parent.sessionId);
+    const childId = relation.childSessionId;
+    const card = await cardAt(page, childId, 'child');
+    await wait(1_500);
+    const parentTurns = turnsOfSession(await snapshot(page), parent.sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`);
+    if (await latestCard(page, parent.sessionId)) problems.push('the parent has a card');
+    await wait(untilMs(card.resetsAt ?? new Date().toISOString()));
+    liftLimit(providerId);
+    await wait(TIMING.afterResetMs + 8_000);
+    noSends(providerId, since, problems, 'for a child');
+    const childPanel = await showConversation(page, await reshow(page, childId));
+    await wait(800);
+    await shootMatrix(page, `${name}-card`, report, cardOn(childPanel));
+    const buttons = await cardOn(childPanel).getByRole('button').allTextContents();
+    const parentReportsBefore = (await transcriptOf(page, parent.sessionId)).filter((item) => item.payload?.type === 'subagent').length;
+    await limitButton(childPanel, 'resume').click();
+    const childCard = await cardAt(page, childId, 'resumed');
+    const after = await poll(() => snapshot(page), (current) => settledTurns(current, childId, 2) && settledTurns(current, parent.sessionId, parentTurns.length + 1), 45_000, 'the child finishing and its report arriving');
+    await wait(3_000);
+    const childTurns = turnsOfSession(after, childId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`);
+    const reports = (await transcriptOf(page, parent.sessionId)).filter((item) => item.payload?.type === 'subagent').length - parentReportsBefore;
+    const sends = continueSends(providerId, since).filter((entry) => markerCount(entry, 'child') > 0).length;
+    if (card.childKind !== 'managed-supported') problems.push(`childKind ${card.childKind}`);
+    if (childTurns.at(-1) !== 'completed:') problems.push(`the child's next turn is ${childTurns.at(-1)}`);
+    if (sends !== 1) problems.push(`"Continue." reached the API ${sends} times for the child`);
+    if (reports !== 1) problems.push(`${reports} reports reached the parent`);
+    delete route.markers.child;
+    finishProblems(name, problems, report, { parentId: parent.sessionId, childId, owner: relation.owner, card, childCard, buttons, reports, sends, parentTurns, childTurns, after: turnsOfSession(after, parent.sessionId).map((turn) => turn.state) });
+  } finally {
+    liftLimit(providerId);
+    if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: false }).catch(() => undefined);
+  }
+}
+
+/** "Continue." gets through and work starts, then the limit comes back on that same turn. */
+async function runLimitOnResumedTurn(page, report, providerId) {
+  const name = `${providerId}-limit-resumed-turn`;
+  const { sessionId, panel, since, card, problems } = await stoppedConversation(page, providerId, name, { resetIn: 5 });
+  const { route } = stubWorld[providerId];
+  route.steps.push(slowStep(providerId, 1), () => ({ kind: 'raw', ...refusalOf(providerId, { resetIn: 40 }) }));
+  await wait(untilMs(card.resetsAt));
+  liftLimit(providerId);
+  const rows = [];
+  const second = await poll(async () => {
+    const current = await latestCard(page, sessionId);
+    if (current?.phase !== rows.at(-1)) rows.push(current?.phase);
+    return current;
+  }, (current) => current?.stopId !== card.stopId || ['retrying', 'gave-up', 'ask-reset', 'ask-unknown'].includes(current?.phase), untilMs(card.resumeAt) + 90_000, 'the second stop');
+  await wait(1_000);
+  await shootMatrix(page, `${name}-second-stop`, report, cardOn(panel));
+  const snap = await snapshot(page);
+  const cards = await cardOn(panel).count();
+  const items = await transcriptOf(page, sessionId);
+  const stops = [...new Set(limitRows(items).map((item) => item.payload.stopId))];
+  const errors = items.filter((item) => item.kind === 'error').map((item) => item.text.slice(0, 100));
+  if (errors.length) problems.push(`error rows: ${errors.join(' | ')}`);
+  if (agentOf(snap, sessionId)?.state !== 'idle') problems.push(`agent ${agentOf(snap, sessionId)?.state}`);
+  const sends = continueSends(providerId, since).length;
+  // The second stop keeps its own schedule, which would go out in the middle of the next scenario.
+  if (second.phase === 'waiting') {
+    await limitButton(panel, 'auto-off').last().click();
+    await cardAt(page, sessionId, 'off');
+  }
+  finishProblems(name, problems, report, { sessionId, card, second, phases: rows, cards, stops, turns: turnsOfSession(snap, sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`), sends });
+}
+
+const RESTART_SEED = (providerId) => path.join(output, `restart-${providerId}.json`);
+
+/** First half: a stop with the reset still ahead, and the app closes when this run ends. */
+async function runLimitRestartSeed(page, report, providerId) {
+  const name = `${providerId}-limit-restart-seed`;
+  const { conversation, sessionId, card, problems, since } = await stoppedConversation(page, providerId, name, { resetIn: 8 });
+  await page.evaluate(() => window.__ezLayoutFlush?.());
+  writeFileSync(RESTART_SEED(providerId), JSON.stringify({ conversation, card, since }));
+  liftLimit(providerId);
+  finishProblems(name, problems, report, { sessionId, card });
+}
+
+/** Second half, run past the time: it asks, and nothing has gone. The seed's stub log is gone with its run, so this one counts. */
+async function runLimitRestartReopen(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-restart-reopen`;
+  const { conversation, card } = JSON.parse(readFileSync(RESTART_SEED(providerId), 'utf8'));
+  const { sessionId } = conversation;
+  const problems = [];
+  if (untilMs(card.resumeAt) > 0) problems.push('this run started before the time passed');
+  const reopened = await cardAt(page, sessionId, 'ask-reopened');
+  const panel = await ensureOnScreen(page, conversation);
+  await wait(1_000);
+  await shootMatrix(page, `${name}-asks`, report, cardOn(panel));
+  problems.push(...await askProblems(page, sessionId, true));
+  await wait(8_000);
+  noSends(providerId, 0, problems, 'on reopening');
+  await limitButton(panel, 'resume').click();
+  const resumed = await cardAt(page, sessionId, 'resumed');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the pressed turn finishing');
+  if (continueSends(providerId, 0).length !== 1) problems.push(`${continueSends(providerId, 0).length} sends after the press`);
+  finishProblems(name, problems, report, { sessionId, reopened, resumed, turns: turnsOfSession(await snapshot(page), sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`) });
+}
+
+/** Bundle 2 at a stop: no recap for a turn the limit stopped, even off screen; the resumed turn gets one, as a person's turn would. */
+async function runLimitRecap(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-limit-recap`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  // A slow step first, so the window can look away before the stop.
+  const { route } = stubWorld[providerId];
+  route.steps.push(slowStep(providerId, 4), () => ({ kind: 'raw', ...refusalOf(providerId, { resetIn: 6 }) }));
+  await say(page, panel, sessionId, '카트를 고쳐 줘.');
+  await park(page, conversation);
+  const card = await cardAt(page, sessionId, 'waiting');
+  const stoppedTurn = turnsOfSession(await snapshot(page), sessionId).at(-1);
+  await wait(4_000);
+  const atStop = recapRows(await transcriptOf(page, sessionId)).filter((item) => item.payload.turnId === stoppedTurn.id);
+  if (atStop.length) problems.push(`a stopped turn got a recap: ${JSON.stringify(rowFacts(atStop))}`);
+  const resumed = await cardAt(page, sessionId, 'resumed', untilMs(card.resumeAt) + 90_000);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the resumed turn finishing');
+  const turn = turnsOfSession(settled, sessionId).at(-1);
+  const seen = await awaitRecap(page, sessionId, turn.id, 60_000);
+  if (seen.recap?.state !== 'complete') problems.push(`the resumed turn's recap: ${seen.recap?.state ?? 'never came'} ${seen.recap?.failure ?? ''}`);
+  const parent = await ensureOnScreen(page, conversation);
+  await wait(800);
+  await shootMatrix(page, `${name}-card`, report, parent.getByTestId('chat-recap-card'));
+  finishProblems(name, problems, report, { sessionId, card, resumed, trigger: seen.recap?.trigger, recapText: seen.recap?.text, requests: stubRequests(providerId, since).map((entry) => `${entry.main}:${entry.answer}`) });
+}
+
+const STEER_WORD = 'PINEAPPLE';
+const REAL_MODEL = { claude: { model: 'haiku' }, codex: { reasoningEffort: 'low' } };
+
+const REAL_STEER_TURNS = {
+  tool: (providerId) => `${providerId === 'claude' ? SLOW_TOOL_NAME.claude : `${SLOW_SERVER}의 ${SLOW_TOOL}`} 도구를 seconds 20으로 딱 한 번 불러. 다른 도구는 쓰지 마. 끝나면 "끝"이라고만 답해.`,
+  text: () => '도구는 쓰지 말고, 터미널 프로그램에 대한 짧은 사실 40개를 번호 목록으로 한 줄씩 써 줘.',
+  approval: (providerId) => (providerId === 'claude'
+    ? 'Write 도구로 notes.md를 만들어 "ok" 한 줄만 적어 줘. 다른 것은 하지 마. 끝나면 "끝"이라고만 답해.'
+    : '셸 명령 하나를 실행해 줘: node -e "console.log(40+2)". 이 PC의 샌드박스에서는 명령이 멈추니, 처음부터 sandbox_permissions를 require_escalated로 해서 내 승인을 요청하고, 사유는 "샌드박스에서 멈춤"이라고 적어 줘. 샌드박스 안에서는 실행하지 마. 파일은 읽지도 고치지도 마. 끝나면 "끝"이라고만 답해.'),
+};
+
+function stubSteerSteps(providerId, kind, root) {
+  const closing = { kind: 'text', text: `끝 ${STEER_WORD}` };
+  if (kind === 'tool') return [slowStep(providerId, 9), closing];
+  if (kind === 'approval') return [approvalStep(providerId, root), closing];
+  return [{ kind: 'text', text: '터미널의 사실을 하나씩 적습니다. '.repeat(24), chunks: 40, chunkMs: 200 }, closing];
+}
+
+async function pressEnter(panel, text) {
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill(text);
+  await poll(() => panel.getByTestId('structured-agent-send').isEnabled().catch(() => false), Boolean, 15_000, 'send enabled');
+  await input.press('Enter');
+}
+
+async function steerMoment(page, sessionId, kind, callsBefore) {
+  if (kind === 'tool') return poll(async () => slowEndpoint.route.calls.length, (count) => count > callsBefore, 120_000, 'the slow tool running');
+  if (kind === 'approval') return poll(() => snapshot(page), (snap) => Boolean(pendingApproval(snap, sessionId)), 120_000, 'the approval');
+  const turnId = agentOf(await snapshot(page), sessionId)?.currentTurnId;
+  // Text arrives as many delta rows.
+  return poll(() => transcriptOf(page, sessionId), (items) => items.filter((item) => item.kind === 'assistant-message' && item.turnId === turnId).reduce((sum, item) => sum + (item.text?.length ?? 0), 0) >= 60, 90_000, 'text under way');
+}
+
+/** The rows that reached the model in a session file: not a queue's bookkeeping line. */
+function landedInSession(providerId, providerSessionId, key) {
+  const stubHome = path.join(output, 'stub-home');
+  const file = !stubWorld ? ownSessionFile(providerId, providerSessionId)
+    : providerId === 'claude' ? claudeSessionFile(path.join(stubHome, '.claude'), providerSessionId)
+      : filesNamed(path.join(stubHome, '.codex', 'sessions'), providerSessionId, 4)[0];
+  const facts = providerId === 'claude' ? claudeSessionFacts(file, { note: key }) : codexRolloutFacts(file, { note: key });
+  if (!facts.found) return { found: false };
+  const entries = facts.entries.filter((entry) => entry.markers?.length);
+  return {
+    found: true, lines: entries.map((entry) => `${entry.type}${entry.payload ? `/${entry.payload}` : ''}${entry.attachment ? `/${entry.attachment}` : ''}${entry.operation ? `/${entry.operation}` : ''}`),
+    model: entries.filter((entry) => (providerId === 'claude' ? entry.attachment === 'queued_command' || entry.type === 'user' : entry.type === 'response_item')).length,
+  };
+}
+
+/** What the model's next call read from the cache, against the size of the call before it. */
+function nextCallCache(providerId, providerSessionId, atMs) {
+  if (providerId === 'claude') {
+    const requests = claudeRequests(telemetry, providerSessionId).filter((request) => request.source === 'sdk');
+    const index = requests.findIndex((request) => request.at >= atMs);
+    if (index < 1) return null;
+    const previous = requests[index - 1];
+    const total = (previous.input ?? 0) + (previous.cacheRead ?? 0) + (previous.cacheCreation ?? 0);
+    return { cacheRead: requests[index].cacheRead, context: total, ratio: Math.round((requests[index].cacheRead / total) * 1000) / 1000 };
+  }
+  const usage = tapNow().filter((record) => record.data?.method === 'thread/tokenUsage/updated' && record.data.params?.threadId === providerSessionId);
+  const index = usage.findIndex((record) => record.at >= atMs);
+  if (index < 1) return null;
+  const last = usage[index].data.params.tokenUsage.last;
+  const context = usage[index - 1].data.params.tokenUsage.last.inputTokens;
+  return { cacheRead: last.cachedInputTokens, context, ratio: Math.round((last.cachedInputTokens / context) * 1000) / 1000 };
+}
+
+/** The frames a steer made, seen from outside: what was sent, and how the provider said it landed. */
+function steerFrames(providerId, providerSessionId, note, since) {
+  const records = tapNow().filter((record) => record.at >= since);
+  if (providerId === 'claude') {
+    const stream = claudeStream(records.length ? tapNow() : [], providerSessionId).filter((record) => record.at >= since);
+    const sent = stream.find((record) => record.direction === 'in' && record.data?.priority);
+    const uuid = sent?.data?.uuid;
+    return {
+      priority: sent?.data?.priority ?? null,
+      lifecycle: uuid ? stream.filter((record) => record.data?.type === 'command_lifecycle' && record.data?.command_uuid === uuid).map((record) => record.data.state) : [],
+      results: stream.filter((record) => record.data?.type === 'result').map((record) => ({ uuids: (record.data.user_message_uuids ?? []).length, turns: record.data.num_turns })),
+      interrupted: stream.some((record) => record.direction === 'in' && record.data?.request?.subtype === 'interrupt'),
+    };
+  }
+  const codex = records.filter((record) => record.provider === 'codex');
+  const sent = codex.find((record) => record.direction === 'in' && record.data?.method === 'turn/steer');
+  const reply = sent ? codex.find((record) => record.direction === 'out' && record.data?.id === sent.data.id && !record.data.method) : undefined;
+  const item = codex.find((record) => record.data?.method === 'item/started' && record.data.params?.item?.type === 'userMessage' && JSON.stringify(record.data.params.item.content).includes(note));
+  return {
+    clientUserMessageId: sent?.data?.params?.clientUserMessageId ?? null, expectedTurnId: sent?.data?.params?.expectedTurnId ?? null, reply: reply?.data?.error ?? (reply ? 'ok' : null),
+    itemClientId: item?.data?.params?.item?.clientId ?? null, itemTurnId: item?.data?.params?.turnId ?? null, msAfterSteer: item && sent ? item.at - sent.at : null,
+    interrupted: codex.some((record) => record.direction === 'in' && record.data?.method === 'turn/interrupt'),
+  };
+}
+
+/**
+ * Enter during a long tool, during text, or behind a held approval: landed once, the model acted on it, the composer and
+ * tray were honest. On the stub the same run proves the real CLI's frames; without it a real model reads the message.
+ */
+async function runSteer(page, report, providerId, kind, skin) {
+  requireTap();
+  const name = `${providerId}-steer-${kind}-${skin}`;
+  const conversation = await longRunConversation(page, providerId, name, stubWorld ? {} : REAL_MODEL[providerId]);
+  const { sessionId, root } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  await selectSkin(page, skin, panel);
+  const problems = [];
+  const stamp = Date.now().toString(36);
+  const note = `참고 ${stamp}: 마지막 답 끝에 ${STEER_WORD}라는 단어를 한 번 덧붙여 줘.`;
+  if (stubWorld) {
+    stubWorld[providerId].route.markers.note = stamp;
+    stubWorld[providerId].route.steps.push(...stubSteerSteps(providerId, kind, root));
+  }
+  const callsBefore = slowEndpoint.route.calls.length;
+  const since = Date.now();
+  const prompt = stubWorld ? `끼워넣기 시험 ${kind}` : REAL_STEER_TURNS[kind](providerId);
+  const first = await say(page, panel, sessionId, prompt);
+  const moment = await steerMoment(page, sessionId, kind, callsBefore);
+  const writing = kind === 'text' ? moment.filter((item) => item.kind === 'assistant-message' && item.isDelta).at(-1) : undefined;
+  const hint = await textOf(panel.getByTestId('structured-agent-composer-hint'));
+  const enteredAt = Date.now();
+  await pressEnter(panel, note);
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await poll(() => input.inputValue(), (value) => value === '', 5_000, 'the composer clearing');
+  const composerClearedMs = Date.now() - enteredAt;
+  const tray = panel.getByTestId('chat-steer-tray');
+  const trayText = await poll(async () => ((await tray.count()) ? (await tray.first().textContent())?.trim() : undefined) ?? (await panel.getByTestId('chat-steer-landed').count() ? 'landed at once' : undefined), Boolean, 15_000, 'the tray or its landing');
+  await shootMatrix(page, `${name}-tray`, report, tray);
+  if (kind === 'approval') {
+    await wait(2_000);
+    const inside = steerRows(await transcriptOf(page, sessionId), note).length;
+    if (inside) problems.push('the message landed behind an open approval');
+    if (!await tray.count()) problems.push('no tray behind the approval');
+    await panel.locator('[data-dock-primary]').click();
+  }
+  const rows = await poll(() => transcriptOf(page, sessionId).then((items) => steerRows(items, note)), (found) => found.length > 0, 120_000, 'the message landing');
+  const landedAt = Date.parse(rows[0].createdAt);
+  await wait(400);
+  await shootMatrix(page, `${name}-landed`, report, panel.getByTestId('chat-steer-landed'));
+  const newTurn = providerId === 'claude' && kind === 'text';
+  const turnsWanted = first + (newTurn ? 1 : 0);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, turnsWanted), 180_000, `${name} settling`);
+  await wait(1_500);
+  const items = await transcriptOf(page, sessionId);
+  const turns = turnsOfSession(settled, sessionId).map((turn) => turn.state);
+  const final = finalMessage(items);
+  const providerSessionId = agentOf(settled, sessionId)?.providerSessionId;
+  const landing = landedInSession(providerId, providerSessionId, stamp);
+  const frames = steerFrames(providerId, providerSessionId, stamp, since);
+  const cache = stubWorld ? undefined : nextCallCache(providerId, providerSessionId, landedAt);
+  const row = steerRows(items, note);
+  if (row.length !== 1) problems.push(`${row.length} rows of the message`);
+  if (row[0]?.payload?.type !== 'steer') problems.push(`its row is ${row[0]?.payload?.type}`);
+  if (Boolean(row[0]?.payload?.newTurn) !== newTurn) problems.push(`newTurn ${row[0]?.payload?.newTurn}`);
+  if (await tray.count()) problems.push('the tray stayed');
+  if (await panel.getByTestId('chat-steer-landed').count() !== 1) problems.push(`${await panel.getByTestId('chat-steer-landed').count()} landed marks`);
+  if (await panel.getByTestId('chat-queue-fallback').count()) problems.push('it fell back to the queue');
+  if (stubWorld) {
+    // The stub answers the same words whatever it is sent, so what it proves is what it read.
+    const reads = markerCount(stubRequests(providerId, since).filter((entry) => entry.main).at(-1), 'note');
+    if (reads !== 1) problems.push(`the last request reads the message ${reads} times`);
+  } else if (!final.includes(STEER_WORD)) problems.push(`the model did not act on it: ${final.slice(0, 160)}`);
+  if (turns.some((state) => state !== 'completed')) problems.push(`turns ${turns.join(',')}`);
+  if (frames.interrupted) problems.push('Enter interrupted the turn');
+  if (landing.found && landing.model !== 1) problems.push(`in the session file ${landing.model} times: ${landing.lines.join(', ')}`);
+  if (providerId === 'codex') {
+    if (frames.reply !== 'ok') problems.push(`turn/steer answered ${JSON.stringify(frames.reply)}`);
+    if (!frames.itemClientId || frames.itemClientId !== frames.clientUserMessageId) problems.push(`clientId ${frames.itemClientId}, sent ${frames.clientUserMessageId}`);
+  } else if (frames.priority !== 'next') problems.push(`priority ${frames.priority}`);
+  if (kind === 'tool') {
+    const call = slowEndpoint.route.calls.at(-1);
+    const ranMs = call.endedAt - call.startedAt;
+    if (ranMs < (call.seconds * 1000) - 800) problems.push(`the tool was cut short at ${ranMs} ms`);
+  }
+  if (kind === 'text' && providerId === 'codex') {
+    if (!row[0]?.payload?.rewritten) problems.push('dropped text not marked rewritten');
+    // Its last row is the empty one that takes the streamed text away.
+    const ending = items.filter((item) => item.messageId && item.messageId === writing?.messageId).at(-1);
+    if (!ending || ending.isDelta || ending.text) problems.push(`the dropped text ends on ${JSON.stringify({ delta: ending?.isDelta, chars: ending?.text?.length })}`);
+    // A real model may start its new answer the same way, so only the stub's words prove the screen.
+    if (stubWorld && (await panel.textContent()).includes('터미널의 사실을')) problems.push('the dropped text is still on screen');
+  }
+  const dropped = items.filter((item) => item.kind === 'assistant-message' && item.turnId === row[0]?.turnId).map((item) => ({ id: String(item.messageId ?? item.id).slice(-8), chars: item.text?.length ?? 0, delta: item.isDelta ?? false }));
+  if (stubWorld) delete stubWorld[providerId].route.markers.note;
+  await shootMatrix(page, `${name}-finished`, report, panel.getByTestId('chat-steer-landed'));
+  finishProblems(name, problems, report, {
+    sessionId, hint, trayText, composerClearedMs, steerToLandMs: landedAt - enteredAt, turns, payload: row[0]?.payload, final: final.slice(0, 240), landing, frames, cache, assistantRows: dropped,
+    composer: await input.inputValue(), landedMark: await textOf(panel.getByTestId('chat-steer-landed')),
+  });
+}
+
+const steerRows = (items, text) => items.filter((item) => item.kind === 'user-message' && item.text === text);
+
+/** 끊고 보내기 stops the turn; the message starts the next one and is never steered. */
+async function runInterruptSend(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-interrupt-send`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  const callsBefore = slowEndpoint.route.calls.length;
+  stubWorld[providerId].route.steps.push(slowStep(providerId, 15));
+  await say(page, panel, sessionId, '끊을 턴');
+  await steerMoment(page, sessionId, 'tool', callsBefore);
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill('멈추고 이것부터 해 줘.');
+  await panel.getByTestId('structured-agent-interrupt-send').click();
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the next turn finishing');
+  const turns = turnsOfSession(settled, sessionId).map((turn) => turn.state);
+  const providerSessionId = agentOf(settled, sessionId)?.providerSessionId;
+  const records = tapNow().filter((record) => record.at >= since);
+  const steered = providerId === 'codex'
+    ? records.some((record) => record.data?.method === 'turn/steer')
+    : records.some((record) => record.direction === 'in' && record.data?.priority === 'next');
+  const interrupted = providerId === 'codex'
+    ? records.some((record) => record.data?.method === 'turn/interrupt')
+    : records.some((record) => record.direction === 'in' && (record.data?.request?.subtype === 'interrupt' || record.data?.priority === 'now'));
+  if (turns.join() !== 'completed,interrupted,completed') problems.push(`turns ${turns.join(',')}`);
+  if (steered) problems.push('it went as a steer');
+  if (!interrupted) problems.push('no interrupt reached the CLI');
+  finishProblems(name, problems, report, { sessionId, turns, providerSessionId });
+}
+
+/** Real Codex refuses a steer into a review turn. The app takes `turn/start` for what it asked; the tap made it `review/start`. */
+async function runSteerRefusedReview(page, report) {
+  requireStub();
+  const name = 'codex-steer-refused-review';
+  const conversation = await longRunConversation(page, 'codex', name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  const { route } = stubWorld.codex;
+  const note = `검토 턴에는 못 들어가는 말 ${since.toString(36)}`;
+  route.markers.note = note;
+  let streaming = false;
+  route.steps.push({ kind: 'text', text: '{"findings":[],"overall_correctness":"patch is correct","overall_explanation":"ok","overall_confidence_score":0.9}', chunks: 40, chunkMs: 400, onChunk: () => { streaming = true; } });
+  await say(page, panel, sessionId, `${REVIEW_TURN_WORD} 봐 줘`);
+  await poll(async () => streaming, Boolean, 60_000, 'the review turn running');
+  const hint = await textOf(panel.getByTestId('structured-agent-composer-hint'));
+  await pressEnter(panel, note);
+  const fallback = panel.getByTestId('chat-queue-fallback');
+  await fallback.waitFor({ timeout: 15_000 });
+  const says = await textOf(fallback);
+  await shootMatrix(page, `${name}-queued`, report, fallback);
+  const frames = steerFrames('codex', undefined, note, since);
+  if (frames.reply?.code !== -32600) problems.push(`turn/steer answered ${JSON.stringify(frames.reply)}`);
+  const turnKind = frames.reply?.data?.codexErrorInfo?.activeTurnNotSteerable?.turnKind;
+  if (turnKind !== 'review') problems.push(`turnKind ${turnKind}, in ${JSON.stringify(frames.reply?.data)}`);
+  if (await panel.getByTestId('chat-steer-tray').count()) problems.push('the tray stayed');
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 90_000, 'the queued message running');
+  await wait(1_000);
+  const rows = steerRows(await transcriptOf(page, sessionId), note);
+  if (rows.length !== 1) problems.push(`${rows.length} rows`);
+  const reached = stubRequests('codex', since).filter((entry) => entry.main && markerCount(entry, 'note') > 0);
+  if (reached.length !== 1 || markerCount(reached[0], 'note') !== 1) problems.push(`the message reached the API in ${reached.length} requests`);
+  delete route.markers.note;
+  finishProblems(name, problems, report, { sessionId, hint, says, turnKind, error: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state), payload: rows[0]?.payload });
+}
+
+/** Codex has ended the turn and the app has not heard: the refusal real Codex gives then, and the queue takes the message. */
+async function runSteerRefusedStale(page, report) {
+  requireStub();
+  const name = 'codex-steer-refused-stale';
+  const conversation = await longRunConversation(page, 'codex', name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  const { route } = stubWorld.codex;
+  const note = `막 끝난 턴에 보낸 말 ${since.toString(36)}`;
+  route.markers.note = note;
+  let openGate;
+  const gate = new Promise((resolve) => { openGate = resolve; });
+  let waiting = false;
+  route.steps.push({ kind: 'text', text: '곧 끝납니다.', beforeEnd: async () => { waiting = true; await gate; } });
+  await say(page, panel, sessionId, '금방 끝날 일');
+  await poll(async () => waiting, Boolean, 60_000, 'the turn about to end');
+  writeFileSync(holdFile, '');
+  try {
+    openGate();
+    await poll(async () => tapNow().filter((record) => record.at >= since && record.data?.method === 'turn/completed').length, (count) => count > 0, 30_000, 'Codex ending the turn');
+    await pressEnter(panel, note);
+    const fallback = panel.getByTestId('chat-queue-fallback');
+    await fallback.waitFor({ timeout: 15_000 });
+    const says = await textOf(fallback);
+    await shootMatrix(page, `${name}-queued`, report, fallback);
+    const frames = steerFrames('codex', undefined, note, since);
+    if (frames.reply?.code !== -32600) problems.push(`turn/steer answered ${JSON.stringify(frames.reply)}`);
+    rmSync(holdFile, { force: true });
+    const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 3), 60_000, 'the queued message running');
+    await wait(800);
+    const rows = steerRows(await transcriptOf(page, sessionId), note);
+    if (rows.length !== 1) problems.push(`${rows.length} rows`);
+    const reached = stubRequests('codex', since).filter((entry) => entry.main && markerCount(entry, 'note') > 0);
+    if (reached.length !== 1) problems.push(`the message reached the API in ${reached.length} requests`);
+    delete route.markers.note;
+    finishProblems(name, problems, report, { sessionId, says, error: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state) });
+  } finally {
+    rmSync(holdFile, { force: true });
+  }
+}
+
+/** The account runs out with a message on its way: it must not read twice, and the screen must not claim either way. */
+async function runSteerIntoLimit(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-steer-into-limit`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const since = Date.now();
+  const callsBefore = slowEndpoint.route.calls.length;
+  const { route } = stubWorld[providerId];
+  const stamp = since.toString(36);
+  const note = `한도 직전에 보낸 말 ${stamp}`;
+  route.markers.note = stamp;
+  route.steps.push(slowStep(providerId, 6));
+  await say(page, panel, sessionId, '시간이 걸리는 일');
+  await steerMoment(page, sessionId, 'tool', callsBefore);
+  limitAccount(providerId, { resetIn: 12 });
+  await pressEnter(panel, note);
+  const card = await cardAt(page, sessionId, ['waiting', 'unconfirmed', 'retrying']);
+  await wait(1_500);
+  await shootMatrix(page, `${name}-stopped`, report, panel.getByTestId('chat-steer-tray'));
+  const held = await page.evaluate((id) => window.ezterminal.getDaemonSnapshot().then((snap) => snap.steers?.[id] ?? []), sessionId);
+  const onScreen = (await panel.textContent())?.includes(note);
+  const rows = steerRows(await transcriptOf(page, sessionId), note);
+  const reached = stubRequests(providerId, since).filter((entry) => entry.main && markerCount(entry, 'note') > 0);
+  await wait(untilMs(card.resetsAt ?? new Date().toISOString()));
+  liftLimit(providerId);
+  await wait(TIMING.afterResetMs + 6_000);
+  const after = await latestCard(page, sessionId);
+  const heldAfter = await page.evaluate((id) => window.ezterminal.getDaemonSnapshot().then((snap) => snap.steers?.[id] ?? []), sessionId);
+  const counted = stubRequests(providerId, since).filter((entry) => entry.main && markerCount(entry, 'note') > 0).at(-1);
+  if (markerCount(counted, 'note') !== 1) problems.push(`the message reads ${markerCount(counted, 'note')} times in the last request`);
+  // Only this conversation's requests hold the note; a stop of another conversation has its own schedule.
+  const sends = continueSends(providerId, since).filter((entry) => markerCount(entry, 'note') > 0).length;
+  if (sends !== 1) problems.push(`"Continue." went ${sends} times`);
+  delete route.markers.note;
+  finishProblems(name, problems, report, {
+    sessionId, card, after, held, heldAfter, onScreen, rows: rows.map((row) => row.payload), requestsWithIt: reached.length, sends,
+    turns: turnsOfSession(await snapshot(page), sessionId).map((turn) => `${turn.state}:${turn.errorCode ?? ''}`),
+  });
+}
+
+/** A steer and a suggestion: the old guess goes when the message is sent, and the guess after the turn has read it. */
+async function runSteerSuggestion(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-steer-suggestion`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const callsBefore = slowEndpoint.route.calls.length;
+  const { route } = stubWorld[providerId];
+  const stamp = Date.now().toString(36);
+  const note = `제안과 끼워넣기 ${stamp}`;
+  route.markers.note = stamp;
+  route.steps.push(slowStep(providerId, 6), { kind: 'text', text: '끝' });
+  const before = await awaitSuggestion(page, panel, sessionId, 15_000);
+  const since = Date.now();
+  await say(page, panel, sessionId, '시간이 걸리는 일');
+  await steerMoment(page, sessionId, 'tool', callsBefore);
+  await pressEnter(panel, note);
+  const during = (await snapshot(page)).nextPromptSuggestions?.[sessionId];
+  await poll(() => transcriptOf(page, sessionId).then((items) => steerRows(items, note)), (found) => found.length > 0, 30_000, 'the message landing');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, 2), 60_000, 'the turn finishing');
+  const after = await awaitSuggestion(page, panel, sessionId, 20_000);
+  const lastTurn = turnsOfSession(await snapshot(page), sessionId).at(-1);
+  const sides = stubRequests(providerId, since).filter((entry) => entry.answer === 'side');
+  if (during) problems.push('the guess of the turn before stayed while the message was on its way');
+  if (!after.text) problems.push('no suggestion after a turn with a steer');
+  if (after.turnId && after.turnId !== lastTurn.id) problems.push('the suggestion belongs to another turn');
+  const sideHeard = sides.filter((entry) => markerCount(entry, 'note') > 0).length;
+  delete route.markers.note;
+  finishProblems(name, problems, report, { sessionId, before, during: during ?? null, after, sideCalls: sides.length, sideCallsThatReadIt: sideHeard });
+}
+
+function longRunScenarios() {
+  return [
+  ...['claude', 'codex'].flatMap((providerId) => [
+    { name: `${providerId}-limit-refused-twice`, run: (page, report) => runLimitRefusedTwice(page, report, providerId) },
+    { name: `${providerId}-limit-no-reset`, run: (page, report) => runLimitNoReset(page, report, providerId) },
+    { name: `${providerId}-limit-weekly`, run: (page, report) => runLimitWeekly(page, report, providerId) },
+    { name: `${providerId}-limit-auto-off`, run: (page, report) => runLimitCardOff(page, report, providerId) },
+    { name: `${providerId}-limit-setting-off`, run: (page, report) => runLimitSettingOff(page, report, providerId) },
+    { name: `${providerId}-limit-person-first`, run: (page, report) => runLimitPersonFirst(page, report, providerId) },
+    { name: `${providerId}-limit-approval-open`, run: (page, report) => runLimitApprovalOpen(page, report, providerId) },
+    { name: `${providerId}-limit-two-conversations`, run: (page, report) => runLimitTwoConversations(page, report, providerId) },
+    { name: `${providerId}-limit-child`, run: (page, report) => runLimitChild(page, report, providerId) },
+    { name: `${providerId}-limit-resumed-turn`, run: (page, report) => runLimitOnResumedTurn(page, report, providerId) },
+    { name: `${providerId}-limit-restart-seed`, run: (page, report) => runLimitRestartSeed(page, report, providerId) },
+    { name: `${providerId}-limit-restart-reopen`, run: (page, report) => runLimitRestartReopen(page, report, providerId) },
+    { name: `${providerId}-limit-recap`, run: (page, report) => runLimitRecap(page, report, providerId) },
+    { name: `${providerId}-interrupt-send`, run: (page, report) => runInterruptSend(page, report, providerId) },
+    { name: `${providerId}-steer-into-limit`, run: (page, report) => runSteerIntoLimit(page, report, providerId) },
+    { name: `${providerId}-steer-suggestion`, run: (page, report) => runSteerSuggestion(page, report, providerId) },
+    ...['tool', 'text', 'approval'].flatMap((kind) => ['cli', 'bubble'].map((skin) => ({ name: `${providerId}-steer-${kind}-${skin}`, run: (page, report) => runSteer(page, report, providerId, kind, skin) }))),
+  ]),
+  { name: 'codex-limit-not-included', run: (page, report) => runLimitNotIncluded(page, report) },
+  { name: 'codex-steer-refused-review', run: (page, report) => runSteerRefusedReview(page, report) },
+  { name: 'codex-steer-refused-stale', run: (page, report) => runSteerRefusedStale(page, report) },
+  ];
+}
+
 /** A dialog or Settings: no chat skin to change (the menu is behind it), both themes. */
 async function shootDialog(page, name, report, crop) {
   const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
@@ -3098,6 +4219,8 @@ if (SCENARIOS.some((scenario) => scenario.name === 'eligibility-advisor')) write
 // --no-pause: 한도 근처 멈춤 off, the real near-limit state's other half. Otherwise the profile keeps the defaults.
 const wrapUpFile = path.join(profile, 'turn-wrap-up.json');
 if (rest.includes('--no-pause')) writeFileSync(wrapUpFile, JSON.stringify({ version: 1, suggestions: { claude: true, codex: true }, recaps: true, tasks: true, pauseNearLimit: false }));
+// --no-wrap-up: a real run that is not about bundle 2 spends nothing on it, and a tight account's own pause stays out of the way.
+else if (rest.includes('--no-wrap-up')) writeFileSync(wrapUpFile, JSON.stringify({ version: 1, suggestions: { claude: false, codex: false }, recaps: false, tasks: false, pauseNearLimit: false }));
 else rmSync(wrapUpFile, { force: true });
 if (rest.includes('--force-pause')) {
   const resetsAt = Date.now() + 4 * 3_600_000;
@@ -3106,12 +4229,28 @@ if (rest.includes('--force-pause')) {
 }
 const tapDir = path.join(output, 'tap');
 const telemetry = tapProviders ? (mkdirSync(tapDir, { recursive: true }), await startTelemetry(path.join(tapDir, 'telemetry.jsonl'))) : undefined;
+// An empty profile starts with Claude off; a person would have turned it on in Settings.
+const claudeEnablement = path.join(profile, 'claude-provider-enablement.json');
+if (enableProviders && !existsSync(claudeEnablement)) {
+  writeFileSync(claudeEnablement, JSON.stringify({ schemaVersion: 1, enablement: { enabled: true, termsAccepted: true, commercialUseApproved: true, authenticationPath: 'existing-claude-ai-login', anthropicThirdPartyApproval: true } }));
+}
+const longRunRun = SCENARIOS.some((scenario) => scenario.longRun);
+slowTools = longRunRun ? await startSlowToolServer() : undefined;
+slowEndpoint = slowTools?.endpoint('long-run');
+if (stubProviders) stubWorld = await startStubWorld();
 const app = await electron.launch({
-  args: [...(tapProviders ? ['-r', path.join(ROOT, 'scripts', 'live-provider-tap.cjs')] : []), MAIN_ENTRY, '--lang=ko-KR'],
+  args: [
+    ...(stubProviders ? ['-r', path.join(ROOT, 'scripts', 'live-limit-stub.cjs')] : []),
+    ...(tapProviders ? ['-r', path.join(ROOT, 'scripts', 'live-provider-tap.cjs')] : []),
+    MAIN_ENTRY, '--lang=ko-KR',
+  ],
   env: {
     ...process.env,
+    ...(stubWorld?.launchEnvironment ?? {}),
+    ...(resumeTiming ? { EZTERMINAL_E2E_LONG_RUN_TIMING: resumeTiming } : {}),
     ...(tapProviders ? { EZ_LIVE_TAP_DIR: tapDir, EZ_LIVE_TAP_OTLP: `http://127.0.0.1:${telemetry.port}` } : {}),
     ...(rest.includes('--force-pause') ? { EZ_LIVE_TAP_HIDE_LIMITS: '1' } : {}),
+    ...(slowEndpoint ? { EZ_LIVE_TAP_EXTRA_MCP: JSON.stringify({ name: SLOW_SERVER, url: slowEndpoint.url, token: slowEndpoint.token }), EZ_LIVE_TAP_REVIEW_WORD: REVIEW_TURN_WORD, EZ_LIVE_TAP_HOLD_FILE: holdFile } : {}),
     EZTERMINAL_USER_DATA_DIR: profile,
     EZTERMINAL_ALLOW_MULTIPLE_INSTANCES: '1',
     EZTERMINAL_DISABLE_UPDATE_CHECK: '1',
@@ -3151,9 +4290,18 @@ try {
   report.push({ usage: 'end', providerUsage: (await snapshot(page)).providerUsage ?? null });
 } finally {
   verdict = liveReportVerdict(report, { requested: SCENARIOS.map((scenario) => scenario.name), unknown: unknownScenarios, allowSkips });
+  if (stubWorld) {
+    // No real credential reached a stub, and nothing else got out; the requests themselves stay for the run's questions.
+    const audit = { claude: credentialAudit(stubWorld.claude.route.requests), codex: credentialAudit(stubWorld.codex.route.requests), proxy: stubWorld.proxy.hosts() };
+    report.push({ credentialAudit: audit });
+    if (!audit.claude.allDummy || !audit.codex.allDummy) verdict = { ok: false, failures: [...verdict.failures, `a stub saw a credential that is not the dummy: ${JSON.stringify(audit)}`] };
+    writeFileSync(path.join(output, 'stub-requests.json'), JSON.stringify({ claude: stubWorld.claude.route.requests, codex: stubWorld.codex.route.requests }, null, 1));
+  }
   writeFileSync(path.join(output, 'live-report.json'), JSON.stringify({ verdict, report }, null, 2));
   await app.close();
   telemetry?.close();
+  await stubWorld?.close();
+  await slowTools?.close();
 }
 process.stdout.write(`${JSON.stringify({ stage, output, verdict, report }, null, 1)}\n`);
 if (!verdict.ok) {

@@ -11,6 +11,12 @@
  * - The OS login item is stubbed in memory: a scenario may need "start at login" on, and no test run may register one.
  * Two switches change what passes through, for one run at a time: EZ_LIVE_TAP_HIDE_LIMITS hides real usage readings from
  * the host (a forced pause would otherwise last seconds), and EZ_LIVE_TAP_KEEP_FORKS makes Codex forks leave a rollout.
+ * Three more serve the long-run scenarios, on Codex only:
+ * - EZ_LIVE_TAP_EXTRA_MCP adds a slow read-only MCP tool to its threads: on this PC its shell commands hang in the
+ *   workspace-write sandbox, so a long tool cannot be a command, and no sandbox or approval setting changes for it.
+ * - EZ_LIVE_TAP_REVIEW_WORD turns a `turn/start` with that word into `review/start`: the product starts no review turn of
+ *   its own, and this is the way to meet Codex's real `activeTurnNotSteerable` through the real app.
+ * - EZ_LIVE_TAP_HOLD_FILE: while that file exists `turn/completed` waits here, so the app steers a turn Codex has ended.
  *
  * Streaming deltas are dropped and long prompts cut; launch arguments and the session's MCP token are not logged.
  */
@@ -26,6 +32,9 @@ const directory = process.env.EZ_LIVE_TAP_DIR;
 const otlp = process.env.EZ_LIVE_TAP_OTLP;
 const hideLimits = process.env.EZ_LIVE_TAP_HIDE_LIMITS === '1';
 const keepForks = process.env.EZ_LIVE_TAP_KEEP_FORKS === '1';
+const extraMcp = process.env.EZ_LIVE_TAP_EXTRA_MCP ? JSON.parse(process.env.EZ_LIVE_TAP_EXTRA_MCP) : undefined;
+const reviewWord = process.env.EZ_LIVE_TAP_REVIEW_WORD;
+const holdFile = process.env.EZ_LIVE_TAP_HOLD_FILE;
 
 const MAX_LINE = 24_000;
 const MAX_INPUT_TEXT = 1_500;
@@ -50,7 +59,8 @@ const CLAUDE_NOISE = new Set(['stream_event', 'assistant', 'user', 'tool_progres
 
 function keep(provider, message) {
   if (provider === 'codex') return !NOISE.test(String(message?.method ?? ''));
-  return !CLAUDE_NOISE.has(message?.type);
+  // A limit's assistant frame and a message sent into a running turn stay: their shape is what the scenarios read.
+  return !CLAUDE_NOISE.has(message?.type) || Boolean(message?.error) || Boolean(message?.priority);
 }
 
 function teeLine(provider, pid, direction, line) {
@@ -117,15 +127,54 @@ function withoutLimits(chunk) {
   return typeof chunk === 'string' ? hidden : Buffer.from(hidden, 'utf8');
 }
 
+/** What this run adds to a request on its way to Codex; anything else passes as it came. */
+function rewrittenRequest(chunk) {
+  const text = String(chunk);
+  if (extraMcp && /"method":"thread\/(?:start|resume)"/u.test(text)) {
+    const message = JSON.parse(text);
+    const servers = { ...message.params.config?.mcp_servers, [extraMcp.name]: { url: extraMcp.url, http_headers: { Authorization: `Bearer ${extraMcp.token}` }, tool_timeout_sec: 120 } };
+    message.params.config = { ...message.params.config, mcp_servers: servers };
+    return `${JSON.stringify(message)}\n`;
+  }
+  if (reviewWord && text.includes('"method":"turn/start"') && text.includes(reviewWord)) {
+    const { id, params } = JSON.parse(text);
+    return `${JSON.stringify({ id, method: 'review/start', params: { threadId: params.threadId, target: { type: 'custom', instructions: 'Review src/cart.ts briefly.' }, delivery: 'inline' } })}\n`;
+  }
+  return chunk;
+}
+
+/** Holds `turn/completed` lines while the hold file exists, and hands them over when it goes. */
+function holdingFrames(child, emit) {
+  const held = [];
+  let pending = '';
+  setInterval(() => {
+    if (fs.existsSync(holdFile) || !held.length) return;
+    for (const line of held.splice(0)) emit.call(child.stdout, 'data', Buffer.from(`${line}\n`, 'utf8'));
+  }, 100).unref();
+  return (chunk) => {
+    if (!fs.existsSync(holdFile) && !pending) return chunk;
+    const lines = `${pending}${String(chunk)}`.split('\n');
+    pending = lines.pop();
+    const passing = lines.filter((line) => {
+      if (!line.includes('"method":"turn/completed"')) return true;
+      held.push(line);
+      return false;
+    });
+    return Buffer.from(passing.map((line) => `${line}\n`).join(''), 'utf8');
+  };
+}
+
 function tee(child, provider) {
   const pid = child.pid;
   const fromProvider = lineReader((line) => teeLine(provider, pid, 'out', line));
   const emit = child.stdout.emit;
+  const hold = provider === 'codex' && holdFile ? holdingFrames(child, emit) : (chunk) => chunk;
   // Listening on `emit` leaves the stream's flow alone: the product decides when it starts reading.
   child.stdout.emit = function tappedEmit(event, chunk, ...rest) {
     if (event !== 'data') return emit.call(this, event, chunk, ...rest);
     fromProvider(chunk);
-    return emit.call(this, event, hideLimits ? withoutLimits(chunk) : chunk, ...rest);
+    const passing = hold(chunk);
+    return passing.length ? emit.call(this, event, hideLimits ? withoutLimits(passing) : passing, ...rest) : true;
   };
   const toProvider = lineReader((line) => teeLine(provider, pid, 'in', line));
   const stdinWrite = child.stdin.write;
@@ -133,7 +182,7 @@ function tee(child, provider) {
     toProvider(chunk);
     // EZ_LIVE_TAP_KEEP_FORKS: a diagnostic run, so a fork leaves a rollout that shows what Codex really sent it.
     const kept = keepForks && provider === 'codex' && String(chunk).includes('"thread/fork"') ? String(chunk).replace('"ephemeral":true', '"ephemeral":false') : chunk;
-    return stdinWrite.call(this, kept, ...rest);
+    return stdinWrite.call(this, provider === 'codex' ? rewrittenRequest(kept) : kept, ...rest);
   };
   child.once('exit', (code, signal) => write({ provider, pid, exit: code ?? signal }));
 }
