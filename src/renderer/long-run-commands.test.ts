@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../shared/daemon-protocol';
 import { LONG_RUN_CAPABILITY, type OpenUsageLimit, type SteeredMessage } from '../shared/long-run';
-import { formatClock } from './chat/copy';
+import { chatCopy, formatClock } from './chat/copy';
 import { longRunHost, type LongRunHostInput } from './long-run-commands';
 
 const SESSION = 'session-1';
@@ -82,9 +82,9 @@ describe('a message that did not land', () => {
     ]);
   });
 
-  it('says what the host refused', async () => {
-    const { props } = host(snapshotWith({ steers: { [SESSION]: [FAILED] } }), [(command) => refused(command, 'invalid-state', 'This message is still on its way.')]);
-    await expect(props?.longRun.steer?.onToBox?.(FAILED)).resolves.toEqual({ ok: false, message: 'This message is still on its way.' });
+  it('says in the app\'s words that the host refused, never the host\'s', async () => {
+    const { props } = host(snapshotWith({ steers: { [SESSION]: [FAILED] } }), [(command) => refused(command, 'invalid-state', 'HOST TEXT')]);
+    await expect(props?.longRun.steer?.onToBox?.(FAILED)).resolves.toEqual({ ok: false, message: chatCopy('en').longRun.steer.messageChanged });
   });
 });
 
