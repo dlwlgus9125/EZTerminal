@@ -193,7 +193,7 @@ turn, 마지막 답 최대 8,000자, 대기 중 승인 제목 최대 5개)을 �
 정리는 사람이 한다.
 
 사용자는 child를 직접 열고 대화하며 model/permission 변경, Cancel, Archive와 Detach를 실행할 수 있다.
-busy session의 일반 Send는 FIFO queue에 들어가고 `Interrupt + Send`만 현재 turn을 중단한다.
+busy session의 일반 글은 실행 중인 turn에 들어가고 못 들어가면 FIFO queue로 간다([장시간 연속성](#장시간-연속성)). `Interrupt + Send`만 현재 turn을 중단한다.
 
 - Cancel: 현재 turn만 cooperative interrupt
 - Archive: 실행을 끝낸 뒤 기본 목록에서 숨기고 history는 보존
@@ -383,7 +383,7 @@ diff·파일·인용 블록 안의 글은 지시가 아닌 데이터라고 말�
 
 ### 자동 호출과 대상
 
-[`automatic-calls.ts`](../../src/shared/automatic-calls.ts)가 사람이 누르지 않아도 나가는 호출을 모두 적는다: 다음 입력 제안과 턴 요약.
+[`automatic-calls.ts`](../../src/shared/automatic-calls.ts)가 사람이 누르지 않아도 나가는 곁 호출을 적는다: 다음 입력 제안과 턴 요약. 대화에 메시지를 보내는 자동 재개는 곁 호출이 아니며 [장시간 연속성](#장시간-연속성)이 소유한다.
 제안 작업은 AI가 제 턴 안에서 부르는 도구라 따로 부르는 호출이 아니다.
 
 - 대상은 `wrapUpAllowed` 하나로 판단한다. 사람이 보낸 턴(`desktop`·`android` principal)의 사람이 직접 보는 대화뿐이다. 준비 중인 대화,
@@ -456,6 +456,37 @@ diff·파일·인용 블록 안의 글은 지시가 아닌 데이터라고 말�
 - `task-suggestions-dropped`(notice): 턴과 수. `task-suggestion-send`(user-message): `여기서 하기`의 턴. `보냄`·`대기열`은 그 턴의 상태에서 client가 계산하고, 턴이
   실패하거나 취소되면 다시 보낼 수 있다.
 - `시작하는 중…`·`보내는 중…`은 client의 일시 상태로 저장하지 않아 충돌로 카드가 묶이지 않는다.
+
+## 장시간 연속성
+
+한도 뒤 자동 재개와 실행 중 메시지. 결정과 측정은 [approvals.md](../ux/overhaul/approvals.md#2026-11-01-장시간-연속성claude-데스크톱-기능-흡수-3묶음-실험-결정), 화면은 [UX 계약](../ux/frontend-design.md#사용량-한도-카드), 구현 기록은
+[여기](../ux/reviews/2026-11-01-long-run-implementation.md)다. 실제 한도는 본 적이 없다: 한도 경로는 실제 CLI를 가짜 서버에 붙여 잰 모양과 그 재생에 기대고 있다.
+
+### 저장과 권위
+
+- [`long-run-coordinator.ts`](../../src/main/long-run-coordinator.ts)가 멈춤과 끼워넣기를 소유한다. DB 스키마는 바꾸지 않는다. `long-run-jobs.json`(`{ jobs, steers, autoResumes }`)이 예약의 권위이고 시작할 때 대화 기록을 훑지 않는다. 대화 기록의 `usage-limit` 행은 `stopId`마다 마지막이 이긴다. 쓰는 순서는 파일, 그다음 행이고 같은 id의 행은 무시되므로 복구가 다시 써도 안전하다.
+- 스냅샷의 `usageLimits`·`steers`·`longRunSupport`는 파일에서 만든 메모리 값이다. 범위 읽기(`daemon-cli-control`)와 폰 오프라인 캐시에서는 뺀다. `usageLimits`는 끝나지 않은 멈춤을 싣는다: 대기열을 붙잡는 멈춤(`holds`)과, 붙잡지 않아도 대화의 마지막 턴이 그 멈춤의 턴인 동안의 놓인 카드(`left`, `person-refused`, `not-included`)다. 목록과 머리글은 대화 기록이 없어 이 값만 읽는다.
+- host는 capability `long-run-v1`, AI별 `longRunSupport`를 알린다. 지원 최소 버전은 Claude Code 2.1.312, Codex 0.165.0이다. 그보다 낮은 AI와 옛 host에서는 Enter가 대기열로 가고 한도는 예전의 오류다. 옛 client는 행의 `text`를 읽는다.
+- 설정은 `long-run.json`(`{ version, autoResume }`, 기본 켬)이고 읽기 전에는 자동 전송이 없다.
+
+### 한도 멈춤
+
+- provider 어댑터가 한도를 `turn-finished`의 `limit`으로 알리고 턴은 `failed`/`usage-limit`, 에이전트는 대기 상태가 된다. 알려진 리셋이 없으면 `recoverLimit`을 묻고 답이 오기 전까지 `ask-unknown`이다. 일반 429는 한도가 아니다. `usage_not_included`는 구조로 구별할 수 없어 글로 판별한다.
+- 멈춘 대화에서는 재개 전송과 사람의 메시지만 지난다(`canDispatchTurn`). 대기열은 멈춤을 지나가지 않는다. 시각이 되었을 때 대기열이 있으면 "Continue." 대신 푼다(`cancelled`).
+- 카드를 받는 대상: 사람이 보낸 최상위 대화. 검토자·자문·기획·예약 대화와 provider 자체 하위 에이전트는 없다. 관리 자식은 `child`이고 자동 재개가 없다.
+- 일찍 시도하면 거절된 턴이 쌓이므로 앱은 시각을 저장하고 그때만 시도한다. 리셋 2분 뒤, 거절되면 10분 뒤 한 번 더, 그래도 거절되면 멈추고 묻는다. 시각은 절대 시각으로 비교하고 타이머는 최대 60초마다 다시 건다. 잠자기는 앱이 닫힌 것이 아니라서 예약이 서 있고 깨어나면 첫 전송을 60초 늦춘다.
+- 보내는 글은 언제나 `RESUME_TEXT`("Continue.")다. 원래 프롬프트는 세션에 남아 있어 다시 보내면 두 번 읽는다. 시도마다 새 command id이고, `sending`을 먼저 파일에 쓰며(write-ahead) **자동으로 다시 보내지 않는다.** 재시작 때 답이 없는 전송은 outbox와 턴으로 판정하고 모르면 `unconfirmed`로 묻는다.
+- `agent.submit.longRunResume`은 `LONG_RUN_PRINCIPAL`만 쓸 수 있고 MCP에는 막혀 있다. 재개된 턴은 턴 마무리에서 사람이 보낸 턴으로 친다.
+- 줄: AI마다 하나, 오래 멈춘 순서, 앞 전송의 60초 뒤, 앞 대화가 끝나기를 기다리지 않는다. 사람의 메시지 없이 연달아 `AUTO_RESUME_CHAIN`(3)번 이어서 했으면 그다음 멈춤은 먼저 묻는다. 세기는 대화별이고 `autoResumes`에 저장한다.
+- 사람의 메시지(`personSent`)는 예약을 닫는다. 그 턴이 지나가면 `cancelled`, 한도에 거절되면 `person-refused`이고 카드는 새로 생기지 않고 내려간다. 놓인 카드(`left`, `person-refused`)는 다른 턴이 돌아도 지워지지 않아 `이어서 하기`가 남는다. `not-included`는 버튼이 없어 다른 턴이 돌면 지운다.
+
+### 실행 중 메시지
+
+- `agent.steer {sessionId, turnId, prompt}`는 사람의 principal만 쓸 수 있고 `/` 명령은 거절한다. 턴이 아니라 기록이라서 `queuedTurnCount`·`currentTurnId`·`agent.queue`를 건드리지 않는다. 기록을 쓴 뒤 커밋 밖에서 provider를 부른다.
+- Claude는 `priority:'next'`로 넣는다(`now`는 쓰지 않는다: 끊고 보내기만 끊는다). Codex는 `turn/steer`이고 `clientUserMessageId`가 중복을 막아 주지 않으므로 앱이 command id당 한 번만 부른다.
+- 도착 판정은 Claude의 `command_lifecycle`·`result.user_message_uuids`, Codex의 `userMessage` 항목 `clientId`다. 그때 행이 생기며(`steer`) 그 자리가 실제 위치다. Claude가 글을 쓰던 중이면 새 턴이 된다. Codex가 글을 버리면 같은 `messageId`의 빈 행이 그 글을 대체한다.
+- 도착하지 않으면: `-32600`은 같은 command id로 대기열(`steer-queued`, 이유 있음). 전송 실패는 `thread/read`로 찾고, 못 찾으면 `failed`, 읽기도 실패하면 `unconfirmed`다. 한도나 멈춤이 먼저 오면 `unconfirmed`이고 다시 보내지 않는다. 30초가 지나도록 들어가지 않은 끼워넣기는 대기열을 붙잡지 않는다.
+- 사람이 고르는 후속은 `agent.steer-settle`(`queue`는 `failed`에서만, `box`), 카드 동작은 `long-run.limit-action`이다. 둘 다 받지 못한 누름은 카드가 움직였다고 말한다. 잦은 수정 번호 충돌은 client의 재시도 고리가 받는다.
 
 ## Schedule, heartbeat와 local control
 

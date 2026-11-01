@@ -148,6 +148,13 @@ start a sub-conversation that asks before it runs, do it here, or dismiss it, an
 task works first. The AI only proposes; nothing is sent or started until a person presses a button. The two automatic
 calls stop when a usage window reaches the danger level, and Settings › AI › Turn wrap-up switches each part off.
 
+**Long-run continuity.** A plain message sent while the AI works goes into the running turn and waits above the box
+until it lands; attachments, replies and `/` commands wait in the queue and say why. A usage limit stops the turn with
+a card: if the reset is known and under 6 hours away, the app tries by itself 2 minutes after it by sending "Continue."
+as a row marked as its own. Otherwise it asks first, and it never says the limit has lifted. This is the one message
+that goes out without a press, and Settings › AI › Continuing turns it off. No real limit has been hit yet: the limit
+paths have run against local stubs of both APIs.
+
 If the structured Agent database cannot be opened or migrated safely, EZTerminal latches into
 terminal-only safe mode for that app process. Existing local and remote terminals keep working while
 Agent history, events, commands, and creation fail closed with a concrete recovery explanation.

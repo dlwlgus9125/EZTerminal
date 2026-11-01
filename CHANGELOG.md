@@ -18,6 +18,20 @@
   button. The automatic calls stop at the usage danger level, and Settings › AI ›
   Turn wrap-up switches each part off. Needs Claude Code 2.1.312 or Codex 0.165.0
   or later.
+- Long-run continuity. A plain message sent while the AI works now goes into
+  the running turn (Enter, or send on the phone) and waits above the box until
+  it lands; what can't go in (attachments, replies, `/` commands, review and
+  compact turns) waits in the queue and says why. Interrupt and send is still
+  the only thing that stops a turn. A usage limit now stops the turn with a card
+  instead of an error: with a known reset within 6 hours, a conversation a person
+  started tries by itself 2 minutes after the reset by sending "Continue.",
+  shown as the app's, and once more 10 minutes later if refused. Weekly limits,
+  later or unknown resets, and a reset that passed while the app was closed ask
+  first, as does the fourth stop in a row with no message from a person.
+  Conversations of one AI go 60 seconds apart, the longest stopped first. The
+  phone has the same card; Settings › AI › Continuing turns the automatic send
+  off. Needs Claude Code 2.1.312 or Codex 0.165.0 or later. The limit paths have
+  run against local stubs of both APIs; no real usage limit has been seen yet.
 - A worktree with no commits of its own and a clean tree, untracked files
   included, can now be cleaned up by a person without a merge.
 - App agent conversations (Codex and Claude) now work in every folder
