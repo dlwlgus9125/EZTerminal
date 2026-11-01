@@ -852,6 +852,11 @@ if (args.includes('--version')) {
           const stale = refusal === 'stale' || !running || running !== frame.params?.expectedTurnId;
           const kind = stale ? undefined : refusal || undefined;
           logLine('ezterminal-e2e-codex-steers.jsonl', { threadId, turnId: running ?? null, expectedTurnId: frame.params?.expectedTurnId ?? null, clientUserMessageId: frame.params?.clientUserMessageId ?? null, text: inputTextOf(frame.params?.input), outcome: stale ? 'stale' : kind ?? 'accepted' });
+          // Not a refusal: the call broke on the way, and `thread/read` then shows it never arrived.
+          if (kind === 'transport') {
+            write({ jsonrpc: '2.0', id: frame.id, error: { code: -32000, message: 'the connection to the thread broke' } });
+            break;
+          }
           if (stale || kind) {
             write({ jsonrpc: '2.0', id: frame.id, error: stale
               ? { code: -32600, message: `expected active turn id \`${String(frame.params?.expectedTurnId)}\` but found \`${String(running)}\`` }
