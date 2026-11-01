@@ -181,12 +181,13 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')?.textContent).not.toContain('버리고');
   });
 
-  it('promises Codex drops text only when it is writing: a tool holds a message on either AI', () => {
+  it('promises Codex drops text only when it is writing, and never that it waits for a tool: it lands under one still running', () => {
     const on = (behind: 'tool' | 'text'): void => {
       box({ providerId: 'codex', steer: steer({ messages: [{ id: 'm', text: '그 파일만', state: 'on-its-way', sentAt: '2026-11-01T05:50:00.000Z', behind }] }) });
     };
     on('tool');
-    expect(byId('chat-steer-tray')?.textContent).toContain('지금 도구가 끝나면');
+    expect(byId('chat-steer-tray')?.textContent).toContain('곧 들어갑니다 · 도구를 기다리지 않고 이 턴에');
+    expect(byId('chat-steer-tray')?.textContent).not.toContain('끝나면');
     expect(byId('chat-steer-tray')?.textContent).not.toContain('버리고');
     on('text');
     expect(byId('chat-steer-tray')?.textContent).toContain('쓰던 글은 버리고 이 턴에서 다시 씁니다');

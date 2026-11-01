@@ -50,6 +50,16 @@ describe('long-run wording', () => {
     expect(chatCopy('ko').longRun.steer.hint.codex).not.toContain('새 턴');
   });
 
+  it('never says a Codex message waits for a tool: it landed in about 0.9 s under one still running', () => {
+    const ko = chatCopy('ko').longRun.steer;
+    expect(ko.behind.codexTool).toContain('기다리지 않고');
+    expect(ko.behind.codexTool).toContain('이 턴');
+    expect(`${ko.behind.codexTool} ${ko.hint.codex} ${ko.hintMobile.codex}`).not.toContain('끝나면');
+    const en = chatCopy('en').longRun.steer;
+    expect(en.behind.codexTool).toContain('without waiting');
+    expect(`${en.behind.codexTool} ${en.hint.codex} ${en.hintMobile.codex}`).not.toMatch(/tool ends/iu);
+  });
+
   it('says the 6-hour rule in Settings too, and what turning it off does', () => {
     expect(settings).toContain('6시간');
     expect(settings).toContain('6 hours');

@@ -150,7 +150,7 @@ export const APP_SENT_REASONS = ['scheduled-time', 'try-now', 'resume-pressed'] 
 export type AppSentReason = (typeof APP_SENT_REASONS)[number];
 
 export type SteerDelivery =
-  /** The host took it; the turn has not. A long tool holds it. */
+  /** The host took it; the turn has not. On Claude a long tool holds it; Codex takes it under a running tool. */
   | 'on-its-way'
   /** An open approval holds it; it lands after the answer. */
   | 'behind-approval'

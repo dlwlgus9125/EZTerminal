@@ -354,10 +354,10 @@ export const SteerOnItsWayText: Story = chat('steer-on-its-way-text', (lang) => 
 export const SteerOnItsWayCodex: Story = chat('steer-on-its-way-codex', (lang) => steerStory(lang, 'on-its-way-text'), { provider: 'codex' }, async ({ canvasElement }) => {
   await expect(await findIn(canvasElement, TRAY)).toHaveTextContent('곧 들어갑니다 · 쓰던 글은 버리고 이 턴에서 다시 씁니다');
 });
-/** Codex behind a tool: it does not cut tools, so nothing is dropped and the tray does not say so. */
+/** Codex beside a tool: it does not cut tools or wait for them, so nothing is dropped and the tray does not say so. */
 export const SteerOnItsWayCodexTool: Story = chat('steer-on-its-way-codex-tool', (lang) => steerStory(lang, 'on-its-way'), { provider: 'codex' }, async ({ canvasElement }) => {
   const tray = await findIn(canvasElement, TRAY);
-  await expect(tray).toHaveTextContent('곧 들어갑니다 · 지금 도구가 끝나면 이 턴에');
+  await expect(tray).toHaveTextContent('곧 들어갑니다 · 도구를 기다리지 않고 이 턴에');
   await expect(tray).not.toHaveTextContent('버리고');
 });
 /** Landed: an ordinary message of the person's, where it arrived, between the tool before it and the work it changed. */
