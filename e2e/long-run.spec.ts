@@ -803,6 +803,10 @@ test('a plan that does not include this AI stops with no button and nothing to w
     await expect(page.getByTestId('shell-live-waiting')).toHaveCount(0);
     await page.waitForTimeout(3_000);
     expect(continues(profile)).toEqual([]);
+    // Nothing is going to happen by itself, so the conversation does not read as ready.
+    await expect(session.locator('.structured-agent-state').first().locator('..')).toContainText('Stopped at limit');
+    await expect(listRow(page, sessionId)).toContainText('Stopped at limit');
+    await expect(listRow(page, sessionId)).not.toHaveAttribute('data-need', 'true');
   });
 });
 

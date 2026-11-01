@@ -376,7 +376,7 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
 const limitOf = (fixture: LongRunFixture): TurnUsageLimit | undefined => latestLimit(fixture.items);
 
 /** Finished or let go, as the host's `holds`: it has its rows, and the snapshot no longer carries it. */
-const NOT_HELD: ReadonlySet<UsageLimitPhase> = new Set(['resumed', 'cancelled', 'not-included', 'left', 'person-refused']);
+const NOT_HELD: ReadonlySet<UsageLimitPhase> = new Set(['resumed', 'cancelled', 'left', 'person-refused']);
 
 /** What `snapshot.usageLimits` holds for this conversation. */
 export function openLimitOf(fixture: LongRunFixture): OpenUsageLimit | undefined {

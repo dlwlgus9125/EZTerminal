@@ -184,14 +184,52 @@ describe('a stop becomes a card', () => {
     expect(h.lastCard()).toMatchObject({ phase: 'waiting', resumeAt: new Date(stoppedMs + RESUME_TIMING.afterResetMs).toISOString() });
   });
 
-  it('a plan without this AI gets a card and nothing more: it holds nothing and stays in no file', async () => {
+  it('a plan without this AI holds nothing, and stays said: the snapshot carries it so the header and the list can', async () => {
     const h = harness();
     h.stop({ kind: 'not-included', window: 'unknown' });
     expect(h.coordinator.canDispatchTurn({ id: 'turn-queued', sessionId: 'chat', commandId: 'other' })).toBe(true);
     await h.coordinator.settled();
     expect(h.lastCard()).toMatchObject({ phase: 'not-included' });
-    expect(h.saved.jobs).toEqual({});
+    expect(h.coordinator.limitOpen('chat')).toBe(false);
+    expect(h.coordinator.usageLimits(h.held.snapshot)?.chat).toMatchObject({ phase: 'not-included' });
     expect(h.wakeQueuedTurns).toHaveBeenCalled();
+  });
+
+  it('a plan without this AI stays said across a restart, with no second row', async () => {
+    const h = harness({ jobs: { 'stop-1': job({ phase: 'not-included', window: 'unknown' }) } });
+    await h.coordinator.start();
+    await h.coordinator.settled();
+    expect(h.coordinator.usageLimits(h.held.snapshot)?.chat).toMatchObject({ phase: 'not-included' });
+    expect(h.lastCard()).toMatchObject({ phase: 'not-included' });
+    h.coordinator.dispose();
+  });
+
+  it('a message of a person closes a plan without this AI: it never reads as refused, and a refusal is a new card', async () => {
+    const h = harness();
+    h.stop({ kind: 'not-included', window: 'unknown' });
+    await h.coordinator.settled();
+    h.coordinator.personSent('chat', 'turn-person');
+    await h.coordinator.settled();
+    expect(h.coordinator.usageLimits(h.held.snapshot)).toBeUndefined();
+    expect(h.saved.jobs).toEqual({});
+    h.stop({ kind: 'not-included', window: 'unknown' }, 'turn-person');
+    await h.coordinator.settled();
+    expect(h.lastCard()).toMatchObject({ phase: 'not-included', turnId: 'turn-person' });
+    expect(h.cards().filter((card) => card?.type === 'usage-limit' && card.phase === 'person-refused')).toEqual([]);
+  });
+
+  it('anything else that runs in the conversation closes a plan without this AI', async () => {
+    const h = harness();
+    await h.coordinator.start();
+    h.stop({ kind: 'not-included', window: 'unknown' });
+    await h.coordinator.settled();
+    h.held.snapshot = { ...h.held.snapshot, turns: [...h.held.snapshot.turns, turn('turn-report', { state: 'working', errorCode: undefined })] } as DaemonSnapshot;
+    h.emit({ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: 'turn-report' } } as DaemonEvent);
+    await new Promise((resolve) => setImmediate(resolve));
+    await h.coordinator.settled();
+    expect(h.coordinator.usageLimits(h.held.snapshot)).toBeUndefined();
+    expect(h.saved.jobs).toEqual({});
+    h.coordinator.dispose();
   });
 
   it.each(['claude', 'codex'])('a managed child never resumes by itself, and on %s, where the live run proved it, a person can carry it on (D7)', async (providerId) => {
