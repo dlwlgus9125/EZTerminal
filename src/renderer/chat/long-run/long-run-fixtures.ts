@@ -118,7 +118,14 @@ function opening(lang: LongLanguage, turnId: string): DaemonTranscriptItem[] {
 
 // ── A. Into a running turn ─────────────────────────────────────────────────────
 
+/** 시안 data: long instructions, the way one pasted in the middle of a turn runs on. */
+const LONG_TEXT = {
+  ko: '`src/cart.test.ts`만 돌려도 돼. 전체 테스트는 오래 걸려. 그리고 할인 계산은 건드리지 말고, 합계가 틀린 경우만 고쳐 줘. 고친 뒤에는 무엇을 바꿨는지 파일별로 짧게 정리하고, 테스트 이름도 같이 적어 줘. 결과가 다르면 멈추고 알려 줘.',
+  en: 'Running `src/cart.test.ts` alone is enough, the whole suite takes long. Leave the discount maths alone and fix only the totals that are wrong. Afterwards list what changed per file in short, with the test names. If the result differs, stop and tell me.',
+} as const;
+
 export type SteerVariant =
+  | 'long-messages' | 'long-behind-approval'
   | 'busy' | 'writing' | 'on-its-way' | 'on-its-way-text' | 'landed' | 'landed-new-turn' | 'landed-rewritten' | 'landed-then-limit' | 'caught-stop' | 'caught-limit' | 'behind-approval' | 'review-turn' | 'compact-turn' | 'turn-ended' | 'failed' | 'failed-disconnected' | 'unconfirmed';
 
 const FULL_SUITE = 'pnpm test';
@@ -148,6 +155,10 @@ export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFi
   const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', started)], state: 'working', rows: {} };
   const writing: LongRunFixture = { ...running, items: [...opening(lang, 'turn-run'), item(6, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })] };
   switch (variant) {
+    case 'long-messages':
+      return { ...running, steered: [1, 2, 3, 4].map((index) => steered(lang, 'on-its-way', { id: `long-${String(index)}`, text: LONG_TEXT[lang], behind: 'tool' })) };
+    case 'long-behind-approval':
+      return { ...steerStory(lang, 'behind-approval'), steered: [1, 2, 3].map((index) => steered(lang, 'behind-approval', { id: `long-${String(index)}`, text: LONG_TEXT[lang] })) };
     case 'busy': return running;
     case 'writing': return writing;
     case 'on-its-way': return { ...running, steered: [steered(lang, 'on-its-way', { behind: 'tool' })] };

@@ -1210,6 +1210,8 @@ export function StructuredAgentChildTrack({
  */
 export interface ComposerSteer {
   readonly running: boolean;
+  /** A decision waits above the box. */
+  readonly decisionOpen?: boolean;
   readonly onSteer: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   /** On their way, held or failed: a landed message is a transcript row. */
   readonly messages?: readonly SteeredMessage[];
@@ -1683,7 +1685,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         if (!disabled) takeFiles(event.dataTransfer.files);
       }}
     >
-      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} onToBox={steerToBox}
+      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={steerToBox}
         {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: steer.onToQueue } : {})} />}
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
@@ -2743,7 +2745,7 @@ export function StructuredAgentSessionPanel({
   const steerHint = longRun?.steer && turnCurrent
     ? (variant === 'mobile' ? longRunCopy.steer.hintMobile : longRunCopy.steer.hint)[steerHintKey] : undefined;
   const longRunHint = steerHint ?? (longRun?.limitHint ? longRunCopy.limit.composerHint : undefined);
-  const composerSteer = useMemo(() => (longRun?.steer ? { ...longRun.steer, running: turnCurrent } : undefined), [longRun?.steer, turnCurrent]);
+  const composerSteer = useMemo(() => (longRun?.steer ? { ...longRun.steer, running: turnCurrent, decisionOpen: state === 'blocked' } : undefined), [longRun?.steer, state, turnCurrent]);
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged

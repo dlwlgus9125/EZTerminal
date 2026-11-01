@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { SteeredMessage } from '../../../shared/long-run';
 import { Button } from '../../ui/Button';
@@ -22,15 +22,56 @@ export function steerStateText(message: SteeredMessage, copy: SteerCopy, codex: 
   }
 }
 
+/** Of the conversation panel: the tray's list never takes more than this, and below that height it folds to one line. */
+const LIST_SHARE = 0.24;
+const LIST_FLOOR = 64;
+const FOLD_BELOW = 560;
+
+/** The panel's real height: a phone's keyboard takes much of it, and viewport units do not see that everywhere. */
+function usePanelHeight(element: HTMLElement | null): number | undefined {
+  const [height, setHeight] = useState<number>();
+  useLayoutEffect(() => {
+    const panel = element?.closest('.structured-agent');
+    if (!panel || typeof ResizeObserver === 'undefined') return undefined;
+    const read = (): void => setHeight(panel.getBoundingClientRect().height);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [element]);
+  return height;
+}
+
+/** Two lines of a long message, and the rest on request: only offered when there is more. */
+function SteerText({ text }: { readonly text: string }): JSX.Element {
+  const copy = useChatCopy().longRun.steer;
+  const body = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false);
+  useLayoutEffect(() => {
+    const element = body.current;
+    if (element && !open) setMore(element.scrollHeight > element.clientHeight + 1);
+  }, [open, text]);
+  return (
+    <>
+      <p ref={body} className="chat-steer__text" data-open={open || undefined}>{text}</p>
+      {more && <button type="button" className="chat-link-button chat-steer__more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? copy.fold : copy.unfold}</button>}
+    </>
+  );
+}
+
 /**
  * 시안: messages on their way into the running turn. They sit above the message box, not in the transcript: until a
  * message lands it has no place there. Only the host's explicit `landed` says it arrived: a message that just leaves the
  * list is announced as nothing, since the host may have cancelled or moved it. A failed one is never sent again by a
- * button here (neither AI drops a repeat for us): it can go to the queue or back to the box.
+ * button here (neither AI drops a repeat for us): it can go to the queue or back to the box. It never takes the box or a
+ * decision off the screen: its list is capped to a share of the panel and scrolls inside, and a short panel folds it.
  */
-export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox }: {
+export function SteerTray({ messages, codex, decisionOpen = false, onFocusDecision, onToQueue, onToBox }: {
   readonly messages: readonly SteeredMessage[];
   readonly codex: boolean;
+  /** A decision waits above the box: on a short panel it has the room, so this stays one line. */
+  readonly decisionOpen?: boolean;
   readonly onFocusDecision?: () => boolean;
   readonly onToQueue?: (message: SteeredMessage) => void;
   readonly onToBox: (message: SteeredMessage) => void;
@@ -44,15 +85,30 @@ export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox
     if (changed) setAnnounced(changed.state === 'landed' ? copy.announceLanded : copy.announceHeld(steerStateText(changed, copy, codex)));
   }, [codex, copy, messages]);
   const shown = messages.filter((message) => message.state !== 'landed');
+  const [section, setSection] = useState<HTMLElement | null>(null);
+  const panelHeight = usePanelHeight(section);
+  const short = panelHeight !== undefined && panelHeight < FOLD_BELOW;
+  const [opened, setOpened] = useState(false);
+  const yields = short && decisionOpen;
+  const listOpen = !short || (opened && !yields);
+  const newest = shown[shown.length - 1];
+  const summary = newest ? steerStateText(newest, copy, codex) : undefined;
   return (
     <>
       {shown.length > 0 && (
-        <section className="chat-steer" aria-label={copy.tray} data-testid="chat-steer-tray">
-          <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{shown.length}</span></p>
-          <ol>
+        <section ref={setSection} className="chat-steer" aria-label={copy.tray} data-testid="chat-steer-tray">
+          {yields && <p className="chat-steer__toggle" data-testid="chat-steer-line"><Glyph name="next" /><span>{copy.tray}</span><span>{shown.length}</span><span className="chat-steer__summary">{summary}</span></p>}
+          {short && !yields && (
+            <button type="button" className="chat-steer__toggle" aria-expanded={opened} onClick={() => setOpened((value) => !value)} data-testid="chat-steer-toggle">
+              <Glyph name={opened ? 'down' : 'next'} /><span>{copy.tray}</span><span>{shown.length}</span>
+              {!opened && <span className="chat-steer__summary">{summary}</span>}
+            </button>
+          )}
+          {!short && <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{shown.length}</span></p>}
+          {listOpen && <ol className="chat-steer__list" tabIndex={0} aria-label={copy.tray} style={panelHeight === undefined ? undefined : { maxHeight: Math.max(LIST_FLOOR, Math.round(panelHeight * LIST_SHARE)) }}>
             {shown.map((message) => (
               <li key={message.id} className="chat-steer__item" data-state={message.state} data-testid="chat-steer-message">
-                <p className="chat-steer__text">{message.text}</p>
+                <SteerText text={message.text} />
                 <p className="chat-steer__state">
                   {message.state === 'on-its-way' && <Led tone="on" />}
                   {message.state === 'behind-approval' && <Glyph name="clock" />}
@@ -75,7 +131,7 @@ export function SteerTray({ messages, codex, onFocusDecision, onToQueue, onToBox
                 )}
               </li>
             ))}
-          </ol>
+          </ol>}
         </section>
       )}
       <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="chat-steer-announce">{announced}</span>

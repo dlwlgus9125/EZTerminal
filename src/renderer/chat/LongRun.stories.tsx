@@ -947,6 +947,68 @@ export const PhoneFeed360: Story = {
 };
 export const PhoneFeed412: Story = { render: () => <FeedScreen width={412} height={915} /> };
 
+/** The tray never takes the box or a decision off the screen: its list is capped and scrolls inside, and a long message folds. */
+async function trayLeavesRoom(canvasElement: HTMLElement, frameHeight: number): Promise<void> {
+  const frame = await findIn(canvasElement, '[data-testid="phone-long-run-frame"]');
+  const tray = await findIn(canvasElement, TRAY);
+  const bottom = frame.getBoundingClientRect().bottom + 1;
+  const boxStays = async (): Promise<void> => {
+    await expect((await findIn(canvasElement, '.chat-composer__box')).getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+    await expect((await composer(canvasElement)).getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+  };
+  const toggle = await waitFor(() => {
+    const folded = tray.querySelector<HTMLElement>('[data-testid="chat-steer-toggle"]');
+    if (frameHeight < 560) expect(folded).not.toBeNull();
+    return folded;
+  });
+  if (toggle) {
+    // A short panel: one line, and the newest state still says what matters.
+    await expect(tray.querySelector('ol')).toBeNull();
+    await expect(tray.getBoundingClientRect().height).toBeLessThanOrEqual(64);
+    await boxStays();
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  }
+  const list = await waitFor(() => { const element = tray.querySelector<HTMLElement>('ol'); expect(element).not.toBeNull(); return element!; });
+  await waitFor(() => expect(list.scrollHeight).toBeGreaterThan(list.clientHeight));
+  await expect(tray.getBoundingClientRect().height).toBeLessThanOrEqual(Math.max(frameHeight * 0.34, 190));
+  await boxStays();
+}
+/** Phone 360×800: four long messages. */
+export const PhoneSteerLong360: Story = phone('phone-steer-long', (lang) => steerStory(lang, 'long-messages'), 360, 800, {}, async ({ canvasElement }) => {
+  await trayLeavesRoom(canvasElement, 800);
+});
+/** The same with the keyboard open (about 420 px left): the box stays. */
+export const PhoneSteerLongKeyboard: Story = phone('phone-steer-long-keyboard', (lang) => steerStory(lang, 'long-messages'), 360, 420, {}, async ({ canvasElement }) => {
+  await trayLeavesRoom(canvasElement, 420);
+});
+/** Keyboard open with a decision waiting: the decision's buttons and the box both stay. */
+export const PhoneSteerLongApproval: Story = phone('phone-steer-long-approval', (lang) => steerStory(lang, 'long-behind-approval'), 360, 420, {}, async ({ canvasElement }) => {
+  const frame = await findIn(canvasElement, '[data-testid="phone-long-run-frame"]');
+  const allow = await waitFor(() => within(canvasElement).getByRole('button', { name: '허용' }));
+  // The decision has the room: one still line that says what happens to the messages, and nothing to open over it.
+  const line = await findIn(canvasElement, '[data-testid="chat-steer-line"]');
+  await expect(line).toHaveTextContent('승인 뒤에 전달됩니다');
+  await expect(canvasElement.querySelector('[data-testid="chat-steer-toggle"]')).toBeNull();
+  await expect(canvasElement.querySelector(`${TRAY} ol`)).toBeNull();
+  const bottom = frame.getBoundingClientRect().bottom + 1;
+  await waitFor(() => expect(allow.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom));
+  await expect(allow.getBoundingClientRect().top).toBeGreaterThanOrEqual(frame.getBoundingClientRect().top);
+  await expect((await findIn(canvasElement, '.chat-composer__box')).getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+});
+/** A long message folds to two lines, and 전체 보기 opens it in place, inside the capped list. */
+export const SteerLongExpand: Story = chat('steer-long-expand', (lang) => steerStory(lang, 'long-messages'), { width: 520, height: 860 }, async ({ canvasElement }) => {
+  const tray = await findIn(canvasElement, TRAY);
+  const first = within(tray).getAllByTestId('chat-steer-message')[0]!;
+  const text = first.querySelector<HTMLElement>('.chat-steer__text')!;
+  const folded = text.getBoundingClientRect().height;
+  const toggle = within(first).getByRole('button', { name: '전체 보기' });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await userEvent.click(toggle);
+  await waitFor(() => expect(text.getBoundingClientRect().height).toBeGreaterThan(folded));
+  await expect(within(first).getByRole('button', { name: '접기' })).toHaveAttribute('aria-expanded', 'true');
+});
+
 /**
  * The WebView 74 floor: `overflow-wrap: anywhere` needs Chrome 80, so there the declared `break-word` fallback is what
  * runs, and it does not lower a flex item's min-content. This style forces that case in a current browser.

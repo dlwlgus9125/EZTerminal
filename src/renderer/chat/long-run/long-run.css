@@ -118,10 +118,50 @@
   font-variant-numeric: tabular-nums;
 }
 
-.chat-steer ol {
+/* The list's share of the panel is set on the element; this is the ceiling before the panel is measured. */
+.chat-steer > .chat-steer__list {
+  max-height: 11rem;
   margin: 0;
   padding: 0;
+  overflow-y: auto;
   list-style: none;
+}
+
+.chat-steer > .chat-steer__toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font: 600 var(--ui-font-size-xs) / 1.4 var(--ui-font-label);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-steer__toggle > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
+.chat-steer__toggle > span + span {
+  flex: none;
+  margin-left: var(--ui-space-1);
+}
+
+.chat-steer__toggle > .chat-steer__summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: var(--ui-space-2);
+  overflow: hidden;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-steer__item + .chat-steer__item {
@@ -136,6 +176,20 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
   overflow-wrap: anywhere;
+}
+
+/* Two lines until asked for more. The -webkit- form is the one WebView 74 reads. */
+.chat-steer__item > .chat-steer__text:not([data-open]) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.chat-steer__item > .chat-steer__more {
+  display: block;
+  margin-top: var(--ui-space-1);
+  font-size: var(--ui-font-size-xs);
 }
 
 .chat-steer__item > .chat-steer__state {
@@ -249,6 +303,11 @@
 .structured-agent[data-variant='mobile'] .chat-cli-action-card[data-kind='usage-limit'] .chat-cli-action-card__actions .chat-cli-dim,
 .structured-agent[data-variant='mobile'] .chat-cli-action-card[data-kind='usage-limit'] .chat-cli-action-card__mark {
   display: none;
+}
+
+.structured-agent[data-variant='mobile'] button.chat-steer__toggle,
+.structured-agent[data-variant='mobile'] .chat-steer__more {
+  min-height: 2.75rem;
 }
 
 .structured-agent[data-variant='mobile'] .chat-steer__actions > * {
