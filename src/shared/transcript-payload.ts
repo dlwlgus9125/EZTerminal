@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ChatAgentProfileSchema } from './chat-agent-profiles';
+import { APP_SENT_REASONS, STEER_FALLBACKS, USAGE_LIMIT_CHILD_KINDS, USAGE_LIMIT_FAILURES, USAGE_LIMIT_PHASES, USAGE_LIMIT_WINDOWS } from './long-run';
 import { REVIEW_LIMITS, REVIEW_SEVERITIES, REVIEW_STATES } from './review-findings';
 import {
   TASK_SUGGESTION_LIMITS, TASK_SUGGESTION_OUTCOMES, TURN_RECAP_FAILURES, TURN_RECAP_LIMITS, TURN_RECAP_STATES, TURN_RECAP_TRIGGERS,
@@ -266,6 +267,52 @@ const TaskSuggestionSendPayloadSchema = z.object({
   turnId: ShortText,
 }).strict();
 
+/**
+ * One limit card (long-run continuity, `long-run-v1`). The host appends rows with the same `stopId` as the stop moves
+ * on; clients show one card per id from its latest row, placed at that row's turn. The row's `text` reads on its own.
+ */
+const UsageLimitPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('usage-limit'),
+  stopId: ShortText,
+  turnId: ShortText,
+  providerId: ShortText,
+  phase: z.enum(USAGE_LIMIT_PHASES),
+  window: z.enum(USAGE_LIMIT_WINDOWS),
+  stoppedAt: ShortText,
+  resetsAt: ShortText.optional(),
+  resumeAt: ShortText.optional(),
+  retryAt: ShortText.optional(),
+  refusedAt: ShortText.optional(),
+  triedAt: ShortText.optional(),
+  offBy: z.enum(['card', 'setting']).optional(),
+  childKind: z.enum(USAGE_LIMIT_CHILD_KINDS).optional(),
+  failure: z.enum(USAGE_LIMIT_FAILURES).optional(),
+}).strict();
+
+/** The user row of a "Continue." the app sent: the row shows that text and says why it went out. */
+const AppSentPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('app-sent'),
+  stopId: ShortText,
+  reason: z.enum(APP_SENT_REASONS),
+}).strict();
+
+/** The user row of a message that landed in a running turn, written where it landed. */
+const SteerPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('steer'),
+  rewritten: z.boolean().optional(),
+  newTurn: z.boolean().optional(),
+}).strict();
+
+/** The user row of a message meant for the running turn that went to the queue, and why. */
+const SteerQueuedPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('steer-queued'),
+  reason: z.enum(STEER_FALLBACKS),
+}).strict();
+
 export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   ToolPayloadSchema,
   TodoPayloadSchema,
@@ -281,6 +328,10 @@ export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   TaskSuggestionStatusPayloadSchema,
   TaskSuggestionsDroppedPayloadSchema,
   TaskSuggestionSendPayloadSchema,
+  UsageLimitPayloadSchema,
+  AppSentPayloadSchema,
+  SteerPayloadSchema,
+  SteerQueuedPayloadSchema,
 ]);
 
 export type TranscriptPayload = z.infer<typeof TranscriptPayloadSchema>;
@@ -298,6 +349,10 @@ export type TaskSuggestionPayload = z.infer<typeof TaskSuggestionPayloadSchema>;
 export type TaskSuggestionStatusPayload = z.infer<typeof TaskSuggestionStatusPayloadSchema>;
 export type TaskSuggestionsDroppedPayload = z.infer<typeof TaskSuggestionsDroppedPayloadSchema>;
 export type TaskSuggestionSendPayload = z.infer<typeof TaskSuggestionSendPayloadSchema>;
+export type UsageLimitPayload = z.infer<typeof UsageLimitPayloadSchema>;
+export type AppSentPayload = z.infer<typeof AppSentPayloadSchema>;
+export type SteerPayload = z.infer<typeof SteerPayloadSchema>;
+export type SteerQueuedPayload = z.infer<typeof SteerQueuedPayloadSchema>;
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
 /** Tolerant parse: unknown versions and malformed values become `undefined`. */

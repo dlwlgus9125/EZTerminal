@@ -92,6 +92,36 @@ describe('daemon protocol', () => {
     expect(safeParseDaemonCommand({ ...base, type: 'review.cancel', payload: { sessionId: 's', reviewId: 'r' } }).success).toBe(true);
   });
 
+  it('parses long-run commands and refuses what a running turn cannot take', () => {
+    const base = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      commandId: 'command-long-run',
+      idempotencyKey: 'desktop:command-long-run',
+      expectedRevision: 3,
+      issuedAt: '2026-11-01T10:00:00.000Z',
+      principal,
+    };
+    const steer = (payload: Record<string, unknown>) => safeParseDaemonCommand({ ...base, type: 'agent.steer', payload: { sessionId: 's', turnId: 't', prompt: 'Use the other file.', ...payload } });
+    expect(steer({}).success).toBe(true);
+    // D1: only plain text goes into a running turn.
+    expect(steer({ context: { attachments: [] } }).success).toBe(false);
+    expect(steer({ prompt: '/compact' }).success).toBe(false);
+    expect(steer({ prompt: '  /compact' }).success).toBe(false);
+    expect(steer({ turnId: undefined }).success).toBe(false);
+    const settle = (action: string) => safeParseDaemonCommand({ ...base, type: 'agent.steer-settle', payload: { sessionId: 's', steerId: 'c', action } });
+    expect(settle('queue').success).toBe(true);
+    expect(settle('box').success).toBe(true);
+    expect(settle('send').success).toBe(false);
+    const limit = (action: string) => safeParseDaemonCommand({ ...base, type: 'long-run.limit-action', payload: { sessionId: 's', stopId: 'stop', action } });
+    for (const action of ['try-now', 'resume', 'auto-off', 'auto-on', 'schedule', 'unschedule', 'leave']) expect(limit(action).success, action).toBe(true);
+    expect(limit('forget').success).toBe(false);
+    const submit = (payload: Record<string, unknown>) => safeParseDaemonCommand({ ...base, type: 'agent.submit', payload: { sessionId: 's', prompt: 'Continue.', ...payload } });
+    expect(submit({ longRunResume: { stopId: 'stop', reason: 'scheduled-time' } }).success).toBe(true);
+    expect(submit({ longRunResume: { stopId: 'stop', reason: 'because' } }).success).toBe(false);
+    expect(submit({ notSteered: true }).success).toBe(true);
+    expect(submit({ notSteered: false }).success).toBe(false);
+  });
+
   it('requires session scope for MCP principals', () => {
     expect(safeParseDaemonCommand({
       protocolVersion: DAEMON_PROTOCOL_VERSION,

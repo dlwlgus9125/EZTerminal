@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ApprovalResponseSchema, type ApprovalRequest, type ApprovalResponse } from './approval-request';
 import { ChatMessageContextSchema, type ChatMessageContext } from './chat-message';
 import { isSafeRef } from './git-status';
+import { APP_SENT_REASONS, LIMIT_ACTIONS, type AppSentReason, type LimitAction } from './long-run';
 import { REVIEW_LIMITS, type ReviewFailureReason } from './review-findings';
 import { SuggestedTaskStartSchema, type TranscriptPayload } from './transcript-payload';
 import type { SuggestedTaskStart } from './turn-wrap-up';
@@ -272,6 +273,12 @@ export interface DaemonSnapshot {
   readonly reviewSupport?: Readonly<Record<string, DaemonReviewSupport>>;
   /** Turn wrap-up: the AI's guess of the person's next message, by session; host memory, never stored. */
   readonly nextPromptSuggestions?: Readonly<Record<string, import('./turn-wrap-up').NextPromptSuggestion>>;
+  /** `long-run-v1`: each conversation's open limit, with its place in the line of sends; held by the host beside the store. */
+  readonly usageLimits?: Readonly<Record<string, import('./long-run').OpenUsageLimit>>;
+  /** `long-run-v1`: messages on their way into a running turn, by session; they have no row until they land. */
+  readonly steers?: Readonly<Record<string, readonly import('./long-run').SteeredMessage[]>>;
+  /** `long-run-v1`: which AIs run long-run continuity on this host, by provider id; below the measured version it is false. */
+  readonly longRunSupport?: Readonly<Record<string, boolean>>;
 }
 
 /** Whether one AI can review now (`review-loop-v1`). */
@@ -348,12 +355,15 @@ export const DAEMON_COMMAND_TYPES = [
   'agent.submit',
   'agent.interrupt-and-submit',
   'agent.interrupt',
+  'agent.steer',
+  'agent.steer-settle',
   'agent.queue',
   'agent.set-settings',
   'agent.cancel',
   'agent.archive',
   'agent.detach',
   'agent.release',
+  'long-run.limit-action',
   'review.start',
   'review.fix',
   'review.resolve',
@@ -456,9 +466,19 @@ export interface DaemonCommandPayloads {
     readonly reportOf?: string;
     /** Turn wrap-up: this message carries out a card of this conversation (여기서 하기); a person's send only. */
     readonly wrapUpTask?: DaemonWrapUpTaskRef;
+    /** The "Continue." the host sends for a limit card (`long-run-runtime` only). */
+    readonly longRunResume?: { readonly stopId: string; readonly reason: AppSentReason };
+    /** Long-run: meant for the running turn, but what it carries cannot go in, so it queued. */
+    readonly notSteered?: true;
   };
   readonly 'agent.interrupt-and-submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
   readonly 'agent.interrupt': { readonly sessionId: string };
+  /** Long-run: plain text for the running turn `turnId`. It stops nothing; when it cannot go in, it queues. */
+  readonly 'agent.steer': { readonly sessionId: string; readonly turnId: string; readonly prompt: string };
+  /** What a person does with a steer that did not land: `queue` only from `failed`, `box` takes the text back. */
+  readonly 'agent.steer-settle': { readonly sessionId: string; readonly steerId: string; readonly action: 'queue' | 'box' };
+  /** A person's answer on a limit card. */
+  readonly 'long-run.limit-action': { readonly sessionId: string; readonly stopId: string; readonly action: LimitAction };
   readonly 'agent.queue': {
     readonly sessionId: string;
     readonly turnId: string;
@@ -812,9 +832,19 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     reasoningEffort: z.string().min(1).max(32).optional(),
     parentSessionId: IdentifierSchema.optional(),
   }).strict(),
-  'agent.submit': AgentMessageFields.extend({ wrapUpTask: z.object(WrapUpTaskRefFields).strict().optional() }).strict().refine(messageFits, MESSAGE_TOO_LARGE),
+  'agent.submit': AgentMessageFields.extend({
+    wrapUpTask: z.object(WrapUpTaskRefFields).strict().optional(),
+    longRunResume: z.object({ stopId: IdentifierSchema, reason: z.enum(APP_SENT_REASONS) }).strict().optional(),
+    notSteered: z.literal(true).optional(),
+  }).strict().refine(messageFits, MESSAGE_TOO_LARGE),
   'agent.interrupt-and-submit': AgentMessagePayloadSchema,
   'agent.interrupt': SessionIdSchema,
+  // D1: only plain text goes into a running turn. A `/` command was never measured there, so it queues.
+  'agent.steer': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, prompt: NonEmptyStringSchema.max(100_000) }).strict()
+    .refine((value) => !value.prompt.trimStart().startsWith('/'), 'A slash command does not go into a running turn.')
+    .refine(messageFits, MESSAGE_TOO_LARGE),
+  'agent.steer-settle': z.object({ sessionId: IdentifierSchema, steerId: IdentifierSchema, action: z.enum(['queue', 'box']) }).strict(),
+  'long-run.limit-action': z.object({ sessionId: IdentifierSchema, stopId: IdentifierSchema, action: z.enum(LIMIT_ACTIONS) }).strict(),
   'agent.queue': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, turnRevision: z.number().int().nonnegative(), action: z.enum(['remove', 'take', 'run-next']) }).strict(),
   'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional(), reasoningEffort: z.string().min(1).max(32).optional(), scope: z.enum(['once', 'keep']).optional(), clearPending: z.literal(true).optional() }).strict(),
   'agent.cancel': SessionIdSchema,

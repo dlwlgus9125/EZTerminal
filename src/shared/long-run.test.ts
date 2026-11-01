@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { resumeDue, resumesByItself, RESUME_TIMING, turnAutoResumeOff, type TurnUsageLimit, type UsageLimitPhase } from './long-run';
+import {
+  APP_SENT_REASONS, LONG_RUN_CAPABILITY, LONG_RUN_PRINCIPAL, resumeDue, resumesByItself, RESUME_TIMING, STEER_FALLBACKS, turnAutoResumeOff, USAGE_LIMIT_PHASES,
+  type TurnUsageLimit, type UsageLimitPhase,
+} from './long-run';
+import { parseTranscriptPayload } from './transcript-payload';
 
 const RESUME = '2026-11-01T06:12:00.000Z';
 const RETRY = '2026-11-01T06:22:00.000Z';
@@ -11,9 +15,41 @@ function limit(phase: UsageLimitPhase, extra: Partial<TurnUsageLimit> = {}): Tur
   return { turnId: 'turn', providerId: 'claude', phase, window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resumeAt: RESUME, retryAt: RETRY, ...extra };
 }
 
-const PHASES: readonly UsageLimitPhase[] = [
-  'waiting', 'resuming', 'resumed', 'retrying', 'gave-up', 'ask-reset', 'scheduled', 'ask-unknown', 'ask-reopened', 'off', 'left', 'cancelled', 'person-refused', 'skipped', 'not-included', 'child', 'failed', 'unconfirmed',
-];
+const PHASES: readonly UsageLimitPhase[] = USAGE_LIMIT_PHASES;
+
+describe('the stored shapes', () => {
+  const row = { v: 1, type: 'usage-limit', stopId: 'stop', turnId: 'turn', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z' };
+
+  it('names the capability and the host principal once', () => {
+    expect(LONG_RUN_CAPABILITY).toBe('long-run-v1');
+    expect(LONG_RUN_PRINCIPAL).toBe('long-run-runtime');
+  });
+
+  it('keeps a card in every phase, with the clocks a phase has', () => {
+    for (const phase of USAGE_LIMIT_PHASES) expect(parseTranscriptPayload({ ...row, phase })?.type, phase).toBe('usage-limit');
+    const full = { ...row, phase: 'retrying', resetsAt: RESUME, resumeAt: RESUME, retryAt: RETRY, refusedAt: RESUME, triedAt: RESUME };
+    expect(parseTranscriptPayload(full)).toEqual(full);
+    expect(parseTranscriptPayload({ ...row, phase: 'off', offBy: 'setting' })).toBeDefined();
+    expect(parseTranscriptPayload({ ...row, phase: 'child', childKind: 'managed' })).toBeDefined();
+    expect(parseTranscriptPayload({ ...row, phase: 'failed', failure: 'session-gone' })).toBeDefined();
+  });
+
+  it('never stores the line, a phase it does not know, or a child the AI runs itself', () => {
+    expect(parseTranscriptPayload({ ...row, line: { position: 1, total: 2 } })).toBeUndefined();
+    expect(parseTranscriptPayload({ ...row, phase: 'lifted' })).toBeUndefined();
+    expect(parseTranscriptPayload({ ...row, phase: 'child', childKind: 'provider' })).toBeUndefined();
+    expect(parseTranscriptPayload({ ...row, stopId: undefined })).toBeUndefined();
+  });
+
+  it('marks the rows of what the app sent and what a steer became', () => {
+    for (const reason of APP_SENT_REASONS) expect(parseTranscriptPayload({ v: 1, type: 'app-sent', stopId: 'stop', reason })?.type).toBe('app-sent');
+    expect(parseTranscriptPayload({ v: 1, type: 'app-sent', stopId: 'stop', reason: 'bored' })).toBeUndefined();
+    expect(parseTranscriptPayload({ v: 1, type: 'steer', rewritten: true })?.type).toBe('steer');
+    expect(parseTranscriptPayload({ v: 1, type: 'steer', newTurn: true })?.type).toBe('steer');
+    for (const reason of STEER_FALLBACKS) expect(parseTranscriptPayload({ v: 1, type: 'steer-queued', reason })?.type).toBe('steer-queued');
+    expect(parseTranscriptPayload({ v: 1, type: 'steer-queued', reason: 'tired' })).toBeUndefined();
+  });
+});
 
 describe('when the app may send by itself', () => {
   it('only in a state that waits on a clock, and only once that time has passed', () => {

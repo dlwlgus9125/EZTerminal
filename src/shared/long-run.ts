@@ -1,50 +1,63 @@
 /**
- * 시안 (2026-11-01): draft types for bundle 3, long-run continuity. Nothing here is a contract yet: no host writes
- * these, there is no protocol command, payload schema or capability, and only Storybook fixtures fill them. The real
- * shapes are decided when the host is wired, after the draft is approved. What they rest on (and what was never seen,
- * above all a real limit): docs/ux/overhaul/approvals.md ("장시간 연속성").
+ * Long-run continuity's contract (`long-run-v1`): a usage limit's card and a message sent into a running turn. The
+ * host side is src/main/long-run-coordinator.ts. What this rests on, and what was never seen, above all a real limit:
+ * docs/ux/overhaul/approvals.md ("장시간 연속성").
  */
 
-/** The window that stopped a turn; `unknown` when the provider did not say which. */
-export type UsageLimitWindow = 'five-hour' | 'weekly' | 'unknown';
+export const LONG_RUN_CAPABILITY = 'long-run-v1';
+/** The host's own principal when it sends "Continue.": the only one `agent.submit.longRunResume` is accepted from. */
+export const LONG_RUN_PRINCIPAL = 'long-run-runtime';
 
-export type UsageLimitPhase =
+/** The window that stopped a turn; `unknown` when the provider did not say which. */
+export const USAGE_LIMIT_WINDOWS = ['five-hour', 'weekly', 'unknown'] as const;
+export type UsageLimitWindow = (typeof USAGE_LIMIT_WINDOWS)[number];
+
+export const USAGE_LIMIT_PHASES = [
   /** The reset is known and within hours: the app tries by sending "Continue." at `resumeAt`. */
-  | 'waiting'
+  'waiting',
   /** It is being sent now. */
-  | 'resuming'
+  'resuming',
   /** It went out; the row after the card shows exactly what. */
-  | 'resumed'
+  'resumed',
   /** Refused although the reset had passed: one later try at `retryAt`. */
-  | 'retrying'
+  'retrying',
   /** Refused twice: the app stops and asks. */
-  | 'gave-up'
+  'gave-up',
   /** The limit is weekly, or its reset is more than 6 hours away (D2): nothing goes out until they say so. */
-  | 'ask-reset'
+  'ask-reset',
   /** They said 그때 이어서 하기: waits for `resumeAt`, however far off. */
-  | 'scheduled'
+  'scheduled',
   /** No reset time is known. */
-  | 'ask-unknown'
+  'ask-unknown',
   /** The reset passed while the app was closed (D5). */
-  | 'ask-reopened'
+  'ask-reopened',
   /** Automatic resume went off, on this card (this conversation only) or in Settings (`offBy`). */
-  | 'off'
+  'off',
   /** They left it (그대로 두기). */
-  | 'left'
+  'left',
   /** They sent a message before the app did, and it went through. */
-  | 'cancelled'
+  'cancelled',
   /** They sent a message before the reset and the limit refused it: it stays in the session, and auto-resume is off. */
-  | 'person-refused'
+  'person-refused',
   /** An approval was open when the time came. */
-  | 'skipped'
+  'skipped',
   /** `usage_not_included`: the plan cannot use this at all, and nothing resets. */
-  | 'not-included'
+  'not-included',
   /** A child conversation: never automatic (D7). `childKind` says whether anything can be offered. */
-  | 'child'
+  'child',
   /** The host confirms the send failed and nothing went out. */
-  | 'failed'
+  'failed',
   /** The host cannot say whether "Continue." arrived. */
-  | 'unconfirmed';
+  'unconfirmed',
+] as const;
+export type UsageLimitPhase = (typeof USAGE_LIMIT_PHASES)[number];
+
+/** What an adapter reports with a turn a limit stopped (`turn-finished`). `resetsAt` is what the provider said, if it did. */
+export interface ProviderUsageLimit {
+  readonly window: UsageLimitWindow;
+  readonly resetsAt?: string;
+  readonly kind: 'resettable' | 'not-included';
+}
 
 /** One stopped turn's limit: the host knows the window and usually the reset. */
 export interface TurnUsageLimit {
@@ -76,6 +89,20 @@ export interface TurnUsageLimit {
   readonly failure?: 'disconnected' | 'session-gone';
 }
 
+/** An open limit as the snapshot carries it: the list and the feed read it, and have no transcript. */
+export interface OpenUsageLimit extends TurnUsageLimit {
+  /** One card, for as long as its rows carry this id. */
+  readonly stopId: string;
+}
+
+export const USAGE_LIMIT_FAILURES = ['disconnected', 'session-gone'] as const;
+/** A managed child a card can speak for. The AI's own subagents get no card (D7). */
+export const USAGE_LIMIT_CHILD_KINDS = ['managed-supported', 'managed'] as const;
+
+/** What a person can do on a limit card (`long-run.limit-action`). */
+export const LIMIT_ACTIONS = ['try-now', 'resume', 'auto-off', 'auto-on', 'schedule', 'unschedule', 'leave'] as const;
+export type LimitAction = (typeof LIMIT_ACTIONS)[number];
+
 /**
  * The decided timing (D2, D4, D6). Proposed values, not measured: only Claude's whole 10 minutes is, and that no signal
  * comes when a limit lifts. So `afterResetMs` is a try after the expected time, never a promise that it worked.
@@ -103,7 +130,8 @@ export function turnAutoResumeOff(limit: TurnUsageLimit): TurnUsageLimit {
 export const RESUME_TEXT = 'Continue.';
 
 /** Why a "Continue." went out: its scheduled time came (nothing says the limit has lifted), or the person pressed 지금 시도 or 이어서 하기. */
-export type AppSentReason = 'scheduled-time' | 'try-now' | 'resume-pressed';
+export const APP_SENT_REASONS = ['scheduled-time', 'try-now', 'resume-pressed'] as const;
+export type AppSentReason = (typeof APP_SENT_REASONS)[number];
 
 export type SteerDelivery =
   /** The host took it; the turn has not. A long tool holds it. */
@@ -144,7 +172,8 @@ export interface SteerLanding {
 }
 
 /** Why a message meant for the running turn went to the queue instead. */
-export type SteerFallback = 'review-turn' | 'compact-turn' | 'turn-ended' | 'not-plain';
+export const STEER_FALLBACKS = ['review-turn', 'compact-turn', 'turn-ended', 'not-plain'] as const;
+export type SteerFallback = (typeof STEER_FALLBACKS)[number];
 
 export interface LongRunSettings {
   /** 해제 예정 시각이 되면 자동으로 이어서 하기. */

@@ -26,6 +26,35 @@ function command(
   } as DaemonCommand;
 }
 
+describe('long-run commands', () => {
+  const noDescendants = { isManagedDescendant: () => false };
+  const decide = (type: DaemonCommandType, payload: Record<string, unknown>, principal: DaemonPrincipal, descendant = false) =>
+    authorizeDaemonCommand(command(type, payload, principal), descendant ? { isManagedDescendant: () => true } : noDescendants);
+  const personal: readonly [DaemonCommandType, Record<string, unknown>][] = [
+    ['agent.steer', { sessionId: 'chat', turnId: 'turn-1', prompt: 'Use the other file.' }],
+    ['agent.steer-settle', { sessionId: 'chat', steerId: 'steer-1', action: 'queue' }],
+    ['long-run.limit-action', { sessionId: 'chat', stopId: 'stop-1', action: 'try-now' }],
+  ];
+
+  it('lets a person on either device steer, settle a steer and answer a limit card', () => {
+    for (const [type, payload] of personal) {
+      expect(decide(type, payload, { kind: 'desktop', id: 'person' }).allowed, type).toBe(true);
+      expect(decide(type, payload, { kind: 'android', id: 'phone' }).allowed, type).toBe(true);
+    }
+  });
+
+  it('never lets an AI do any of them, not even on its own descendant', () => {
+    const agent: DaemonPrincipal = { kind: 'mcp', id: 'session-parent', sessionId: 'parent' };
+    for (const [type, payload] of personal) expect(decide(type, { ...payload, sessionId: 'child' }, agent, true).allowed, type).toBe(false);
+  });
+
+  it('denies an AI the resume marker, though it may message its own child', () => {
+    const agent: DaemonPrincipal = { kind: 'mcp', id: 'session-parent', sessionId: 'parent' };
+    expect(decide('agent.submit', { sessionId: 'child', prompt: 'Go.' }, agent, true).allowed).toBe(true);
+    expect(decide('agent.submit', { sessionId: 'child', prompt: 'Continue.', longRunResume: { stopId: 'stop-1', reason: 'try-now' } }, agent, true).allowed).toBe(false);
+  });
+});
+
 describe('turn wrap-up commands', () => {
   const noDescendants = { isManagedDescendant: () => false };
 

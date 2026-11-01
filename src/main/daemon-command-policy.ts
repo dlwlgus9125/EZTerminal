@@ -29,11 +29,14 @@ const ANDROID_COMMANDS = new Set<DaemonCommandType>([
   'agent.submit',
   'agent.interrupt-and-submit',
   'agent.interrupt',
+  'agent.steer',
+  'agent.steer-settle',
   'agent.queue',
   'agent.set-settings',
   'agent.cancel',
   'agent.archive',
   'agent.detach',
+  'long-run.limit-action',
   'review.start',
   'review.fix',
   'review.resolve',
@@ -78,11 +81,14 @@ function getTargetSessionId(command: DaemonCommand): string | undefined {
     case 'agent.submit':
     case 'agent.interrupt-and-submit':
     case 'agent.interrupt':
+    case 'agent.steer':
+    case 'agent.steer-settle':
     case 'agent.queue':
     case 'agent.set-settings':
     case 'agent.cancel':
     case 'agent.archive':
     case 'agent.detach':
+    case 'long-run.limit-action':
     case 'review.start':
     case 'review.fix':
     case 'review.resolve':
@@ -141,6 +147,10 @@ export function authorizeDaemonCommand(
       // Both commands are an agent's for its own children: the card is not. The AI proposes; a person starts.
       if ((command.type === 'agent.create' || command.type === 'agent.submit') && command.payload.wrapUpTask) {
         return denied(command, 'Only a person starts a suggested task.');
+      }
+      // A "Continue." is the host's to send; an AI's message to its child is only a message.
+      if (command.type === 'agent.submit' && command.payload.longRunResume) {
+        return denied(command, 'Only the host resumes a conversation a limit stopped.');
       }
 
       if (command.type === 'agent.create') {

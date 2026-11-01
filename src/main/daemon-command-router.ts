@@ -128,12 +128,15 @@ function providerNativeMutationTarget(
     case 'agent.submit':
     case 'agent.interrupt-and-submit':
     case 'agent.interrupt':
+    case 'agent.steer':
+    case 'agent.steer-settle':
     case 'agent.queue':
     case 'agent.set-settings':
     case 'agent.cancel':
     case 'agent.archive':
     case 'agent.detach':
     case 'agent.release':
+    case 'long-run.limit-action':
     case 'review.start':
     case 'review.fix':
     case 'review.resolve':
