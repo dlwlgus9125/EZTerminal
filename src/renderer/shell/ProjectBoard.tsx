@@ -5,7 +5,7 @@ import type { LiveConversation, LiveFlow, WaitingItem, otherProjects } from './s
 import { StageChain } from './StageChain';
 import type { ShellTerminal } from './LiveList';
 import { workflowRepeatLabel } from '../workflow/workflow-copy';
-import { conversationLineText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
+import { conversationLineText, flowPhaseText, providerName, useShellText, waitingDetailText, waitingKindText } from './shell-text';
 
 export interface BoardProject {
   readonly name: string;
@@ -84,7 +84,7 @@ function WaitingCard({ item, onDecide, onOpen }: {
     <article className="ez-shell-need" aria-label={`${waitingKindText(item.kind, text, item.asks)}: ${item.title}`} data-testid="shell-need" data-kind={item.kind}>
       <div className="ez-shell-need__k"><Glyph name={item.kind === 'question' || item.asks === 'answer' ? 'q' : 'ok'} size={14} />{waitingKindText(item.kind, text, item.asks)}{item.providerId ? ` · ${providerName(item.providerId)}` : ''}</div>
       <p className="ez-shell-need__t">{item.title}</p>
-      {item.kind === 'command' ? <pre className="ez-shell-need__c">{item.detail}</pre> : item.detail && <p className="ez-shell-need__q">{item.detail}</p>}
+      {item.kind === 'command' ? <pre className="ez-shell-need__c">{item.detail}</pre> : waitingDetailText(item, text) && <p className="ez-shell-need__q">{waitingDetailText(item, text)}</p>}
       <div className="ez-shell-btns">
         {decidable ? (
           <>

@@ -88,44 +88,63 @@ export async function submitConversationMessage(access: ConversationCommandAcces
 }
 
 /**
- * Every streamed row moves the one revision a command must match, so a steer loses that race as a matter of course. A
- * lost race recorded nothing and reached no provider: each attempt is safe, with a fresh command id, because a repeated
- * key would replay the stored refusal.
+ * Every streamed row moves the one revision a command must match, so a message sent while a turn runs loses that race as
+ * a matter of course. A lost race recorded nothing and reached no provider: each attempt is safe, with a fresh command
+ * id, because a repeated key would replay the stored refusal.
  */
-const STEER_ATTEMPTS = 8;
-const STEER_PAUSE_MS = 50;
+const RACE_ATTEMPTS = 8;
+const RACE_PAUSE_MS = 50;
 
-/** Send plain text into the running turn: escrowed as any message is, and the host queues it if it cannot go in. */
-export async function steerConversationMessage(access: ConversationCommandAccess, input: {
-  readonly sessionId: string;
-  readonly recovery: ChatRecoveryController | null;
-  readonly turnId: string;
-  readonly prompt: string;
-  readonly onAccepted?: (commandId: string) => void;
-}): Promise<StructuredAgentUiResult> {
-  const { recovery } = input;
-  if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
-  if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
-  return exclusively(recovery, async () => {
-    for (let attempt = 0; attempt < STEER_ATTEMPTS; attempt += 1) {
-      if (attempt > 0) await new Promise((resolve) => { setTimeout(resolve, STEER_PAUSE_MS); });
-      const { result, lostRace } = await submitNow(access, { ...input, recovery, type: 'agent.steer' });
-      if (!lostRace) return result;
-    }
-    return { ok: false, message: 'The conversation changed meanwhile. Try again.' };
-  });
-}
-
-async function submitNow(access: ConversationCommandAccess, input: {
+interface SubmitNowInput {
   readonly sessionId: string;
   readonly recovery: ChatRecoveryController;
   readonly type: ChatPendingCommand['type'];
   readonly prompt: string;
   readonly context?: ChatMessageContext;
   readonly turnId?: string;
+  /** It was meant for the running turn and is not plain text: the queued row says why. */
+  readonly notSteered?: true;
   readonly onAccepted?: (commandId: string) => void;
-}): Promise<{ readonly result: StructuredAgentUiResult; readonly lostRace?: true }> {
-  const { sessionId, recovery, type, prompt, context, turnId } = input;
+}
+
+async function submitPastRaces(access: ConversationCommandAccess, input: Omit<SubmitNowInput, 'recovery'> & { readonly recovery: ChatRecoveryController | null }): Promise<StructuredAgentUiResult> {
+  const { recovery } = input;
+  if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
+  if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
+  return exclusively(recovery, async () => {
+    for (let attempt = 0; attempt < RACE_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => { setTimeout(resolve, RACE_PAUSE_MS); });
+      const { result, lostRace } = await submitNow(access, { ...input, recovery });
+      if (!lostRace) return result;
+    }
+    return { ok: false, message: 'The conversation changed meanwhile. Try again.' };
+  });
+}
+
+/** Send plain text into the running turn: escrowed as any message is, and the host queues it if it cannot go in. */
+export function steerConversationMessage(access: ConversationCommandAccess, input: {
+  readonly sessionId: string;
+  readonly recovery: ChatRecoveryController | null;
+  readonly turnId: string;
+  readonly prompt: string;
+  readonly onAccepted?: (commandId: string) => void;
+}): Promise<StructuredAgentUiResult> {
+  return submitPastRaces(access, { ...input, type: 'agent.steer' });
+}
+
+/** What cannot go into the running turn (attachments, replies, `/` commands): it waits in the queue, whose row says why. */
+export function queueConversationMessage(access: ConversationCommandAccess, input: {
+  readonly sessionId: string;
+  readonly recovery: ChatRecoveryController | null;
+  readonly prompt: string;
+  readonly context?: ChatMessageContext;
+  readonly onAccepted?: (commandId: string) => void;
+}): Promise<StructuredAgentUiResult> {
+  return submitPastRaces(access, { ...input, type: 'agent.submit', notSteered: true });
+}
+
+async function submitNow(access: ConversationCommandAccess, input: SubmitNowInput): Promise<{ readonly result: StructuredAgentUiResult; readonly lostRace?: true }> {
+  const { sessionId, recovery, type, prompt, context, turnId, notSteered } = input;
   // The composition being sent, as it is now: an edit made while the snapshot is read must stay in the box.
   const composition = recovery.getSnapshot().draft;
   const authority = await access.latestSnapshot();
@@ -149,7 +168,7 @@ async function submitNow(access: ConversationCommandAccess, input: {
         issuedAt: new Date().toISOString(),
         principal: access.principal ?? PRINCIPAL,
         type,
-        payload: { sessionId, prompt, ...(context ? { context } : {}) },
+        payload: { sessionId, prompt, ...(context ? { context } : {}), ...(notSteered ? { notSteered } : {}) },
       })
     : createDaemonCommand({
         commandId,

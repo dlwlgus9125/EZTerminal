@@ -1,5 +1,8 @@
 import { useCallback } from 'react';
 
+import { chatCopy } from '../chat/copy';
+import { limitStatus } from '../chat/long-run/long-run-presentation';
+import type { ChatLocale } from '../chat/model/summary';
 import { useAppTranslation } from '../i18n';
 import type { ConversationState, LiveConversation, LiveFlow, WaitingItem } from './shell-model';
 
@@ -34,10 +37,20 @@ export function conversationStateText(state: ConversationState, text: ShellText)
   }
 }
 
-/** A conversation's state on a list; 시안: a clock's time follows its state (`한도 대기 · 15:12`). */
-export function conversationLineText(item: Pick<LiveConversation, 'state' | 'limitClock'>, text: ShellText): string {
-  const state = conversationStateText(item.state, text);
-  return item.limitClock ? `${state} · ${item.limitClock}` : state;
+const textLocale = (text: ShellText): ChatLocale => (text('ko', 'en') === 'ko' ? 'ko' : 'en');
+
+/** A conversation's state on a list; a clock's time follows its state (`한도 대기 · 15:12`). */
+export function conversationLineText(item: Pick<LiveConversation, 'state' | 'limit'>, text: ShellText): string {
+  const locale = textLocale(text);
+  return (item.limit && limitStatus(item.limit, chatCopy(locale).longRun.limit, locale)?.text) ?? conversationStateText(item.state, text);
+}
+
+/** A waiting item's one line. A limit's is said here: the model has no language. */
+export function waitingDetailText(item: Pick<WaitingItem, 'detail' | 'limit'>, text: ShellText): string {
+  if (!item.limit) return item.detail;
+  const copy = chatCopy(textLocale(text)).longRun.limit;
+  const state = item.limit.phase === 'ask-reset' ? text('먼저 묻습니다', 'the app asks first') : copy.state[item.limit.phase];
+  return item.limit.window === 'unknown' ? state : `${copy.window[item.limit.window]} · ${state}`;
 }
 
 export function flowPhaseText(phase: LiveFlow['phase'], text: ShellText): string {

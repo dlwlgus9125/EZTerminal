@@ -3,19 +3,20 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { MobileFeedView } from '../../../mobile/src/feed/MobileFeedView';
-import type { FeedConversation, FeedWaitingItem } from '../../../mobile/src/feed/feed-model';
+import { feedWaiting, type FeedConversation } from '../../../mobile/src/feed/feed-model';
 import { MobileConversationReviewProvider } from '../../../mobile/src/MobileConversationReviewProvider';
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
 import type { ChatComposerDraft } from '../../shared/chat-message';
-import { resumeDue, type LongRunSettings } from '../../shared/long-run';
+import { LONG_RUN_CAPABILITY, resumeDue, type LongRunSettings } from '../../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY, type TurnWrapUpSettings } from '../../shared/turn-wrap-up';
 import type { CapabilityAccess, LongRunAccess, TurnWrapUpAccess } from '../capability-access';
 import type { ChatSkin } from '../chat-view-state';
 import { conversationQueue } from '../conversation-queue';
 import { AppI18nProvider } from '../i18n';
 import { LiveList } from '../shell/LiveList';
+import { hostWaitingItems, projectConversations } from '../shell/shell-model';
 import { shellSnapshot } from '../shell/shell-fixtures';
 import { SettingsFixture, storyCapabilities } from '../shell/tool-screen-fixtures';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps, type StructuredAgentUiResult } from '../StructuredAgentSession';
@@ -25,10 +26,10 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
 import {
-  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, LIMIT_STOP, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, LATER_RESET_AT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
+  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, LIMIT_STOP, limitStory, LINE_AT, LIST_PROJECT, listSnapshot, LONG_ROOT, LATER_RESET_AT, openLimitOf, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
   type LongLanguage, type LongProvider, type LongRunFixture,
 } from './long-run/long-run-fixtures';
-import { limitStatus } from './long-run/long-run-presentation';
+import { limitHeader } from './long-run/long-run-presentation';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import { latestLimit } from './model/long-run-rows';
 import '../index.css';
@@ -159,10 +160,11 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
   const turnOff = useCallback(() => setState((current) => settingOff(current)), []);
   const steer = useMemo(() => ({
     onSteer,
+    onQueue: onSend,
     ...(state.steered ? { messages: state.steered } : {}),
-    onToQueue: (message: { readonly id: string }): void => setState((current) => queueSteer(current, message.id)),
-    onToBox: (message: { readonly id: string }): void => setState((current) => dropSteer(current, message.id)),
-  }), [onSteer, state.steered]);
+    onToQueue: async (message: { readonly id: string }): Promise<StructuredAgentUiResult> => { setState((current) => queueSteer(current, message.id)); return { ok: true }; },
+    onToBox: async (message: { readonly id: string }): Promise<StructuredAgentUiResult> => { setState((current) => dropSteer(current, message.id)); return { ok: true }; },
+  }), [onSend, onSteer, state.steered]);
   return { state, onAction, onSend, steer, settingOff: turnOff };
 }
 
@@ -175,9 +177,9 @@ const PARENT = { ko: '장바구니 전체 정리', en: 'Clean up the cart' } as 
 
 function panelProps(sessionId: string, host: StoryHost, provider: LongProvider, locale: LongLanguage, args: Args): StructuredAgentSessionPanelProps {
   const { state } = host;
+  const openLimit = openLimitOf(state);
   const limit = latestLimit(state.items);
-  const status = limit && limit.phase !== 'skipped' ? limitStatus(limit, chatCopy(locale).longRun.limit, locale) : undefined;
-  const clockRuns = limit !== undefined && (limit.phase === 'waiting' || limit.phase === 'scheduled' || limit.phase === 'retrying');
+  const { statusLabel, ...header } = openLimit ? limitHeader(openLimit, chatCopy(locale).longRun.limit, locale) : { statusLabel: undefined };
   const queueItems = conversationQueue(sessionId, state.turns, state.items);
   return {
     queuedCount: queueItems.length, queueItems, onQueueAction: fn(async () => ({ ok: true as const })),
@@ -191,8 +193,8 @@ function panelProps(sessionId: string, host: StoryHost, provider: LongProvider, 
     onSend: host.onSend, onInterruptAndSend: args.onInterruptAndSend,
     onChangeSettings: fn(async () => ({ ok: true as const })), onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
-    ...(status ? { statusLabel: status.text } : {}),
-    longRun: { ...(limit && state.line ? { openLimit: { ...limit, line: state.line } } : {}), onAction: host.onAction, steer: host.steer, ...(status?.asks ? { asks: true } : {}), ...(clockRuns ? { limitHint: true } : {}) },
+    ...(statusLabel ? { statusLabel } : {}),
+    longRun: { ...(openLimit ? { openLimit } : {}), onAction: host.onAction, steer: host.steer, ...header },
   };
 }
 
@@ -703,7 +705,8 @@ export const LimitNotIncluded: Story = chat('limit-not-included', (lang) => limi
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('이 요금제에는 Codex 사용량이 포함되어 있지 않습니다.');
   await expect(within(card).queryAllByRole('button')).toHaveLength(0);
-  await expect(header(canvasElement)).toHaveTextContent('한도로 멈춤');
+  // The host closes this stop: its card stays, and the header and the list are the conversation's own.
+  await expect(header(canvasElement)).not.toHaveTextContent('한도');
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
@@ -781,12 +784,12 @@ export const CliLimitFailed: Story = chat('cli-limit-failed', (lang) => limitSto
 // ── C. Where a waiting conversation shows ──────────────────────────────────────────────────────────────
 function ListScreen({ onOpen }: { readonly onOpen?: (sessionId: string) => void }): JSX.Element {
   const locale = useContext(StoryLocale);
-  const conversations = listConversations(locale, { first: clockOf(RESUME_AT, locale), second: clockOf(LINE_AT, locale) });
+  const snapshot = listSnapshot(locale);
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <div className="ez-shell" style={{ width: 'min(1100px, 100vw)', height: 'min(760px, 100vh)' }} data-testid="long-run-list">
         <div style={{ display: 'flex', minHeight: 0, flex: 1 }}>
-          <LiveList projectName="cart-kit" conversations={conversations} waiting={listWaiting(locale)} flows={[]} terminals={[]} focus="c-first" others={[]} tools={[]} activeTool={null}
+          <LiveList projectName="cart-kit" conversations={projectConversations(snapshot, LIST_PROJECT)} waiting={hostWaitingItems(snapshot, LIST_PROJECT)} flows={[]} terminals={[]} focus="c-first" others={[]} tools={[]} activeTool={null}
             onBoard={() => undefined} onOpenConversation={onOpen ?? (() => undefined)} onNewConversation={() => undefined} onOpenWaiting={() => undefined} onInbox={() => undefined}
             onOpenFlow={() => undefined} onOpenTerminal={() => undefined} onNewTerminal={() => undefined} onAllConversations={() => undefined} onOtherProject={() => undefined} onTool={() => undefined} />
           <div style={{ flex: 1 }} aria-hidden="true" />
@@ -823,7 +826,7 @@ function SettingsScreen({ autoResume = true, args = meta.args }: { readonly auto
     let long: LongRunSettings = { autoResume };
     const turnWrapUp: TurnWrapUpAccess = { load: async () => ({ settings: wrap, paused: [] }), save: async (next) => { wrap = next; return wrap; } };
     const longRun: LongRunAccess = { load: async () => long, save: async (next) => { long = next; setOn(next.autoResume); return long; } };
-    return { ...base, daemon: { ...base.daemon, getSnapshot: async () => ({ ...snapshot, capabilities: [...(snapshot.capabilities ?? []), TURN_WRAP_UP_CAPABILITY] }) }, turnWrapUp, longRun };
+    return { ...base, daemon: { ...base.daemon, getSnapshot: async () => ({ ...snapshot, capabilities: [...(snapshot.capabilities ?? []), TURN_WRAP_UP_CAPABILITY, LONG_RUN_CAPABILITY] }) }, turnWrapUp, longRun };
   }, [autoResume, locale]);
   return (
     <Desk>
@@ -987,11 +990,12 @@ export const PhoneLimitCli360: Story = phone('phone-limit-cli', (lang) => limitS
 
 function FeedScreen({ width, height }: { readonly width: number; readonly height: number }): JSX.Element {
   const locale = useContext(StoryLocale);
-  const items = listConversations(locale, { first: clockOf(RESUME_AT, locale), second: clockOf(LINE_AT, locale) }).map((item): FeedConversation => ({ ...item, projectId: 'p-cart', projectName: 'cart-kit' }));
-  const waiting = listWaiting(locale).map((item): FeedWaitingItem => ({ key: item.approvalId, kind: 'usage-limit', at: item.at, title: item.title, detail: item.detail, providerId: item.providerId, sessionId: item.sessionId, projectId: 'p-cart', projectName: 'cart-kit' }));
+  const snapshot = listSnapshot(locale);
+  const items = projectConversations(snapshot, LIST_PROJECT).map((item): FeedConversation => ({ ...item, projectId: LIST_PROJECT, projectName: 'cart-kit' }));
+  const waiting = feedWaiting(snapshot, []);
   return (
     <Phone width={width} height={height}>
-      <MobileFeedView projects={[{ id: 'p-cart', name: 'cart-kit' }]} scope="p-cart" onScopeChange={() => undefined} host={{ tone: 'on', label: locale === 'ko' ? '작업 PC · 18ms' : 'Work PC · 18ms' }} waiting={waiting} flows={[]}
+      <MobileFeedView projects={[{ id: LIST_PROJECT, name: 'cart-kit' }]} scope={LIST_PROJECT} onScopeChange={() => undefined} host={{ tone: 'on', label: locale === 'ko' ? '작업 PC · 18ms' : 'Work PC · 18ms' }} waiting={waiting} flows={[]}
         conversations={{ items, total: items.length }} usage={{ fiveHour: { usedPercent: 100 }, weekly: { usedPercent: 38 } }}
         onDecide={async () => ({ ok: true })} onOpenWaiting={() => undefined} onOpenConversation={() => undefined} onOpenFlow={() => undefined} onSeeAllConversations={() => undefined} onNewConversation={() => undefined} />
     </Phone>

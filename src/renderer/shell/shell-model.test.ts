@@ -2,8 +2,65 @@ import { describe, expect, it } from 'vitest';
 
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
 import type { AgentProjectSummary } from '../../shared/agent-history';
+import type { DaemonSnapshot } from '../../shared/daemon-protocol';
+import type { OpenUsageLimit } from '../../shared/long-run';
+import { formatClock } from '../chat/copy';
 import { hostWaitingItems, knownProjects, otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
+import { conversationLineText, waitingDetailText } from './shell-text';
 import { workflowRepeatLabel } from '../workflow/workflow-copy';
+
+describe('a conversation a limit stopped', () => {
+  const LIMIT: OpenUsageLimit = { stopId: 'stop-1', turnId: 'turn-s-font', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resetsAt: '2026-11-01T06:10:00.000Z', resumeAt: '2026-11-01T06:12:00.000Z' };
+  const limited = (patch: Partial<OpenUsageLimit> = {}, sessionId = 's-font'): DaemonSnapshot => ({ ...shellSnapshot(), usageLimits: { [sessionId]: { ...LIMIT, ...patch } } });
+  const row = (snapshot: DaemonSnapshot, sessionId = 's-font') => projectConversations(snapshot, 'p-ez').find((item) => item.sessionId === sessionId);
+
+  it('on a clock waits for no one: no amber, nothing to answer, and the list says when', () => {
+    const item = row(limited());
+    expect(item).toMatchObject({ state: 'limit-wait', lamp: 'idle' });
+    expect(conversationLineText(item!, (ko) => ko)).toBe(`한도 대기 · ${formatClock(LIMIT.resumeAt!, 'ko')}`);
+    expect(waitingItems(limited(), 'p-ez').some((entry) => entry.kind === 'usage-limit')).toBe(false);
+  });
+
+  it('that asks waits for the person, in the same place as every other request', () => {
+    const snapshot = limited({ phase: 'ask-reset', window: 'weekly' });
+    expect(row(snapshot)).toMatchObject({ state: 'limit-ask', lamp: 'amber' });
+    const waiting = waitingItems(snapshot, 'p-ez').find((entry) => entry.kind === 'usage-limit');
+    expect(waiting).toMatchObject({ approvalId: 'stop-1', sessionId: 's-font', providerId: 'claude', asks: 'answer', at: LIMIT.stoppedAt });
+    expect(waitingDetailText(waiting!, (ko) => ko)).toBe('주간 한도 · 먼저 묻습니다');
+    expect(waitingDetailText(waiting!, (_ko, en) => en)).toBe('Weekly limit · the app asks first');
+  });
+
+  it('says only the state when the window has no name', () => {
+    const snapshot = limited({ phase: 'ask-unknown', window: 'unknown', resetsAt: undefined, resumeAt: undefined });
+    const waiting = waitingItems(snapshot, 'p-ez').find((entry) => entry.kind === 'usage-limit');
+    expect(waitingDetailText(waiting!, (ko) => ko)).toBe('결정을 기다림');
+  });
+
+  it('with nothing coming and nothing asked says so, plainly', () => {
+    expect(row(limited({ phase: 'off', offBy: 'card' }))).toMatchObject({ state: 'limit-stop', lamp: 'idle' });
+  });
+
+  it('with its "Continue." going out reads as working', () => {
+    expect(row(limited({ phase: 'resuming' }))).toMatchObject({ state: 'working', lamp: 'on' });
+  });
+
+  it('gives way to what is happening now: a running turn, or a decision', () => {
+    const snapshot = limited({ phase: 'ask-reset' });
+    expect(row({ ...snapshot, agents: snapshot.agents.map((agent) => (agent.sessionId === 's-font' ? { ...agent, state: 'working' as const } : agent)) })).toMatchObject({ state: 'working' });
+    expect(row(limited({}, 's-notify'), 's-notify')).toMatchObject({ state: 'approval' });
+  });
+
+  it('stays out of other projects, and of archived conversations', () => {
+    const snapshot = limited({ phase: 'ask-reset' });
+    expect(waitingItems(snapshot, 'p-garnet').some((entry) => entry.kind === 'usage-limit')).toBe(false);
+    const archived = { ...snapshot, sessions: snapshot.sessions.map((session) => (session.id === 's-font' ? { ...session, archivedAt: LIMIT.stoppedAt } : session)) };
+    expect(waitingItems(archived).some((entry) => entry.kind === 'usage-limit')).toBe(false);
+  });
+
+  it('joins what waits beside the host\'s own items', () => {
+    expect(hostWaitingItems(limited({ phase: 'ask-reset' }), 'p-ez').some((entry) => entry.kind === 'usage-limit')).toBe(true);
+  });
+});
 
 describe('projectConversations', () => {
   it('lists a project\'s conversations newest first with provider subagents nested under their parent', () => {

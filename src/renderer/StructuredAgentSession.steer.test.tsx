@@ -68,6 +68,30 @@ async function click(element: HTMLElement): Promise<void> {
 const steer = (extra: Partial<Omit<ComposerSteer, 'onSteer'>> = {}): ComposerSteer & { readonly onSteer: Sent } => ({ running: true, ...extra, onSteer: sender() });
 
 describe('the busy message box', () => {
+  it('sends what cannot go in through the queue its way, with what came with it', async () => {
+    const running = { ...steer(), onQueue: sender() };
+    const { send } = box({ steer: running });
+    type('/compact');
+    await click(byId('structured-agent-send')!);
+    expect(running.onQueue).toHaveBeenCalledWith('/compact');
+    expect(running.onSteer).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('keeps a message out of the box until the host has let it go, and says why not', async () => {
+    const held = { id: 'm', text: '그 파일만', state: 'failed' as const, sentAt: '2026-11-01T05:50:00.000Z', failure: 'disconnected' as const };
+    const onToBox = vi.fn(async () => ({ ok: false as const, message: '아직 가는 중입니다.' }));
+    box({ steer: steer({ messages: [held], onToBox }) });
+    await click(byId('chat-steer-to-box')!);
+    await act(async () => { await Promise.resolve(); });
+    expect(input().value).toBe('');
+    expect(container.textContent).toContain('아직 가는 중입니다.');
+    onToBox.mockResolvedValueOnce({ ok: true } as never);
+    await click(byId('chat-steer-to-box')!);
+    await act(async () => { await Promise.resolve(); });
+    expect(input().value).toBe('그 파일만');
+  });
+
   it('without the long-run prop stays as it is: Enter queues', async () => {
     const { send } = box();
     expect(input().getAttribute('placeholder')).toBe('다음에 보낼 메시지를 입력하세요 (Esc로 중단)');

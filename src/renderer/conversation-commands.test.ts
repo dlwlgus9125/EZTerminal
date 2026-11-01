@@ -4,7 +4,7 @@ import { ChatSessionStateSchema, type ChatSessionState, type ChatStateResult, ty
 import { createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonSnapshot } from '../shared/daemon-protocol';
 import type { ChatStateAccess } from './chat-recovery';
 import { retainChatRecovery, sharedChatRecovery } from './chat-recovery-registry';
-import { reconcileConversationSubmit, steerConversationMessage, submitConversationMessage, type ConversationCommandAccess } from './conversation-commands';
+import { queueConversationMessage, reconcileConversationSubmit, steerConversationMessage, submitConversationMessage, type ConversationCommandAccess } from './conversation-commands';
 
 const NOW = '2026-10-27T08:00:00.000Z';
 const scope = { projectId: 'project-1', sessionId: 'session-1' };
@@ -144,8 +144,19 @@ describe('steerConversationMessage', () => {
     };
     const onAccepted = vi.fn();
     const send = () => steerConversationMessage(access, { sessionId: scope.sessionId, recovery, turnId: 'turn-1', prompt: 'Use the other file.', onAccepted });
-    return { access, chat, recovery, sent, onAccepted, send, view };
+    const queue = () => queueConversationMessage(access, { sessionId: scope.sessionId, recovery, prompt: '/compact', onAccepted });
+    return { access, chat, recovery, sent, onAccepted, send, queue, view };
   }
+
+  it('queues what cannot go in as a message that says so, past a lost race', async () => {
+    const run = await steering([(command) => refused(command, 'revision-conflict'), applied]);
+    await expect(run.queue()).resolves.toEqual({ ok: true });
+    expect(run.sent).toHaveLength(2);
+    expect(run.sent[1]).toMatchObject({ type: 'agent.submit', payload: { sessionId: scope.sessionId, prompt: '/compact', notSteered: true } });
+    expect(run.onAccepted).toHaveBeenCalledExactlyOnceWith(run.sent[1]!.commandId);
+    expect(run.recovery.getSnapshot().pendingSubmit).toBeUndefined();
+    run.view();
+  });
 
   it('goes as agent.steer for that turn, and settles its escrow', async () => {
     const run = await steering([applied]);

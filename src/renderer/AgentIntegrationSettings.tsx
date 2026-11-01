@@ -10,6 +10,7 @@ import {
 import { rendererCapabilities, type AgentManagementAccess, type CapabilityAccess } from './capability-access';
 import { AgentManagementSettings, agentManagementInputs } from './AgentManagementSettings';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import { LONG_RUN_CAPABILITY } from '../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY } from '../shared/turn-wrap-up';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
@@ -109,12 +110,12 @@ export function AgentIntegrationSettings({
     void refresh().catch(() => setMessage({ kind: 'unavailable' }));
   }, [refresh]);
 
-  // The host keeps these settings: one without `turn-wrap-up-v1` has nothing to show here.
-  const [wrapUpOffered, setWrapUpOffered] = useState(false);
+  // The host keeps these settings: one without `turn-wrap-up-v1` or `long-run-v1` has nothing to show here.
+  const [offered, setOffered] = useState<readonly string[]>([]);
   useEffect(() => {
     let alive = true;
     void capabilities.daemon.getSnapshot()
-      .then((snapshot) => { if (alive) setWrapUpOffered(snapshot?.capabilities?.includes(TURN_WRAP_UP_CAPABILITY) === true); })
+      .then((snapshot) => { if (alive) setOffered(snapshot?.capabilities ?? []); })
       .catch(() => undefined);
     return () => { alive = false; };
   }, [capabilities]);
@@ -317,8 +318,8 @@ export function AgentIntegrationSettings({
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>
       <ChatAgentCollaborationSettings capabilities={capabilities} />
-      {capabilities.turnWrapUp && wrapUpOffered && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
-      {capabilities.longRun && <LongRunSettings access={capabilities.longRun} />}
+      {capabilities.turnWrapUp && offered.includes(TURN_WRAP_UP_CAPABILITY) && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
+      {capabilities.longRun && offered.includes(LONG_RUN_CAPABILITY) && <LongRunSettings access={capabilities.longRun} />}
       <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}

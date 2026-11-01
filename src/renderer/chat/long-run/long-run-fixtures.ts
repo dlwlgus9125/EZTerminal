@@ -1,8 +1,8 @@
-import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
+import type { DaemonAgent, DaemonApproval, DaemonSnapshot, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import {
   RESUME_TEXT, turnAutoResumeOff, USAGE_LIMIT_ERROR, type AppSentReason, type OpenUsageLimit, type SteeredMessage, type SteerFallback, type TurnUsageLimit, type UsageLimitPhase, type UsageLimitWindow,
 } from '../../../shared/long-run';
-import type { LiveConversation, WaitingItem } from '../../shell/shell-model';
+import { shellSnapshot } from '../../shell/shell-fixtures';
 import type { ChatLongRunAction } from '../ChatContext';
 import { latestLimit } from '../model/long-run-rows';
 
@@ -374,6 +374,16 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
 
 const limitOf = (fixture: LongRunFixture): TurnUsageLimit | undefined => latestLimit(fixture.items);
 
+/** Finished or let go, as the host's `holds`: it has its rows, and the snapshot no longer carries it. */
+const NOT_HELD: ReadonlySet<UsageLimitPhase> = new Set(['resumed', 'cancelled', 'not-included', 'left', 'person-refused']);
+
+/** What `snapshot.usageLimits` holds for this conversation. */
+export function openLimitOf(fixture: LongRunFixture): OpenUsageLimit | undefined {
+  const limit = limitOf(fixture);
+  if (!limit || NOT_HELD.has(limit.phase) || (limit.phase === 'child' && limit.childKind === 'managed')) return undefined;
+  return { ...limit, ...(fixture.line ? { line: fixture.line } : {}) };
+}
+
 /** The story host: answers a card's buttons the way a host does. `settled`: its second step, a moment later. */
 export function applyLongRunAction(fixture: LongRunFixture, action: ChatLongRunAction, settled: boolean): LongRunFixture {
   const limit = limitOf(fixture);
@@ -458,27 +468,33 @@ const LIST_TITLES = {
   en: ['Fix the cart tests', 'Fix the price display', 'Fix the discount maths', 'Tidy the weekly report', 'Check authentication', 'Tidy the docs'],
 } as const;
 
-function conversation(sessionId: string, title: string, providerId: string, state: LiveConversation['state'], lamp: LiveConversation['lamp'], clock?: string): LiveConversation {
-  return { sessionId, title, providerId, state, lamp, updatedAt: STOPPED_AT, children: [], ...(clock ? { limitClock: clock } : {}) };
-}
+/** The project the list stories show. */
+export const LIST_PROJECT = 'p-ez';
 
-/** The list as bundle 3 would show it: two on the clock, one that asks, one stopped for good, and ordinary ones around them. */
-export function listConversations(lang: LongLanguage, clocks: { readonly first: string; readonly second: string }): readonly LiveConversation[] {
+/** The host's view of six conversations: two on the clock, one that asks, one stopped for good, and ordinary ones around them. */
+export function listSnapshot(lang: LongLanguage): DaemonSnapshot {
   const titles = LIST_TITLES[lang];
-  return [
-    conversation('c-work', titles[4], 'codex', 'working', 'on'),
-    conversation('c-first', titles[0], 'claude', 'limit-wait', 'idle', clocks.first),
-    conversation('c-second', titles[1], 'claude', 'limit-wait', 'idle', clocks.second),
-    conversation('c-weekly', titles[3], 'claude', 'limit-ask', 'amber'),
-    conversation('c-plan', titles[2], 'codex', 'limit-stop', 'idle'),
-    conversation('c-done', titles[5], 'claude', 'done', 'ok'),
+  const base = shellSnapshot();
+  const open = (turnId: string, providerId: string, stoppedAt: string, limit: Pick<OpenUsageLimit, 'phase'> & Partial<OpenUsageLimit>): OpenUsageLimit => ({
+    stopId: `stop-${turnId}`, turnId, providerId, window: 'five-hour', stoppedAt, ...limit,
+  });
+  const rows: readonly { readonly id: string; readonly title: string; readonly providerId: string; readonly state: DaemonAgent['state']; readonly limit?: OpenUsageLimit }[] = [
+    { id: 'c-work', title: titles[4], providerId: 'codex', state: 'working' },
+    { id: 'c-first', title: titles[0], providerId: 'claude', state: 'idle', limit: open('t-first', 'claude', STOPPED_AT, { phase: 'waiting', resetsAt: RESET_AT, resumeAt: RESUME_AT }) },
+    { id: 'c-second', title: titles[1], providerId: 'claude', state: 'idle', limit: open('t-second', 'claude', STOPPED_AT, { phase: 'waiting', resetsAt: RESET_AT, resumeAt: LINE_AT }) },
+    { id: 'c-weekly', title: titles[3], providerId: 'claude', state: 'idle', limit: open('t-weekly', 'claude', STOPPED_AT, { phase: 'ask-reset', window: 'weekly', resetsAt: WEEKLY_RESET_AT, resumeAt: WEEKLY_RESUME_AT }) },
+    { id: 'c-plan', title: titles[2], providerId: 'codex', state: 'idle', limit: open('t-plan', 'codex', STOPPED_AT, { phase: 'off', offBy: 'card' }) },
+    { id: 'c-done', title: titles[5], providerId: 'claude', state: 'idle' },
   ];
-}
-
-/** Only an ask-first case joins 나를 기다리는 것. */
-export function listWaiting(lang: LongLanguage): readonly WaitingItem[] {
-  return [{
-    approvalId: 'limit-weekly', sessionId: 'c-weekly', title: LIST_TITLES[lang][3], providerId: 'claude', kind: 'usage-limit',
-    detail: lang === 'ko' ? '주간 한도 · 먼저 묻습니다' : 'Weekly limit · the app asks first', at: STOPPED_AT, asks: 'answer',
-  }];
+  // Newest first, in this order.
+  const stamp = (index: number) => ({ revision: 1, createdAt: STOPPED_AT, updatedAt: new Date(Date.parse(STOPPED_AT) - index * 60_000).toISOString() });
+  return {
+    ...base,
+    projects: base.projects.map((project) => (project.id === LIST_PROJECT ? { ...project, name: 'cart-kit' } : project)),
+    sessions: rows.map(({ id, title }, index) => ({ id, projectId: LIST_PROJECT, workspaceId: `${LIST_PROJECT}-main`, kind: 'agent', title, state: 'idle', source: 'structured', ...stamp(index) })),
+    agents: rows.map(({ id, providerId, state }, index) => ({ sessionId: id, providerId, permissionPreset: 'standard', queuedTurnCount: 0, orchestrationEnabled: false, state, ...stamp(index) })),
+    agentRelations: [], approvals: [],
+    turns: [{ ...turn('turn-done', 'completed', started, at(9)), sessionId: 'c-done' }],
+    usageLimits: Object.fromEntries(rows.flatMap(({ id, limit }) => (limit ? [[id, limit] as const] : []))),
+  };
 }

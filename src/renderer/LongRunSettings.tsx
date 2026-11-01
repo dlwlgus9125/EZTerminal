@@ -6,7 +6,7 @@ import { useAppTranslation } from './i18n';
 import { Status, Switch } from './ui';
 import './chat/long-run/long-run.css';
 
-/** 시안: the one switch, with what it sends and where it applies. */
+/** The one switch, with what it sends and where it applies. */
 function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
@@ -44,7 +44,7 @@ function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Elem
 }
 
 /**
- * 시안: Settings › 에이전트 › 이어서 하기, right after 턴 마무리 (D9). Not inside it: that section promises nothing goes
+ * Settings › 에이전트 › 이어서 하기, right after 턴 마무리 (D9). Not inside it: that section promises nothing goes
  * out until the person presses a button, and this switch is the one thing that does.
  */
 export function LongRunSettings({ access }: { readonly access: LongRunAccess }): JSX.Element {

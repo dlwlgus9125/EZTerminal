@@ -1213,12 +1213,15 @@ export interface ComposerSteer {
   /** A decision waits above the box. */
   readonly decisionOpen?: boolean;
   readonly onSteer: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  /** What cannot go in. Without it, the box's own send. */
+  readonly onQueue?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   /** On their way, held or failed: a landed message is a transcript row. */
   readonly messages?: readonly SteeredMessage[];
   /** The newest landed row in the transcript. */
   readonly landedRow?: string;
-  readonly onToQueue?: (message: SteeredMessage) => void;
-  readonly onToBox?: (message: SteeredMessage) => void;
+  /** Each is the host's to allow: until it has, the message stays where it is. */
+  readonly onToQueue?: (message: SteeredMessage) => Promise<StructuredAgentUiResult>;
+  readonly onToBox?: (message: SteeredMessage) => Promise<StructuredAgentUiResult>;
 }
 
 export interface StructuredAgentComposerProps {
@@ -1456,7 +1459,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
     if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
     const mode = asked === 'send' && steerable ? 'steer' : asked;
-    const action = mode === 'interrupt' ? onInterruptAndSend : mode === 'steer' ? steer?.onSteer : onSend;
+    const action = mode === 'interrupt' ? onInterruptAndSend : mode === 'steer' ? steer?.onSteer : (steerOnEnter ? steer?.onQueue : undefined) ?? onSend;
     if (!action) return;
     submittingRef.current = true;
     sentDraft.current = valueRef.current;
@@ -1662,12 +1665,17 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   ) : null;
   /** What a message that could not go into the turn does next: back to the box, added to what is there. */
   const fellBack = new Map(queueItems.flatMap((item) => (item.fellBack ? [[item.turnId, item.fellBack] as const] : [])));
-  const steerToBox = (message: SteeredMessage): void => {
+  const steerToBox = async (message: SteeredMessage): Promise<void> => {
+    const settled = await steer?.onToBox?.(message);
+    if (settled && !settled.ok) { setError(settled.message); return; }
     const current = valueRef.current;
     const text = current.text.trim() ? `${current.text.replace(/\s+$/u, '')}\n\n${message.text}` : message.text;
     updateDraft({ ...current, text, selectionStart: text.length, selectionEnd: text.length });
-    steer?.onToBox?.(message);
     inputRef.current?.focus();
+  };
+  const steerToQueue = async (message: SteeredMessage): Promise<void> => {
+    const settled = await steer?.onToQueue?.(message);
+    if (settled && !settled.ok) setError(settled.message);
   };
 
   return (
@@ -1694,9 +1702,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         if (!disabled) takeFiles(event.dataTransfer.files);
       }}
     >
-      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={steerToBox} fellBack={fellBack}
+      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={(message) => void steerToBox(message)} fellBack={fellBack}
         {...(steer.landedRow ? { landedRow: steer.landedRow } : {})}
-        {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: steer.onToQueue } : {})} />}
+        {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: (message: SteeredMessage) => void steerToQueue(message) } : {})} />}
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
         {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
@@ -2082,13 +2090,14 @@ export interface StructuredAgentSessionPanelProps {
   readonly heartbeatActive?: boolean;
   /**
    * Long-run continuity: without it the panel is today's. `openLimit`: this conversation's limit in the snapshot,
-   * `onAction`: the usage limit card's buttons, `steer`: the message box while a turn runs. `asks`: the header's state
-   * waits on the person (a clock does not). `limitHint`: a clock runs, so sending now has a cost to say.
+   * `onAction`: the usage limit card's buttons, `steer`: the message box while a turn runs (`noTurn`: the conversation
+   * only waits in the queue, so there is no turn to write into). `asks`: the header's state waits on the person (a clock
+   * does not). `limitHint`: a clock runs, so sending now has a cost to say.
    */
   readonly longRun?: {
     readonly openLimit?: OpenUsageLimit;
-    readonly onAction?: (action: ChatLongRunAction) => void;
-    readonly steer?: Omit<ComposerSteer, 'running'>;
+    readonly onAction?: (action: ChatLongRunAction) => Promise<StructuredAgentUiResult> | void;
+    readonly steer?: Omit<ComposerSteer, 'running'> & { readonly noTurn?: true };
     readonly asks?: boolean;
     readonly limitHint?: boolean;
   };
@@ -2727,6 +2736,16 @@ export function StructuredAgentSessionPanel({
     setWrapUpError(null);
     void result.then((answer) => { if (!answer.ok) setWrapUpError(answer.message || copy.wrapUpFailed); }, () => setWrapUpError(copy.wrapUpFailed));
   };
+  const onLongRunAction = longRun?.onAction;
+  const longRunActionNow = useRef<(action: ChatLongRunAction) => void>(() => undefined);
+  const longRunAction = useCallback((action: ChatLongRunAction): void => longRunActionNow.current(action), []);
+  longRunActionNow.current = (action: ChatLongRunAction): void => {
+    setWrapUpError(null);
+    void Promise.resolve(onLongRunAction?.(action)).then((answer) => { if (answer && !answer.ok) setWrapUpError(answer.message || copy.wrapUpFailed); }, () => setWrapUpError(copy.wrapUpFailed));
+  };
+  const openLimit = longRun?.openLimit;
+  const canPressLimit = onLongRunAction !== undefined;
+  const transcriptLongRun = useMemo(() => ({ ...(openLimit ? { openLimit } : {}), ...(canPressLimit ? { onAction: longRunAction } : {}) }), [canPressLimit, longRunAction, openLimit]);
   const canAct = onWrapUpAction !== undefined && wrapUpActive;
   const transcriptWrapUp = useMemo(() => ({
     ...(canAct ? { onAction: wrapUpAction } : {}),
@@ -2759,10 +2778,11 @@ export function StructuredAgentSessionPanel({
     for (let index = items.length - 1; index >= 0; index -= 1) if (items[index]!.payload?.type === 'steer') return items[index]!.id;
     return undefined;
   }, [items, longRunSteer]);
-  const steerHint = longRun?.steer && turnCurrent
+  const steerRunning = longRunSteer !== undefined && longRunSteer.noTurn !== true && turnCurrent;
+  const steerHint = steerRunning
     ? (variant === 'mobile' ? longRunCopy.steer.hintMobile : longRunCopy.steer.hint)[steerHintKey] : undefined;
   const longRunHint = steerHint ?? (longRun?.limitHint ? longRunCopy.limit.composerHint : undefined);
-  const composerSteer = useMemo(() => (longRunSteer ? { ...longRunSteer, running: turnCurrent, decisionOpen: state === 'blocked', ...(landedRow ? { landedRow } : {}) } : undefined), [landedRow, longRunSteer, state, turnCurrent]);
+  const composerSteer = useMemo(() => (longRunSteer ? { ...longRunSteer, running: steerRunning, decisionOpen: state === 'blocked', ...(landedRow ? { landedRow } : {}) } : undefined), [landedRow, longRunSteer, state, steerRunning]);
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged
@@ -3175,7 +3195,7 @@ export function StructuredAgentSessionPanel({
         {...(hostReviews ? { onReviewAction: reviewAction } : {})}
         wrapUp={transcriptWrapUp}
         onFocusDecision={focusDecision}
-        {...(longRun ? { longRun } : {})}
+        {...(longRun ? { longRun: transcriptLongRun } : {})}
         {...(tailDock ? { tailDock } : {})}
       />}
       {full && childTrack !== undefined && (

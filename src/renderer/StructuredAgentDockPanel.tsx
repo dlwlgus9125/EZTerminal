@@ -25,13 +25,16 @@ import { conversationQueue } from './conversation-queue';
 import {
   changeConversationSettings,
   opaqueId,
+  queueConversationMessage,
   queueConversationTurn,
   reconcileConversationSubmit,
   resultOf,
   runConversationLifecycle,
+  steerConversationMessage,
   submitConversationMessage,
   type ConversationCommandAccess,
 } from './conversation-commands';
+import { longRunHost } from './long-run-commands';
 import {
   AGENT_SETTINGS_CAPABILITY,
   createDaemonCommand,
@@ -1262,6 +1265,18 @@ export function StructuredAgentDockPanel(
     onStartForm: (request) => setTaskDialog({ request, values: taskStartForm(request) }),
   };
   const wrapUp = !historyOnly && owner === 'managed' ? turnWrapUpHost(wrapUpInput) : undefined;
+  // long-run-v1: Enter in a running turn, the tray and the limit card's buttons; an older host keeps today's box.
+  const longRun = !historyOnly && owner === 'managed' ? longRunHost({
+    snapshot, sessionId, access: commandAccess, locale: korean ? 'ko' : 'en',
+    onSteer: (turnId, prompt) => {
+      keepPreview();
+      return steerConversationMessage(commandAccess, { sessionId, recovery: chatRecovery.controller, turnId, prompt, onAccepted: () => { void syncTranscript(sessionId); } });
+    },
+    onQueue: (prompt, context) => {
+      keepPreview();
+      return queueConversationMessage(commandAccess, { sessionId, recovery: chatRecovery.controller, prompt, ...(context ? { context } : {}), onAccepted: (commandId) => showSent(commandId, prompt, context) });
+    },
+  }) : undefined;
 
   const delegateDialogProps = (forSession: NonNullable<typeof session>) => ({
     profiles: delegateProfiles,
@@ -1396,6 +1411,8 @@ export function StructuredAgentDockPanel(
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
       {...(reviews ? { reviewStart: { ...reviews.reviewStart, onOpen: () => setReviewFormOpens((count) => count + 1) }, onReviewAction: reviews.onReviewAction } : {})}
       {...(wrapUp ? { wrapUp } : {})}
+      {...(longRun ? { longRun: longRun.longRun } : {})}
+      {...(longRun?.statusLabel ? { statusLabel: longRun.statusLabel } : {})}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}

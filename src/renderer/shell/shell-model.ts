@@ -1,8 +1,10 @@
 import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { DaemonApproval, DaemonSnapshot } from '../../shared/daemon-protocol';
+import type { OpenUsageLimit } from '../../shared/long-run';
 import { blockingRunOf } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowSnapshot } from '../../shared/workflow';
 import { currentFlowRun, flowRunNumber, runStageConversation } from '../../shared/workflow-run-view';
+import { limitStanding } from '../chat/long-run/long-run-presentation';
 import { projectRunOverlay, type WorkflowNodeRunStatus } from '../workflow/workflow-canvas-model';
 
 /**
@@ -22,8 +24,8 @@ export type DeskToolId = typeof DESK_TOOL_IDS[number];
 export type Lamp = 'on' | 'amber' | 'red' | 'ok' | 'idle';
 
 /**
- * 시안 (no host says these yet): `limit-wait` waits on a clock, `limit-ask` on the person (the reset is days away or
- * unknown, the app was closed, or the tries ran out), `limit-stop` on nothing.
+ * `limit-wait` waits on a clock, `limit-ask` on the person (the reset is days away or unknown, the app was closed, or the
+ * tries ran out), `limit-stop` on nothing.
  */
 export type ConversationState = 'working' | 'approval' | 'question' | 'failed' | 'stopped' | 'done' | 'new' | 'limit-wait' | 'limit-ask' | 'limit-stop';
 
@@ -35,8 +37,8 @@ export interface LiveConversation {
   readonly lamp: Lamp;
   readonly updatedAt: string;
   readonly children: readonly LiveConversation[];
-  /** 시안: `limit-wait`: when the app will send, as the list says it (`15:12`). */
-  readonly limitClock?: string;
+  /** `limit-wait`: the limit whose clock the list says (`15:12`). */
+  readonly limit?: OpenUsageLimit;
 }
 
 export interface WaitingItem {
@@ -56,6 +58,8 @@ export interface WaitingItem {
   readonly flow?: { readonly subprojectId: string; readonly nodeId: string; readonly runId?: string };
   /** A flow stage that waits for an answer (내 답변) rather than an approval. */
   readonly asks?: 'answer';
+  /** `usage-limit`: its one line is said where the language is known. */
+  readonly limit?: OpenUsageLimit;
 }
 
 export type StageLamp = 'done' | 'run' | 'wait' | 'idle' | 'fail';
@@ -88,6 +92,16 @@ function lampOf(state: ConversationState): Lamp {
   }
 }
 
+function limitState(limit: OpenUsageLimit): ConversationState | undefined {
+  switch (limitStanding(limit)) {
+    case 'asks': return 'limit-ask';
+    case 'sending': return 'working';
+    case 'clock': return 'limit-wait';
+    case 'stopped': return 'limit-stop';
+    case undefined: return undefined;
+  }
+}
+
 function waitingKind(approval: DaemonApproval): WaitingItem['kind'] {
   return approval.request?.kind ?? 'other';
 }
@@ -113,12 +127,14 @@ export function projectConversations(
     const agent = agents.get(sessionId);
     if (!session || !agent || session.archivedAt || agent.state === 'archived') return null;
     const waits = pending.get(sessionId) ?? [];
+    const limit = snapshot.usageLimits?.[sessionId];
     const state: ConversationState = waits.some((approval) => approval.request?.kind === 'question') ? 'question'
       : waits.length > 0 || agent.state === 'blocked' ? 'approval'
         : WORKING.has(agent.state) ? 'working'
-          : agent.state === 'error' || agent.state === 'delivery-uncertain' ? 'failed'
-            : agent.state === 'interrupted' ? 'stopped'
-              : turned.has(sessionId) ? 'done' : 'new';
+          : (limit ? limitState(limit) : undefined)
+            ?? (agent.state === 'error' || agent.state === 'delivery-uncertain' ? 'failed'
+              : agent.state === 'interrupted' ? 'stopped'
+                : turned.has(sessionId) ? 'done' : 'new');
     const next = new Set(seen).add(sessionId);
     const children = attached
       .filter((relation) => relation.parentSessionId === sessionId && !next.has(relation.childSessionId))
@@ -128,6 +144,7 @@ export function projectConversations(
     return {
       sessionId, title: session.title, providerId: agent.providerId, state, lamp: lampOf(state),
       updatedAt: [session.updatedAt, agent.updatedAt].sort().at(-1)!, children,
+      ...(state === 'limit-wait' && limit ? { limit } : {}),
     };
   };
   return snapshot.sessions
@@ -139,14 +156,20 @@ export function projectConversations(
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-/** Approvals and questions that wait on the person, newest first; all projects when none is given. */
+/** Approvals, questions and the limits that ask first: what waits on the person, newest first; all projects when none is given. */
 export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string): WaitingItem[] {
   if (!snapshot) return [];
   const sessions = new Map(snapshot.sessions.map((session) => [session.id, session]));
   const agents = new Map(snapshot.agents.map((agent) => [agent.sessionId, agent]));
-  return snapshot.approvals
+  const limits = Object.entries(snapshot.usageLimits ?? {}).flatMap(([sessionId, limit]): WaitingItem[] => {
+    const session = sessions.get(sessionId);
+    const agent = agents.get(sessionId);
+    if (limitStanding(limit) !== 'asks' || !session || !agent || WORKING.has(agent.state) || session.archivedAt || (projectId && session.projectId !== projectId)) return [];
+    return [{ approvalId: limit.stopId, sessionId, title: session.title, providerId: limit.providerId, kind: 'usage-limit', detail: '', at: limit.stoppedAt, asks: 'answer', limit }];
+  });
+  const approvals = snapshot.approvals
     .filter((approval) => approval.state === 'pending')
-    .flatMap((approval) => {
+    .flatMap((approval): WaitingItem[] => {
       const session = sessions.get(approval.sessionId);
       const agent = agents.get(approval.sessionId);
       if (!session || !agent || session.archivedAt || (projectId && session.projectId !== projectId)) return [];
@@ -160,8 +183,8 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
         approvalId: approval.id, sessionId: approval.sessionId, title: session.title, providerId: agent.providerId,
         kind: waitingKind(approval), detail, at: approval.createdAt,
       }];
-    })
-    .sort((left, right) => right.at.localeCompare(left.at));
+    });
+  return [...approvals, ...limits].sort((left, right) => right.at.localeCompare(left.at));
 }
 
 /**

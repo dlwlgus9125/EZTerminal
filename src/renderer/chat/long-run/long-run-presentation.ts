@@ -37,6 +37,21 @@ export function formatWhen(iso: string, locale: ChatLocale, far = false): string
   return `${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}, ${clock}`;
 }
 
+/** The time the app will send at, if a clock runs. */
+const clockOf = (limit: TurnUsageLimit): string | undefined => (limit.phase === 'retrying' ? limit.retryAt
+  : limit.phase === 'waiting' || limit.phase === 'scheduled' ? limit.resumeAt : undefined);
+
+/** Where a limit stands: it asks the person, is being sent, waits on a clock, or nothing more will happen by itself. */
+export type LimitStanding = 'asks' | 'sending' | 'clock' | 'stopped';
+
+/** Nothing once the conversation has moved on: the state is then its turn's, as for any conversation. */
+export function limitStanding(limit: TurnUsageLimit): LimitStanding | undefined {
+  if (limit.phase === 'resumed' || limit.phase === 'cancelled') return undefined;
+  if (ASKS.has(limit.phase)) return 'asks';
+  if (limit.phase === 'resuming') return 'sending';
+  return clockOf(limit) ? 'clock' : 'stopped';
+}
+
 export interface LimitStatus {
   readonly text: string;
   /** It waits on the person: only these take the amber and 나를 기다리는 것. */
@@ -45,17 +60,29 @@ export interface LimitStatus {
   readonly stopped: boolean;
 }
 
-/**
- * The state in the conversation list and the header. Waiting on a clock is not waiting on the person. Nothing once the
- * conversation has moved on: the state is then its turn's, as for any conversation.
- */
+/** The state in the conversation list and the header. Waiting on a clock is not waiting on the person. */
 export function limitStatus(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLocale): LimitStatus | undefined {
-  if (limit.phase === 'resumed' || limit.phase === 'cancelled') return undefined;
-  if (ASKS.has(limit.phase)) return { text: copy.status.asks, asks: true, stopped: false };
-  if (limit.phase === 'resuming') return { text: copy.status.resuming, asks: false, stopped: false };
-  const clock = limit.phase === 'retrying' ? limit.retryAt : (limit.phase === 'waiting' || limit.phase === 'scheduled') ? limit.resumeAt : undefined;
-  if (clock) return { text: copy.status.waiting(formatWhen(clock, locale, otherDay(limit, clock))), asks: false, stopped: false };
-  return { text: copy.status.stopped, asks: false, stopped: true };
+  switch (limitStanding(limit)) {
+    case undefined: return undefined;
+    case 'asks': return { text: copy.status.asks, asks: true, stopped: false };
+    case 'sending': return { text: copy.status.resuming, asks: false, stopped: false };
+    case 'stopped': return { text: copy.status.stopped, asks: false, stopped: true };
+    case 'clock': {
+      const clock = clockOf(limit)!;
+      return { text: copy.status.waiting(formatWhen(clock, locale, otherDay(limit, clock))), asks: false, stopped: false };
+    }
+  }
+}
+
+/** What the header and the message box say of the limit the host holds open. */
+export function limitHeader(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLocale): { readonly statusLabel?: string; readonly asks?: true; readonly limitHint?: true } {
+  // An approval was open when the time came: the header stays that decision's.
+  const status = limit.phase === 'skipped' ? undefined : limitStatus(limit, copy, locale);
+  return {
+    ...(status ? { statusLabel: status.text } : {}),
+    ...(status?.asks ? { asks: true as const } : {}),
+    ...(limitStanding(limit) === 'clock' ? { limitHint: true as const } : {}),
+  };
 }
 
 export type LimitActionId = ChatLongRunAction['kind'] | 'focus-decision';

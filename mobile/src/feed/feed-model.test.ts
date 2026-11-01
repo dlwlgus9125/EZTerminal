@@ -15,6 +15,23 @@ import {
   stageSessionIds,
 } from './feed-model';
 
+describe('a limit that asks, on the feed', () => {
+  const asking = (): DaemonSnapshot => ({ ...shellSnapshot(), usageLimits: { 's-font': { stopId: 'stop-1', turnId: 'turn-s-font', providerId: 'claude', phase: 'ask-reset', window: 'weekly', stoppedAt: '2026-11-01T05:58:00.000Z' } } });
+
+  it('waits like any request, and only opens its conversation: the card is where it is answered', () => {
+    const item = feedWaiting(asking(), []).find((entry) => entry.kind === 'usage-limit');
+    expect(item).toMatchObject({ kind: 'usage-limit', sessionId: 's-font', providerId: 'claude' });
+    expect(item?.decide).toBeUndefined();
+    expect(item?.limit?.phase).toBe('ask-reset');
+  });
+
+  it('on a clock it is no request at all', () => {
+    const snapshot = asking();
+    const waiting = { ...snapshot, usageLimits: { 's-font': { ...snapshot.usageLimits!['s-font']!, phase: 'waiting' as const } } };
+    expect(feedWaiting(waiting, []).some((entry) => entry.kind === 'usage-limit')).toBe(false);
+  });
+});
+
 function terminal(overrides: Partial<AgentActivity> = {}): AgentActivity {
   return {
     id: 'activity-1', sessionId: 'pty-1', provider: 'claude', providerLabel: 'Claude', cwd: 'C:/Working/Garnet',

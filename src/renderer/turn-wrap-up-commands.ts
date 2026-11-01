@@ -32,7 +32,7 @@ import type { StructuredAgentUiResult } from './StructuredAgentSession';
  * these is a person pressing a button. Only the desktop has `worktrees` and the start form.
  */
 
-type WrapUpCommandType = 'agent.create' | 'agent.submit' | 'wrap-up.task-outcome' | 'wrap-up.recap-retry';
+type CardCommandType = 'agent.create' | 'agent.submit' | 'wrap-up.task-outcome' | 'wrap-up.recap-retry' | 'agent.steer-settle' | 'long-run.limit-action';
 
 type CommandAnswer =
   | { readonly kind: 'ok' }
@@ -52,7 +52,7 @@ const REVISION_PAUSE_MS = 50;
  * One command against the latest snapshot, under a fresh command id each attempt: a repeated key would replay the stored
  * receipt, rejection included. No answer is reported as such, never retried.
  */
-async function sendWrapUpCommand<T extends WrapUpCommandType>(access: ConversationCommandAccess, type: T, payload: DaemonCommandPayloads[T]): Promise<CommandAnswer> {
+export async function sendCardCommand<T extends CardCommandType>(access: ConversationCommandAccess, type: T, payload: DaemonCommandPayloads[T]): Promise<CommandAnswer> {
   const creating = type === 'agent.create';
   for (let attempt = 0; attempt < REVISION_ATTEMPTS; attempt += 1) {
     if (attempt > 0) await new Promise((resolve) => { setTimeout(resolve, REVISION_PAUSE_MS); });
@@ -76,7 +76,7 @@ async function sendWrapUpCommand<T extends WrapUpCommandType>(access: Conversati
   return { kind: 'refused', message: creating ? 'The project changed while handing off. Try again.' : 'The conversation changed meanwhile. Try again.' };
 }
 
-const uiResult = (answer: CommandAnswer): StructuredAgentUiResult => (answer.kind === 'ok' ? { ok: true } : { ok: false, message: answer.message });
+export const uiResult = (answer: CommandAnswer): StructuredAgentUiResult => (answer.kind === 'ok' ? { ok: true } : { ok: false, message: answer.message });
 
 /** Where a new child conversation works: a workspace that exists, or a new worktree on this branch (desktop). */
 export type ChildPlace = { readonly workspaceId: string } | { readonly branch: string };
@@ -106,7 +106,7 @@ export async function createChildConversation(
   } else {
     workspaceId = input.place.workspaceId;
   }
-  const answer = await sendWrapUpCommand(access, 'agent.create', { ...input.child, workspaceId });
+  const answer = await sendCardCommand(access, 'agent.create', { ...input.child, workspaceId });
   return answer.kind === 'ok' ? { ok: true } : { ok: false, error: answer.kind, message: answer.message, workspaceId };
 }
 
@@ -238,7 +238,7 @@ async function startTask(input: TurnWrapUpHostInput, request: TaskStartRequest):
   if (created.error === 'refused' && ALREADY_STARTED.has(created.message)) return { kind: 'already-started' };
   // It may have started: nothing on the card says otherwise.
   if (created.error === 'no-answer' || request.elsewhere !== undefined) return { kind: 'failed', message: created.message };
-  const recorded = await sendWrapUpCommand(input.access, 'wrap-up.task-outcome', {
+  const recorded = await sendCardCommand(input.access, 'wrap-up.task-outcome', {
     sessionId: input.sessionId, turnId, taskId: task.id, outcome: 'start-failed',
     reason: created.message.slice(0, REASON_LIMIT),
     // The worktree it made stays with the failure, so a retry does not collide with its own branch.
@@ -311,7 +311,7 @@ const CARD_GONE: StructuredAgentUiResult = { ok: false, message: 'This suggested
 
 async function runAction(input: TurnWrapUpHostInput, action: ChatWrapUpAction, defaults: ChatTaskDefaults): Promise<StructuredAgentUiResult> {
   const { access, sessionId } = input;
-  if (action.kind === 'recap-retry') return uiResult(await sendWrapUpCommand(access, 'wrap-up.recap-retry', { sessionId, turnId: action.turnId }));
+  if (action.kind === 'recap-retry') return uiResult(await sendCardCommand(access, 'wrap-up.recap-retry', { sessionId, turnId: action.turnId }));
   if (action.kind === 'task-start-all') return startAll(input, action, defaults);
   const { turnId, taskId } = action;
   const tasks = cardTasks(input, turnId);
@@ -332,14 +332,14 @@ async function runAction(input: TurnWrapUpHostInput, action: ChatWrapUpAction, d
     case 'task-here': {
       input.onPending(taskId, 'sending');
       const before = taskRows(input.items(), taskId);
-      const answer = await sendWrapUpCommand(access, 'agent.submit', { sessionId, prompt: task.prompt, wrapUpTask: { turnId, taskId } });
+      const answer = await sendCardCommand(access, 'agent.submit', { sessionId, prompt: task.prompt, wrapUpTask: { turnId, taskId } });
       if (answer.kind === 'ok') await taskRowArrived(input, taskId, before);
       input.onPending(taskId);
       return uiResult(answer);
     }
     case 'task-dismiss':
     case 'task-reopen':
-      return uiResult(await sendWrapUpCommand(access, 'wrap-up.task-outcome', { sessionId, turnId, taskId, outcome: action.kind === 'task-dismiss' ? 'dismissed' : 'open' }));
+      return uiResult(await sendCardCommand(access, 'wrap-up.task-outcome', { sessionId, turnId, taskId, outcome: action.kind === 'task-dismiss' ? 'dismissed' : 'open' }));
   }
 }
 

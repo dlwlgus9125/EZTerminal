@@ -48,6 +48,8 @@ export interface FeedWaitingItem {
   readonly activityId?: string;
   readonly flow?: { readonly subprojectId: string; readonly nodeId: string; readonly runId?: string };
   readonly decide?: FeedDecision;
+  /** `usage-limit`: its one line is said where the language is known. */
+  readonly limit?: WaitingItem['limit'];
 }
 
 export interface FeedConversation extends LiveConversation {
@@ -106,11 +108,12 @@ export function feedWaiting(
   const sessionProject = new Map((daemon?.sessions ?? []).map((session) => [session.id, session.projectId]));
   const conversations = waitingItems(daemon).map((item): FeedWaitingItem => {
     const projectId = sessionProject.get(item.sessionId);
-    const kind: FeedWaitingKind = item.kind === 'question' ? 'question' : item.kind === 'plan' ? 'plan' : 'approval';
+    const kind: FeedWaitingKind = item.kind === 'question' ? 'question' : item.kind === 'plan' ? 'plan' : item.kind === 'usage-limit' ? 'usage-limit' : 'approval';
     return {
       key: `approval:${item.approvalId}`, kind, at: item.at, title: item.title, detail: item.detail,
       ...(projectId ? { projectId, ...(names.has(projectId) ? { projectName: names.get(projectId)! } : {}) } : {}),
       providerId: item.providerId, requestKind: item.kind, sessionId: item.sessionId, approvalId: item.approvalId,
+      ...(item.limit ? { limit: item.limit } : {}),
       ...(CARD_DECIDES.has(item.kind) ? { decide: { target: 'conversation' as const, approvalId: item.approvalId } } : {}),
     };
   });

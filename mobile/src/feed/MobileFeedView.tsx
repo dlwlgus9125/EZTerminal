@@ -7,6 +7,7 @@ import {
   flowPhaseText,
   providerName,
   useShellText,
+  waitingDetailText,
   waitingKindText,
   type ShellText,
 } from '../../../src/renderer/shell/shell-text';
@@ -94,7 +95,7 @@ function WaitingCard({ item, showProject, onDecide, onOpen }: {
         data-testid="mobile-feed-waiting" data-kind={item.kind}>
         {kicker}
         <span className="mob-feed__t">{item.title}</span>
-        {item.detail && <span className="mob-feed__m">{item.detail}</span>}
+        {waitingDetailText(item, text) && <span className="mob-feed__m">{waitingDetailText(item, text)}</span>}
       </button>
     );
   }
