@@ -38,8 +38,28 @@ async function enableCodex(window: Page): Promise<void> {
   expect(receipt?.ok, `Codex enable receipt: ${JSON.stringify(receipt)}`).toBe(true);
 }
 
-function fixtureState(stateDirectory: string): { installed: Record<string, boolean>; skills: Record<string, boolean>; marketplaces: Record<string, string> } {
+interface FixtureState {
+  readonly installed: Record<string, boolean>;
+  readonly skills: Record<string, boolean>;
+  readonly marketplaces: Record<string, string>;
+}
+
+function fixtureState(stateDirectory: string): FixtureState {
   return JSON.parse(readFileSync(path.join(stateDirectory, 'ezterminal-e2e-codex-extensions.json'), 'utf8'));
+}
+
+/**
+ * For a poll racing the fake's write. The fake rewrites the file in place, so a read can see a prefix of it, which never
+ * parses: that reads as "not yet", and the next poll sees it whole. Writing a temp file and renaming it would not do:
+ * Windows refuses the rename with EPERM while this read has the file open.
+ */
+function polledFixtureState(stateDirectory: string): FixtureState | undefined {
+  try {
+    return fixtureState(stateDirectory);
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
 }
 
 test('AI management browses, installs, switches and removes Codex plugins, marketplaces and skills', async ({ browserName }, testInfo) => {
@@ -83,7 +103,7 @@ test('AI management browses, installs, switches and removes Codex plugins, marke
 
     // Turn it off, then remove it after the danger confirmation.
     await row.getByRole('switch').click();
-    await expect.poll(() => fixtureState(stateDirectory).installed['fixture-lint@fixture-market']).toBe(false);
+    await expect.poll(() => polledFixtureState(stateDirectory)?.installed['fixture-lint@fixture-market']).toBe(false);
     await expect(row.getByRole('switch')).not.toBeChecked();
     await row.getByRole('button', { name: 'Remove fixture-lint' }).click();
     const removeDialog = window.getByTestId('agent-management-remove-dialog');
@@ -101,7 +121,7 @@ test('AI management browses, installs, switches and removes Codex plugins, marke
     const skills = panel.getByTestId('agent-skills-codex');
     await skills.locator('summary').click();
     await skills.getByRole('switch', { name: 'Use fixture-review' }).click();
-    await expect.poll(() => fixtureState(stateDirectory).skills['C:\\fixture\\skills\\review\\SKILL.md']).toBe(false);
+    await expect.poll(() => polledFixtureState(stateDirectory)?.skills['C:\\fixture\\skills\\review\\SKILL.md']).toBe(false);
     await window.screenshot({ path: path.join(evidenceDirectory, 'codex-after-changes.png'), fullPage: true });
   } catch (error) {
     await window.screenshot({ path: path.join(evidenceDirectory, 'failure.png') });
