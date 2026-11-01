@@ -229,14 +229,15 @@ describe('the busy message box', () => {
     const running = steer();
     box({ steer: running });
     expect(byId('chat-steer-announce')?.textContent).toBe('');
-    box({ steer: { ...running, fellBack: new Map([['turn-a', 'review-turn']]) } });
+    const queued = [{ turnId: 'turn-a', revision: 1, text: '그 파일만', fellBack: 'review-turn' as const }];
+    box({ steer: running, queueItems: queued });
     expect(byId('chat-steer-announce')?.textContent).toBe('검토 턴에는 끼워넣을 수 없어 대기열에 넣었습니다.');
     const once = byId('chat-steer-announce')?.textContent;
-    box({ steer: { ...running, fellBack: new Map([['turn-a', 'review-turn']]) } });
+    box({ steer: running, queueItems: queued });
     expect(byId('chat-steer-announce')?.textContent).toBe(once);
   });
 
-  it('says a message was delivered only when the host says it landed, never because it left the list', () => {
+  it('says a message was delivered only when its row shows, never because it left the list', () => {
     const held = { id: 'm', text: '그 파일만', state: 'on-its-way' as const, sentAt: '2026-11-01T05:50:00.000Z', behind: 'tool' as const };
     const running = steer({ messages: [held] });
     box({ steer: running });
@@ -244,10 +245,17 @@ describe('the busy message box', () => {
     expect(byId('chat-steer-tray')).toBeNull();
     expect(byId('chat-steer-announce')?.textContent).toBe('');
     box({ steer: { ...running, messages: [held] } });
-    box({ steer: { ...running, messages: [{ ...held, state: 'landed' }] } });
+    box({ steer: { ...running, messages: [], landedRow: 'row-1' } });
     expect(byId('chat-steer-announce')?.textContent).toBe('메시지가 전달됐습니다.');
     // A landed one is a transcript row by now, not a line above the box.
     expect(byId('chat-steer-tray')).toBeNull();
+  });
+
+  it('says nothing of old landed rows a transcript brings in as it loads', () => {
+    const running = steer();
+    box({ steer: running });
+    box({ steer: { ...running, landedRow: 'row-old' } });
+    expect(byId('chat-steer-announce')?.textContent).toBe('');
   });
 
   it('says what a stop or a limit left unknown, and offers no resend', () => {

@@ -1,5 +1,6 @@
 import type { ChatMessageContext } from '../shared/chat-message';
 import type { DaemonTranscriptItem, DaemonTurn } from '../shared/daemon-protocol';
+import type { SteerFallback } from '../shared/long-run';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 
 export interface ConversationQueueItem {
@@ -9,6 +10,8 @@ export interface ConversationQueueItem {
   readonly context?: ChatMessageContext;
   /** A review's 고치기: shown as the transcript names it ("검토 결과 고치기 · N개"), the message on demand. */
   readonly reviewFix?: { readonly findings: number };
+  /** It was meant for the running turn and could not go in: why. */
+  readonly fellBack?: SteerFallback;
 }
 export type ConversationQueueAction = 'remove' | 'take' | 'run-next';
 
@@ -24,6 +27,7 @@ export function conversationQueue(sessionId: string, turns: readonly DaemonTurn[
       return [{
         turnId: turn.id, revision: turn.revision, text: message.text, context: message.context,
         ...(payload?.type === 'review-fix' ? { reviewFix: { findings: payload.findingIds.length } } : {}),
+        ...(payload?.type === 'steer-queued' ? { fellBack: payload.reason } : {}),
       }];
     });
 }

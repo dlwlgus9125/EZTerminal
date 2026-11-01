@@ -2,7 +2,7 @@ import type { ApprovalRequest } from '../../../shared/approval-request';
 import type { ChatMessageContext } from '../../../shared/chat-message';
 import type { DaemonApproval, DaemonTurn } from '../../../shared/daemon-protocol';
 import type { RecordedFileChange } from '../../../shared/conversation-changes';
-import type { AppSentReason, SteerLanding, TurnUsageLimit } from '../../../shared/long-run';
+import type { AppSentReason, OpenUsageLimit, SteerLanding } from '../../../shared/long-run';
 import type { ReviewFinding, ReviewState, ReviewTarget, ReviewerRef } from '../../../shared/review-findings';
 import type { TodoItem, ToolCategory, ToolStatus } from '../../../shared/transcript-payload';
 import type { SuggestTaskRefusal, TurnRecap, TurnTaskSuggestions } from '../../../shared/turn-wrap-up';
@@ -155,12 +155,12 @@ export type ChatRow =
        * as a message (`subagent-report`, from `from`). The review loop writes the
        * person's fix turns (`review-fix`) and an other-AI reviewer's request
        * (`review-request`); both show as a compact chip with the full text on demand.
-       * 시안: the app sent it to continue a turn stopped at a usage limit (`app-resume`).
+       * The app sent it to continue a turn stopped at a usage limit (`app-resume`).
        */
       readonly origin?: 'parent-agent' | 'subagent-report' | 'review-fix' | 'review-request' | 'app-resume';
-      /** 시안: why the app sent it (`app-resume`). */
+      /** Why the app sent it (`app-resume`). */
       readonly appSent?: AppSentReason;
-      /** 시안: the person put it into a running turn and it landed here, at its real place. */
+      /** The person put it into a running turn and it landed here, at its real place. */
       readonly steer?: SteerLanding;
       readonly from?: ChatSubagentLink;
       readonly review?: ChatReviewTurn;
@@ -208,7 +208,7 @@ export type ChatRow =
       readonly state: DaemonTurn['state'];
       readonly startedAt?: string;
       readonly finishedAt?: string;
-      /** 시안: it stopped at a usage limit, or the limit refused a "Continue.": said plainly, not as a failure. */
+      /** It stopped at a usage limit, or the limit refused it while that stop was open: said plainly, not as a failure. */
       readonly limited?: 'stopped' | 'refused';
     })
   | (RowBase & { readonly kind: 'changes'; readonly files: readonly ChatToolFile[]; readonly changes: readonly RecordedFileChange[] })
@@ -222,10 +222,10 @@ export type ChatRow =
    */
   | (RowBase & { readonly kind: 'recap'; readonly turnId: string; readonly recap: TurnRecap; readonly waitingNow?: boolean })
   /**
-   * 시안: a turn that stopped at a usage limit, after its last message. `approvalOpen`: an approval waits now, so a
-   * skipped resume says so and leads there.
+   * One card per stop, from its latest row, after the last message of the turn that row names. `approvalOpen`: an
+   * approval waits now, so a skipped resume says so and leads there.
    */
-  | (RowBase & { readonly kind: 'usage-limit'; readonly turnId: string; readonly limit: TurnUsageLimit; readonly approvalOpen?: boolean });
+  | (RowBase & { readonly kind: 'usage-limit'; readonly turnId: string; readonly limit: OpenUsageLimit; readonly approvalOpen?: boolean });
 
 export type ChatRowKind = ChatRow['kind'];
 

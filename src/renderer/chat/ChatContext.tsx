@@ -41,12 +41,12 @@ export type ChatWrapUpAction =
   | { readonly kind: 'recap-retry'; readonly turnId: string };
 
 /**
- * 시안: what the person did on a usage limit card. `limit-try-now` and `limit-resume` send "Continue." now; the first is
+ * What the person did on a usage limit card. `limit-try-now` and `limit-resume` send "Continue." now; the first is
  * pressed before a known reset, so a refusal stays in the conversation. Nothing else sends anything by itself.
  */
 export type ChatLongRunAction = {
   readonly kind: 'limit-try-now' | 'limit-auto-off' | 'limit-auto-on' | 'limit-resume' | 'limit-schedule' | 'limit-unschedule' | 'limit-leave';
-  readonly turnId: string;
+  readonly stopId: string;
 };
 
 /** What one press starts: the settings on the card's line, and that line in words. */

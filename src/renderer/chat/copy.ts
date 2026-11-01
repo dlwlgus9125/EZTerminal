@@ -280,7 +280,7 @@ const EN = {
     answer: 'Go answer',
     aiText: (provider: string): string => `${provider}’s recap`,
   },
-  /** Long-run continuity (시안): a usage limit that stopped a turn, and messages put into a running turn. */
+  /** Long-run continuity: a usage limit that stopped a turn, and messages put into a running turn. */
   longRun: {
     limit: {
       card: 'Usage limit',
@@ -339,7 +339,6 @@ const EN = {
       child: 'A sub-conversation does not continue by itself.',
       childParent: 'Its parent may stop at the same limit.',
       childUnsupported: 'This sub-conversation can’t be continued from here.',
-      childProvider: 'The AI runs this subagent itself, so the app sends nothing.',
       resumeNow: 'Continue sends “Continue.” right away. Before the expected reset, the refused turn stays in the conversation.',
       failedLabel: 'Couldn’t send “Continue.”',
       failure: { disconnected: 'The conversation is not connected.', 'session-gone': 'The AI’s session is gone.' },
@@ -800,7 +799,6 @@ const KO: typeof EN = {
       child: '하위 대화는 자동으로 이어서 하지 않습니다.',
       childParent: '부모 대화도 같은 한도로 멈출 수 있습니다.',
       childUnsupported: '이 하위 대화는 여기서 이어서 할 수 없습니다.',
-      childProvider: 'AI가 직접 관리하는 하위 에이전트라 앱이 보내지 않습니다.',
       resumeNow: '이어서 하기는 "Continue."를 바로 보냅니다. 해제 예정 시각 전이면 거절된 턴이 대화에 그대로 남습니다.',
       failedLabel: '"Continue."를 보내지 못했습니다',
       failure: { disconnected: '이 대화의 연결이 끊겼습니다.', 'session-gone': 'AI 세션이 사라졌습니다.' },

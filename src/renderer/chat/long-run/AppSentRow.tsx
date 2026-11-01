@@ -7,7 +7,7 @@ import './long-run.css';
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
 /**
- * 시안: what the app sent to continue a stopped turn. The transcript keeps it as what it is: not the person's words, shown
+ * What the app sent to continue a stopped turn. The transcript keeps it as what it is: not the person's words, shown
  * as sent (D3), and never with the person's actions (reuse, reply).
  */
 export function AppSentRow({ row }: { readonly row: RowOf<'user'> }): JSX.Element {

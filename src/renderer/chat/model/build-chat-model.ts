@@ -1,35 +1,25 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
-import type { AppSentReason, SteerLanding, TurnUsageLimit } from '../../../shared/long-run';
+import { USAGE_LIMIT_ERROR, type OpenUsageLimit, type SteerLanding } from '../../../shared/long-run';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
 import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import type { TurnRecap } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
+import { longRunRows } from './long-run-rows';
 import type {
   ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
   PendingInteraction, TodoChange,
 } from './types';
 import { foldsIntoCard, suggestTaskRefusal, wrapUpCards } from './wrap-up-cards';
 
-/** 시안: what the long-run stories hand the model instead of host rows; there is no payload for these yet. */
-export interface ChatLongRunRows {
-  /** By the turn that stopped. */
-  readonly limits?: ReadonlyMap<string, TurnUsageLimit>;
-  /** By transcript item: messages that landed in a running turn. */
-  readonly landed?: ReadonlyMap<string, SteerLanding>;
-  /** By transcript item: what the app sent, and why. */
-  readonly appSent?: ReadonlyMap<string, AppSentReason>;
-  /** By turn: stopped at the limit, or a "Continue." the limit refused. Neither is a failure of the work. */
-  readonly limited?: ReadonlyMap<string, 'stopped' | 'refused'>;
-}
-
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
-  readonly longRun?: ChatLongRunRows;
+  /** This conversation's open limit in the snapshot: where it stands in the line of sends, which no row says. */
+  readonly openLimit?: OpenUsageLimit;
 }
 
 /** A transcript item after streaming fragments have been merged. */
@@ -367,12 +357,13 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [], longRun }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], openLimit }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
   const wrapUp = wrapUpCards(coalesced, turns);
   const { tasks: taskCards, recaps: recapCards } = wrapUp;
+  const { limits: limitCards, limited: limitedTurns } = longRunRows(coalesced, turns);
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const rows: ChatRow[] = [];
   const toolsByCallId = new Map<string, MutableTool>();
@@ -452,19 +443,23 @@ export function buildChatModel({ items, approvals = [], turns = [], longRun }: B
         // The runtime stores the prompt; providers echo it back (sensitive).
         const key = turnId ?? `seq:${item.sequence}`;
         const text = normalized(item.text);
-        if (turnId && userTextByTurn.get(key) === text) break;
-        if (turnId) userTextByTurn.set(key, text);
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+        // A landed message is the person's own, whatever it repeats.
+        if (turnId && userTextByTurn.get(key) === text && payload?.type !== 'steer') break;
+        if (turnId) userTextByTurn.set(key, text);
         if (payload?.type === 'review-fix') {
           addReviewEvent(payload.reviewId, { sequence: item.sequence, findingIds: payload.findingIds, kind: 'fix', ...(turnId ? { turnId } : {}) });
         }
-        const landing = longRun?.landed?.get(item.id);
-        const appSent = longRun?.appSent?.get(item.id);
+        // Refused needs no row of its own: the turn it landed in says so.
+        const landing: SteerLanding | undefined = payload?.type === 'steer' ? {
+          ...(payload.rewritten ? { rewritten: true } : {}), ...(payload.newTurn ? { newTurn: true } : {}),
+          ...(turnId && turnById.get(turnId)?.errorCode === USAGE_LIMIT_ERROR ? { refused: true } : {}),
+        } : undefined;
         push({
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
           ...(landing ? { steer: landing } : {}),
-          ...(appSent ? { origin: 'app-resume' as const, appSent } : {}),
+          ...(payload?.type === 'app-sent' ? { origin: 'app-resume' as const, appSent: payload.reason } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'instruction' ? { origin: 'parent-agent' as const } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'result' && payload.childSessionId ? {
             origin: 'subagent-report' as const,
@@ -483,7 +478,7 @@ export function buildChatModel({ items, approvals = [], turns = [], longRun }: B
           const turn = turnById.get(turnId);
           if (turn) {
             statusInserted.add(turnId);
-            const limited = longRun?.limited?.get(turnId);
+            const limited = limitedTurns.get(turnId);
             rows.push({
               kind: 'turn-status', id: `turn:${turnId}`, turnId, createdAt: item.createdAt, state: turn.state,
               ...(turn.startedAt ? { startedAt: turn.startedAt } : {}), ...(turn.finishedAt ? { finishedAt: turn.finishedAt } : {}),
@@ -621,8 +616,8 @@ export function buildChatModel({ items, approvals = [], turns = [], longRun }: B
           }
           break;
         }
-        // Turn wrap-up's rows are read ahead into their turn's cards. Not pushed, like a review's: the run of tool lines goes on.
-        if (payload?.type === 'task-suggestion' || payload?.type === 'task-suggestion-status' || payload?.type === 'task-suggestions-dropped') break;
+        // Turn wrap-up's rows are read ahead into their turn's cards, a limit's into its one card. Not pushed, like a review's: the run of tool lines goes on.
+        if (payload?.type === 'task-suggestion' || payload?.type === 'task-suggestion-status' || payload?.type === 'task-suggestions-dropped' || payload?.type === 'usage-limit') break;
         // A review keeps the place of its first row; each later row replaces what the card shows.
         // Replaced in place, not pushed: the card does not end the run of tool lines around it.
         if (payload?.type === 'review') {
@@ -742,11 +737,12 @@ export function buildChatModel({ items, approvals = [], turns = [], longRun }: B
         if (suggestions) finalRows.push({ kind: 'task-suggestions', id: `tasks:${row.turnId}`, turnId: row.turnId, createdAt: suggestions.createdAt, suggestions });
         const recap = recapCards.get(row.turnId);
         if (recap && (row.kind === 'recap' || !stoppedRecaps.has(row.turnId))) finalRows.push(recapRowOf(row.turnId, recap));
-        const limit = longRun?.limits?.get(row.turnId);
+        const limit = limitCards.get(row.turnId);
         if (limit) {
           const approvalOpen = approvals.some((approval) => approval.state === 'pending');
+          const line = openLimit?.stopId === limit.stopId ? openLimit.line : undefined;
           // Named by the stop, not the turn: the card moves down when a refused try leaves a row, and stays one card.
-          finalRows.push({ kind: 'usage-limit', id: `usage-limit:${limit.stoppedAt}`, turnId: row.turnId, createdAt: limit.stoppedAt, limit, ...(approvalOpen ? { approvalOpen } : {}) });
+          finalRows.push({ kind: 'usage-limit', id: `usage-limit:${limit.stopId}`, turnId: row.turnId, createdAt: limit.stoppedAt, limit: { ...limit, ...(line ? { line } : {}) }, ...(approvalOpen ? { approvalOpen } : {}) });
         }
       }
       const status = liveStatus.get(row.turnId);

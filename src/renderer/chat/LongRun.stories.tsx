@@ -25,11 +25,12 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
 import {
-  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, LATER_RESET_AT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
+  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, LIMIT_STOP, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, LATER_RESET_AT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
   type LongLanguage, type LongProvider, type LongRunFixture,
 } from './long-run/long-run-fixtures';
 import { limitStatus } from './long-run/long-run-presentation';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
+import { latestLimit } from './model/long-run-rows';
 import '../index.css';
 import '../structured-agent.css';
 import '../mobile-shared.css';
@@ -41,12 +42,11 @@ import '../workbench/workbench.css';
 import '../shell/shell.css';
 
 /**
- * 시안 (2026-11-01): long-run continuity. A: Enter while a turn runs puts the message into that turn instead of stopping
- * it, and falls back to the queue when it cannot land. B: a turn that stopped at a usage limit gets one card, and the app
- * sends "Continue." when the reset passes. C: where a waiting conversation shows. D: the one setting. E: the phone.
- * Everything here is the production renderer fed by fixtures; the host is simulated. No real limit was ever seen: the
- * shapes behind the states come from stub runs of the real CLIs and Claude's real records, and every sentence, time and
- * conversation is 시안 data.
+ * Long-run continuity. A: Enter while a turn runs puts the message into that turn instead of stopping it, and falls back
+ * to the queue when it cannot land. B: a turn that stopped at a usage limit gets one card, and the app sends "Continue."
+ * when the reset passes. C: where a waiting conversation shows. D: the one setting. E: the phone. Everything here is the
+ * production renderer reading the rows a host writes; only the host is simulated. No real limit was ever seen: the shapes
+ * behind the states come from stub runs of the real CLIs and Claude's real records.
  */
 
 interface Args {
@@ -128,7 +128,7 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
   useEffect(() => () => { timers.current.forEach((timer) => window.clearTimeout(timer)); }, []);
   useEffect(() => {
     const tick = (event: Event): void => {
-      const limit = [...(latest.current.rows.limits?.values() ?? [])][0];
+      const limit = latestLimit(latest.current.items);
       if (!limit || !resumeDue(limit, (event as CustomEvent<number>).detail)) return;
       args.onResumeSent(limit.turnId);
       // Twice in one tick would be a double send: the state a send leaves must not be due.
@@ -160,10 +160,9 @@ function useStoryHost(fixture: LongRunFixture, provider: LongProvider, args: Arg
   const steer = useMemo(() => ({
     onSteer,
     ...(state.steered ? { messages: state.steered } : {}),
-    ...(state.fellBack ? { fellBack: state.fellBack } : {}),
     onToQueue: (message: { readonly id: string }): void => setState((current) => queueSteer(current, message.id)),
     onToBox: (message: { readonly id: string }): void => setState((current) => dropSteer(current, message.id)),
-  }), [onSteer, state.fellBack, state.steered]);
+  }), [onSteer, state.steered]);
   return { state, onAction, onSend, steer, settingOff: turnOff };
 }
 
@@ -176,7 +175,7 @@ const PARENT = { ko: '장바구니 전체 정리', en: 'Clean up the cart' } as 
 
 function panelProps(sessionId: string, host: StoryHost, provider: LongProvider, locale: LongLanguage, args: Args): StructuredAgentSessionPanelProps {
   const { state } = host;
-  const limit = [...(state.rows.limits?.values() ?? [])][0];
+  const limit = latestLimit(state.items);
   const status = limit && limit.phase !== 'skipped' ? limitStatus(limit, chatCopy(locale).longRun.limit, locale) : undefined;
   const clockRuns = limit !== undefined && (limit.phase === 'waiting' || limit.phase === 'scheduled' || limit.phase === 'retrying');
   const queueItems = conversationQueue(sessionId, state.turns, state.items);
@@ -193,7 +192,7 @@ function panelProps(sessionId: string, host: StoryHost, provider: LongProvider, 
     onChangeSettings: fn(async () => ({ ok: true as const })), onResolveApproval: fn(async () => ({ ok: true as const })),
     onCancel: fn(async () => ({ ok: true as const })), onOpenRelatedSession: args.onOpenRelatedSession,
     ...(status ? { statusLabel: status.text } : {}),
-    longRun: { rows: state.rows, onAction: host.onAction, steer: host.steer, ...(status?.asks ? { asks: true } : {}), ...(clockRuns ? { limitHint: true } : {}) },
+    longRun: { ...(limit && state.line ? { openLimit: { ...limit, line: state.line } } : {}), onAction: host.onAction, steer: host.steer, ...(status?.asks ? { asks: true } : {}), ...(clockRuns ? { limitHint: true } : {}) },
   };
 }
 
@@ -204,8 +203,8 @@ interface ChatOptions {
   readonly height?: number;
   /** After this many ms a message put into the turn lands (the stories that follow one all the way). */
   readonly landAfter?: number;
-  /** A child conversation (D7): one of ours, or a subagent the AI runs itself. */
-  readonly child?: 'managed' | 'provider';
+  /** A child conversation (D7). */
+  readonly child?: boolean;
   /** What the person sends before the reset is refused. */
   readonly personRefused?: boolean;
   /** What is in the message box when the screen opens. */
@@ -213,7 +212,7 @@ interface ChatOptions {
 }
 
 function childProps(child: ChatOptions['child'], locale: LongLanguage): Pick<StructuredAgentSessionPanelProps, 'owner' | 'parent'> | undefined {
-  return child ? { owner: child === 'provider' ? 'provider-native' : 'managed', parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : undefined;
+  return child ? { owner: 'managed', parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : undefined;
 }
 
 function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child, personRefused = false, draft }: ChatOptions & {
@@ -523,7 +522,7 @@ export const LimitWaitingCodex: Story = chat('limit-waiting-codex', (lang) => li
 /** 지금 시도 before the reset: refused, so the refused turn stays, and the card still waits for its clock. */
 export const LimitTryNow: Story = chat('limit-try-now', (lang) => limitStory(lang, 'waiting'), {}, async ({ canvasElement, args }) => {
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-try-now"]'));
-  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-try-now', turnId: 'turn-limit' });
+  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-try-now', stopId: LIMIT_STOP });
   await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 지금 시도를 누름'), { timeout: 4_000 });
   const card = await findIn(canvasElement, CARD);
   await waitFor(() => expect(card).toHaveTextContent('지금 시도가 거절됐습니다. 거절된 턴이 대화에 남아 있습니다.'));
@@ -640,7 +639,7 @@ export const LimitWeekly: Story = chat('limit-weekly', (lang) => limitStory(lang
 /** 그때 이어서 하기: now it waits for that clock, and that can be cancelled. */
 export const LimitWeeklyScheduled: Story = chat('limit-weekly-scheduled', (lang) => limitStory(lang, 'ask-reset', { window: 'weekly' }), {}, async ({ canvasElement, args }) => {
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-schedule"]'));
-  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-schedule', turnId: 'turn-limit' });
+  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-schedule', stopId: LIMIT_STOP });
   const card = await findIn(canvasElement, CARD);
   await waitFor(() => expect(card).toHaveTextContent('앱이 "Continue."를 보내 재개를 시도합니다.'));
   await expect(await findIn(canvasElement, '[data-testid="chat-limit-limit-unschedule"]')).toBeVisible();
@@ -712,7 +711,7 @@ export const LimitNotIncluded: Story = chat('limit-not-included', (lang) => limi
  * D7: a managed child never resumes by itself. 이어서 하기 is there only if that path proves supported at implementation, so
  * this is the card if it does (Claude only: a Codex child was not measured).
  */
-export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 'child'), { child: 'managed' }, async ({ canvasElement }) => {
+export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 'child'), { child: true }, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('하위 대화는 자동으로 이어서 하지 않습니다.');
   await expect(card).not.toHaveTextContent('자동으로 재개를 시도합니다');
@@ -720,18 +719,10 @@ export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 
   scrollToTop(card);
 });
 /** D7: the card if that path does not prove supported: no button. */
-export const LimitChildUnsupported: Story = chat('limit-child-unsupported', (lang) => limitStory(lang, 'child', { childKind: 'managed' }), { child: 'managed' }, async ({ canvasElement }) => {
+export const LimitChildUnsupported: Story = chat('limit-child-unsupported', (lang) => limitStory(lang, 'child', { childKind: 'managed' }), { child: true }, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('이 하위 대화는 여기서 이어서 할 수 없습니다.');
   await expect(within(card).queryAllByRole('button')).toHaveLength(0);
-  scrollToTop(card);
-});
-/** D7: a subagent the AI runs itself has no box and gets nothing from the app. */
-export const LimitChildProvider: Story = chat('limit-child-provider', (lang) => limitStory(lang, 'child', { childKind: 'provider' }), { child: 'provider' }, async ({ canvasElement }) => {
-  const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('AI가 직접 관리하는 하위 에이전트라 앱이 보내지 않습니다.');
-  await expect(within(card).queryAllByRole('button')).toHaveLength(0);
-  await expect(canvasElement.querySelector(INPUT)).toBeNull();
   scrollToTop(card);
 });
 /** The send itself failed: the one state that is an error, with its reason and a retry. */
@@ -744,7 +735,7 @@ export const LimitFailed: Story = chat('limit-failed', (lang) => limitStory(lang
 /** 이어서 하기 on an asking card: being sent, then the row, marked as pressed. */
 export const LimitResumePressed: Story = chat('limit-resume-pressed', (lang) => limitStory(lang, 'ask-reopened'), {}, async ({ canvasElement, args }) => {
   await userEvent.click(await findIn(canvasElement, '[data-testid="chat-limit-limit-resume"]'));
-  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-resume', turnId: 'turn-limit' });
+  await expect(args.onLongRunAction).toHaveBeenCalledWith({ kind: 'limit-resume', stopId: LIMIT_STOP });
   await waitFor(() => expect(canvasElement.querySelector('[data-testid="chat-app-sent"]')).toHaveTextContent('앱이 보냄 · 이어서 하기를 누름'), { timeout: 4_000 });
   scrollToTop(await findIn(canvasElement, CARD));
 });
@@ -989,8 +980,7 @@ export const PhoneLimitUnconfirmed360: Story = phone('phone-limit-unconfirmed', 
 export const PhoneLimitReopened360: Story = phone('phone-limit-reopened', (lang) => limitStory(lang, 'ask-reopened'), 360, 800, {}, phoneCard());
 export const PhoneLimitResumed360: Story = phone('phone-limit-resumed', (lang) => limitStory(lang, 'resumed'), 360, 800, {}, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="chat-app-sent"]'); });
 export const PhoneLimitLine412: Story = phone('phone-limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), 412, 915, {}, phoneCard());
-export const PhoneLimitChild360: Story = phone('phone-limit-child', (lang) => limitStory(lang, 'child'), 360, 800, { child: 'managed' }, phoneCard());
-export const PhoneLimitChildProvider360: Story = phone('phone-limit-child-provider', (lang) => limitStory(lang, 'child', { childKind: 'provider' }), 360, 800, { child: 'provider' }, phoneCard());
+export const PhoneLimitChild360: Story = phone('phone-limit-child', (lang) => limitStory(lang, 'child'), 360, 800, { child: true }, phoneCard());
 export const PhoneLimitNotIncluded360: Story = phone('phone-limit-not-included', (lang) => limitStory(lang, 'not-included', { provider: 'codex', window: 'unknown' }), 360, 800, { provider: 'codex' }, phoneCard());
 /** Phone, CLI skin: the text-styled buttons stacked too. */
 export const PhoneLimitCli360: Story = phone('phone-limit-cli', (lang) => limitStory(lang, 'waiting'), 360, 800, { skin: 'cli' }, phoneCard('.chat-cli-action-card[data-kind="usage-limit"]'));

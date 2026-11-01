@@ -1,6 +1,6 @@
 import type { ApprovalResponse } from '../shared/approval-request';
-import type { SteeredMessage, SteerFallback } from '../shared/long-run';
-import { buildChatModel, coalesceTranscript, type ChatLongRunRows } from './chat/model/build-chat-model';
+import type { OpenUsageLimit, SteeredMessage } from '../shared/long-run';
+import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
 import { ChatProvider, type ChatLongRunAction, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
 import { SteerTray } from './chat/long-run/SteerTray';
 import { ChatTranscript } from './chat/ChatTranscript';
@@ -981,8 +981,8 @@ export interface StructuredAgentTranscriptProps {
   };
   /** Moves focus to the decision waiting above the message box (a recap's 답하러 가기); false when there is none. */
   readonly onFocusDecision?: () => boolean;
-  /** 시안: long-run rows and the usage limit card's buttons. */
-  readonly longRun?: { readonly rows?: ChatLongRunRows; readonly onAction?: (action: ChatLongRunAction) => void };
+  /** Long-run: the limit open in the snapshot, and the usage limit card's buttons. */
+  readonly longRun?: { readonly openLimit?: OpenUsageLimit; readonly onAction?: (action: ChatLongRunAction) => void };
   /** The phone: where its next-prompt chip floats, and the scroll room for it. */
   readonly tailDock?: ChatTailDock;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
@@ -1033,10 +1033,10 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
-  const longRunRows = longRun?.rows;
+  const openLimit = longRun?.openLimit;
   const built = useMemo(
-    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(longRunRows ? { longRun: longRunRows } : {}) }),
-    [items, approvals, turns, longRunRows],
+    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}) }),
+    [items, approvals, turns, openLimit],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -1205,8 +1205,8 @@ export function StructuredAgentChildTrack({
 }
 
 /**
- * 시안: a message box that can put a message into the running turn. Only the long-run stories pass this: without it the
- * box is today's. `running`: a turn is going, also one held by an open approval. What Enter does there is D1.
+ * A message box that can put a message into the running turn. Without it the box is today's. `running`: a turn is going,
+ * also one held by an open approval. What Enter does there is D1.
  */
 export interface ComposerSteer {
   readonly running: boolean;
@@ -1215,8 +1215,8 @@ export interface ComposerSteer {
   readonly onSteer: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   /** On their way, held or failed: a landed message is a transcript row. */
   readonly messages?: readonly SteeredMessage[];
-  /** Queued turns that were meant for the running one, and why they could not go in. */
-  readonly fellBack?: ReadonlyMap<string, SteerFallback>;
+  /** The newest landed row in the transcript. */
+  readonly landedRow?: string;
   readonly onToQueue?: (message: SteeredMessage) => void;
   readonly onToBox?: (message: SteeredMessage) => void;
 }
@@ -1293,7 +1293,7 @@ export interface StructuredAgentComposerProps {
   readonly latestTurnId?: string;
   /** The phone: where the chip floats over the foot of the transcript, so its coming and going moves nothing. */
   readonly suggestionChipAnchor?: HTMLElement | null;
-  /** 시안: see `ComposerSteer`. */
+  /** See `ComposerSteer`. */
   readonly steer?: ComposerSteer;
 }
 
@@ -1372,7 +1372,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const valueRef = useRef(value);
   const draft = value.text;
   const attachments = value.attachments ?? [];
-  // 시안: only plain text was measured going into a running turn. Everything else queues, as it does today.
+  // Only plain text was measured going into a running turn. Everything else queues, as it does today.
   const plainDraft = attachments.length === 0 && !value.replyTo && !value.skills?.length && !draft.trimStart().startsWith('/');
   const steerable = steerOnEnter && plainDraft;
   const updateDraft = (next: ChatComposerDraft): void => {
@@ -1626,7 +1626,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const hintText = disabledReason || sendDisabledReason ? undefined
     : steerOnEnter && hasDraft && !plainDraft ? steerCopy.notPlain
     : statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined);
-  // 시안: what Enter does and what sending costs are part of what the box is, so a screen reader hears them with it.
+  // What Enter does and what sending costs are part of what the box is, so a screen reader hears them with it.
   const hintId = `${composerId}-hint`;
   const sendKind = steerable ? 'steer' : busy || steerOnEnter ? 'queue' : 'send';
   const sendLabel = steerable ? steerCopy.add : busy || steerOnEnter ? copy.queue : copy.send;
@@ -1645,7 +1645,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       {steer ? steerCopy.interruptSend : copy.interruptSend}
     </Button>
   ) : null;
-  // 시안: on the phone it and the stop button have their own row: beside the settings chips they squeeze them to a letter.
+  // On the phone it and the stop button have their own row: beside the settings chips they squeeze them to a letter.
   const interruptOnOwnRow = steer !== undefined && variant === 'mobile' && interruptButton !== null;
   const stopButton = !showStop && onStop !== undefined ? (
     <button
@@ -1661,6 +1661,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     </button>
   ) : null;
   /** What a message that could not go into the turn does next: back to the box, added to what is there. */
+  const fellBack = new Map(queueItems.flatMap((item) => (item.fellBack ? [[item.turnId, item.fellBack] as const] : [])));
   const steerToBox = (message: SteeredMessage): void => {
     const current = valueRef.current;
     const text = current.text.trim() ? `${current.text.replace(/\s+$/u, '')}\n\n${message.text}` : message.text;
@@ -1693,8 +1694,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         if (!disabled) takeFiles(event.dataTransfer.files);
       }}
     >
-      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={steerToBox}
-        {...(steer.fellBack ? { fellBack: steer.fellBack } : {})}
+      {steer && <SteerTray messages={steer.messages ?? []} codex={providerId === 'codex'} decisionOpen={steer.decisionOpen === true} onToBox={steerToBox} fellBack={fellBack}
+        {...(steer.landedRow ? { landedRow: steer.landedRow } : {})}
         {...(onFocusDecision ? { onFocusDecision } : {})} {...(steer.onToQueue ? { onToQueue: steer.onToQueue } : {})} />}
       {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
         <p className="chat-queue__title"><Glyph name="clock" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
@@ -1710,8 +1711,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             </p>
             {openQueued.has(item.turnId) && <p className="chat-queue__original">{item.text}</p>}
           </> : <p>{item.text}</p>}
-          {steer?.fellBack?.has(item.turnId) && (
-            <p className="chat-queue__fallback" data-testid="chat-queue-fallback"><Glyph name="info" /><span>{steerCopy.fellBack[steer.fellBack.get(item.turnId)!]}</span></p>
+          {steer && item.fellBack && (
+            <p className="chat-queue__fallback" data-testid="chat-queue-fallback"><Glyph name="info" /><span>{steerCopy.fellBack[item.fellBack]}</span></p>
           )}
           {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
           {onQueueAction && <div className="conversation-queue__actions">{(['run-next', 'take', 'remove'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
@@ -2080,12 +2081,12 @@ export interface StructuredAgentSessionPanelProps {
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
   readonly heartbeatActive?: boolean;
   /**
-   * 시안: long-run continuity. Only the long-run stories pass this: without it the panel is today's. `rows`: what the
-   * transcript shows, `onAction`: the usage limit card's buttons, `steer`: the message box while a turn runs. `asks`: the
-   * header's state waits on the person (a clock does not). `limitHint`: a clock runs, so sending now has a cost to say.
+   * Long-run continuity: without it the panel is today's. `openLimit`: this conversation's limit in the snapshot,
+   * `onAction`: the usage limit card's buttons, `steer`: the message box while a turn runs. `asks`: the header's state
+   * waits on the person (a clock does not). `limitHint`: a clock runs, so sending now has a cost to say.
    */
   readonly longRun?: {
-    readonly rows?: ChatLongRunRows;
+    readonly openLimit?: OpenUsageLimit;
     readonly onAction?: (action: ChatLongRunAction) => void;
     readonly steer?: Omit<ComposerSteer, 'running'>;
     readonly asks?: boolean;
@@ -2748,13 +2749,20 @@ export function StructuredAgentSessionPanel({
   const [suggestionChipAnchor, setSuggestionChipAnchor] = useState<HTMLDivElement | null>(null);
   const suggestionRoom = composerSuggestion !== undefined;
   const tailDock = useMemo(() => (variant === 'mobile' ? { anchorRef: setSuggestionChipAnchor, room: suggestionRoom } : undefined), [suggestionRoom, variant]);
-  // 시안: what Enter (on the phone, the send button) does here, and what sending costs while a clock runs.
+  // What Enter (on the phone, the send button) does here, and what sending costs while a clock runs.
   const longRunCopy = chatCopy(chatLocale).longRun;
   const steerHintKey = state === 'blocked' ? 'blocked' : providerId === 'codex' ? 'codex' : 'claude';
+  // The row is the host saying a message landed; nothing else may. Not `findLast`: the phone runs on WebView 74.
+  const longRunSteer = longRun?.steer;
+  const landedRow = useMemo(() => {
+    if (!longRunSteer) return undefined;
+    for (let index = items.length - 1; index >= 0; index -= 1) if (items[index]!.payload?.type === 'steer') return items[index]!.id;
+    return undefined;
+  }, [items, longRunSteer]);
   const steerHint = longRun?.steer && turnCurrent
     ? (variant === 'mobile' ? longRunCopy.steer.hintMobile : longRunCopy.steer.hint)[steerHintKey] : undefined;
   const longRunHint = steerHint ?? (longRun?.limitHint ? longRunCopy.limit.composerHint : undefined);
-  const composerSteer = useMemo(() => (longRun?.steer ? { ...longRun.steer, running: turnCurrent, decisionOpen: state === 'blocked' } : undefined), [longRun?.steer, state, turnCurrent]);
+  const composerSteer = useMemo(() => (longRunSteer ? { ...longRunSteer, running: turnCurrent, decisionOpen: state === 'blocked', ...(landedRow ? { landedRow } : {}) } : undefined), [landedRow, longRunSteer, state, turnCurrent]);
   const queuedAccessChanged = queuedSettings !== undefined && queuedSettings.current.permissionPreset !== nextValues.permissionPreset;
   const queuedDiffers = queuedSettings !== undefined && (
     queuedAccessChanged

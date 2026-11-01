@@ -11,7 +11,7 @@ import '../long-run/long-run.css';
 type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
 /**
- * 시안: a turn stopped at a usage limit. Nothing arrives when a limit lifts, so the card says what the app will do and
+ * A turn stopped at a usage limit. Nothing arrives when a limit lifts, so the card says what the app will do and
  * when, and what it will send. Only an ask-first case waits on the person, and even then amber stays in the list and the
  * header: the card reports, as every ActionCard does. A change of state is said once; when the pressed button goes,
  * focus moves to the card's title.
@@ -41,7 +41,7 @@ export function UsageLimitCard({ row }: { readonly row: RowOf<'usage-limit'> }):
   const press = (id: LimitActionId): void => {
     if (id === 'focus-decision') { context.onFocusDecision?.(); return; }
     pressed.current = true;
-    context.onLongRunAction?.({ kind: id, turnId: limit.turnId });
+    context.onLongRunAction?.({ kind: id, stopId: limit.stopId });
   };
   const actions: ActionCardAction[] = context.onLongRunAction
     ? view.actions.map((action) => ({

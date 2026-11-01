@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { RESUME_TEXT, type TurnUsageLimit, type UsageLimitPhase } from '../../../shared/long-run';
+import { RESUME_TEXT, type OpenUsageLimit, type UsageLimitPhase } from '../../../shared/long-run';
 import { chatCopy } from '../copy';
 import { limitStatus, limitView } from './long-run-presentation';
 
@@ -9,8 +9,8 @@ const en = chatCopy('en').longRun.limit;
 const RESET = '2026-11-01T06:10:00.000Z';
 const RESUME = '2026-11-01T06:12:00.000Z';
 
-function limit(phase: UsageLimitPhase, extra: Partial<TurnUsageLimit> = {}): TurnUsageLimit {
-  return { turnId: 'turn', providerId: 'claude', phase, window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resetsAt: RESET, resumeAt: RESUME, ...extra };
+function limit(phase: UsageLimitPhase, extra: Partial<OpenUsageLimit> = {}): OpenUsageLimit {
+  return { stopId: 'stop', turnId: 'turn', providerId: 'claude', phase, window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resetsAt: RESET, resumeAt: RESUME, ...extra };
 }
 
 const PHASES: readonly UsageLimitPhase[] = [
@@ -88,9 +88,12 @@ describe('the usage limit card', () => {
     const unsupported = limitView(limit('child', { childKind: 'managed' }), ko, 'ko');
     expect(unsupported.actions).toEqual([]);
     expect(unsupported.notes.map((note) => note.text)).toContain(ko.childUnsupported);
-    const provider = limitView(limit('child', { childKind: 'provider' }), ko, 'ko');
-    expect(provider.actions).toEqual([]);
-    expect(provider.notes.map((note) => note.text)).toContain(ko.childProvider);
+  });
+
+  it('reopened on a send that had no reset names none', () => {
+    const view = limitView(limit('ask-reopened', { window: 'unknown', resetsAt: undefined }), ko, 'ko');
+    expect(view.message.text).toBe(ko.unknown);
+    expect(view.message.text).not.toContain('()');
   });
 
   it('with no reset time says so and says what an early try costs', () => {

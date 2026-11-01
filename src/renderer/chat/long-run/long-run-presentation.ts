@@ -1,4 +1,4 @@
-import type { SteerLanding, TurnUsageLimit, UsageLimitPhase } from '../../../shared/long-run';
+import type { OpenUsageLimit, SteerLanding, TurnUsageLimit, UsageLimitPhase } from '../../../shared/long-run';
 import type { ChatLongRunAction } from '../ChatContext';
 import { formatClock, type ChatCopy } from '../copy';
 import type { ChatLocale } from '../model/summary';
@@ -78,7 +78,7 @@ export interface LimitView {
 const note = (id: string, text: string, tone?: ActionCardNote['tone']): ActionCardNote => ({ id, text, ...(tone ? { tone } : {}) });
 
 /** What the card says and offers in each phase. The clock is the app's, the reset the provider's; nothing else is told. */
-export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLocale, approvalOpen = false): LimitView {
+export function limitView(limit: OpenUsageLimit, copy: LimitCopy, locale: ChatLocale, approvalOpen = false): LimitView {
   const provider = providerName(limit.providerId);
   const windowName = copy.window[limit.window];
   const clock = (iso: string | undefined): string => (iso ? formatWhen(iso, locale, otherDay(limit, iso)) : '');
@@ -134,7 +134,8 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
       };
     case 'ask-reopened':
       return {
-        ...base, message: { text: copy.reopened(clock(limit.resetsAt)) },
+        // A send the app was closed on may have had no reset to name.
+        ...base, message: { text: limit.resetsAt ? copy.reopened(clock(limit.resetsAt)) : copy.unknown },
         notes: [note('why', copy.reopenedWhy, 'lead'), note('then', copy.reopenedSends)], actions: [resume, leave],
       };
     case 'off':
@@ -157,7 +158,6 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'not-included':
       return { ...base, message: { text: copy.notIncluded(provider) }, notes: [note('none', copy.notIncludedNote)], actions: [] };
     case 'child':
-      if (limit.childKind === 'provider') return { ...base, message: { text: resets }, notes: [note('why', copy.child, 'lead'), note('owner', copy.childProvider)], actions: [] };
       if (limit.childKind !== 'managed-supported') return { ...base, message: { text: resets }, notes: [note('why', copy.child, 'lead'), note('parent', copy.childParent), note('none', copy.childUnsupported)], actions: [] };
       return {
         ...base, message: { text: resets },

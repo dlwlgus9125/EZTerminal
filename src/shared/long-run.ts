@@ -68,8 +68,11 @@ export interface ProviderUsageLimit extends UsageLimitReading {
   readonly kind: 'resettable' | 'not-included';
 }
 
-/** One stopped turn's limit: the host knows the window and usually the reset. */
+/** One stop's card, as its latest row says it: the host knows the window and usually the reset. */
 export interface TurnUsageLimit {
+  /** One card, for as long as its rows carry this id. */
+  readonly stopId: string;
+  /** Where the card goes: the stopped turn, or the last turn the limit refused. */
   readonly turnId: string;
   readonly providerId: string;
   readonly phase: UsageLimitPhase;
@@ -87,21 +90,16 @@ export interface TurnUsageLimit {
   readonly offBy?: 'card' | 'setting';
   /** `waiting`: when 지금 시도 was refused; that refused turn stays in the conversation. */
   readonly triedAt?: string;
-  /**
-   * D7: `managed-supported`: a managed child whose resume proved supported, so 이어서 하기 is offered by hand. `managed`: not
-   * proved. `provider`: a subagent the AI runs itself, which the app never sends to.
-   */
-  readonly childKind?: 'managed-supported' | 'managed' | 'provider';
-  /** D6: sends go out one at a time, 60 s apart; none waits for the conversation before it to finish. */
-  readonly line?: { readonly position: number; readonly total: number };
+  /** D7: `managed-supported`: a managed child whose resume proved supported, so 이어서 하기 is offered by hand. `managed`: not proved. */
+  readonly childKind?: (typeof USAGE_LIMIT_CHILD_KINDS)[number];
   /** `failed`: why nothing went out, in the app's words. */
   readonly failure?: 'disconnected' | 'session-gone';
 }
 
 /** An open limit as the snapshot carries it: the list and the feed read it, and have no transcript. */
 export interface OpenUsageLimit extends TurnUsageLimit {
-  /** One card, for as long as its rows carry this id. */
-  readonly stopId: string;
+  /** D6: sends go out one at a time, 60 s apart; none waits for the conversation before it to finish. */
+  readonly line?: { readonly position: number; readonly total: number };
 }
 
 export const USAGE_LIMIT_FAILURES = ['disconnected', 'session-gone'] as const;
@@ -150,14 +148,15 @@ export type SteerDelivery =
   | 'on-its-way'
   /** An open approval holds it; it lands after the answer. */
   | 'behind-approval'
-  /** The host confirms it landed. The only state that may say so: leaving the list proves nothing. */
-  | 'landed'
   /** The host says it did not get there. */
   | 'failed'
   /** The host cannot say: it may have been read. */
   | 'unconfirmed';
 
-/** A message on its way into the running turn: it has no place in the transcript until it lands. */
+/**
+ * A message on its way into the running turn: it has no place in the transcript until it lands. Landing is its row, the
+ * only thing that says so: leaving this list proves nothing.
+ */
 export interface SteeredMessage {
   readonly id: string;
   readonly text: string;

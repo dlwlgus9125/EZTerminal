@@ -12,7 +12,7 @@ const before = Date.parse(RESUME) - 1;
 const after = Date.parse(RETRY) + 60_000;
 
 function limit(phase: UsageLimitPhase, extra: Partial<TurnUsageLimit> = {}): TurnUsageLimit {
-  return { turnId: 'turn', providerId: 'claude', phase, window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resumeAt: RESUME, retryAt: RETRY, ...extra };
+  return { stopId: 'stop', turnId: 'turn', providerId: 'claude', phase, window: 'five-hour', stoppedAt: '2026-11-01T05:58:00.000Z', resumeAt: RESUME, retryAt: RETRY, ...extra };
 }
 
 const PHASES: readonly UsageLimitPhase[] = USAGE_LIMIT_PHASES;

@@ -16,7 +16,6 @@ export function steerStateText(message: SteeredMessage, copy: SteerCopy, codex: 
   switch (message.state) {
     case 'on-its-way': return `${copy.onItsWay} · ${codex && message.behind === 'text' ? copy.behind.codex : copy.behind[message.behind ?? 'tool']}`;
     case 'behind-approval': return copy.behindApproval;
-    case 'landed': return copy.announceLanded;
     case 'failed': return message.failure ? `${copy.failed} · ${copy.failure[message.failure]}` : copy.failed;
     case 'unconfirmed': return message.caught ? copy.caught[message.caught] : copy.unconfirmed;
   }
@@ -61,17 +60,19 @@ function SteerText({ text }: { readonly text: string }): JSX.Element {
 }
 
 /**
- * 시안: messages on their way into the running turn. They sit above the message box, not in the transcript: until a
- * message lands it has no place there. Only the host's explicit `landed` says it arrived: a message that just leaves the
- * list is announced as nothing, since the host may have cancelled or moved it. A failed one is never sent again by a
- * button here (neither AI drops a repeat for us): it can go to the queue or back to the box. It never takes the box or a
- * decision off the screen: its list is capped to a share of the panel and scrolls inside, and a short panel folds it.
+ * Messages on their way into the running turn. They sit above the message box, not in the transcript: until a message
+ * lands it has no place there. Only a landed message's row says it arrived: one that just leaves the list is announced
+ * as nothing, since the host may have cancelled or moved it. A failed one is never sent again by a button here (neither
+ * AI drops a repeat for us): it can go to the queue or back to the box. It never takes the box or a decision off the
+ * screen: its list is capped to a share of the panel and scrolls inside, and a short panel folds it.
  */
-export function SteerTray({ messages, codex, fellBack, decisionOpen = false, onFocusDecision, onToQueue, onToBox }: {
+export function SteerTray({ messages, codex, fellBack, landedRow, decisionOpen = false, onFocusDecision, onToQueue, onToBox }: {
   readonly messages: readonly SteeredMessage[];
   readonly codex: boolean;
   /** Queued turns that were meant for the running one: each is announced once, with its reason. */
   readonly fellBack?: ReadonlyMap<string, SteerFallback>;
+  /** The newest landed row in the transcript: a new one is the host confirming a message arrived. */
+  readonly landedRow?: string;
   /** A decision waits above the box: on a short panel it has the room, so this stays one line. */
   readonly decisionOpen?: boolean;
   readonly onFocusDecision?: () => boolean;
@@ -84,8 +85,19 @@ export function SteerTray({ messages, codex, fellBack, decisionOpen = false, onF
   useEffect(() => {
     const changed = messages.find((message) => known.current.get(message.id) !== message.state);
     known.current = new Map(messages.map((message) => [message.id, message.state]));
-    if (changed) setAnnounced(changed.state === 'landed' ? copy.announceLanded : copy.announceHeld(steerStateText(changed, copy, codex)));
+    if (changed) setAnnounced(copy.announceHeld(steerStateText(changed, copy, codex)));
   }, [codex, copy, messages]);
+  // Only a message this tray held: a transcript still loading brings old rows in too.
+  const landedSeen = useRef(landedRow);
+  const expecting = useRef(false);
+  useEffect(() => {
+    if (messages.length > 0) expecting.current = true;
+    if (landedRow === landedSeen.current) return;
+    landedSeen.current = landedRow;
+    if (!expecting.current) return;
+    expecting.current = messages.length > 0;
+    setAnnounced(copy.announceLanded);
+  }, [copy, landedRow, messages.length]);
   const told = useRef(new Set(fellBack?.keys()));
   useEffect(() => {
     const fresh = [...(fellBack ?? [])].find(([turnId]) => !told.current.has(turnId));
@@ -93,29 +105,28 @@ export function SteerTray({ messages, codex, fellBack, decisionOpen = false, onF
     told.current.add(fresh[0]);
     setAnnounced(copy.fellBack[fresh[1]]);
   }, [copy, fellBack]);
-  const shown = messages.filter((message) => message.state !== 'landed');
   const [section, setSection] = useState<HTMLElement | null>(null);
   const panelHeight = usePanelHeight(section);
   const short = panelHeight !== undefined && panelHeight < FOLD_BELOW;
   const [opened, setOpened] = useState(false);
   const yields = short && decisionOpen;
   const listOpen = !short || (opened && !yields);
-  const newest = shown[shown.length - 1];
+  const newest = messages[messages.length - 1];
   const summary = newest ? steerStateText(newest, copy, codex) : undefined;
   return (
     <>
-      {shown.length > 0 && (
+      {messages.length > 0 && (
         <section ref={setSection} className="chat-steer" aria-label={copy.tray} data-testid="chat-steer-tray">
-          {yields && <p className="chat-steer__toggle" data-testid="chat-steer-line"><Glyph name="next" /><span>{copy.tray}</span><span>{shown.length}</span><span className="chat-steer__summary">{summary}</span></p>}
+          {yields && <p className="chat-steer__toggle" data-testid="chat-steer-line"><Glyph name="next" /><span>{copy.tray}</span><span>{messages.length}</span><span className="chat-steer__summary">{summary}</span></p>}
           {short && !yields && (
             <button type="button" className="chat-steer__toggle" aria-expanded={opened} onClick={() => setOpened((value) => !value)} data-testid="chat-steer-toggle">
-              <Glyph name={opened ? 'down' : 'next'} /><span>{copy.tray}</span><span>{shown.length}</span>
+              <Glyph name={opened ? 'down' : 'next'} /><span>{copy.tray}</span><span>{messages.length}</span>
               {!opened && <span className="chat-steer__summary">{summary}</span>}
             </button>
           )}
-          {!short && <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{shown.length}</span></p>}
+          {!short && <p className="chat-steer__title"><Glyph name="next" />{copy.tray}<span>{messages.length}</span></p>}
           {listOpen && <ol className="chat-steer__list" tabIndex={0} aria-label={copy.tray} style={panelHeight === undefined ? undefined : { maxHeight: Math.max(LIST_FLOOR, Math.round(panelHeight * LIST_SHARE)) }}>
-            {shown.map((message) => (
+            {messages.map((message) => (
               <li key={message.id} className="chat-steer__item" data-state={message.state} data-testid="chat-steer-message">
                 <SteerText text={message.text} />
                 <p className="chat-steer__state">
