@@ -2304,6 +2304,168 @@ describe('Codex usage', () => {
   });
 });
 
+describe('Codex usage limit', () => {
+  const NOW = Date.parse('2026-11-01T00:00:00.000Z');
+  const RESET_SECONDS = NOW / 1000 + 7_200;
+  const fullWindow = { limitId: 'codex', primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: RESET_SECONDS }, secondary: { usedPercent: 30, windowDurationMins: 10_080, resetsAt: RESET_SECONDS + 259_200 } };
+  const usageError = { message: 'You have hit your usage limit. Try again at 2 AM.', codexErrorInfo: 'usageLimitExceeded' };
+
+  async function runningTurn(options: { readonly longRun?: boolean; readonly rateLimits?: unknown; readonly hold?: Promise<unknown> } = {}) {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-6-astra' };
+      if (method === 'turn/start') return options.hold ?? { turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } };
+      if (method === 'account/rateLimits/read') {
+        if (options.rateLimits) return { rateLimits: options.rateLimits };
+        throw new Error('not signed in');
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date(NOW) });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession({ ...context(), ...(options.longRun === false ? {} : { longRun: true as const }) });
+    const submitting = adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1', commandId: 'command-1', prompt: 'Work' });
+    if (!options.hold) await submitting;
+    return {
+      adapter, connection, events, submitting,
+      systemError: () => connection.emitNotification('thread/status/changed', { threadId: 'thread-1', status: { type: 'systemError' } }),
+      error: (error: unknown, turnId = 'provider-turn-1', willRetry = false) => connection.emitNotification('error', { threadId: 'thread-1', turnId, error, willRetry }),
+      completed: (error: unknown) => connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'failed', items: [], error } }),
+      finished: () => events.filter((event) => event.kind === 'turn-finished'),
+      failed: () => events.filter((event) => event.kind === 'session-state' && event.state === 'failed'),
+      errors: () => events.filter((event) => event.kind === 'provider-error'),
+    };
+  }
+
+  it('waits on a system error, and the limit ends the turn with the window read before it', async () => {
+    const run = await runningTurn();
+    await run.connection.emitNotification('account/rateLimits/updated', { rateLimits: fullWindow });
+    await run.systemError();
+    expect(run.failed()).toEqual([]);
+    await run.error(usageError);
+    expect(run.errors()).toEqual([]);
+    await run.completed(usageError);
+    expect(run.finished()).toEqual([{
+      kind: 'turn-finished', sessionId: 'session-1', turnId: 'local-turn-1', outcome: 'failed', errorCode: 'usage-limit',
+      limit: { kind: 'resettable', window: 'five-hour', resetsAt: new Date(RESET_SECONDS * 1000).toISOString() },
+    }]);
+    expect(run.failed()).toEqual([]);
+    expect(run.events.at(-1)).toMatchObject({ kind: 'session-state', state: 'idle' });
+    await run.adapter.dispose();
+  });
+
+  it('with no window read and words of a reset, the limit has no reset: the host asks', async () => {
+    const run = await runningTurn();
+    await run.systemError();
+    await run.error(usageError);
+    await run.completed(usageError);
+    expect(run.finished()[0]).toMatchObject({ errorCode: 'usage-limit', limit: { kind: 'resettable', window: 'unknown' } });
+    expect(run.finished()[0]).not.toHaveProperty('limit.resetsAt');
+    await run.adapter.dispose();
+  });
+
+  it('a limit that raced the turn/start answer ends the turn all the same', async () => {
+    let answer!: (value: unknown) => void;
+    const run = await runningTurn({ hold: new Promise((resolve) => { answer = resolve; }) });
+    await vi.waitFor(() => expect(run.connection.requests.some((request) => request.method === 'turn/start')).toBe(true));
+    await run.systemError();
+    await run.error(usageError);
+    await run.completed(usageError);
+    answer({ turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } });
+    await run.submitting;
+    expect(run.errors()).toEqual([]);
+    expect(run.failed()).toEqual([]);
+    expect(run.finished()[0]).toMatchObject({ turnId: 'local-turn-1', errorCode: 'usage-limit' });
+    await run.adapter.dispose();
+  });
+
+  it('a system error nothing explains takes the old path after the wait', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const run = await runningTurn();
+      await run.systemError();
+      expect(run.failed()).toEqual([]);
+      vi.advanceTimersByTime(1_999);
+      expect(run.failed()).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(run.failed()).toHaveLength(1);
+      await run.adapter.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a limit whose turn never ends takes the old path after the wait: the turn does not hang', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const run = await runningTurn();
+      await run.systemError();
+      await run.error(usageError);
+      expect(run.errors()).toEqual([]);
+      vi.advanceTimersByTime(2_000);
+      expect(run.errors()).toEqual([expect.objectContaining({ kind: 'provider-error', code: 'codex-turn-error', recoverable: false })]);
+      expect(run.failed()).toHaveLength(1);
+      await run.adapter.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('another error during the wait takes the old path at once', async () => {
+    const run = await runningTurn();
+    await run.systemError();
+    await run.error({ message: 'The server fell over.', codexErrorInfo: 'internalServerError' });
+    expect(run.failed()).toHaveLength(1);
+    expect(run.finished()).toEqual([]);
+    await run.adapter.dispose();
+  });
+
+  it('a turn that completes during the wait ends the wait', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const run = await runningTurn();
+      await run.systemError();
+      await run.error(usageError);
+      await run.completed(usageError);
+      const failures = run.failed().length;
+      vi.advanceTimersByTime(5_000);
+      expect(run.failed()).toHaveLength(failures);
+      await run.adapter.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a stale reading does not name a window whose reset has passed', async () => {
+    const run = await runningTurn();
+    await run.connection.emitNotification('account/rateLimits/updated', { rateLimits: { ...fullWindow, primary: { ...fullWindow.primary, resetsAt: NOW / 1000 - 60 } } });
+    await run.error(usageError);
+    await run.completed(usageError);
+    expect(run.finished()[0]).toMatchObject({ limit: { window: 'unknown' } });
+    await run.adapter.dispose();
+  });
+
+  it('with no window and no way to try again, the plan does not include it', async () => {
+    const run = await runningTurn();
+    const error = { message: 'To use Codex with your ChatGPT plan, upgrade to Plus.', codexErrorInfo: 'usageLimitExceeded' };
+    await run.error(error);
+    await run.completed(error);
+    expect(run.finished()[0]).toMatchObject({ errorCode: 'usage-limit', limit: { kind: 'not-included', window: 'unknown' } });
+    await run.adapter.dispose();
+  });
+
+  it('below the measured version nothing waits and nothing changes', async () => {
+    const run = await runningTurn({ longRun: false });
+    await run.systemError();
+    expect(run.failed()).toHaveLength(1);
+    await run.adapter.dispose();
+  });
+
+  it('recovers the window from the account, and nothing when it cannot be read', async () => {
+    const run = await runningTurn({ rateLimits: fullWindow });
+    await expect(run.adapter.recoverLimit()).resolves.toEqual({ window: 'five-hour', resetsAt: new Date(RESET_SECONDS * 1000).toISOString() });
+    await run.adapter.dispose();
+    const unread = await runningTurn();
+    await expect(unread.adapter.recoverLimit()).resolves.toBeUndefined();
+    await unread.adapter.dispose();
+  });
+});
+
 describe('Codex side questions (/btw)', () => {
   const question = 'Which file holds the PORTAL_SECRET_7 setting?';
   const instruction = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '

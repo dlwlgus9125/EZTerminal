@@ -133,6 +133,30 @@ describe('a Claude limit through the adapter', () => {
   });
 });
 
+describe('a Codex limit through the adapter', () => {
+  const resetsAt = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u);
+
+  it.each([
+    ['codex-limit-usage', { kind: 'resettable', window: 'five-hour', resetsAt }],
+    ['codex-limit-no-reset', { kind: 'resettable', window: 'five-hour', resetsAt }],
+    ['codex-limit-not-included', { kind: 'not-included', window: 'unknown' }],
+  ] as const)('%s ends the turn with the limit: no error, and the session usable', async (name, limit) => {
+    const { finished, errors, states, golden } = await replayed(name);
+    expect(finished).toHaveLength(1);
+    expect(finished[0]).toEqual({ kind: 'turn-finished', sessionId: 'replay-session', turnId: 'replay-turn-1', outcome: 'failed', errorCode: 'usage-limit', limit });
+    expect(errors).toEqual([]);
+    expect(states).not.toContain('failed');
+    expect(states.at(-1)).toBe('idle');
+    expect(golden.items.filter((item) => item.kind === 'error')).toEqual([]);
+  });
+
+  it('below the measured version it classifies as it always did', async () => {
+    const { finished, states } = await replayed('codex-limit-usage', false);
+    expect(states).toContain('failed');
+    for (const event of finished) expect(event).not.toHaveProperty('limit');
+  });
+});
+
 describe('what a Codex limit looks like', () => {
   const order = (name: string): readonly string[] => notifications(readProviderCaptureFixture(name)).map(({ method, params }) => (
     method === 'thread/status/changed' ? `status:${String((params.status as RawMessage).type)}` : method

@@ -41,6 +41,8 @@ import type {
 } from './agent-provider-adapter';
 import { ProviderReviewError, ProviderSideQuestionError, REVIEW_READ_ONLY_UNVERIFIED } from './agent-provider-adapter';
 import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
+import type { AgentUsageLimitsReading } from '../shared/agent-usage';
+import { USAGE_LIMIT_ERROR, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { nextPromptText, PREDICT_INSTRUCTION } from '../shared/turn-wrap-up';
 import {
@@ -58,7 +60,7 @@ import {
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
 import { providerTranscriptText } from './provider-transcript';
-import { codexContextPercent, codexLimitsFromRateLimits } from './agent-usage-readings';
+import { codexContextPercent, codexFullWindow, codexLimitsFromRateLimits } from './agent-usage-readings';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 /** The oldest Codex known to run the review loop's read-only shapes (the version the probes and captures used). */
@@ -112,6 +114,10 @@ type PreResponseLifecycleEvent =
       readonly recoverable: boolean;
     };
 
+/** Status and error frames of a limit arrive within 25 ms of `turn/completed` (the probes); this is well past that. */
+const SYSTEM_ERROR_WAIT_MS = 2_000;
+const USAGE_LIMIT_ERROR_INFO = 'usageLimitExceeded';
+
 interface PreResponseLifecycleRecord {
   started?: Extract<PreResponseLifecycleEvent, { readonly kind: 'started' }>;
   retryableError?: Extract<PreResponseLifecycleEvent, { readonly kind: 'error' }>;
@@ -149,6 +155,13 @@ interface SessionState {
   planUnsupportedNoticed?: boolean;
   /** The last plan Codex proposed in the current turn. */
   proposedPlan?: { readonly providerTurnId: string; readonly markdown: string };
+  /** Launched with `context.longRun`: a limit ends its turn with `turn-finished.limit`. */
+  longRun?: true;
+  /**
+   * `longRun`: a system error or a limit's `error`, until `turn/completed` tells which it was. A limit reads as a
+   * system error for a moment, and the thread keeps working afterwards.
+   */
+  systemErrorWait?: { readonly timer: ReturnType<typeof setTimeout>; limitError?: { readonly providerTurnId: string | undefined; readonly message: string } };
   nextTranscriptSequence: number;
   activeTurn?: {
     readonly localTurnId: string;
@@ -955,6 +968,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly probeTimeoutMs: number;
   private readonly now: () => Date;
   private accountLimitsReadAt = Number.NEGATIVE_INFINITY;
+  /** The last reading of the account's windows: which window a limit filled is read from it. */
+  private accountLimits: AgentUsageLimitsReading | undefined;
   private readonly idFactory: () => string;
   private readonly deltaCoalescer: DeltaCoalescerOptions | undefined;
   private readonly enableUpdatePlan: boolean;
@@ -2131,8 +2146,21 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.accountLimitsReadAt = now;
     void connection.request('account/rateLimits/read').then((result) => {
       const limits = codexLimitsFromRateLimits(asObject(result)?.rateLimits);
-      if (limits) this.emit({ kind: 'usage', limits });
+      if (limits) {
+        this.accountLimits = limits;
+        this.emit({ kind: 'usage', limits });
+      }
     }, () => undefined);
+  }
+
+  /** The account's limits now: the only other place a reset can come from when a stop's frames named none. */
+  async recoverLimit(): Promise<UsageLimitReading | undefined> {
+    try {
+      const result = await this.connection?.request('account/rateLimits/read');
+      return codexFullWindow(codexLimitsFromRateLimits(asObject(result)?.rateLimits), this.now().getTime());
+    } catch {
+      return undefined;
+    }
   }
 
   private requireConnection(): CodexAppServerConnection {
@@ -2412,7 +2440,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (method === 'account/rateLimits/updated') {
       // Account-wide and thread-less: one app-server serves every session.
       const limits = codexLimitsFromRateLimits(params.rateLimits);
-      if (limits) this.emit({ kind: 'usage', limits });
+      if (limits) {
+        this.accountLimits = limits;
+        this.emit({ kind: 'usage', limits });
+      }
       return;
     }
     const providerSessionId = asString(params.threadId);
@@ -2436,6 +2467,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ).text;
       const providerTurnId = asString(params.turnId);
       const recoverable = params.willRetry === true;
+      // A limit's `error` says nothing, here or in the pre-response buffer, whose one terminal slot `turn/completed` needs:
+      // that frame reports the limit, and the wait ends the turn if it never comes.
+      if (state?.longRun && !recoverable && this.codexErrorCode(error?.codexErrorInfo) === USAGE_LIMIT_ERROR_INFO) {
+        this.waitOnSystemError(state).limitError = { providerTurnId: providerTurnId ?? undefined, message };
+        return;
+      }
+      // Anything else ends the wait the old way, before this error is read.
+      if (state?.systemErrorWait) this.systemErrorStands(state);
       if (
         state
         && providerTurnId
@@ -2621,8 +2660,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
         break;
       case 'systemError':
-        this.clearActiveTurn(state, new Error('Codex entered a terminal system error state.'));
-        this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'failed' });
+        if (state.longRun && state.activeTurn) this.waitOnSystemError(state);
+        else this.failFromSystemError(state);
         break;
       case 'notLoaded':
         this.clearActiveTurn(state, new Error('Codex unloaded the active thread.'));
@@ -2631,6 +2670,39 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       default:
         break;
     }
+  }
+
+  private waitOnSystemError(state: SessionState): NonNullable<SessionState['systemErrorWait']> {
+    if (state.systemErrorWait) return state.systemErrorWait;
+    const timer = setTimeout(() => this.systemErrorStands(state), SYSTEM_ERROR_WAIT_MS);
+    timer.unref?.();
+    state.systemErrorWait = { timer };
+    return state.systemErrorWait;
+  }
+
+  private endSystemErrorWait(state: SessionState): void {
+    if (state.systemErrorWait) clearTimeout(state.systemErrorWait.timer);
+    state.systemErrorWait = undefined;
+  }
+
+  private failFromSystemError(state: SessionState): void {
+    this.clearActiveTurn(state, new Error('Codex entered a terminal system error state.'));
+    this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'failed' });
+  }
+
+  /** Nothing explained the wait, or the limit's turn never ended: what happens without one, so a turn cannot hang. */
+  private systemErrorStands(state: SessionState): void {
+    const limitError = state.systemErrorWait?.limitError;
+    this.endSystemErrorWait(state);
+    if (!state.activeTurn) return;
+    if (limitError) this.handleCodexError(state, state.sessionId, limitError.providerTurnId, limitError.message, false);
+    this.failFromSystemError(state);
+  }
+
+  /** What the words and the last reading say. `usage_not_included` has the same code: only its words tell it apart. */
+  private turnLimit(message: string | null | undefined): ProviderUsageLimit {
+    const reading = codexFullWindow(this.accountLimits, this.now().getTime());
+    return { window: 'unknown', ...reading, kind: !reading && !/try again/iu.test(message ?? '') ? 'not-included' : 'resettable' };
   }
 
   private handleCodexError(
@@ -2800,6 +2872,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private clearActiveTurn(state: SessionState, error: Error): void {
+    this.endSystemErrorWait(state);
     this.clearPreResponseLifecycle(state);
     const active = state.activeTurn;
     if (!active) return;
@@ -2861,15 +2934,21 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const error = asObject(turn?.error);
     const summary = this.lastAssistantText(turn);
     const errorCode = this.codexErrorCode(error?.codexErrorInfo);
+    const limit = state.longRun && matchingActive && outcome === 'failed' && errorCode === USAGE_LIMIT_ERROR_INFO
+      ? this.turnLimit(asString(error?.message))
+      : undefined;
     this.emit({
       kind: 'turn-finished',
       sessionId: state.sessionId,
       turnId: matchingActive?.localTurnId ?? `provider:${providerTurnId}`,
       outcome,
-      ...(summary ? { summary } : {}),
-      ...(errorCode ? { errorCode } : {}),
+      ...(limit ? { errorCode: USAGE_LIMIT_ERROR, limit } : {
+        ...(summary ? { summary } : {}),
+        ...(errorCode ? { errorCode } : {}),
+      }),
     });
     if (active && !matchingActive) return;
+    this.endSystemErrorWait(state);
     if (state.activeTurn === matchingActive) {
       state.activeTurn = undefined;
       this.clearPreResponseLifecycle(state);
@@ -2877,8 +2956,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.emit({
       kind: 'session-state',
       sessionId: state.sessionId,
-      state: outcome === 'failed' ? 'failed' : outcome === 'interrupted' ? 'interrupted' : 'idle',
-      ...(asString(error?.message)
+      state: limit ? 'idle' : outcome === 'failed' ? 'failed' : outcome === 'interrupted' ? 'interrupted' : 'idle',
+      ...(!limit && asString(error?.message)
         ? { detail: sanitizeProviderDiagnostic(asString(error?.message)).text }
         : {}),
     });
@@ -3348,6 +3427,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ...(context.reasoningEffort ?? appliedEffort ? { reasoningEffort: context.reasoningEffort ?? appliedEffort! } : {}),
       permissionPreset: context.permissionPreset,
       ...(context.readOnlyReviewer ? { reviewer: true as const } : {}),
+      ...(context.longRun ? { longRun: true as const } : {}),
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
       preResponseLifecycleOverflowed: false,

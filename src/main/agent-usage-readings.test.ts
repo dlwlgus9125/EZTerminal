@@ -3,9 +3,44 @@ import { describe, expect, it } from 'vitest';
 import {
   claudeContextPercent,
   claudeLimitsFromRateLimitInfo,
+  claudeRejectedLimit,
   codexContextPercent,
+  codexFullWindow,
   codexLimitsFromRateLimits,
 } from './agent-usage-readings';
+
+describe('which window a limit filled', () => {
+  const now = Date.parse('2026-11-01T00:00:00.000Z');
+  const soon = now + 3_600_000;
+  const later = now + 7_200_000;
+  const iso = (ms: number): string => new Date(ms).toISOString();
+
+  it('Claude: only a refusal counts, and its reset is in seconds', () => {
+    expect(claudeRejectedLimit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_800_000_000 })).toEqual({ window: 'five-hour', resetsAt: '2027-01-15T08:00:00.000Z' });
+    expect(claudeRejectedLimit({ status: 'rejected', rateLimitType: 'seven_day' })).toEqual({ window: 'weekly' });
+    expect(claudeRejectedLimit({ status: 'rejected', rateLimitType: 'seven_day_opus' })).toEqual({ window: 'unknown' });
+    expect(claudeRejectedLimit({ status: 'allowed', rateLimitType: 'five_hour', resetsAt: 1 })).toBeUndefined();
+    expect(claudeRejectedLimit(undefined)).toBeUndefined();
+  });
+
+  it('Codex: the full window, whichever slot it came in', () => {
+    expect(codexFullWindow({ fiveHour: { usedPercent: 100, resetsAt: soon }, weekly: { usedPercent: 30, resetsAt: later } }, now)).toEqual({ window: 'five-hour', resetsAt: iso(soon) });
+    // An account whose only window is the week: the slot is primary, and the window is not five hours.
+    expect(codexFullWindow(codexLimitsFromRateLimits({ primary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: later / 1000 } }), now)).toEqual({ window: 'weekly', resetsAt: iso(later) });
+  });
+
+  it('Codex: both full means the later reset, since nothing goes through before it', () => {
+    expect(codexFullWindow({ fiveHour: { usedPercent: 100, resetsAt: later }, weekly: { usedPercent: 100, resetsAt: soon } }, now)).toEqual({ window: 'five-hour', resetsAt: iso(later) });
+    expect(codexFullWindow({ fiveHour: { usedPercent: 100, resetsAt: soon }, weekly: { usedPercent: 100, resetsAt: later } }, now)).toEqual({ window: 'weekly', resetsAt: iso(later) });
+  });
+
+  it('Codex: nothing full, or a window whose reset has passed, says nothing', () => {
+    expect(codexFullWindow({ fiveHour: { usedPercent: 99, resetsAt: soon }, weekly: { usedPercent: 30 } }, now)).toBeUndefined();
+    expect(codexFullWindow({ fiveHour: { usedPercent: 100, resetsAt: now - 1 } }, now)).toBeUndefined();
+    expect(codexFullWindow(undefined, now)).toBeUndefined();
+    expect(codexFullWindow({ weekly: { usedPercent: 100 } }, now)).toEqual({ window: 'weekly' });
+  });
+});
 
 describe('Claude plan limits', () => {
   it('reads both windows from a captured rate_limit_event', () => {

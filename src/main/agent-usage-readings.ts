@@ -118,6 +118,22 @@ export function codexLimitsFromRateLimits(rateLimits: unknown): AgentUsageLimits
   return { fiveHour, weekly };
 }
 
+/**
+ * Which Codex window a limit filled, by its length, never its slot: `primary` is not always five hours. Both full: the
+ * later reset, since nothing goes through before it. A window whose reset has passed is over, whatever its reading says.
+ */
+export function codexFullWindow(limits: AgentUsageLimitsReading | undefined, nowMs: number): UsageLimitReading | undefined {
+  const full = (window: UsageLimitReading['window'], reading: AgentUsageWindow | null | undefined): (UsageLimitReading & { readonly at: number }) | undefined => {
+    if (!reading || reading.usedPercent < 100 || (reading.resetsAt !== undefined && reading.resetsAt <= nowMs)) return undefined;
+    return { window, at: reading.resetsAt ?? 0, ...(reading.resetsAt !== undefined ? { resetsAt: new Date(reading.resetsAt).toISOString() } : {}) };
+  };
+  const [latest] = [full('five-hour', limits?.fiveHour), full('weekly', limits?.weekly)]
+    .filter((entry) => entry !== undefined)
+    .sort((a, b) => b.at - a.at);
+  if (!latest) return undefined;
+  return { window: latest.window, ...(latest.resetsAt ? { resetsAt: latest.resetsAt } : {}) };
+}
+
 /** Codex leaves this many tokens out of the window when it reports context use. */
 const CODEX_CONTEXT_BASELINE_TOKENS = 12_000;
 
