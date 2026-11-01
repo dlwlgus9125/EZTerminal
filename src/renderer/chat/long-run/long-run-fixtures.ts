@@ -157,7 +157,8 @@ function queuedFallback(lang: LongLanguage, base: LongRunFixture, reason: SteerF
 export function steerStory(lang: LongLanguage, variant: SteerVariant): LongRunFixture {
   const text = TEXT[lang];
   const work = [...opening(lang, 'turn-run'), ...shell(5, 'turn-run', FULL_SUITE, false)];
-  const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', started)], state: 'working' };
+  // Its age is read against the clock, so a fixed start would date every screenshot of a running turn.
+  const running: LongRunFixture = { items: work, turns: [turn('turn-run', 'working', new Date(Date.now() - 150_000).toISOString())], state: 'working' };
   const writing: LongRunFixture = { ...running, items: [...opening(lang, 'turn-run'), item(5, 'assistant-message', text.streaming, { turnId: 'turn-run', isDelta: true, messageId: 'streaming' })] };
   switch (variant) {
     case 'long-messages':

@@ -945,6 +945,8 @@ export const PhoneBusyDraft412: Story = phone('phone-busy-412', (lang) => steerS
   await thumbTargets([await findIn(canvasElement, '[data-testid="structured-agent-send"]'), await findIn(canvasElement, '[data-testid="structured-agent-interrupt-send"]')]);
 });
 export const PhoneSteerOnItsWay360: Story = phone('phone-steer-on-its-way', (lang) => steerStory(lang, 'on-its-way'), 360, 800, {}, showTray);
+/** Codex beside a tool, on the phone: the same tray, with the words Codex can keep. */
+export const PhoneSteerOnItsWayCodex360: Story = phone('phone-steer-on-its-way-codex', (lang) => steerStory(lang, 'on-its-way'), 360, 800, { provider: 'codex' }, showTray);
 export const PhoneSteerLandedNewTurn360: Story = phone('phone-steer-landed-new-turn', (lang) => steerStory(lang, 'landed-new-turn'), 360, 800);
 export const PhoneSteerLanded360: Story = phone('phone-steer-landed', (lang) => steerStory(lang, 'landed-rewritten'), 360, 800, { provider: 'codex' });
 export const PhoneSteerBehindApproval360: Story = phone('phone-steer-behind', (lang) => steerStory(lang, 'behind-approval'), 360, 800, {}, async ({ canvasElement }) => {
@@ -1123,6 +1125,7 @@ function reference(story: Story, play?: Story['play']): Story {
 const typed: Story['play'] = async ({ canvasElement }) => { await userEvent.type(await composer(canvasElement), canvasElement.ownerDocument.documentElement.lang.startsWith('en') ? 'Just that file.' : '그 파일만 돌려 줘.'); };
 export const BusyDraftReference = reference(BusyDraft, typed);
 export const SteerOnItsWayReference = reference(SteerOnItsWay, showTray);
+export const SteerOnItsWayCodexToolReference = reference(SteerOnItsWayCodexTool, showTray);
 export const SteerLandedReference = reference(SteerLanded, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="chat-steer-landed"]'); });
 export const SteerBehindApprovalReference = reference(SteerBehindApproval, showTray);
 export const SteerFellBackReviewReference = reference(SteerFellBackReview, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="chat-queue-fallback"]'); });
@@ -1136,4 +1139,5 @@ export const ListDesktopReference = reference(ListDesktop, async ({ canvasElemen
 export const SettingsLongRunReference = reference(SettingsLongRun, async ({ canvasElement }) => { await showSwitch(canvasElement); });
 export const PhoneBusyDraftReference = reference(PhoneBusyDraft360, typed);
 export const PhoneLimitWaitingReference = reference(PhoneLimitWaiting360, phoneCard());
+export const PhoneSteerOnItsWayCodexReference = reference(PhoneSteerOnItsWayCodex360, showTray);
 export const PhoneFeedReference = reference(PhoneFeed360, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="mobile-feed-waiting"]'); });

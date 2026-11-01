@@ -849,6 +849,186 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-턴-마무리",
         "decidedAt": "2026-10-30"
       }
+    },
+    {
+      "id": "steer-tray",
+      "title": "A message put into a running turn: the tray above the box holds it until it lands, in words Codex can keep beside a tool",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "SteerOnItsWayCodexToolReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--steer-on-its-way-codex-tool-reference",
+        "snapshot": "reference-2-0-steer-tray-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/steer-tray.png",
+        "sha256": "2f9bf32b22ca87efed745d5c953a80f42f65ac136e2b02fdf314ddef3b751884"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "steer-behind-approval",
+      "title": "A message behind an open approval: the tray says it goes in after the answer, and leads to the decision",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "SteerBehindApprovalReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--steer-behind-approval-reference",
+        "snapshot": "reference-2-0-steer-behind-approval-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/steer-behind-approval.png",
+        "sha256": "7389aa4abdbc5dc75017a787eb3f411c9f01d9286f21b8ddcbb1c2af5388a6aa"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "limit-waiting",
+      "title": "Usage limit card on a clock: the expected reset, when the app will try, what it sends, nothing amber",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "LimitWaitingReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--limit-waiting-reference",
+        "snapshot": "reference-2-0-limit-waiting-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/limit-waiting.png",
+        "sha256": "af3e04ae46b43d4bd2ecbd826f8e7fa32fca231d53f64caa52471dbbead1cfb7"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "limit-ask",
+      "title": "A weekly limit asks first: amber, with the two choices and nothing sent until a press",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "LimitWeeklyReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--limit-weekly-reference",
+        "snapshot": "reference-2-0-limit-ask-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/limit-ask.png",
+        "sha256": "d1a0d45c45e5d91e6d0efa41f33c926ebda271d46aaa035595e89a4faf88fa4b"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "limit-resumed",
+      "title": "After the clock: the card says when the app sent, and the sent row names it as the app's, with why",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "LimitResumedReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--limit-resumed-reference",
+        "snapshot": "reference-2-0-limit-resumed-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/limit-resumed.png",
+        "sha256": "16ca370e9cecdc271a26a351797f973a7cbb67f9082b9a065e502d7d98af8058"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "long-run-list",
+      "title": "The conversation list with limits: on a clock, asking (amber, in Waiting for me), stopped for good, done and running",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "ListDesktopReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--list-desktop-reference",
+        "snapshot": "reference-2-0-long-run-list-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/long-run-list.png",
+        "sha256": "33bc5547184d19cad3868073c653e7830d4cb0e54d0f68025f37368eb57ada5d"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "long-run-settings",
+      "title": "Settings › AI › Continuing: the one switch that sends with no press, right after Turn wrap-up",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "SettingsLongRunReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--settings-long-run-reference",
+        "snapshot": "reference-2-0-long-run-settings-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/long-run-settings.png",
+        "sha256": "0eb8bf58f483ae6fec85aae95c118263bd8e45917e8b2bbd25af89b77e5fa0ef"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "limit-phone-card",
+      "title": "Phone usage limit card on a clock: the same card, actions stacked at thumb size",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "PhoneLimitWaitingReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--phone-limit-waiting-reference",
+        "snapshot": "reference-2-0-limit-phone-card-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/limit-phone-card.png",
+        "sha256": "a7fc7712a4bc6aacc795435c841595f9b6a0797f454cd1e2f0bea39a66005bad"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "steer-phone-tray",
+      "title": "Phone tray: a message on its way into a running turn, above the box",
+      "story": {
+        "file": "src/renderer/chat/LongRun.stories.tsx",
+        "export": "PhoneSteerOnItsWayCodexReference"
+      },
+      "visual": {
+        "storyId": "production-longrun-mockup--phone-steer-on-its-way-codex-reference",
+        "snapshot": "reference-2-0-steer-phone-tray-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/steer-phone-tray.png",
+        "sha256": "f94fca3ba8c859dc82aeae4dfb900420de872fee88e95b15f56cf1a62608fe50"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
+        "decidedAt": "2026-11-01"
+      }
     }
   ]
 }
