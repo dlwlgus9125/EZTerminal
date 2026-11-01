@@ -1112,6 +1112,8 @@ app.on('ready', async () => {
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
     onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
     wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    execute: (command) => daemonRouterRef.current!.execute(command),
+    readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit),
     commandExists: (commandId) => daemonStore.findCommand(commandId) !== undefined,
     store: {
       load: async () => { await longRunJobsFile.init(); return longRunJobsFile.read(); },
@@ -3720,7 +3722,10 @@ app.on('ready', async () => {
   workflowRepeatRef.current = workflowRepeat;
   void planningExecutionReady.then(() => { if (!daemonAuthorityShutdown.isStopping()) void workflowRepeat.start(); });
   // A sleeping PC's timers drift: look at the wall clock again on resume, and when automation is turned on or off.
-  powerMonitor.on('resume', () => { void workflowRepeat.wake(); });
+  powerMonitor.on('resume', () => {
+    void workflowRepeat.wake();
+    longRunCoordinator.wake();
+  });
   daemonCommandRouter.onEvent((event) => { if (event.kind === 'runtime.changed') void workflowRepeat.wake(); });
   const planningRunAuthority = new PlanningRunAuthority({
     service: planningRunService, results: planningResultService, ready: planningExecutionReady, ingress: localAgentOperationIngress,

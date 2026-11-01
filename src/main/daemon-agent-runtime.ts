@@ -60,7 +60,7 @@ import { composeFixPrompt, reviewerLabel, type ReviewerRef, type ReviewTarget } 
 import { conversationBusy, readReviewHistory, reviewRowItem, unsupportedReason, type DaemonReviewHost } from './review-coordinator';
 import { readTaskCard, taskStatusRowItem, type DaemonWrapUpHost } from './turn-wrap-up-coordinator';
 import type { DaemonLongRunHost } from './long-run-coordinator';
-import { USAGE_LIMIT_ERROR } from '../shared/long-run';
+import { LONG_RUN_PRINCIPAL, USAGE_LIMIT_ERROR } from '../shared/long-run';
 import { suggestedTaskChildSessionId } from '../shared/turn-wrap-up';
 
 type AgentCommandType = Extract<DaemonCommandType,
@@ -1117,12 +1117,17 @@ export class DaemonAgentRuntime {
       const refused = this.taskCardRefusal(context.snapshot, command.payload.sessionId, wrapUpTask);
       if (refused) return refused;
     }
+    const longRunResume = command.type === 'agent.submit' ? command.payload.longRunResume : undefined;
+    if (longRunResume && (command.principal.kind !== 'cli' || command.principal.id !== LONG_RUN_PRINCIPAL)) {
+      return commandError('invalid-command', 'Only the host resumes a conversation a limit stopped.');
+    }
     return this.queueTurn(command, context, {
       sessionId: command.payload.sessionId,
       prompt: command.payload.prompt,
       ...(command.payload.context ? { context: command.payload.context } : {}),
       ...(command.type === 'agent.submit' && command.payload.reportOf ? { reportOf: command.payload.reportOf } : {}),
       ...(wrapUpTask ? { payload: { v: 1, type: 'task-suggestion-send', ...wrapUpTask } } : {}),
+      ...(longRunResume ? { payload: { v: 1, type: 'app-sent', ...longRunResume } } : {}),
       interruptFirst,
     });
   }

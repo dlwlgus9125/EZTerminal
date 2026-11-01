@@ -17,7 +17,7 @@ import type {
 } from './agent-provider-adapter';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
-import type { DaemonLongRunHost, LimitStop } from './long-run-coordinator';
+import { LongRunCoordinator, type DaemonLongRunHost, type LimitStop } from './long-run-coordinator';
 import { AgentProviderRegistry, createProviderReviewDigest } from './agent-provider-registry';
 import { MAX_TRANSCRIPT_BATCH_UTF8_BYTES, DaemonStore } from './daemon-store';
 
@@ -5146,6 +5146,101 @@ describe('a turn a usage limit stopped', () => {
       await h.runtime.whenIdle();
       expect(limitStopped).not.toHaveBeenCalled();
     } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('accepts the resume marker from the host alone, and marks the row with what went out and why', async () => {
+    const h = await harness();
+    try {
+      const turn = await startedAgent(h);
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      const resume = { stopId: 'stop-1', reason: 'scheduled-time' } as const;
+      const send = (principal: DaemonPrincipal) => h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Continue.', longRunResume: resume }, principal);
+      expect(await send({ kind: 'desktop', id: 'person' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      expect(await send({ kind: 'android', id: 'long-run-runtime' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      expect(await send({ kind: 'cli', id: 'report-back-runtime' })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      vi.mocked(h.codex.submit).mockClear();
+      expect(await send({ kind: 'cli', id: 'long-run-runtime' })).toMatchObject({ ok: true });
+      await h.runtime.whenIdle();
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+      const row = h.router.readTranscript('agent-1').findLast((item) => item.kind === 'user-message');
+      expect(row).toMatchObject({ text: 'Continue.', isSensitive: false, payload: { v: 1, type: 'app-sent', stopId: 'stop-1', reason: 'scheduled-time' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('runs end to end: a stop becomes a stored card, its time sends "Continue." once, and the answer closes it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const clock = { ms: Date.parse('2026-09-04T10:00:00.000Z') };
+    const now = (): Date => new Date(clock.ms);
+    const coordinatorRef: { current?: LongRunCoordinator } = {};
+    const h = await harness({
+      now,
+      longRun: { sessionContext: () => true, limitStopped: (stop) => coordinatorRef.current!.limitStopped(stop) },
+      canDispatchTurn: (turn) => coordinatorRef.current?.canDispatchTurn(turn) ?? true,
+    });
+    const coordinator = new LongRunCoordinator({
+      getSnapshot: () => h.router.getSnapshot(),
+      applySystemCommit: (commit) => h.router.applySystemCommit(commit),
+      onEvent: (listener) => h.router.onEvent(listener),
+      execute: (command) => h.router.execute(command),
+      readTranscript: (sessionId, afterSequence, limit) => h.router.readTranscript(sessionId, afterSequence, limit),
+      wakeQueuedTurns: () => h.runtime.wakeQueuedTurns(),
+      commandExists: (commandId) => h.store.findCommand(commandId) !== undefined,
+      providers: h.providers,
+      settings: () => ({ autoResume: true }),
+      allowed: () => true,
+      prepared: () => false,
+      now,
+    });
+    coordinatorRef.current = coordinator;
+    try {
+      await coordinator.start();
+      const turn = await startedAgent(h);
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Behind it.' });
+      vi.mocked(h.codex.submit).mockClear();
+      h.codex.emit(limited(turn.id));
+      await h.runtime.whenIdle();
+      await coordinator.settled();
+      const cards = () => h.router.readTranscript('agent-1').flatMap((item) => (item.payload?.type === 'usage-limit' ? [item.payload] : []));
+      expect(cards().at(-1)).toMatchObject({ phase: 'waiting', resumeAt: '2026-09-04T12:02:00.000Z' });
+      expect(h.codex.submit).not.toHaveBeenCalled();
+
+      // A message queued before the stop goes instead of "Continue." when the time comes.
+      clock.ms = Date.parse('2026-09-04T12:02:00.000Z');
+      await vi.advanceTimersByTimeAsync(60_000);
+      await coordinator.settled();
+      await h.runtime.whenIdle();
+      expect(cards().at(-1)).toMatchObject({ phase: 'cancelled' });
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+      expect(vi.mocked(h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Behind it.' });
+
+      const queued = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1' && entry.id !== turn.id)!;
+      h.codex.emit(limited(queued.id));
+      await h.runtime.whenIdle();
+      await coordinator.settled();
+      expect(cards().at(-1)).toMatchObject({ phase: 'waiting', turnId: queued.id });
+      vi.mocked(h.codex.submit).mockClear();
+
+      clock.ms += 3 * 3_600_000;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await coordinator.settled();
+      await h.runtime.whenIdle();
+      expect(h.codex.submit).toHaveBeenCalledOnce();
+      expect(vi.mocked(h.codex.submit).mock.lastCall?.[0]).toMatchObject({ prompt: 'Continue.' });
+      expect(cards().at(-1)).toMatchObject({ phase: 'resuming' });
+
+      const resumed = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1' && entry.id !== turn.id && entry.id !== queued.id)!;
+      h.codex.emit({ kind: 'transcript', item: { id: 'answer', sessionId: 'agent-1', turnId: resumed.id, sequence: 1, kind: 'assistant-message', text: 'Carrying on.', isDelta: false, isSensitive: false, createdAt: '2026-09-04T15:00:00.000Z' } });
+      await h.runtime.whenIdle();
+      await vi.waitFor(() => expect(cards().at(-1)).toMatchObject({ phase: 'resumed' }));
+      expect(h.router.readTranscript('agent-1').filter((item) => item.payload?.type === 'app-sent')).toHaveLength(1);
+      expect(coordinator.usageLimits(h.router.getSnapshot())).toBeUndefined();
+    } finally {
+      coordinator.dispose();
+      vi.useRealTimers();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
   });
 
   it('launches a session with long-run only when the host says so', async () => {

@@ -236,7 +236,7 @@ export function readTaskCard(read: TranscriptReader, sessionId: string, taskId: 
 }
 
 /** A pending request that stops a conversation on the person. A settings proposal stops nothing; a subagent's stops only the subagent. */
-function stoppingApproval(approval: DaemonApproval): boolean {
+export function stoppingApproval(approval: DaemonApproval): boolean {
   return approval.state === 'pending' && !isSettingsProposalRequest(approval.providerRequestId) && approval.request?.subagent === undefined;
 }
 

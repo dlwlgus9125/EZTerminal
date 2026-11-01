@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import type { DaemonEvent, DaemonSnapshot, DaemonTurn } from '../shared/daemon-protocol';
 import {
+  createDaemonCommand,
+  type DaemonCommand,
+  type DaemonCommandReceipt,
+  type DaemonEvent,
+  type DaemonSnapshot,
+  type DaemonTurn,
+} from '../shared/daemon-protocol';
+import {
+  LONG_RUN_PRINCIPAL,
+  RESUME_TEXT,
   RESUME_TIMING,
+  resumeDue,
   resumesByItself,
   turnAutoResumeOff,
   USAGE_LIMIT_ERROR,
@@ -17,6 +27,9 @@ import { parseTranscriptPayload, type UsageLimitPayload } from '../shared/transc
 import type { AgentProviderAdapter } from './agent-provider-adapter';
 import type { DaemonSystemTransitionPlanner } from './daemon-command-router';
 import type { DaemonStoreCommit, DaemonTranscriptItemInput } from './daemon-store';
+import type { TranscriptReader } from './managed-child-transcript';
+import { conversationBusy } from './review-coordinator';
+import { stoppingApproval } from './turn-wrap-up-coordinator';
 
 /** A turn a usage limit stopped, as the runtime hands it over. */
 export interface LimitStop {
@@ -62,9 +75,25 @@ const RELEASED_PHASES = new Set<UsageLimitPhase>(['left', 'person-refused']);
 const MANAGED_RESUME_PROVEN: ReadonlySet<string> = new Set();
 /** D4: the first try, and one later one. */
 const RESUME_ATTEMPTS = 2;
+/** A send that keeps losing the revision race stops here, as a report-back does. */
+const SEND_TRIES = 3;
+/** One timer, however far off the next time: each pass reads the clock, so a clock moved shows within this. */
+const SCHEDULER_CAP_MS = 60_000;
+/** What the timer waits at least, so a time already due cannot spin while something holds it back. */
+const SCHEDULER_FLOOR_MS = 1_000;
+/** The rows that prove the AI took it up. */
+const ANSWER_KINDS = new Set(['assistant-message', 'tool-call']);
 
 const finished = (job: LimitJobRecord): boolean => FINISHED_PHASES.has(job.phase) || (job.phase === 'child' && job.childKind === 'managed');
 const holds = (job: LimitJobRecord): boolean => !finished(job) && !RELEASED_PHASES.has(job.phase);
+
+/** When a job's clock says to send, if it waits on one. */
+function dueAt(job: LimitJobRecord): number | undefined {
+  const clock = job.phase === 'retrying' ? job.retryAt : job.phase === 'waiting' || job.phase === 'scheduled' ? job.resumeAt : undefined;
+  return clock === undefined ? undefined : Date.parse(clock);
+}
+
+const oldestFirst = (left: LimitJobRecord, right: LimitJobRecord): number => left.stoppedAt.localeCompare(right.stoppedAt) || left.stopId.localeCompare(right.stopId);
 
 function stableId(prefix: string, ...parts: readonly string[]): string {
   return `${prefix}-${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)}`;
@@ -152,6 +181,8 @@ export interface LongRunCoordinatorOptions {
   readonly getSnapshot: () => DaemonSnapshot;
   /** Evaluated under the command FIFO (the router's applySystemCommit). */
   readonly applySystemCommit: (commit: DaemonStoreCommit | DaemonSystemTransitionPlanner) => Promise<unknown>;
+  readonly readTranscript: TranscriptReader;
+  readonly execute: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   readonly onEvent: (listener: (event: DaemonEvent) => void) => () => void;
   /** Lets go of a queue a stop was holding. */
   readonly wakeQueuedTurns: () => void;
@@ -181,6 +212,10 @@ export interface LongRunCoordinatorOptions {
  * usable, and this coordinator keeps one card per stop, in the jobs file first and then as a row, so a crash between
  * them only writes the row again. While a stop is open the queue behind it holds, because a queued turn would only be
  * refused and stay in the session.
+ *
+ * When a time comes it sends "Continue.", the one thing the app sends with no press: per AI, oldest stop first, 60
+ * seconds apart, never waiting for a result (D6). The send is written ahead of the command and never repeats by itself;
+ * the outcome is read from what the turn does (D4). Nothing says a limit has lifted, so a time is only a try.
  */
 export class LongRunCoordinator implements DaemonLongRunHost {
   private readonly now: () => Date;
@@ -192,6 +227,13 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   private disposed = false;
   /** File, row, in the order things happened. */
   private tail: Promise<void> = Promise.resolve();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  /** Each AI's last send: the next one waits for the gap. */
+  private readonly lastSend = new Map<string, number>();
+  /** After a sleep, when the network has had its minute. */
+  private notBefore = 0;
+  /** The first row each session added since the last pass. */
+  private readonly newRows = new Map<string, number>();
 
   constructor(private readonly options: LongRunCoordinatorOptions) {
     this.now = options.now ?? (() => new Date());
@@ -214,7 +256,13 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     if (this.disposed || this.unsubscribe) return;
     await this.load();
     this.unsubscribe = this.options.onEvent((event) => {
-      if (event.kind === 'entity.archived') this.schedulePass();
+      if (event.kind === 'transcript.appended') {
+        const { sessionId, fromSequence } = event.payload;
+        if (this.jobOf(sessionId)?.sending) this.newRows.set(sessionId, Math.min(this.newRows.get(sessionId) ?? fromSequence, fromSequence));
+      } else if (event.kind !== 'entity.archived' && !(event.kind === 'entity.upserted' && event.payload.entityType === 'turn')) {
+        return;
+      }
+      this.schedulePass();
     });
     const snapshot = this.options.getSnapshot();
     for (const job of [...this.jobs.values()]) {
@@ -230,12 +278,21 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     }
     await this.tail;
     await this.saveJobs();
+    this.arm();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.unsubscribe?.();
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  /** The PC woke: a sleep is not the app closed, so the schedule stands, and the first send gives the network a minute. */
+  wake(): void {
+    this.notBefore = this.now().getTime() + RESUME_TIMING.lineGapMs;
+    this.arm();
   }
 
   /** Everything written so far has reached the file and the transcript. */
@@ -288,6 +345,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   /** The Settings switch went off: what has not gone out is cancelled, and turning it on restores nothing. */
   settingsChanged(): void {
     if (this.disposed || !this.unsubscribe || this.options.settings()?.autoResume !== false) return;
+    this.applySettingOff();
+  }
+
+  private applySettingOff(): void {
     for (const job of [...this.jobs.values()]) {
       const off = turnAutoResumeOff(job);
       if (off !== job) this.place(off);
@@ -305,7 +366,136 @@ export class LongRunCoordinator implements DaemonLongRunHost {
   }
 
   private view(job: LimitJobRecord): OpenUsageLimit {
-    return cardFields(job);
+    const line = this.line(job);
+    return { ...cardFields(job), ...(line ? { line } : {}) };
+  }
+
+  /** Stops of one AI whose times fall together share a line: the same reset, in practice. It is never stored. */
+  private line(job: LimitJobRecord): OpenUsageLimit['line'] {
+    const due = dueAt(job);
+    if (due === undefined) return undefined;
+    const peers = [...this.jobs.values()].filter((other) => {
+      const theirs = dueAt(other);
+      return other.providerId === job.providerId && theirs !== undefined && Math.abs(theirs - due) <= RESUME_TIMING.lineGapMs;
+    }).sort(oldestFirst);
+    return peers.length > 1 ? { position: peers.findIndex((other) => other.stopId === job.stopId) + 1, total: peers.length } : undefined;
+  }
+
+  private arm(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.disposed || !this.unsubscribe) return;
+    const times = [...this.jobs.values()].flatMap((job) => dueAt(job) ?? []);
+    if (times.length === 0) return;
+    const wait = Math.min(SCHEDULER_CAP_MS, Math.max(SCHEDULER_FLOOR_MS, Math.min(...times) - this.now().getTime()));
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.fire();
+      this.arm();
+    }, wait);
+    this.timer.unref?.();
+  }
+
+  /** Reads the clock itself, so a clock moved ahead tries early (refused, then +10 minutes, then it asks) and one moved back waits. */
+  private fire(): void {
+    if (this.disposed) return;
+    const settings = this.options.settings();
+    if (!settings) return;
+    if (!settings.autoResume) {
+      this.applySettingOff();
+      return;
+    }
+    const nowMs = this.now().getTime();
+    if (nowMs < this.notBefore) return;
+    const lined = new Set<string>();
+    for (const job of [...this.jobs.values()].filter((entry) => resumeDue(entry, nowMs)).sort(oldestFirst)) {
+      if (lined.has(job.providerId)) continue;
+      lined.add(job.providerId);
+      const last = this.lastSend.get(job.providerId);
+      if (last !== undefined && nowMs - last < RESUME_TIMING.lineGapMs) continue;
+      this.lastSend.set(job.providerId, nowMs);
+      void this.send(job, 'scheduled-time');
+    }
+  }
+
+  /** What stands in the way as the time comes: a person's decision, or something already moving this conversation on. */
+  private blocked(snapshot: DaemonSnapshot, job: LimitJobRecord): Pick<LimitJobRecord, 'phase' | 'failure'> | undefined {
+    if (snapshot.approvals.some((approval) => approval.sessionId === job.sessionId && stoppingApproval(approval))) return { phase: 'skipped' };
+    // A held queue goes instead: the refused prompt stays in the session, so nothing needs saying again.
+    if (conversationBusy(snapshot, job.sessionId)) return { phase: 'cancelled' };
+    return this.options.providers.enabledAdapter(snapshot, job.providerId).ok ? undefined : { phase: 'failed', failure: 'disconnected' };
+  }
+
+  /** One send: written ahead so a restart can tell, a new command for each lost race, never repeated by itself. */
+  private async send(job: LimitJobRecord, reason: AppSentReason): Promise<void> {
+    const blocked = this.blocked(this.options.getSnapshot(), job);
+    if (blocked) {
+      this.place({ ...job, ...blocked });
+      return;
+    }
+    this.place({ ...job, phase: 'resuming', sending: { commandId: this.sendId(job), reason, from: job.phase } });
+    await this.tail;
+    for (let tries = 0; tries < SEND_TRIES; tries += 1) {
+      const current = this.jobs.get(job.stopId);
+      if (this.disposed || current?.phase !== 'resuming' || !current.sending) return;
+      const commandId = this.sendId(current);
+      this.jobs.set(current.stopId, { ...current, sending: { ...current.sending, commandId } });
+      await this.queueSave();
+      let receipt: DaemonCommandReceipt;
+      try {
+        const expectedRevision = this.options.getSnapshot().revision;
+        receipt = await this.options.execute(createDaemonCommand({
+          commandId,
+          idempotencyKey: commandId,
+          expectedRevision,
+          issuedAt: this.now().toISOString(),
+          principal: { kind: 'cli', id: LONG_RUN_PRINCIPAL },
+          type: 'agent.submit',
+          payload: { sessionId: current.sessionId, prompt: RESUME_TEXT, longRunResume: { stopId: current.stopId, reason } },
+        }));
+      } catch (error) {
+        // The router threw: the command may have gone, so the card says it cannot tell.
+        this.report(`long-run send ${current.stopId}`, error);
+        this.settleSend(job.stopId, { phase: 'unconfirmed' });
+        return;
+      }
+      if (receipt.ok) return;
+      if (receipt.error.code !== 'revision-conflict') {
+        this.settleSend(job.stopId, { phase: 'failed', ...(receipt.error.code === 'not-found' ? { failure: 'session-gone' as const } : {}) });
+        return;
+      }
+    }
+    this.settleSend(job.stopId, { phase: 'failed' });
+  }
+
+  /** New at each try: Claude drops a repeated uuid in silence, and the uuid derives from this. */
+  private sendId(job: LimitJobRecord): string {
+    return stableId('long-run-send', job.stopId, String(job.attempt), String(this.options.getSnapshot().revision));
+  }
+
+  private settleSend(stopId: string, outcome: Pick<LimitJobRecord, 'phase' | 'failure'>): void {
+    const current = this.jobs.get(stopId);
+    if (!current) return;
+    const { sending, ...rest } = current;
+    if (sending) this.place({ ...rest, ...outcome });
+  }
+
+  /** What the send became, read from its turn. A limit on it comes through `limitStopped`, under the FIFO. */
+  private advance(snapshot: DaemonSnapshot, job: LimitJobRecord): void {
+    const commandId = job.sending?.commandId;
+    const turn = commandId ? snapshot.turns.find((entry) => entry.commandId === commandId) : undefined;
+    if (!turn) return;
+    const from = this.newRows.get(job.sessionId);
+    const answered = from !== undefined && this.options.readTranscript(job.sessionId, from - 1, 2_000).some((item) => item.turnId === turn.id && ANSWER_KINDS.has(item.kind));
+    if (answered || turn.state === 'completed' || turn.state === 'interrupted') {
+      this.settleSend(job.stopId, { phase: 'resumed' });
+    } else if (turn.state === 'failed' && turn.errorCode !== USAGE_LIMIT_ERROR) {
+      // Never started: nothing went out. Anything later may have reached the AI.
+      this.settleSend(job.stopId, turn.errorCode === 'provider-start-failed' ? { phase: 'failed', failure: 'disconnected' } : { phase: 'unconfirmed' });
+    } else if (turn.state === 'delivery-uncertain' && job.phase === 'resuming') {
+      // Kept with its `sending`: if the turn answers after all, this still closes.
+      this.place({ ...job, phase: 'unconfirmed' });
+    }
   }
 
   /** A person's conversation, or a managed child. No other session launches with `longRun`, so no other gets here. */
@@ -374,10 +564,10 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       if (turn.state === 'delivery-uncertain') return { ...job, phase: 'unconfirmed' };
       return turn.state === 'completed' || turn.state === 'interrupted' || turn.state === 'failed' ? { ...rest, phase: 'resumed' } : undefined;
     }
-    const clock = job.phase === 'retrying' ? job.retryAt : job.phase === 'waiting' || job.phase === 'scheduled' ? job.resumeAt : undefined;
-    if (clock === undefined) return undefined;
+    const due = dueAt(job);
+    if (due === undefined) return undefined;
     if (settings?.autoResume === false) return turnAutoResumeOff(job);
-    return Date.parse(clock) <= this.now().getTime() ? { ...job, phase: 'ask-reopened' } : undefined;
+    return due <= this.now().getTime() ? { ...job, phase: 'ask-reopened' } : undefined;
   }
 
   /** No time came with the stop: until this answers, the card says none is known. */
@@ -398,6 +588,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     const next = { ...job, revision: job.revision + 1 };
     this.jobs.set(next.stopId, next);
     this.write(next);
+    this.arm();
     return next;
   }
 
@@ -422,6 +613,12 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     }).catch((error: unknown) => this.report('limit job write', error));
   }
 
+  /** In line with what is being written: the file never goes back to an older job. */
+  private queueSave(): Promise<void> {
+    this.tail = this.tail.then(() => this.saveJobs());
+    return this.tail;
+  }
+
   private schedulePass(): void {
     if (this.passScheduled || this.disposed) return;
     this.passScheduled = true;
@@ -431,7 +628,7 @@ export class LongRunCoordinator implements DaemonLongRunHost {
     });
   }
 
-  /** A conversation archived or gone takes its stop with it. */
+  /** A conversation archived or gone takes its stop with it; a send moves on with its turn. */
   private pass(): void {
     const snapshot = this.options.getSnapshot();
     let dropped = false;
@@ -441,7 +638,9 @@ export class LongRunCoordinator implements DaemonLongRunHost {
       this.jobs.delete(job.stopId);
       dropped = true;
     }
-    if (dropped) this.tail = this.tail.then(() => this.saveJobs());
+    if (dropped) void this.queueSave();
+    for (const job of [...this.jobs.values()]) this.advance(snapshot, job);
+    this.newRows.clear();
   }
 
   private async saveJobs(): Promise<void> {
