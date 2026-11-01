@@ -8,8 +8,8 @@ import type { AgentUsageLevel } from './agent-usage';
 export interface AutomaticCallPolicy {
   /** The host starts it on its own. */
   readonly automatic: boolean;
-  /** The Settings › 에이전트 › 턴 마무리 switch that stops it. */
-  readonly setting?: 'suggestions' | 'recaps';
+  /** The switch that stops it: Settings › 에이전트 › 턴 마무리 for `suggestions` and `recaps`, › 이어서 하기 for `autoResume`. */
+  readonly setting?: 'suggestions' | 'recaps' | 'autoResume';
   /** It stops while a usage window is at AUTOMATIC_CALL_PAUSE_LEVEL. */
   readonly pausesNearLimit: boolean;
 }
@@ -18,6 +18,8 @@ export const AUTOMATIC_CALLS = {
   review: { automatic: false, pausesNearLimit: false },
   'next-prompt-suggestion': { automatic: true, setting: 'suggestions', pausesNearLimit: true },
   'turn-recap': { automatic: true, setting: 'recaps', pausesNearLimit: true },
+  // Sent because a limit stopped the turn, at the expected reset: LongRunCoordinator reads no usage window.
+  'auto-resume': { automatic: true, setting: 'autoResume', pausesNearLimit: false },
 } as const satisfies Readonly<Record<string, AutomaticCallPolicy>>;
 
 export const AUTOMATIC_CALL_PAUSE_LEVEL: AgentUsageLevel = 'danger';
