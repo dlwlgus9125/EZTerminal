@@ -60,9 +60,37 @@ describe('the usage limit card', () => {
 
   it('asks first for a reset days away, and offers the choice as its main action', () => {
     const view = limitView(limit('ask-reset', { window: 'weekly', resetsAt: '2026-11-03T14:50:00.000Z', resumeAt: '2026-11-03T14:52:00.000Z' }), ko, 'ko');
-    expect(view.notes[0]?.text).toBe(ko.askFar);
+    expect(view.notes[0]?.text).toBe(ko.askWeekly);
     expect(view.actions[0]).toMatchObject({ id: 'limit-schedule', primary: true });
     expect(view.message.text).toContain('11월 3일');
+  });
+
+  it('says why it tries by itself, and why it asks instead', () => {
+    expect(limitView(limit('waiting'), ko, 'ko').notes.map((note) => note.text)).toContain(ko.within);
+    expect(ko.within).toContain('6시간');
+    const weekly = limitView(limit('ask-reset', { window: 'weekly' }), ko, 'ko');
+    expect(weekly.notes[0]?.text).toBe(ko.askWeekly);
+    const later = limitView(limit('ask-reset', { window: 'unknown' }), ko, 'ko');
+    expect(later.notes[0]?.text).toBe(ko.askFar);
+    expect(ko.askFar).toContain('6시간');
+  });
+
+  it('says sends go out in turn without waiting for one another (D6)', () => {
+    const notes = limitView(limit('waiting', { line: { position: 2, total: 3 } }), ko, 'ko').notes.map((note) => note.text);
+    expect(notes).toContain('대화 3개에 차례로 보냅니다 · 이 대화는 2번째');
+    expect(notes).toContain('오래 멈춘 대화부터 60초 간격으로 보냅니다. 앞 대화가 끝나기를 기다리지 않습니다.');
+    expect(notes.join(' ')).not.toContain('이어집니다');
+  });
+
+  it('never resumes a child by itself, and offers it by hand only where that path is supported (D7)', () => {
+    const managed = limitView(limit('child', { childKind: 'managed-supported' }), ko, 'ko');
+    expect(managed.actions.map((action) => action.id)).toEqual(['limit-resume']);
+    const unsupported = limitView(limit('child', { childKind: 'managed' }), ko, 'ko');
+    expect(unsupported.actions).toEqual([]);
+    expect(unsupported.notes.map((note) => note.text)).toContain(ko.childUnsupported);
+    const provider = limitView(limit('child', { childKind: 'provider' }), ko, 'ko');
+    expect(provider.actions).toEqual([]);
+    expect(provider.notes.map((note) => note.text)).toContain(ko.childProvider);
   });
 
   it('with no reset time says so and says what an early try costs', () => {

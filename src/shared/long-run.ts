@@ -19,7 +19,7 @@ export type UsageLimitPhase =
   | 'retrying'
   /** Refused twice: the app stops and asks. */
   | 'gave-up'
-  /** The reset is days away, or the person chose to be asked (D2): nothing goes out until they say so. */
+  /** The limit is weekly, or its reset is more than 6 hours away (D2): nothing goes out until they say so. */
   | 'ask-reset'
   /** They said 그때 이어서 하기: waits for `resumeAt`, however far off. */
   | 'scheduled'
@@ -39,7 +39,7 @@ export type UsageLimitPhase =
   | 'skipped'
   /** `usage_not_included`: the plan cannot use this at all, and nothing resets. */
   | 'not-included'
-  /** A child conversation: offered, never automatic (D7). */
+  /** A child conversation: never automatic (D7). `childKind` says whether anything can be offered. */
   | 'child'
   /** The host confirms the send failed and nothing went out. */
   | 'failed'
@@ -65,7 +65,12 @@ export interface TurnUsageLimit {
   readonly offBy?: 'card' | 'setting';
   /** `waiting`: when 지금 시도 was refused; that refused turn stays in the conversation. */
   readonly triedAt?: string;
-  /** D6: several conversations resume one at a time. */
+  /**
+   * D7: `managed-supported`: a managed child whose resume proved supported, so 이어서 하기 is offered by hand. `managed`: not
+   * proved. `provider`: a subagent the AI runs itself, which the app never sends to.
+   */
+  readonly childKind?: 'managed-supported' | 'managed' | 'provider';
+  /** D6: sends go out one at a time, 60 s apart; none waits for the conversation before it to finish. */
   readonly line?: { readonly position: number; readonly total: number };
   /** `failed`: why nothing went out, in the app's words. */
   readonly failure?: 'disconnected' | 'session-gone';
@@ -75,7 +80,13 @@ export interface TurnUsageLimit {
  * The decided timing (D2, D4, D6). Proposed values, not measured: only Claude's whole 10 minutes is, and that no signal
  * comes when a limit lifts. So `afterResetMs` is a try after the expected time, never a promise that it worked.
  */
-export const RESUME_TIMING = { afterResetMs: 2 * 60_000, retryAfterRefusalMs: 10 * 60_000, lineGapMs: 60_000 } as const;
+export const RESUME_TIMING = { afterResetMs: 2 * 60_000, retryAfterRefusalMs: 10 * 60_000, lineGapMs: 60_000, autoWithinMs: 6 * 3_600_000 } as const;
+
+/** D2: the app tries by itself only for a known reset within 6 hours; weekly, later or unknown asks first. */
+export function resumesByItself(limit: Pick<TurnUsageLimit, 'window' | 'resetsAt'>, now: number): boolean {
+  if (limit.window === 'weekly' || limit.resetsAt === undefined) return false;
+  return Date.parse(limit.resetsAt) - now <= RESUME_TIMING.autoWithinMs;
+}
 
 /** Whether the app may send "Continue." by itself now: only a state that waits on a clock, once that time has come. */
 export function resumeDue(limit: TurnUsageLimit, now: number): boolean {

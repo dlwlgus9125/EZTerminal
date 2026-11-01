@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildChatModel } from './build-chat-model';
+import { resumesByItself } from '../../../shared/long-run';
 import { landSteer, LONG_SESSION, limitStory, steerStory, type LongRunFixture } from '../long-run/long-run-fixtures';
 
 const model = ({ items, turns, approvals, rows }: LongRunFixture): ReturnType<typeof buildChatModel> => buildChatModel({ items, turns, ...(approvals ? { approvals } : {}), longRun: rows });
@@ -104,6 +105,17 @@ describe('long-run rows in the chat model', () => {
   it('does not call a stop at the limit a failure', () => {
     const status = model(limitStory('ko', 'retrying')).rows.filter((row) => row.kind === 'turn-status');
     expect(status.map((row) => (row.kind === 'turn-status' ? row.limited : undefined))).toEqual(['stopped', 'refused']);
+  });
+
+  it('draws each limit the way the 6-hour rule treats it', () => {
+    const limitIn = (fixture: LongRunFixture): ReturnType<typeof limitStory>['rows']['limits'] extends ReadonlyMap<string, infer L> | undefined ? L : never => [...fixture.rows.limits!.values()][0]!;
+    const decided = (fixture: LongRunFixture): boolean => {
+      const limit = limitIn(fixture);
+      return resumesByItself(limit, Date.parse(limit.stoppedAt));
+    };
+    expect(decided(limitStory('ko', 'waiting'))).toBe(true);
+    expect(decided(limitStory('ko', 'ask-reset', { window: 'weekly' }))).toBe(false);
+    expect(decided(limitStory('ko', 'ask-reset', { window: 'unknown', later: true }))).toBe(false);
   });
 
   it('keeps fixtures in one session', () => {

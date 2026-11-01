@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resumeDue, RESUME_TIMING, turnAutoResumeOff, type TurnUsageLimit, type UsageLimitPhase } from './long-run';
+import { resumeDue, resumesByItself, RESUME_TIMING, turnAutoResumeOff, type TurnUsageLimit, type UsageLimitPhase } from './long-run';
 
 const RESUME = '2026-11-01T06:12:00.000Z';
 const RETRY = '2026-11-01T06:22:00.000Z';
@@ -32,6 +32,24 @@ describe('when the app may send by itself', () => {
 
   it('keeps the decided timing in one place', () => {
     expect(RESUME_TIMING).toMatchObject({ afterResetMs: 120_000, retryAfterRefusalMs: 600_000, lineGapMs: 60_000 });
+  });
+});
+
+describe('which limits the app tries by itself (D2)', () => {
+  const stopped = Date.parse('2026-11-01T05:58:00.000Z');
+  const at = (ms: number): string => new Date(stopped + ms).toISOString();
+  const within = RESUME_TIMING.autoWithinMs;
+
+  it('a known reset within 6 hours', () => {
+    expect(within).toBe(6 * 3_600_000);
+    expect(resumesByItself({ window: 'five-hour', resetsAt: at(within) }, stopped)).toBe(true);
+    expect(resumesByItself({ window: 'unknown', resetsAt: at(60_000) }, stopped)).toBe(true);
+  });
+
+  it('nothing later, nothing weekly, nothing without a time: those ask first', () => {
+    expect(resumesByItself({ window: 'five-hour', resetsAt: at(within + 1) }, stopped)).toBe(false);
+    expect(resumesByItself({ window: 'weekly', resetsAt: at(60_000) }, stopped)).toBe(false);
+    expect(resumesByItself({ window: 'five-hour' }, stopped)).toBe(false);
   });
 });
 

@@ -23,6 +23,11 @@ export function steerMark(steer: SteerLanding, copy: ChatCopy['longRun']['steer'
   return steer.rewritten ? `${copy.landed} · ${copy.rewritten}` : copy.landed;
 }
 
+/** A time on another day than the stop needs its day. */
+function otherDay(limit: TurnUsageLimit, iso: string): boolean {
+  return new Date(iso).toDateString() !== new Date(limit.stoppedAt).toDateString();
+}
+
 /** Time today, or the day and time for a reset days away. */
 export function formatWhen(iso: string, locale: ChatLocale, far = false): string {
   if (!far) return formatClock(iso, locale);
@@ -49,7 +54,7 @@ export function limitStatus(limit: TurnUsageLimit, copy: LimitCopy, locale: Chat
   if (ASKS.has(limit.phase)) return { text: copy.status.asks, asks: true, stopped: false };
   if (limit.phase === 'resuming') return { text: copy.status.resuming, asks: false, stopped: false };
   const clock = limit.phase === 'retrying' ? limit.retryAt : (limit.phase === 'waiting' || limit.phase === 'scheduled') ? limit.resumeAt : undefined;
-  if (clock) return { text: copy.status.waiting(formatWhen(clock, locale, limit.phase === 'scheduled')), asks: false, stopped: false };
+  if (clock) return { text: copy.status.waiting(formatWhen(clock, locale, otherDay(limit, clock))), asks: false, stopped: false };
   return { text: copy.status.stopped, asks: false, stopped: true };
 }
 
@@ -76,8 +81,7 @@ const note = (id: string, text: string, tone?: ActionCardNote['tone']): ActionCa
 export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLocale, approvalOpen = false): LimitView {
   const provider = providerName(limit.providerId);
   const windowName = copy.window[limit.window];
-  const far = limit.window === 'weekly';
-  const clock = (iso: string | undefined): string => (iso ? formatWhen(iso, locale, far) : '');
+  const clock = (iso: string | undefined): string => (iso ? formatWhen(iso, locale, otherDay(limit, iso)) : '');
   const resets = limit.resetsAt ? copy.resets(windowName, clock(limit.resetsAt)) : windowName;
   const tryNow: LimitActionView = { id: 'limit-try-now', ariaLabel: copy.tryNowLabel };
   const autoOff: LimitActionView = { id: 'limit-auto-off', ariaLabel: copy.autoOffLabel };
@@ -90,6 +94,7 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
         ...base, message: { text: resets },
         notes: [
           note('plan', copy.resumesAt(clock(limit.resumeAt)), 'lead'),
+          note('within', copy.within),
           ...(limit.line ? [note('line', copy.line(limit.line.total, limit.line.position)), note('line-gap', copy.lineNote)] : []),
           note('sends', copy.sends),
           note('early', limit.triedAt ? copy.triedNow(clock(limit.triedAt)) : copy.earlyRefused),
@@ -119,7 +124,7 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'ask-reset':
       return {
         ...base, message: { text: resets },
-        notes: [note('why', copy.askFar, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
+        notes: [note('why', limit.window === 'weekly' ? copy.askWeekly : copy.askFar, 'lead'), note('then', copy.askThen(clock(limit.resumeAt)))],
         actions: [{ id: 'limit-schedule', primary: true }, leave],
       };
     case 'ask-unknown':
@@ -152,6 +157,8 @@ export function limitView(limit: TurnUsageLimit, copy: LimitCopy, locale: ChatLo
     case 'not-included':
       return { ...base, message: { text: copy.notIncluded(provider) }, notes: [note('none', copy.notIncludedNote)], actions: [] };
     case 'child':
+      if (limit.childKind === 'provider') return { ...base, message: { text: resets }, notes: [note('why', copy.child, 'lead'), note('owner', copy.childProvider)], actions: [] };
+      if (limit.childKind !== 'managed-supported') return { ...base, message: { text: resets }, notes: [note('why', copy.child, 'lead'), note('parent', copy.childParent), note('none', copy.childUnsupported)], actions: [] };
       return {
         ...base, message: { text: resets },
         notes: [note('why', copy.child, 'lead'), note('parent', copy.childParent), note('now', copy.resumeNow)], actions: [resume],

@@ -50,6 +50,11 @@ describe('long-run wording', () => {
     expect(chatCopy('ko').longRun.steer.hint.codex).not.toContain('새 턴');
   });
 
+  it('says the 6-hour rule in Settings too, and what turning it off does', () => {
+    expect(settings).toContain('6시간');
+    expect(settings).toContain('6 hours');
+  });
+
   it('tells a screen at the scheduled time apart from a confirmed lift', () => {
     expect(chatCopy('ko').longRun.appSent.why['scheduled-time']).toBe('앱이 보냄 · 예약 시각이 되어');
     expect(chatCopy('en').longRun.appSent.why['scheduled-time']).toBe('Sent by the app · at the scheduled time');

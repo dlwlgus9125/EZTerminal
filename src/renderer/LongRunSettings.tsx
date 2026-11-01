@@ -32,8 +32,8 @@ function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Elem
           onChange={(event) => save({ ...settings, autoResume: event.target.checked })}
           label={text('해제 예정 시각이 되면 자동으로 이어서 하기', 'Try to continue at the expected reset')}
           description={text(
-            '앱이 그 대화에 "Continue."를 보냅니다. 멈춘 요청은 다시 보내지 않습니다. 사람이 보낸 최상위 대화에만, 리셋 시각을 아는 몇 시간 안의 한도에만 적용합니다. 주간 한도와 시각을 모르는 한도는 먼저 묻고, 하위 대화는 카드에서 이어서 합니다. 끄면 아직 보내지 않은 예약도 취소하고, 카드에서 직접 이어서 할 수 있습니다',
-            'The app sends “Continue.” to that conversation. Your stopped request is not sent again. This applies only to top-level conversations a person sent, and only to limits that reset within hours at a known time. A weekly limit or an unknown reset asks first, and a sub-conversation continues from its card. Turning this off also cancels schedules not yet sent; each card can still be continued by hand',
+            '앱이 그 대화에 "Continue."를 보냅니다. 멈춘 요청은 다시 보내지 않습니다. 사람이 보낸 최상위 대화에만, 해제 예정 시각을 알고 6시간 안인 한도에만 적용합니다. 주간 한도, 더 먼 시각, 시각을 모르는 한도는 먼저 묻습니다. 하위 대화는 자동으로 이어서 하지 않습니다. 끄면 아직 보내지 않은 예약도 취소하고, 카드에서 직접 이어서 할 수 있습니다',
+            'The app sends “Continue.” to that conversation. Your stopped request is not sent again. This applies only to top-level conversations a person sent, and only when the expected reset is known and within 6 hours. A weekly limit, a later time or an unknown reset asks first. A sub-conversation never continues by itself. Turning this off also cancels schedules not yet sent; each card can still be continued by hand',
           )}
           data-testid="long-run-auto-resume"
         />

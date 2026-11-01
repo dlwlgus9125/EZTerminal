@@ -29,6 +29,9 @@ export const RESUME_AT = kst(1, 15, 12);
 export const LINE_AT = kst(1, 15, 13);
 /** D4: ten minutes after the first refused try. */
 export const RETRY_AT = kst(1, 15, 22);
+/** Eight hours after the stop: past the 6 hours the app tries by itself. */
+export const LATER_RESET_AT = kst(1, 22, 58);
+const LATER_RESUME_AT = kst(1, 23, 0);
 export const WEEKLY_RESET_AT = kst(3, 23, 50);
 export const WEEKLY_RESUME_AT = kst(3, 23, 52);
 const PERSON_AT = kst(1, 15, 11);
@@ -303,6 +306,9 @@ export interface LimitOptions {
   /** Who the row after `resumed` says sent it. */
   readonly reason?: AppSentReason;
   readonly failure?: TurnUsageLimit['failure'];
+  /** D2: a reset known, but further off than 6 hours. */
+  readonly later?: boolean;
+  readonly childKind?: TurnUsageLimit['childKind'];
 }
 
 export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: LimitOptions = {}): LongRunFixture {
@@ -310,13 +316,14 @@ export function limitStory(lang: LongLanguage, phase: UsageLimitPhase, options: 
   const { items, turns } = stopped(lang);
   const window = options.window ?? 'five-hour';
   const weekly = window === 'weekly';
-  const reset = weekly ? WEEKLY_RESET_AT : RESET_AT;
-  const clock = weekly ? WEEKLY_RESUME_AT : options.line ? LINE_AT : RESUME_AT;
+  const reset = weekly ? WEEKLY_RESET_AT : options.later ? LATER_RESET_AT : RESET_AT;
+  const clock = weekly ? WEEKLY_RESUME_AT : options.later ? LATER_RESUME_AT : options.line ? LINE_AT : RESUME_AT;
   const limit: TurnUsageLimit = {
     turnId: phase === 'person-refused' ? 'turn-person' : LIMIT_TURN, providerId: options.provider ?? 'claude', phase, window, stoppedAt: STOPPED_AT,
     ...(phase === 'ask-unknown' ? {} : { resetsAt: reset, resumeAt: clock }),
     ...(options.line ? { line: options.line } : {}),
     ...(options.failure ? { failure: options.failure } : {}),
+    ...(phase === 'child' ? { childKind: options.childKind ?? 'managed-supported' } : {}),
   };
   const fixture = (extra: Partial<LongRunFixture> = {}, card: TurnUsageLimit = limit): LongRunFixture => ({
     items, turns, state: 'idle', ...extra,
@@ -499,6 +506,6 @@ export function listConversations(lang: LongLanguage, clocks: { readonly first: 
 export function listWaiting(lang: LongLanguage): readonly WaitingItem[] {
   return [{
     approvalId: 'limit-weekly', sessionId: 'c-weekly', title: LIST_TITLES[lang][3], providerId: 'claude', kind: 'usage-limit',
-    detail: lang === 'ko' ? '주간 한도 · 리셋이 며칠 뒤라 먼저 묻습니다' : 'Weekly limit · the reset is days away, so the app asks first', at: STOPPED_AT, asks: 'answer',
+    detail: lang === 'ko' ? '주간 한도 · 먼저 묻습니다' : 'Weekly limit · the app asks first', at: STOPPED_AT, asks: 'answer',
   }];
 }

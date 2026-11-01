@@ -25,7 +25,7 @@ import { SidebarShell } from '../workbench/SidebarShell';
 import type { ChatLongRunAction } from './ChatContext';
 import { chatCopy, formatClock } from './copy';
 import {
-  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
+  acceptSteer, applyLongRunAction, clockSends, dropSteer, inLongSession, landSteer, limitStory, LINE_AT, listConversations, listWaiting, LONG_ROOT, LATER_RESET_AT, personSends, queueAside, queueSteer, RESET_AT, RESUME_AT, RETRY_AT, settingOff, steerStory, WEEKLY_RESUME_AT,
   type LongLanguage, type LongProvider, type LongRunFixture,
 } from './long-run/long-run-fixtures';
 import { limitStatus } from './long-run/long-run-presentation';
@@ -204,15 +204,19 @@ interface ChatOptions {
   readonly height?: number;
   /** After this many ms a message put into the turn lands (the stories that follow one all the way). */
   readonly landAfter?: number;
-  /** A child conversation (D7). */
-  readonly child?: boolean;
+  /** A child conversation (D7): one of ours, or a subagent the AI runs itself. */
+  readonly child?: 'managed' | 'provider';
   /** What the person sends before the reset is refused. */
   readonly personRefused?: boolean;
   /** What is in the message box when the screen opens. */
   readonly draft?: ChatComposerDraft;
 }
 
-function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child = false, personRefused = false, draft }: ChatOptions & {
+function childProps(child: ChatOptions['child'], locale: LongLanguage): Pick<StructuredAgentSessionPanelProps, 'owner' | 'parent'> | undefined {
+  return child ? { owner: child === 'provider' ? 'provider-native' : 'managed', parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : undefined;
+}
+
+function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', width = 1100, height = 780, landAfter, child, personRefused = false, draft }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -224,13 +228,13 @@ function ChatScreen({ id, make, args, provider = 'claude', skin = 'bubble', widt
   return (
     <Desk width={width} height={height}>
       <StructuredAgentSessionPanel {...panelProps(sessionId, host, provider, locale, args)} skin={skin}
-        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})}
+        {...childProps(child, locale)}
         {...(draft ? { draftState: draft, supportsMessageContext: true } : {})} />
     </Desk>
   );
 }
 
-function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin = 'bubble', landAfter, child = false, draft }: ChatOptions & {
+function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin = 'bubble', landAfter, child, draft }: ChatOptions & {
   readonly id: string;
   readonly make: (lang: LongLanguage) => LongRunFixture;
   readonly args: Args;
@@ -244,7 +248,7 @@ function PhoneScreen({ id, make, args, provider = 'claude', width, height, skin 
   return (
     <Phone width={width} height={height}>
       <MobileStructuredAgentSession {...panelProps(sessionId, host, provider, locale, args)} skin={skin} folders={undefined} onBack={fn()}
-        {...(child ? { owner: 'managed' as const, parent: { sessionId: 'long-run-parent', title: PARENT[locale] } } : {})}
+        {...childProps(child, locale)}
         {...(draft ? { draftState: draft, supportsMessageContext: true } : {})} />
     </Phone>
   );
@@ -507,6 +511,7 @@ export const LimitWaiting: Story = chat('limit-waiting', (lang) => limitStory(la
   scrollToTop(card);
   await expect(card).toHaveTextContent(`5시간 한도 · ${clockOf(RESET_AT)} 해제 예정`);
   await expect(card).toHaveTextContent(`${clockOf(RESUME_AT)}에 자동으로 재개를 시도합니다`);
+  await expect(card).toHaveTextContent('해제 예정 시각이 6시간 안이라 자동으로 시도합니다.');
   await expect(card).toHaveTextContent('지금 시도가 거절되면 거절된 턴이 대화에 그대로 남습니다.');
   await expect(within(card).getByRole('button', { name: '지금 시도. 거절되면 거절된 턴이 대화에 그대로 남습니다.' })).toBeVisible();
   await expect(header(canvasElement)).toHaveTextContent(`한도 대기 · ${clockOf(RESUME_AT)}`);
@@ -627,7 +632,7 @@ export const LimitGaveUp: Story = chat('limit-gave-up', (lang) => limitStory(lan
 export const LimitWeekly: Story = chat('limit-weekly', (lang) => limitStory(lang, 'ask-reset', { window: 'weekly' }), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('주간 한도');
-  await expect(card).toHaveTextContent('리셋이 며칠 뒤라 먼저 묻습니다.');
+  await expect(card).toHaveTextContent('주간 한도는 먼저 묻습니다.');
   await expect(within(card).getByRole('button', { name: '그때 이어서 하기' })).toBeVisible();
   await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
@@ -640,6 +645,14 @@ export const LimitWeeklyScheduled: Story = chat('limit-weekly-scheduled', (lang)
   await waitFor(() => expect(card).toHaveTextContent('앱이 "Continue."를 보내 재개를 시도합니다.'));
   await expect(await findIn(canvasElement, '[data-testid="chat-limit-limit-unschedule"]')).toBeVisible();
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
+  scrollToTop(card);
+});
+/** A known reset, but 8 hours off: past the 6 hours the app tries by itself, so it asks first and says why (D2). */
+export const LimitLater: Story = chat('limit-later', (lang) => limitStory(lang, 'ask-reset', { window: 'unknown', later: true }), {}, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, CARD);
+  await expect(card).toHaveTextContent('해제 예정 시각이 6시간보다 멀어 먼저 묻습니다.');
+  await expect(card).toHaveTextContent(`${clockOf(LATER_RESET_AT)} 해제 예정`);
+  await expect(header(canvasElement)).toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
 /** No reset time known: nothing to wait for, and 이어서 하기 says what an early try costs. */
@@ -681,7 +694,8 @@ export const LimitReopened: Story = chat('limit-reopened', (lang) => limitStory(
 /** D6: several conversations, one at a time, 60 s apart, the longest-stopped first. This one is second. */
 export const LimitLine: Story = chat('limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), {}, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
-  await expect(card).toHaveTextContent('대화 3개가 차례로 이어집니다 · 이 대화는 2번째');
+  await expect(card).toHaveTextContent('대화 3개에 차례로 보냅니다 · 이 대화는 2번째');
+  await expect(card).toHaveTextContent('앞 대화가 끝나기를 기다리지 않습니다.');
   await expect(card).toHaveTextContent(`${clockOf(LINE_AT)}에 자동으로 재개를 시도합니다`);
   scrollToTop(card);
 });
@@ -694,12 +708,30 @@ export const LimitNotIncluded: Story = chat('limit-not-included', (lang) => limi
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
-/** D7: a child conversation offers 이어서 하기 and never resumes by itself. Claude only: a Codex child was not measured. */
-export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 'child'), { child: true }, async ({ canvasElement }) => {
+/**
+ * D7: a managed child never resumes by itself. 이어서 하기 is there only if that path proves supported at implementation, so
+ * this is the card if it does (Claude only: a Codex child was not measured).
+ */
+export const LimitChild: Story = chat('limit-child', (lang) => limitStory(lang, 'child'), { child: 'managed' }, async ({ canvasElement }) => {
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('하위 대화는 자동으로 이어서 하지 않습니다.');
   await expect(card).not.toHaveTextContent('자동으로 재개를 시도합니다');
   await expect(within(card).getByRole('button', { name: '이어서 하기' })).toBeVisible();
+  scrollToTop(card);
+});
+/** D7: the card if that path does not prove supported: no button. */
+export const LimitChildUnsupported: Story = chat('limit-child-unsupported', (lang) => limitStory(lang, 'child', { childKind: 'managed' }), { child: 'managed' }, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, CARD);
+  await expect(card).toHaveTextContent('이 하위 대화는 여기서 이어서 할 수 없습니다.');
+  await expect(within(card).queryAllByRole('button')).toHaveLength(0);
+  scrollToTop(card);
+});
+/** D7: a subagent the AI runs itself has no box and gets nothing from the app. */
+export const LimitChildProvider: Story = chat('limit-child-provider', (lang) => limitStory(lang, 'child', { childKind: 'provider' }), { child: 'provider' }, async ({ canvasElement }) => {
+  const card = await findIn(canvasElement, CARD);
+  await expect(card).toHaveTextContent('AI가 직접 관리하는 하위 에이전트라 앱이 보내지 않습니다.');
+  await expect(within(card).queryAllByRole('button')).toHaveLength(0);
+  await expect(canvasElement.querySelector(INPUT)).toBeNull();
   scrollToTop(card);
 });
 /** The send itself failed: the one state that is an error, with its reason and a retry. */
@@ -842,7 +874,8 @@ export const SettingsLongRun: Story = {
     const section = within(canvasElement).getByTestId('long-run-settings');
     await expect(section).toHaveTextContent('사람이 누르지 않아도 메시지가 나가는 유일한 곳입니다.');
     await expect(section).toHaveTextContent('앱이 그 대화에 "Continue."를 보냅니다.');
-    await expect(section).toHaveTextContent('사람이 보낸 최상위 대화에만');
+    await expect(section).toHaveTextContent('사람이 보낸 최상위 대화에만, 해제 예정 시각을 알고 6시간 안인 한도에만');
+    await expect(section).toHaveTextContent('주간 한도, 더 먼 시각, 시각을 모르는 한도는 먼저 묻습니다.');
     await expect(within(canvasElement).getByTestId('turn-wrap-up-settings')).toHaveTextContent('누르기 전에는 아무것도 보내거나 실행하지 않습니다.');
     const control = within(section).getByRole('switch');
     await expect(control).toBeChecked();
@@ -956,7 +989,8 @@ export const PhoneLimitUnconfirmed360: Story = phone('phone-limit-unconfirmed', 
 export const PhoneLimitReopened360: Story = phone('phone-limit-reopened', (lang) => limitStory(lang, 'ask-reopened'), 360, 800, {}, phoneCard());
 export const PhoneLimitResumed360: Story = phone('phone-limit-resumed', (lang) => limitStory(lang, 'resumed'), 360, 800, {}, async ({ canvasElement }) => { await findIn(canvasElement, '[data-testid="chat-app-sent"]'); });
 export const PhoneLimitLine412: Story = phone('phone-limit-line', (lang) => limitStory(lang, 'waiting', { line: { position: 2, total: 3 } }), 412, 915, {}, phoneCard());
-export const PhoneLimitChild360: Story = phone('phone-limit-child', (lang) => limitStory(lang, 'child'), 360, 800, { child: true }, phoneCard());
+export const PhoneLimitChild360: Story = phone('phone-limit-child', (lang) => limitStory(lang, 'child'), 360, 800, { child: 'managed' }, phoneCard());
+export const PhoneLimitChildProvider360: Story = phone('phone-limit-child-provider', (lang) => limitStory(lang, 'child', { childKind: 'provider' }), 360, 800, { child: 'provider' }, phoneCard());
 export const PhoneLimitNotIncluded360: Story = phone('phone-limit-not-included', (lang) => limitStory(lang, 'not-included', { provider: 'codex', window: 'unknown' }), 360, 800, { provider: 'codex' }, phoneCard());
 /** Phone, CLI skin: the text-styled buttons stacked too. */
 export const PhoneLimitCli360: Story = phone('phone-limit-cli', (lang) => limitStory(lang, 'waiting'), 360, 800, { skin: 'cli' }, phoneCard('.chat-cli-action-card[data-kind="usage-limit"]'));
