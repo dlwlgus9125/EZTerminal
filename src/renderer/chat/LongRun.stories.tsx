@@ -705,8 +705,8 @@ export const LimitNotIncluded: Story = chat('limit-not-included', (lang) => limi
   const card = await findIn(canvasElement, CARD);
   await expect(card).toHaveTextContent('이 요금제에는 Codex 사용량이 포함되어 있지 않습니다.');
   await expect(within(card).queryAllByRole('button')).toHaveLength(0);
-  // The host closes this stop: its card stays, and the header and the list are the conversation's own.
-  await expect(header(canvasElement)).not.toHaveTextContent('한도');
+  // Nothing will happen by itself and nothing asks: stopped, with no amber, until something else runs here.
+  await expect(header(canvasElement)).toHaveTextContent('한도로 멈춤');
   await expect(header(canvasElement)).not.toHaveAttribute('data-state', 'blocked');
   scrollToTop(card);
 });
