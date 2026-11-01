@@ -1198,11 +1198,16 @@ async function startConversation(page, { providerId, projectId, workspaceId, roo
   const ready = await poll(() => snapshot(page), (snap) => snap.providers.some((entry) => entry.id === providerId && entry.enabled && entry.health === 'ready'), 90_000, `${providerId} ready`).then(() => true, () => false);
   if (!ready) throw new Error(`${providerId} is not enabled and ready`);
   const sessionId = `ux-live-review-${providerId}-${Date.now().toString(36)}`;
-  const created = await command(page, 'agent.create', {
-    sessionId, workspaceId, title, providerId, permissionPreset, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}),
-    // No tools in the first turn: this PC's Codex shell commands hang under the workspace-write sandbox.
-    initialPrompt: initialPrompt ?? '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
-  });
+  let created;
+  // The revision moves under this whenever anything else commits, and a rejected create changed nothing.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    created = await command(page, 'agent.create', {
+      sessionId, workspaceId, title, providerId, permissionPreset, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}),
+      // No tools in the first turn: this PC's Codex shell commands hang under the workspace-write sandbox.
+      initialPrompt: initialPrompt ?? '도구는 쓰지 말고 한 문장으로만 답해 줘: 이 대화에서는 이 폴더의 변경을 검토하고 고칠 거야.',
+    });
+    if (created?.ok || created?.error?.code !== 'revision-conflict') break;
+  }
   if (!created?.ok) throw new Error(`agent.create failed ${JSON.stringify(created)}`);
   const conversation = { providerId, sessionId, panelId: `agent-session-${SESSION_PREFIX}${sessionId}`, title, projectId, workspaceId, root };
   await showConversation(page, conversation);
@@ -3197,10 +3202,8 @@ async function shootMatrix(page, name, report, crop) {
     await wait(700);
     await page.screenshot({ path: path.join(output, `${name}.png`) });
     shots.push(`${name}.png`);
-    if (crop && await crop.count()) {
-      await crop.last().screenshot({ path: path.join(output, `${name}-crop.png`) });
-      shots.push(`${name}-crop.png`);
-    }
+    // A tray can land and go while it is being cropped; the full picture above is the evidence.
+    if (crop && await crop.count()) await crop.last().screenshot({ path: path.join(output, `${name}-crop.png`), timeout: 3_000 }).then(() => shots.push(`${name}-crop.png`), () => undefined);
   } finally {
     await applyTheme(theme);
   }
@@ -3539,6 +3542,12 @@ async function runLimitTwoConversations(page, report, providerId) {
   const line = (await snapshot(page)).usageLimits?.[second.sessionId]?.line;
   if (line?.position !== 2 || line?.total !== 2) problems.push(`the second's line is ${JSON.stringify(line)}`);
   await shootMatrix(page, `${name}-line`, report, cardOn(panel));
+  // Its own time is the first's; the card must say when it really goes.
+  const secondGoes = new Date(Date.parse(cardB.resumeAt) + TIMING.lineGapMs);
+  const shownClock = `${String(secondGoes.getHours()).padStart(2, '0')}:${String(secondGoes.getMinutes()).padStart(2, '0')}`;
+  const open = (await snapshot(page)).usageLimits?.[second.sessionId];
+  if (open?.sendsAt !== secondGoes.toISOString()) problems.push(`sendsAt ${open?.sendsAt}, not ${secondGoes.toISOString()}`);
+  if (!(await cardOn(panel).textContent()).includes(shownClock)) problems.push(`the card does not say ${shownClock}`);
   await wait(untilMs(cardA.resetsAt));
   liftLimit(providerId);
   await cardAt(page, first.sessionId, 'resumed', untilMs(cardA.resumeAt) + 90_000);
@@ -3552,7 +3561,9 @@ async function runLimitTwoConversations(page, report, providerId) {
   if (gapMs !== null && (gapMs < TIMING.lineGapMs - 2_000 || gapMs > TIMING.lineGapMs + 62_000)) problems.push(`${gapMs} ms apart`);
   delete route.markers.a;
   delete route.markers.b;
-  finishProblems(name, problems, report, { first: first.sessionId, second: second.sessionId, cardA, cardB, line, gapMs, whose });
+  const secondLateMs = sends[1] ? sends[1].at - secondGoes.getTime() : null;
+  if (secondLateMs !== null && Math.abs(secondLateMs) > 5_000) problems.push(`the second went ${secondLateMs} ms from the time its card said`);
+  finishProblems(name, problems, report, { first: first.sessionId, second: second.sessionId, cardA, cardB, line, gapMs, whose, shownClock, secondLateMs });
 }
 
 /**
@@ -3809,16 +3820,17 @@ function steerFrames(providerId, providerSessionId, note, since) {
  * Enter during a long tool, during text, or behind a held approval: landed once, the model acted on it, the composer and
  * tray were honest. On the stub the same run proves the real CLI's frames; without it a real model reads the message.
  */
-async function runSteer(page, report, providerId, kind, skin) {
+async function runSteer(page, report, providerId, kind, skin, { tag = '', model, plainWords = false } = {}) {
   requireTap();
-  const name = `${providerId}-steer-${kind}-${skin}`;
-  const conversation = await longRunConversation(page, providerId, name, stubWorld ? {} : REAL_MODEL[providerId]);
+  const name = `${providerId}-steer-${kind}-${skin}${tag}`;
+  const conversation = await longRunConversation(page, providerId, name, stubWorld ? {} : { ...REAL_MODEL[providerId], ...(model ? { model } : {}) });
   const { sessionId, root } = conversation;
   const panel = await ensureOnScreen(page, conversation);
   await selectSkin(page, skin, panel);
   const problems = [];
   const stamp = Date.now().toString(36);
-  const note = `참고 ${stamp}: 마지막 답 끝에 ${STEER_WORD}라는 단어를 한 번 덧붙여 줘.`;
+  // The canary reads like an injected order; `plainWords` is how a person would really say it.
+  const note = plainWords ? `참고 ${stamp}: 끝나면 "끝" 대신 "완료"라고 답해 줘.` : `참고 ${stamp}: 마지막 답 끝에 ${STEER_WORD}라는 단어를 한 번 덧붙여 줘.`;
   if (stubWorld) {
     stubWorld[providerId].route.markers.note = stamp;
     stubWorld[providerId].route.steps.push(...stubSteerSteps(providerId, kind, root));
@@ -3828,12 +3840,14 @@ async function runSteer(page, report, providerId, kind, skin) {
   const prompt = stubWorld ? `끼워넣기 시험 ${kind}` : REAL_STEER_TURNS[kind](providerId);
   const first = await say(page, panel, sessionId, prompt);
   const moment = await steerMoment(page, sessionId, kind, callsBefore);
+  // A press right after a tool starts can meet the model's own stream still open, where Codex takes it at once; this one is well into the tool.
+  if (kind === 'tool' && skin === 'bubble') await wait(3_000);
   const writing = kind === 'text' ? moment.filter((item) => item.kind === 'assistant-message' && item.isDelta).at(-1) : undefined;
   const hint = await textOf(panel.getByTestId('structured-agent-composer-hint'));
   const enteredAt = Date.now();
   await pressEnter(panel, note);
   const input = panel.getByTestId('structured-agent-composer-input');
-  await poll(() => input.inputValue(), (value) => value === '', 5_000, 'the composer clearing');
+  while (await input.inputValue() !== '') if (Date.now() - enteredAt > 5_000) throw new Error('the composer kept the message');
   const composerClearedMs = Date.now() - enteredAt;
   const tray = panel.getByTestId('chat-steer-tray');
   const trayText = await poll(async () => ((await tray.count()) ? (await tray.first().textContent())?.trim() : undefined) ?? (await panel.getByTestId('chat-steer-landed').count() ? 'landed at once' : undefined), Boolean, 15_000, 'the tray or its landing');
@@ -3871,7 +3885,7 @@ async function runSteer(page, report, providerId, kind, skin) {
     // The stub answers the same words whatever it is sent, so what it proves is what it read.
     const reads = markerCount(stubRequests(providerId, since).filter((entry) => entry.main).at(-1), 'note');
     if (reads !== 1) problems.push(`the last request reads the message ${reads} times`);
-  } else if (!final.includes(STEER_WORD)) problems.push(`the model did not act on it: ${final.slice(0, 160)}`);
+  } else if (plainWords ? !/완료/u.test(final) || /따르지 않/u.test(final) : !new RegExp(`${STEER_WORD}[.!。]*\\s*$`, 'u').test(final)) problems.push(`the model did not act on it: ${final.slice(0, 200)}`);
   if (turns.some((state) => state !== 'completed')) problems.push(`turns ${turns.join(',')}`);
   if (frames.interrupted) problems.push('Enter interrupted the turn');
   if (landing.found && landing.model !== 1) problems.push(`in the session file ${landing.model} times: ${landing.lines.join(', ')}`);
@@ -3902,6 +3916,42 @@ async function runSteer(page, report, providerId, kind, skin) {
 }
 
 const steerRows = (items, text) => items.filter((item) => item.kind === 'user-message' && item.text === text);
+
+/** Enter twice, as a hurried person does: one message, one provider call, one row. */
+async function runSteerDoubleEnter(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-steer-double-enter`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const stamp = Date.now().toString(36);
+  const note = `두 번 눌러도 한 번만 ${stamp}`;
+  const { route } = stubWorld[providerId];
+  route.markers.note = stamp;
+  route.steps.push(slowStep(providerId, 7), { kind: 'text', text: '끝' });
+  const callsBefore = slowEndpoint.route.calls.length;
+  const since = Date.now();
+  const turnCount = await say(page, panel, sessionId, '시간이 걸리는 일');
+  await steerMoment(page, sessionId, 'tool', callsBefore);
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill(note);
+  await poll(() => panel.getByTestId('structured-agent-send').isEnabled().catch(() => false), Boolean, 15_000, 'send enabled');
+  await Promise.all([input.press('Enter'), input.press('Enter')]);
+  await poll(() => transcriptOf(page, sessionId).then((items) => steerRows(items, note)), (found) => found.length > 0, 30_000, 'the message landing');
+  await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, turnCount), 60_000, 'the turn finishing');
+  await wait(1_500);
+  const rows = steerRows(await transcriptOf(page, sessionId), note).length;
+  const records = tapNow().filter((record) => record.at >= since && record.direction === 'in');
+  const calls = records.filter((record) => (providerId === 'codex' ? record.data?.method === 'turn/steer' : record.data?.priority)).length;
+  const reads = markerCount(stubRequests(providerId, since).filter((entry) => entry.main).at(-1), 'note');
+  if (rows !== 1) problems.push(`${rows} rows`);
+  if (calls !== 1) problems.push(`${calls} provider calls`);
+  if (reads !== 1) problems.push(`the last request reads it ${reads} times`);
+  delete route.markers.note;
+  finishProblems(name, problems, report, { sessionId, rows, calls, reads, composer: await input.inputValue() });
+}
 
 /** 끊고 보내기 stops the turn; the message starts the next one and is never steered. */
 async function runInterruptSend(page, report, providerId) {
@@ -3970,7 +4020,7 @@ async function runSteerRefusedReview(page, report) {
   const reached = stubRequests('codex', since).filter((entry) => entry.main && markerCount(entry, 'note') > 0);
   if (reached.length !== 1 || markerCount(reached[0], 'note') !== 1) problems.push(`the message reached the API in ${reached.length} requests`);
   delete route.markers.note;
-  finishProblems(name, problems, report, { sessionId, hint, says, turnKind, error: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state), payload: rows[0]?.payload });
+  finishProblems(name, problems, report, { sessionId, hint, says, turnKind, refusal: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state), payload: rows[0]?.payload });
 }
 
 /** Codex has ended the turn and the app has not heard: the refusal real Codex gives then, and the queue takes the message. */
@@ -4010,7 +4060,7 @@ async function runSteerRefusedStale(page, report) {
     const reached = stubRequests('codex', since).filter((entry) => entry.main && markerCount(entry, 'note') > 0);
     if (reached.length !== 1) problems.push(`the message reached the API in ${reached.length} requests`);
     delete route.markers.note;
-    finishProblems(name, problems, report, { sessionId, says, error: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state) });
+    finishProblems(name, problems, report, { sessionId, says, refusal: frames.reply, turns: turnsOfSession(settled, sessionId).map((turn) => turn.state) });
   } finally {
     rmSync(holdFile, { force: true });
   }
@@ -4092,6 +4142,37 @@ async function runSteerSuggestion(page, report, providerId) {
   finishProblems(name, problems, report, { sessionId, before, during: during ?? null, after, sideCalls: sides.length, sideCallsThatReadIt: sideHeard });
 }
 
+/** A steer, then the window looks away: the turn gets its recap, and the recap has read the message. */
+async function runSteerRecap(page, report, providerId) {
+  requireStub();
+  const name = `${providerId}-steer-recap`;
+  const conversation = await longRunConversation(page, providerId, name);
+  const { sessionId } = conversation;
+  const panel = await ensureOnScreen(page, conversation);
+  const problems = [];
+  const callsBefore = slowEndpoint.route.calls.length;
+  const { route } = stubWorld[providerId];
+  const stamp = Date.now().toString(36);
+  const note = `요약과 끼워넣기 ${stamp}`;
+  route.markers.note = stamp;
+  route.steps.push(slowStep(providerId, 7), { kind: 'text', text: '끝' });
+  const since = Date.now();
+  const count = await say(page, panel, sessionId, '시간이 걸리는 일');
+  await steerMoment(page, sessionId, 'tool', callsBefore);
+  await pressEnter(panel, note);
+  await park(page, conversation);
+  const settled = await poll(() => snapshot(page), (snap) => settledTurns(snap, sessionId, count), 60_000, 'the turn finishing');
+  const turn = turnsOfSession(settled, sessionId).at(-1);
+  const seen = await awaitRecap(page, sessionId, turn.id, 60_000);
+  if (seen.recap?.state !== 'complete') problems.push(`recap ${seen.recap?.state ?? 'never came'} ${seen.recap?.failure ?? ''}`);
+  const sides = stubRequests(providerId, since).filter((entry) => entry.answer === 'side');
+  const read = sides.filter((entry) => markerCount(entry, 'note') === 1).length;
+  if (!sides.length || read !== sides.length) problems.push(`${read} of ${sides.length} side calls read the message once`);
+  if (steerRows(await transcriptOf(page, sessionId), note).length !== 1) problems.push('the message is not one row');
+  delete route.markers.note;
+  finishProblems(name, problems, report, { sessionId, trigger: seen.recap?.trigger, sideCalls: sides.length, read });
+}
+
 function longRunScenarios() {
   return [
   ...['claude', 'codex'].flatMap((providerId) => [
@@ -4111,8 +4192,12 @@ function longRunScenarios() {
     { name: `${providerId}-interrupt-send`, run: (page, report) => runInterruptSend(page, report, providerId) },
     { name: `${providerId}-steer-into-limit`, run: (page, report) => runSteerIntoLimit(page, report, providerId) },
     { name: `${providerId}-steer-suggestion`, run: (page, report) => runSteerSuggestion(page, report, providerId) },
+    { name: `${providerId}-steer-double-enter`, run: (page, report) => runSteerDoubleEnter(page, report, providerId) },
+    { name: `${providerId}-steer-recap`, run: (page, report) => runSteerRecap(page, report, providerId) },
     ...['tool', 'text', 'approval'].flatMap((kind) => ['cli', 'bubble'].map((skin) => ({ name: `${providerId}-steer-${kind}-${skin}`, run: (page, report) => runSteer(page, report, providerId, kind, skin) }))),
   ]),
+  // Real Haiku once read a steer beside a tool result as an order from the tool, and declined it. Wording, model, or delivery?
+  ...[['-plain-a', undefined], ['-plain-b', undefined], ['-plain-sonnet', 'sonnet']].map(([tag, model]) => ({ name: `claude-steer-tool-cli${tag}`, run: (page, report) => runSteer(page, report, 'claude', 'tool', 'cli', { tag, model, plainWords: true }) })),
   { name: 'codex-limit-not-included', run: (page, report) => runLimitNotIncluded(page, report) },
   { name: 'codex-steer-refused-review', run: (page, report) => runSteerRefusedReview(page, report) },
   { name: 'codex-steer-refused-stale', run: (page, report) => runSteerRefusedStale(page, report) },
