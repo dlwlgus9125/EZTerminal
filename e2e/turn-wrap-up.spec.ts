@@ -484,6 +484,8 @@ test('with two conversations only the one off screen gets a recap; a queued foll
     const session = sessionView(page, firstId);
     await setWindowFocused(app, page, false);
     await startHeldTurn(page, firstId, 'queued');
+    // Enter puts plain text into a running turn now; one the turn refuses is what still waits in the queue.
+    writeFileSync(control(profile, 'steer-refusal.txt'), 'stale');
     await send(session, 'A follow-up while it works.');
     await expect(session.getByRole('region', { name: 'Queued requests' }).locator('.chat-queue__item')).toHaveCount(1);
     release(profile, 'queued');
