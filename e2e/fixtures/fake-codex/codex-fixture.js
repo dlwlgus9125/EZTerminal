@@ -124,6 +124,13 @@ function controlText(name, fallback) {
   }
 }
 
+/** A marker for the next turn alone, so a picture keeps a person's own words in the bubble. */
+function nextTurnMarker() {
+  const marker = controlText('ezterminal-e2e-codex-next-marker.txt', '');
+  if (marker) fs.rmSync(controlFile('ezterminal-e2e-codex-next-marker.txt'), { force: true });
+  return marker;
+}
+
 /** How full the account's usage window reads: a file, so a spec can bring it near the limit. */
 function usedPercent() {
   return Number(controlText('ezterminal-e2e-codex-used-percent.txt', '26')) || 26;
@@ -591,7 +598,7 @@ if (args.includes('--version')) {
               method: 'turn/started',
               params: { threadId, turn: { id: turnId, status: 'inProgress', items: [] } },
             });
-            const inputText = inputTextOf(frame.params?.input);
+            const inputText = `${inputTextOf(frame.params?.input)}${nextTurnMarker()}`;
             // Before a hold, so a card can arrive while its turn still runs.
             const suggestionList = /EZTERMINAL_E2E_SUGGEST:([\w-]+)/u.exec(inputText)?.[1];
             let suggested = '';
@@ -630,7 +637,7 @@ if (args.includes('--version')) {
             }
             // Deterministic provider behavior, crossing the real authenticated app-tool
             // endpoint. The product still owns preview validation and persistence.
-            let responseText = 'Structured Codex fixture ready.';
+            let responseText = controlText('ezterminal-e2e-codex-answer.txt', 'Structured Codex fixture ready.');
             if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_PREVIEW')) {
               try {
                 const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;

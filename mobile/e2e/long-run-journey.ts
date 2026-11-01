@@ -35,6 +35,8 @@ const artifacts = process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR
   : path.resolve(import.meta.dirname, `../../artifacts/long-run/android/api${androidApi}-${OLD_HOST ? 'old-host' : THEME}`);
 /** The oldest Codex long-run continuity runs on (CODEX_LONG_RUN_MINIMUM_VERSION). */
 const LONG_RUN_CODEX_VERSION = '0.165.0';
+/** The fake's answer: the pictures show a conversation, not a fixture. */
+const ANSWER = '장바구니 테스트를 확인했습니다.';
 /** What only a spec shortens: the app's waits are minutes. */
 const TIMING = { afterResetMs: 2_000, retryAfterRefusalMs: 4_000, lineGapMs: 1_000 };
 const HOUR = 3_600;
@@ -415,6 +417,7 @@ async function main(): Promise<void> {
     const snapshot = () => host.evaluate(() => window.ezterminal.getDaemonSnapshot());
     const workspaceId = await addProject(host, root, 'cart-kit');
     await prepareCodex(host, fakeCodex, control);
+    writeFileSync(controlFile('answer.txt'), ANSWER);
 
     const transcript = (sessionId: string) => host.evaluate((id) => window.ezterminal.getDaemonTranscript(id, 0, 500), sessionId);
     const hostCard = async (sessionId: string): Promise<Card | undefined> => {
@@ -439,7 +442,8 @@ async function main(): Promise<void> {
     const agentIds = async (): Promise<readonly string[]> => (await snapshot())?.agents.map((entry) => entry.sessionId) ?? [];
     /** A turn the fake keeps running until `release(token)`, sent from the phone. */
     const heldTurn = async (sessionId: string, token: string, words = '계속 작업해 주세요.'): Promise<void> => {
-      await sendFromPhone(`EZTERMINAL_E2E_HOLD:${token} ${words}`);
+      writeFileSync(controlFile('next-marker.txt'), `EZTERMINAL_E2E_HOLD:${token}`);
+      await sendFromPhone(words);
       await turnWorking(sessionId);
       await waitFor(exists(STOP), 'the stop button while it runs');
     };
@@ -459,7 +463,7 @@ async function main(): Promise<void> {
       await draftIn(workspaceId, '장바구니 테스트를 고쳐 주세요.');
       const sessionId = await newAgent(known);
       await nothingRuns(sessionId, 'the first turn on the old host');
-      await waitFor(`document.body.textContent.indexOf('Structured Codex fixture ready.') >= 0`, 'the first answer');
+      await waitFor(`document.body.textContent.indexOf(${JSON.stringify(ANSWER)}) >= 0`, 'the first answer');
       const before = await snapshot();
       assert.equal(before?.capabilities?.includes('long-run-v1'), false, 'this host offers long-run-v1');
       assert.equal((before as { longRunSupport?: unknown } | null | undefined)?.longRunSupport, undefined, 'this host says what AIs run long-run');
@@ -502,7 +506,7 @@ async function main(): Promise<void> {
     await draftIn(workspaceId, '장바구니 테스트를 전부 고쳐 주세요.');
     const sessionId = await newAgent(known);
     await nothingRuns(sessionId, 'the first turn');
-    await waitFor(`document.body.textContent.indexOf('Structured Codex fixture ready.') >= 0`, 'the first answer');
+    await waitFor(`document.body.textContent.indexOf(${JSON.stringify(ANSWER)}) >= 0`, 'the first answer');
     const ready = await snapshot();
     assert.ok(ready?.capabilities?.includes('long-run-v1'), 'the desktop does not offer long-run-v1');
     assert.equal(ready?.longRunSupport?.codex, true, 'the fake Codex does not run long-run');
