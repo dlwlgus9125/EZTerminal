@@ -403,6 +403,7 @@
   margin: 0;
   font: var(--ui-font-size-md) / var(--ui-line-height-relaxed) var(--ui-font-body);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -414,6 +415,7 @@
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-sm);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
   max-height: 4.5em;
   overflow: hidden;
@@ -666,6 +668,7 @@
   color: var(--ui-text-primary);
   font: var(--ui-font-size-xs) / var(--ui-line-height-normal) var(--ui-font-mono);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1077,6 +1080,7 @@
   margin: 0;
   font: var(--ui-font-size-sm) / var(--ui-line-height-relaxed) var(--ui-font-mono);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1115,6 +1119,7 @@
 
 .chat-cli-tool__target {
   color: var(--ui-text-secondary);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1247,6 +1252,7 @@
   font-family: var(--ui-font-label);
   font-size: 0.9375rem;
   font-weight: 600;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1263,6 +1269,7 @@
 
 .chat-dock__meta {
   margin-top: var(--ui-space-2);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2054,6 +2061,7 @@
 .chat-pill-menu .chat-pill__option,
 .chat-pill-menu .chat-pill__option > * {
   white-space: normal;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2086,6 +2094,7 @@
   letter-spacing: normal;
   text-transform: none;
   white-space: normal;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2140,8 +2149,11 @@
 }
 
 .chat-composer__send > svg {
+  display: block;
   width: 1rem;
   height: 1rem;
+  /* WebView 74 does not lay a <button> out as a grid. */
+  margin: 0 auto;
 }
 
 .chat-composer__send[data-kind='stop'] {
@@ -2308,6 +2320,7 @@
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2449,6 +2462,7 @@
   margin: 0;
   color: var(--ui-text-primary);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2471,6 +2485,7 @@
   margin: 0 0 var(--ui-space-1);
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
