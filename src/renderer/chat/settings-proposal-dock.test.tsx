@@ -115,6 +115,8 @@ describe('what the AI changed in this conversation', () => {
       setAdvisor: async () => false,
       turnWrapUp: async () => ({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] }),
       setTurnWrapUp: async (settings) => settings,
+      longRun: async () => ({ autoResume: true }),
+      setLongRun: async (settings) => settings,
       onChanged: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
       emit: (event) => { for (const listener of listeners) listener(event); },
     };

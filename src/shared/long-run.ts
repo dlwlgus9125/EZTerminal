@@ -186,3 +186,12 @@ export interface LongRunSettings {
   /** 해제 예정 시각이 되면 자동으로 이어서 하기. */
   readonly autoResume: boolean;
 }
+
+export const DEFAULT_LONG_RUN_SETTINGS: LongRunSettings = { autoResume: true };
+
+/** Only the exact shape: anything else is dropped rather than trusted. */
+export function parseLongRunSettings(value: unknown): LongRunSettings | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { autoResume, ...rest } = value as Record<string, unknown>;
+  return typeof autoResume === 'boolean' && Object.keys(rest).length === 0 ? { autoResume } : undefined;
+}

@@ -27,6 +27,7 @@ import {
   type SettingsUndoResult,
   type UiSettingsPatch,
 } from '../shared/settings-changes';
+import { DEFAULT_LONG_RUN_SETTINGS, parseLongRunSettings, type LongRunSettings } from '../shared/long-run';
 import { DEFAULT_TURN_WRAP_UP_SETTINGS, parseTurnWrapUpSettings, type TurnWrapUpPause, type TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { UiPreferences } from '../shared/ui-preferences';
 import type { WorkflowRepeat } from '../shared/workflow';
@@ -36,6 +37,7 @@ import { JsonFile } from './json-file';
 const HISTORY_FILE = 'settings-changes.json';
 const ADVISOR_FILE = 'agent-advisor.json';
 const TURN_WRAP_UP_FILE = 'turn-wrap-up.json';
+const LONG_RUN_FILE = 'long-run.json';
 const EMPTY_HISTORY: SettingsChangeFile = { version: 1, changes: [] };
 /** Proposals one conversation may leave waiting at once. */
 const MAX_PENDING_PROPOSALS = 3;
@@ -225,18 +227,21 @@ export class SettingsAuthority {
   private readonly history: JsonFile;
   private readonly advisorFile: JsonFile;
   private readonly turnWrapUpFile: JsonFile;
+  private readonly longRunFile: JsonFile;
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly proposals = new Map<string, ProposalRecord>();
   private changes: readonly SettingsChangeRecord[] = [];
   private advisor = false;
   private turnWrapUpSettings = DEFAULT_TURN_WRAP_UP_SETTINGS;
+  private longRunSettings = DEFAULT_LONG_RUN_SETTINGS;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly options: SettingsAuthorityOptions) {
     this.history = new JsonFile(options.dir, HISTORY_FILE);
     this.advisorFile = new JsonFile(options.dir, ADVISOR_FILE);
     this.turnWrapUpFile = new JsonFile(options.dir, TURN_WRAP_UP_FILE);
+    this.longRunFile = new JsonFile(options.dir, LONG_RUN_FILE);
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
   }
@@ -248,6 +253,8 @@ export class SettingsAuthority {
     this.advisor = (await this.advisorFile.readValidated(validateAdvisor, { version: 1, enabled: false })).enabled;
     await this.turnWrapUpFile.init();
     this.turnWrapUpSettings = turnWrapUpFromFile(await this.turnWrapUpFile.readValidated(validateTurnWrapUp, EMPTY_TURN_WRAP_UP));
+    await this.longRunFile.init();
+    this.longRunSettings = longRunFromFile(await this.longRunFile.readValidated(validateLongRun, EMPTY_LONG_RUN));
   }
 
   /** 자문 (`ask_advisor`): off until a person turns it on. */
@@ -280,11 +287,28 @@ export class SettingsAuthority {
     });
   }
 
+  /** Settings › 에이전트 › 장시간 작업. Host policy, one set per PC; read per event, so the switch acts at once. */
+  longRun(): LongRunSettings {
+    return this.longRunSettings;
+  }
+
+  /** Only the person's Settings screen writes this: no AI tool reaches it. */
+  setLongRun(settings: LongRunSettings): Promise<LongRunSettings> {
+    return this.run(async () => {
+      const next = await this.longRunFile.update(validateLongRun, EMPTY_LONG_RUN, () => ({ version: 1 as const, ...settings }), 'save long-run');
+      if (!next) throw new Error('The long-run settings could not be saved.');
+      this.longRunSettings = longRunFromFile(next);
+      this.emit(['long-run']);
+      return this.longRunSettings;
+    });
+  }
+
   async flush(): Promise<void> {
     await this.queue.catch(() => undefined);
     await this.history.flush();
     await this.advisorFile.flush();
     await this.turnWrapUpFile.flush();
+    await this.longRunFile.flush();
   }
 
   // ── The AI's tools ──────────────────────────────────────────────────────────────────────────────────
@@ -829,6 +853,21 @@ function turnWrapUpFromFile({ suggestions, recaps, tasks, pauseNearLimit }: Turn
   return { suggestions, recaps, tasks, pauseNearLimit };
 }
 
+type LongRunFile = LongRunSettings & { readonly version: 1 };
+const EMPTY_LONG_RUN: LongRunFile = { version: 1, ...DEFAULT_LONG_RUN_SETTINGS };
+
+/** Anything else reads as the default: there is nothing to migrate. */
+function validateLongRun(raw: unknown): LongRunFile | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { version, ...settings } = raw as Record<string, unknown>;
+  const parsed = version === 1 ? parseLongRunSettings(settings) : undefined;
+  return parsed ? { version: 1, ...parsed } : null;
+}
+
+function longRunFromFile({ autoResume }: LongRunFile): LongRunSettings {
+  return { autoResume };
+}
+
 /**
  * Settings tools are offered only to a conversation a person sees directly: not a prepared (workflow
  * stage, review, planning) session, a scheduled run, an advisor, or a managed or provider-owned child.
@@ -848,7 +887,7 @@ export function settingsConversationAllowed(
   return options.turnPrincipal === 'desktop' || options.turnPrincipal === 'android';
 }
 
-/** `settings-changes:conversation|undo|advisor|set-advisor|turn-wrap-up|set-turn-wrap-up` for the desktop renderer (a person's actions, from an app window only). */
+/** `settings-changes:conversation|undo|advisor|set-advisor|turn-wrap-up|set-turn-wrap-up|long-run|set-long-run` for the desktop renderer (a person's actions, from an app window only). */
 export function installSettingsChangesIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly authority: SettingsAuthority;
@@ -891,7 +930,17 @@ export function installSettingsChangesIpc(input: {
     const parsed = principal(event, clientId) ? parseTurnWrapUpSettings(settings) : undefined;
     return parsed ? authority.setTurnWrapUp(parsed) : authority.turnWrapUp();
   });
+  ipc.handle('settings-changes:long-run', async (event, clientId: unknown) => {
+    if (!principal(event, clientId)) return DEFAULT_LONG_RUN_SETTINGS;
+    await ready;
+    return authority.longRun();
+  });
+  ipc.handle('settings-changes:set-long-run', async (event, clientId: unknown, settings: unknown) => {
+    await ready;
+    const parsed = principal(event, clientId) ? parseLongRunSettings(settings) : undefined;
+    return parsed ? authority.setLongRun(parsed) : authority.longRun();
+  });
   return () => {
-    for (const channel of ['conversation', 'undo', 'advisor', 'set-advisor', 'turn-wrap-up', 'set-turn-wrap-up']) ipc.removeHandler(`settings-changes:${channel}`);
+    for (const channel of ['conversation', 'undo', 'advisor', 'set-advisor', 'turn-wrap-up', 'set-turn-wrap-up', 'long-run', 'set-long-run']) ipc.removeHandler(`settings-changes:${channel}`);
   };
 }

@@ -476,6 +476,8 @@ const api: EzTerminalApi = {
     setAdvisor: (enabled: boolean) => ipcRenderer.invoke('settings-changes:set-advisor', sessionSurfaceClientId, enabled),
     turnWrapUp: () => ipcRenderer.invoke('settings-changes:turn-wrap-up', sessionSurfaceClientId),
     setTurnWrapUp: (settings: import('../shared/turn-wrap-up').TurnWrapUpSettings) => ipcRenderer.invoke('settings-changes:set-turn-wrap-up', sessionSurfaceClientId, settings),
+    longRun: () => ipcRenderer.invoke('settings-changes:long-run', sessionSurfaceClientId),
+    setLongRun: (settings: import('../shared/long-run').LongRunSettings) => ipcRenderer.invoke('settings-changes:set-long-run', sessionSurfaceClientId, settings),
     onChanged: (listener: (event: import('../shared/settings-changes').SettingsChangedEvent) => void): (() => void) => {
       const handler = (_event: unknown, payload: import('../shared/settings-changes').SettingsChangedEvent): void => listener(payload);
       ipcRenderer.on('settings:changed', handler);

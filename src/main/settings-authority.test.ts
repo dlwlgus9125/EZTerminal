@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatAgentPhaseMap, ChatAgentProfile } from '../shared/chat-agent-profiles';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import { DEFAULT_LONG_RUN_SETTINGS } from '../shared/long-run';
 import { DEFAULT_TURN_WRAP_UP_SETTINGS } from '../shared/turn-wrap-up';
 import { createWorkflowGraph } from '../shared/workflow';
 import type { WorkflowTemplate } from '../shared/workflow-templates';
@@ -317,6 +318,53 @@ describe('settings-changes IPC — an EZTerminal window only', () => {
     const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn() };
     installSettingsChangesIpc({ ipc: ipc as never, authority, ready: Promise.resolve(), principal: () => 'desktop:7:surface-1' });
     expect(await handlers.get('settings-changes:turn-wrap-up')!({}, 'surface-1')).toEqual({ settings: DEFAULT_TURN_WRAP_UP_SETTINGS, paused: [] });
+  });
+});
+
+describe('SettingsAuthority — long-run continuity', () => {
+  it('starts with automatic resume on', async () => {
+    const { authority } = await setup();
+    expect(authority.longRun()).toEqual({ autoResume: true });
+    expect(DEFAULT_LONG_RUN_SETTINGS).toEqual({ autoResume: true });
+  });
+
+  it('saves to its own file, keeps it across a restart, and tells the host and windows at once', async () => {
+    const { authority, dir, onChanged } = await setup();
+    await expect(authority.setLongRun({ autoResume: false })).resolves.toEqual({ autoResume: false });
+    expect(authority.longRun()).toEqual({ autoResume: false });
+    expect(onChanged).toHaveBeenLastCalledWith({ domains: ['long-run'] });
+    await authority.flush();
+    expect(JSON.parse(await readFile(path.join(dir, 'long-run.json'), 'utf8'))).toEqual({ version: 1, autoResume: false });
+    const again = new SettingsAuthority({ dir, ui: {} as never, profiles: {} as never, templates: {} as never, host: {} as never, raiseApproval: vi.fn(), korean: async () => true });
+    await again.init();
+    expect(again.longRun()).toEqual({ autoResume: false });
+  });
+
+  it('reads a damaged or newer file as the default: nothing to migrate', async () => {
+    for (const content of ['{not json', JSON.stringify({ version: 2, autoResume: false }), JSON.stringify({ version: 1, autoResume: 'no' }), JSON.stringify({ version: 1 })]) {
+      const { dir } = await setup();
+      await writeFile(path.join(dir, 'long-run.json'), content);
+      const again = new SettingsAuthority({ dir, ui: {} as never, profiles: {} as never, templates: {} as never, host: {} as never, raiseApproval: vi.fn(), korean: async () => true });
+      await again.init();
+      expect(again.longRun(), content).toEqual({ autoResume: true });
+    }
+  });
+
+  it('gives the setting to an app window only, and refuses a malformed save', async () => {
+    const { authority } = await setup();
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipc = { handle: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => { handlers.set(name, handler); }), removeHandler: vi.fn((name: string) => { handlers.delete(name); }) };
+    const dispose = installSettingsChangesIpc({ ipc: ipc as never, authority, ready: Promise.resolve(), principal: (_event, clientId) => clientId === 'surface-1' ? 'desktop:7:surface-1' : null });
+    expect(await handlers.get('settings-changes:long-run')!({}, 'surface-1')).toEqual({ autoResume: true });
+    expect(await handlers.get('settings-changes:set-long-run')!({}, 'other', { autoResume: false })).toEqual({ autoResume: true });
+    expect(await handlers.get('settings-changes:set-long-run')!({}, 'surface-1', { autoResume: 'no' })).toEqual({ autoResume: true });
+    expect(await handlers.get('settings-changes:set-long-run')!({}, 'surface-1', { autoResume: false, more: true })).toEqual({ autoResume: true });
+    expect(authority.longRun()).toEqual({ autoResume: true });
+    expect(await handlers.get('settings-changes:set-long-run')!({}, 'surface-1', { autoResume: false })).toEqual({ autoResume: false });
+    // A reader that is no window sees the default, not what this PC chose.
+    expect(await handlers.get('settings-changes:long-run')!({}, 'other')).toEqual({ autoResume: true });
+    dispose();
+    expect(handlers.size).toBe(0);
   });
 });
 

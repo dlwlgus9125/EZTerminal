@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { ChatAgentProfileSchema } from './chat-agent-profiles';
 import { BUILTIN_THEME_IDS, ThemeNameSchema } from './layout-schema';
+import type { LongRunSettings } from './long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from './turn-wrap-up';
 import { EffectIntensitySchema, UiDensitySchema, UiLocalePreferenceSchema } from './ui-preferences';
 import { WorkflowRepeatSchema } from './workflow';
@@ -150,7 +151,7 @@ export interface SettingsConversationView {
 export type SettingsUndoResult =
   | { readonly ok: true; readonly changeId: string }
   | { readonly ok: false; readonly error: 'not-found' | 'already-undone' | 'conflict' | 'needs-person' | 'failed'; readonly message: string; readonly current?: unknown };
-export type SettingsChangedDomain = SettingsDomain | 'host' | 'proposal' | 'turn-wrap-up';
+export type SettingsChangedDomain = SettingsDomain | 'host' | 'proposal' | 'turn-wrap-up' | 'long-run';
 export interface SettingsChangedEvent {
   readonly domains: readonly SettingsChangedDomain[];
 }
@@ -164,6 +165,9 @@ export interface SettingsChangesAccess {
   /** Settings › 에이전트 › 턴 마무리, with any pause in force now. */
   turnWrapUp(): Promise<{ readonly settings: TurnWrapUpSettings; readonly paused: readonly TurnWrapUpPause[] }>;
   setTurnWrapUp(settings: TurnWrapUpSettings): Promise<TurnWrapUpSettings>;
+  /** Settings › 에이전트 › 장시간 작업. */
+  longRun(): Promise<LongRunSettings>;
+  setLongRun(settings: LongRunSettings): Promise<LongRunSettings>;
   onChanged(listener: (event: SettingsChangedEvent) => void): () => void;
 }
 
