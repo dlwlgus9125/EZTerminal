@@ -2049,6 +2049,20 @@ describe('CodexProviderAdapter structured transcript', () => {
     await adapter.dispose();
   });
 
+  it('keeps an MCP image result out of the row text, and its words in', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'.repeat(4_000);
+    const shot = { id: 'mcp-shot', type: 'mcpToolCall', server: 'ezterminal_orchestration', tool: 'browser_screenshot', arguments: {} };
+    await notify('item/started', { startedAtMs: 1, item: { ...shot, status: 'inProgress' } });
+    await notify('item/completed', { completedAtMs: 2, item: { ...shot, status: 'completed', durationMs: 42,
+      result: { content: [{ type: 'text', text: 'Screenshot of the preview pane' }, { type: 'image', data: bytes, mimeType: 'image/jpeg' }], structuredContent: null } } });
+    const result = transcript().at(-1)!;
+    expect(result.kind).toBe('tool-result');
+    expect(result.text).toContain('Screenshot of the preview pane\n[image]');
+    expect(JSON.stringify(result)).not.toContain(bytes.slice(0, 64));
+    await adapter.dispose();
+  });
+
   it('maps MCP calls and web searches to structured payloads with readable results', async () => {
     const { adapter, notify, transcript } = await startedTurn();
     const mcp = { id: 'mcp-1', type: 'mcpToolCall', server: 'github', tool: 'search_issues', arguments: { q: 'bug' } };

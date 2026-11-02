@@ -916,6 +916,27 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('keeps an MCP image result out of the row text, and its words in', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-shot', commandId: 'command-shot', prompt: 'Look' });
+    await inputIterator.next();
+    const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'.repeat(4_000);
+    fixture.query.emit({ type: 'assistant', uuid: 'shot-call', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { id: 'msg_shot', content: [{ type: 'tool_use', id: 'toolu_shot', name: 'mcp__ezterminal_orchestration__browser_screenshot', input: {} }] } });
+    fixture.query.emit({ type: 'user', uuid: 'shot-result', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_shot',
+        content: [{ type: 'text', text: 'Screenshot of the preview pane' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: bytes } }] }] } });
+    await vi.waitFor(() => {
+      expect(fixture.events.some((event) => event.kind === 'transcript' && event.item.kind === 'tool-result')).toBe(true);
+    });
+    const result = fixture.events.find((event) => event.kind === 'transcript' && event.item.kind === 'tool-result');
+    expect(JSON.stringify(result)).toContain('Screenshot of the preview pane\\n[image]');
+    expect(JSON.stringify(result)).not.toContain(bytes.slice(0, 64));
+    await fixture.adapter.dispose();
+  });
+
   it('normalizes assistant text, reasoning, tool calls/results, and turn completion', async () => {
     const fixture = makeAdapter();
     await start(fixture);
