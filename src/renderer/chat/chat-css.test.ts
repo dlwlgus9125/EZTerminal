@@ -14,6 +14,12 @@ describe('chat.css at the WebView 74 floor', () => {
     for (const index of anywhere) expect(lines[index - 1]?.trim(), `line ${String(index + 1)}`).toBe('overflow-wrap: break-word;');
   });
 
+  it('keeps the dock\'s primary answer amber under the pointer too: the shared button\'s hover would turn it blue', () => {
+    const hover = /\.chat-dock \.ez-ui-button\[data-variant='primary'\]:not\(:disabled\):hover \{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    expect(hover).toContain('background: var(--ui-warning)');
+    expect(hover).toContain('border-color: var(--ui-warning)');
+  });
+
   it('centres the send and stop icons without the grid a <button> does not get there', () => {
     const rule = /\.chat-composer__send > svg \{([^}]*)\}/u.exec(css)?.[1] ?? '';
     expect(rule).toContain('display: block');

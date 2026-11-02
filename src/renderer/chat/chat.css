@@ -1231,6 +1231,13 @@
   color: var(--ui-text-inverse);
 }
 
+/* The shared button's hover is more specific and blue: the answer a person waits to give stays amber under the pointer. */
+.chat-dock .ez-ui-button[data-variant='primary']:not(:disabled):hover {
+  border-color: var(--ui-warning);
+  background: var(--ui-warning);
+  color: var(--ui-text-inverse);
+}
+
 .chat-dock__header {
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr) auto auto;
