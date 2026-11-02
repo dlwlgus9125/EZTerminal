@@ -5,6 +5,7 @@ import { BrowserCdp } from './browser-cdp';
 import {
   fileInsideRoots,
   installBrowserPartitionGuards,
+  leadsToThisPc,
   navigationRefusal,
   originOf as guardOrigin,
   realRoots,
@@ -63,6 +64,10 @@ interface Pane {
   /** Set by the first tool call. Nothing ever clears it. */
   guarded: boolean;
   personNavigating: boolean;
+  /** Where a navigation under way has reached, until it commits or ends. */
+  hop?: string;
+  /** The address a tool asked the host to load, until that load commits or ends. */
+  hostLoad?: string;
   toolsRunning: number;
   toolEndedAt: number;
   personInputAt: number;
@@ -345,6 +350,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     if (!contents) return undefined;
     delete pane.blocked;
     delete pane.fault;
+    pane.hostLoad = url;
     this.load(pane, contents, url);
     return contents;
   }
@@ -484,7 +490,10 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       guarded: pane.guarded,
       personNavigating: pane.personNavigating,
       topUrl,
-      topExternal: siteClass(topUrl, allowedOrigins, { controlPorts: this.deps.controlPorts() }) === 'external',
+      // Not `allowedOrigins`: allowing a site says nothing about what it may reach on this PC.
+      topExternal: siteClass(topUrl, [], { controlPorts: this.deps.controlPorts() }) === 'external',
+      ...(pane.hop !== undefined ? { hop: pane.hop } : {}),
+      ...(pane.hostLoad !== undefined ? { hostLoad: pane.hostLoad } : {}),
       allowedOrigins,
       roots: pane.roots,
       suspectOrigins: pane.visit === undefined ? this.suspects : new Set([...this.suspects].filter((origin) => origin !== pane.visit)),
@@ -544,13 +553,18 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       return { action: 'deny' };
     });
     // The address bar's pass covers its own redirects. A page's own navigation never inherits it: it needs a gesture of its own.
-    const top = (event: Electron.Event, url: string, redirect: boolean): void => {
+    const top = (event: Electron.Event<{ readonly initiator?: Electron.WebFrameMain | null }>, url: string, redirect: boolean): void => {
       const personMade = redirect ? pane.personNavigating : this.personGesture(pane, url);
-      const refusal = navigationRefusal(url, 'top', this.policy(pane), this.deps.controlPorts(), personMade);
+      const policy = this.policy(pane);
+      const refusal = navigationRefusal(url, 'top', policy, this.deps.controlPorts(), personMade, redirect ? [pane.hop] : [policy.topUrl, frameUrl(event.initiator)]);
       if (refusal) {
         event.preventDefault();
         this.block(pane, url, refusal);
-      } else if (personMade) pane.personNavigating = true;
+        return;
+      }
+      pane.hop = url;
+      if (redirect && pane.hostLoad !== undefined) pane.hostLoad = url;
+      if (personMade) pane.personNavigating = true;
     };
     const sub = (event: Electron.Event, url: string): void => {
       const refusal = navigationRefusal(url, 'sub', this.policy(pane), this.deps.controlPorts(), false);
@@ -588,11 +602,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     });
     contents.on('did-stop-loading', () => {
       pane.loading = false;
-      pane.personNavigating = false;
+      this.navigationOver(pane);
       this.publish(pane);
     });
     contents.on('did-navigate', (_event, url) => {
-      pane.personNavigating = false;
+      this.navigationOver(pane);
       this.cancelPick(pane.conversationId);
       if (pane.visit !== guardOrigin(url)) delete pane.visit;
       pane.cdp?.clearRefs();
@@ -601,12 +615,12 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return;
       // A back or forward inside the document is a navigation that commits nothing: the pass ends here too.
-      pane.personNavigating = false;
+      this.navigationOver(pane);
       this.remember(pane, url);
     });
     contents.on('did-fail-load', (_event, code, _text, _url, isMainFrame) => {
       if (!isMainFrame) return;
-      pane.personNavigating = false;
+      this.navigationOver(pane);
       if (code !== ERR_ABORTED && code !== ERR_BLOCKED_BY_CLIENT) pane.fault = 'server-down';
       this.publish(pane);
     });
@@ -635,14 +649,22 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
 
   private openInPlace(pane: Pane, contents: WebContents, url: string): void {
     if (this.suspect(pane, url)) this.block(pane, url, 'rebind-suspected');
-    else if (this.site(pane, url) === 'external') this.block(pane, url, 'site-not-allowed');
+    else if (this.site(pane, url) === 'external' || leadsToThisPc(url, [this.policy(pane).topUrl], this.deps.controlPorts())) this.block(pane, url, 'site-not-allowed');
     else this.load(pane, contents, url);
   }
 
   private load(pane: Pane, contents: WebContents, url: string): void {
+    pane.hop = url;
     // A refused or superseded load already reached the hooks above.
     contents.loadURL(url).catch(() => undefined);
     this.publish(pane);
+  }
+
+  /** What a navigation under way carried ends with it: no later navigation inherits a pass or a redirect's origin. */
+  private navigationOver(pane: Pane): void {
+    pane.personNavigating = false;
+    delete pane.hop;
+    delete pane.hostLoad;
   }
 
   private remember(pane: Pane, url: string): void {
@@ -749,6 +771,15 @@ function originOf(url: string): string | undefined {
   try {
     const origin = new URL(url).origin;
     return origin === 'null' ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The frame that started a navigation; a frame that already went answers for nothing. */
+function frameUrl(frame: Electron.WebFrameMain | null | undefined): string | undefined {
+  try {
+    return frame?.url;
   } catch {
     return undefined;
   }

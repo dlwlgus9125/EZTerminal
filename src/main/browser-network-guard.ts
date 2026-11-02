@@ -72,8 +72,12 @@ export interface BrowserViewPolicy {
   /** A navigation the person made is on its way: its main-frame hops are theirs. */
   readonly personNavigating: boolean;
   readonly topUrl: string;
-  /** The page, or the page it is leaving for, is external. */
+  /** The page, or the page it is leaving for, is on a site, allowed or not: nothing it starts reaches this PC. */
   readonly topExternal: boolean;
+  /** The address a navigation under way has reached and the page has not: what a redirect is leaving. */
+  readonly hop?: string;
+  /** The one address the host itself is loading now, for a tool. */
+  readonly hostLoad?: string;
   readonly allowedOrigins: readonly string[];
   /** Real paths (`realRoots`). */
   readonly roots: readonly string[];
@@ -109,6 +113,20 @@ export function originOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** On a site, allowed or not: allowing one is no local network access. Nothing at all is not a page, and a blank one has no site. */
+function onASite(url: string | undefined, controlPorts: ReadonlySet<number>): boolean {
+  return Boolean(url) && url !== 'about:blank' && siteClass(url!, [], { controlPorts }) === 'external';
+}
+
+/**
+ * Whether a navigation takes something out there to this PC. `from` is what it leaves: the page and whichever frame started it,
+ * and for a redirect only the hop it leaves, or a person's or a tool's own way home through a redirect would count as the page's.
+ * A person's navigation and a tool's own (localhost is free for the AI) are never asked about here.
+ */
+export function leadsToThisPc(url: string, from: readonly (string | undefined)[], controlPorts: ReadonlySet<number>): boolean {
+  return siteClass(url, [], { controlPorts }) !== 'external' && from.some((source) => onASite(source, controlPorts));
 }
 
 export interface BrowserRequestEnvironment {
@@ -150,9 +168,9 @@ export async function requestVerdict(
   }
   const top = resourceType === 'mainFrame';
   if (isLocalHostName(parsed.hostname)) {
-    if (top) return PASS;
+    if (top) return policy.personNavigating || policy.hostLoad === url || !leadsToThisPc(url, [policy.topUrl, policy.hop], environment.controlPorts) ? PASS : refuse('site-not-allowed');
     const { frame } = request;
-    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { controlPorts: environment.controlPorts }) === 'external');
+    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, [], { controlPorts: environment.controlPorts }) === 'external');
     return policy.topExternal || frameExternal ? refuse('site-not-allowed') : PASS;
   }
   // Before the resolver: a clean answer now says nothing about the address it answered from before.
@@ -213,10 +231,12 @@ export function navigationRefusal(
   policy: BrowserViewPolicy,
   controlPorts: ReadonlySet<number>,
   personMade: boolean,
+  from: readonly (string | undefined)[] = [policy.topUrl],
 ): 'site-not-allowed' | 'rebind-suspected' | undefined {
   if (frame === 'top' && !TOP_PAGE.test(url)) return 'site-not-allowed';
   if (isControlPortUrl(url, controlPorts)) return 'site-not-allowed';
   if (/^file:/iu.test(url) && !fileInsideRoots(url, policy.roots)) return 'site-not-allowed';
+  if (!(frame === 'top' && personMade) && leadsToThisPc(url, from, controlPorts)) return 'site-not-allowed';
   if (!(frame === 'top' && personMade) && policy.suspectOrigins.has(originOf(url))) return 'rebind-suspected';
   if (!policy.guarded) return undefined;
   if (siteClass(url, policy.allowedOrigins, { creator: policy.topUrl, controlPorts }) !== 'external') return undefined;

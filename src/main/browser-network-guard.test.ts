@@ -82,8 +82,43 @@ describe('requestVerdict: every request, whoever made it', () => {
     }
   });
 
-  it('lets the top page itself leave an external site for a local one', async () => {
-    expect(await requestVerdict(request('http://localhost:5173/'), policy({ topUrl: 'https://elsewhere.example/', topExternal: true }), environment())).toEqual({ cancel: false });
+  describe('allowing a site is not local network access', () => {
+    const allowedTop = policy({ topUrl: `${ALLOWED}/cart`, topExternal: true });
+    const unallowedTop = policy({ topUrl: 'https://elsewhere.example/', topExternal: true });
+
+    it('refuses what an allowed page pulls in from this PC, of every kind', async () => {
+      for (const resourceType of ['subFrame', 'xhr', 'image', 'script', 'webSocket', 'ping']) {
+        expect(await requestVerdict(request('http://localhost:5173/admin', resourceType), allowedTop, environment()), resourceType).toEqual({ cancel: true, reason: 'site-not-allowed' });
+      }
+    });
+
+    it.each([['an unallowed page', unallowedTop], ['an allowed page', allowedTop]])('refuses a page move to this PC from %s, with no person behind it', async (_name, top) => {
+      expect(await requestVerdict(request('http://localhost:5173/admin'), top, environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('lets the person go there from such a page', async () => {
+      expect(await requestVerdict(request('http://localhost:5173/'), { ...unallowedTop, personNavigating: true }, environment())).toEqual({ cancel: false });
+    });
+
+    it('lets the AI\'s own navigation go: localhost is free, and that one address is all the host asked for', async () => {
+      const top = { ...allowedTop, hostLoad: 'http://localhost:5173/' };
+      expect(await requestVerdict(request('http://localhost:5173/'), top, environment())).toEqual({ cancel: false });
+      expect(await requestVerdict(request('http://localhost:5173/admin'), top, environment()), 'a hop of the site\'s is not what was asked').toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('refuses a redirect out of a site on its way here, though the pane still shows a local page', async () => {
+      expect(await requestVerdict(request('http://localhost:5173/admin'), policy({ hop: `${ALLOWED}/go` }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('leaves a local page and a blank pane alone', async () => {
+      expect(await requestVerdict(request('http://localhost:5173/other'), policy(), environment())).toEqual({ cancel: false });
+      expect(await requestVerdict(request('http://localhost:5173/'), policy({ topUrl: '' }), environment())).toEqual({ cancel: false });
+      expect(await requestVerdict(request('http://localhost:5173/'), policy({ topUrl: 'about:blank' }), environment())).toEqual({ cancel: false });
+    });
+
+    it('refuses a frame of an allowed site reaching this PC, though the page around it is local', async () => {
+      expect(await requestVerdict({ ...request('http://localhost:5173/admin', 'xhr'), frame: ALLOWED }, policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
   });
 
   describe('the frame that asked, which need not be the page the pane shows now', () => {
@@ -101,8 +136,8 @@ describe('requestVerdict: every request, whoever made it', () => {
       expect(await requestVerdict(asked(null), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
 
-    it('lets a local page, a file and an allowed site ask as they did', async () => {
-      for (const frame of ['http://localhost:5173', 'file://', ALLOWED]) {
+    it('lets a local page and a file ask as they did', async () => {
+      for (const frame of ['http://localhost:5173', 'file://']) {
         expect(await requestVerdict(asked(frame), policy(), environment()), frame).toEqual({ cancel: false });
       }
     });
@@ -287,6 +322,42 @@ describe('navigationRefusal: the view\'s own hooks, first', () => {
     expect(navigationRefusal(evil, 'top', policy(), ports, true)).toBeUndefined();
     expect(navigationRefusal(evil, 'sub', policy(), ports, false)).toBe('site-not-allowed');
     expect(navigationRefusal(evil, 'sub', policy(), ports, true), 'the exception is for the top page').toBe('site-not-allowed');
+  });
+
+  describe('a page out there going to this PC', () => {
+    const local = 'http://localhost:5173/admin?do=it';
+    const site = (patch: Partial<BrowserViewPolicy>): BrowserViewPolicy => policy({ guarded: false, topUrl: `${ALLOWED}/cart`, topExternal: true, ...patch });
+
+    it.each([['unguarded', false], ['guarded', true]])('is refused on a pane %s, allowed site or not', (_name, guarded) => {
+      expect(navigationRefusal(local, 'top', site({ guarded }), ports, false)).toBe('site-not-allowed');
+      expect(navigationRefusal(local, 'top', site({ guarded, topUrl: 'https://elsewhere.example/' }), ports, false)).toBe('site-not-allowed');
+      expect(navigationRefusal(local, 'sub', site({ guarded }), ports, false)).toBe('site-not-allowed');
+    });
+
+    it('goes when the person made it, and only at the top', () => {
+      expect(navigationRefusal(local, 'top', site({}), ports, true)).toBeUndefined();
+      expect(navigationRefusal(local, 'sub', site({}), ports, true)).toBe('site-not-allowed');
+    });
+
+    it('is refused when a frame of a site started it from a local page, even with a click behind it', () => {
+      expect(navigationRefusal(local, 'top', policy({ guarded: false }), ports, false, [policy().topUrl, ALLOWED])).toBe('site-not-allowed');
+    });
+
+    it('judges a redirect by the hop it leaves: a tool\'s way home from an allowed page is not the page\'s', () => {
+      expect(navigationRefusal(local, 'top', site({}), ports, false, ['http://localhost:5173/start'])).toBeUndefined();
+      expect(navigationRefusal(local, 'top', policy(), ports, false, [`${ALLOWED}/go`])).toBe('site-not-allowed');
+    });
+
+    it('takes nothing from a load under way: a page\'s own move at that moment is still the page\'s', async () => {
+      const racing = site({ hop: 'http://localhost:5173/start', hostLoad: 'http://localhost:5173/start' });
+      expect(navigationRefusal(local, 'top', racing, ports, false)).toBe('site-not-allowed');
+      expect(await requestVerdict(request(local), racing, environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('is no business of a local page', () => {
+      expect(navigationRefusal(local, 'top', policy(), ports, false)).toBeUndefined();
+      expect(navigationRefusal(local, 'top', policy({ topUrl: '' }), ports, false)).toBeUndefined();
+    });
   });
 
   it('lets local, allowed and same-origin navigations through', () => {
