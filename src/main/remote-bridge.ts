@@ -106,6 +106,7 @@ import {
   type RemoteDaemonAuthorityAvailability,
 } from '../shared/daemon-authority';
 
+import { isBrowserActionRequest } from '../shared/browser';
 import { MAX_QUICK_COMMANDS, QuickCommandSchema, type QuickCommand } from '../shared/quick-command';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
@@ -457,6 +458,23 @@ function daemonRevision(source: RemoteDaemonSource): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * A browser action is answered at the desktop, by someone who can see the page. A phone gets the site and the kind of action,
+ * and nothing of what would run: the value to type, the URL, the keys.
+ */
+function remoteDaemonSnapshot(snapshot: DaemonSnapshot): DaemonSnapshot {
+  if (!snapshot.approvals.some((approval) => isBrowserActionRequest(approval.providerRequestId))) return snapshot;
+  return {
+    ...snapshot,
+    approvals: snapshot.approvals.map((approval) => {
+      if (!isBrowserActionRequest(approval.providerRequestId) || typeof approval.request !== 'object' || approval.request === null) return approval;
+      const request = { ...approval.request as { readonly input?: unknown } };
+      delete request.input;
+      return { ...approval, request };
+    }) as DaemonSnapshot['approvals'],
+  };
 }
 
 function remoteCoordinationSnapshot(snapshot: AgentCoordinationSnapshot): AgentCoordinationSnapshot {
@@ -1282,7 +1300,7 @@ export function attachConnection(
             send({ kind: 'daemon-availability', availability });
             if (availability.state === 'ready') {
               try {
-                send({ kind: 'daemon-snapshot', snapshot: options.daemonSource.getSnapshot() });
+                send({ kind: 'daemon-snapshot', snapshot: remoteDaemonSnapshot(options.daemonSource.getSnapshot()) });
               } catch {
                 send({ kind: 'daemon-snapshot', snapshot: null, unavailable: true });
               }
@@ -1703,7 +1721,7 @@ export function attachConnection(
           send({
             kind: 'daemon-snapshot',
             requestId: msg.requestId,
-            snapshot: options.daemonSource.getSnapshot(),
+            snapshot: remoteDaemonSnapshot(options.daemonSource.getSnapshot()),
           });
         } catch {
           send({
@@ -1759,7 +1777,7 @@ export function attachConnection(
         }
         daemonEventsSubscribed = true;
         try {
-          const snapshot = options.daemonSource.getSnapshot();
+          const snapshot = remoteDaemonSnapshot(options.daemonSource.getSnapshot());
           if (msg.afterSequence !== snapshot.eventSequence) {
             send({ kind: 'daemon-snapshot', snapshot });
           }

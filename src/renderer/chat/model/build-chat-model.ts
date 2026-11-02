@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
+import { browserWaitingOf, hostBrowserTool } from '../../../shared/browser';
 import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { USAGE_LIMIT_ERROR, type OpenUsageLimit, type SteerLanding } from '../../../shared/long-run';
@@ -9,7 +10,7 @@ import type { TurnRecap } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import { longRunRows } from './long-run-rows';
 import type {
-  ChatActivity, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
+  ChatActivity, ChatBrowserStep, ChatModel, ChatReview, ChatReviewFinding, ChatReviewFindingStatus, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile,
   PendingInteraction, TodoChange,
 } from './types';
 import { foldsIntoCard, suggestTaskRefusal, wrapUpCards } from './wrap-up-cards';
@@ -20,6 +21,8 @@ export interface BuildChatModelInput {
   readonly turns?: readonly DaemonTurn[];
   /** 시안: rows the browser stories place where a `notice` item sits; there is no payload for these yet. */
   readonly browserRows?: ReadonlyMap<string, ChatRow>;
+  /** On a phone: browser actions only the desktop answers, each a line here and no dock. */
+  readonly desktopOnly?: readonly DaemonApproval[];
   /** This conversation's open limit in the snapshot: where it stands in the line of sends, which no row says. */
   readonly openLimit?: OpenUsageLimit;
 }
@@ -359,7 +362,7 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [], openLimit, browserRows }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], openLimit, browserRows, desktopOnly = [] }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
@@ -550,7 +553,8 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
           }
         }
         // Task-list tools show as the todo rows they produce, not as tool lines; suggested tasks as their turn's card.
-        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo' && !foldsIntoCard(tool, turnId, wrapUp)) activityFor(item).push({ kind: 'tool', tool });
+        // This app's browser tools show as the host's own record of what ran, never as what the AI asked for.
+        if (!HIDDEN_TOOLS.has(tool.name) && !hostBrowserTool(tool.name, tool.server) && tool.category !== 'todo' && !foldsIntoCard(tool, turnId, wrapUp)) activityFor(item).push({ kind: 'tool', tool });
         const open = openCallsByTurn.get(turnId ?? '') ?? [];
         open.push(tool);
         openCallsByTurn.set(turnId ?? '', open);
@@ -610,6 +614,21 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
           break;
         }
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+        if (payload?.type === 'browser-step' || payload?.type === 'browser-shot') {
+          const step: ChatBrowserStep = { id: item.id, kind: payload.type === 'browser-shot' ? 'screenshot' : payload.step, at: item.createdAt, ...(payload.type === 'browser-step' && payload.pageText ? { pageText: payload.pageText } : {}) };
+          const latestShot = payload.type === 'browser-shot' && payload.thumb ? { thumb: `data:image/jpeg;base64,${payload.thumb}`, takenAt: item.createdAt } : undefined;
+          const last = rows[rows.length - 1];
+          if (last?.kind === 'browser-run' && last.turnId === turnId && last.run.origin === payload.origin) {
+            rows[rows.length - 1] = { ...last, run: { ...last.run, steps: [...last.run.steps, step], ...(latestShot ? { latestShot } : {}) } };
+          } else {
+            push({ kind: 'browser-run', id: `browser-run:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, run: { origin: payload.origin, steps: [step], ...(latestShot ? { latestShot } : {}) } });
+          }
+          break;
+        }
+        if (payload?.type === 'browser-blocked') {
+          push({ kind: 'browser-blocked', id: `browser-blocked:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, origin: payload.site, reason: payload.reason, ...(payload.action ? { action: payload.action } : {}) });
+          break;
+        }
         if (payload?.type === 'todo') {
           recordTodo(item, [...payload.items]);
           break;
@@ -786,7 +805,11 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
     }
   }
 
-  return { rows: shownRows, ...(todo ? { todo } : {}), ...(pending ? { pending } : {}), pendingCount: pendingApprovals.length };
+  const waiting = desktopOnly.flatMap((approval): ChatRow[] => {
+    const view = approval.state === 'pending' ? browserWaitingOf(approval) : undefined;
+    return view ? [{ kind: 'browser-waiting', id: `browser-waiting:${approval.id}`, ...(approval.turnId ? { turnId: approval.turnId } : {}), createdAt: approval.createdAt, ...view }] : [];
+  });
+  return { rows: waiting.length ? [...shownRows, ...waiting] : shownRows, ...(todo ? { todo } : {}), ...(pending ? { pending } : {}), pendingCount: pendingApprovals.length };
 }
 
 export type { ToolStatus };

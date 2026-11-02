@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ApprovalRequest } from './approval-request';
 import {
+  BROWSER_APPROVAL_HOLD_MS, BROWSER_MASK, browserRowInput, browserWaitingOf, hostBrowserTool,
   addressBarUrl, allowableOrigin, BROWSER_TOOLS, browserActionOf, browserActionRequestId, isBrowserActionRequest, isBrowserTool, isControlPortUrl,
   isLocalHostName, looksSecret, siteClass,
 } from './browser';
@@ -161,6 +162,51 @@ describe('the tool names', () => {
 
   it('round-trips the approval prefix', () => {
     expect(isBrowserActionRequest(browserActionRequestId('call-9'))).toBe(true);
+  });
+});
+
+describe('hostBrowserTool: this app\'s tools, and nobody else\'s of the same name', () => {
+  it('reads either AI\'s name', () => {
+    expect(hostBrowserTool('mcp__ezterminal_orchestration__browser_click')).toBe('browser_click');
+    expect(hostBrowserTool('browser_click', 'ezterminal_orchestration')).toBe('browser_click');
+  });
+
+  it.each([['mcp__playwright__browser_click', undefined], ['browser_click', 'playwright'], ['browser_click', undefined], ['mcp__ezterminal_orchestration__browser_evaluate', undefined]])('%s of %s is not', (name, server) => {
+    expect(hostBrowserTool(name, server)).toBeUndefined();
+  });
+});
+
+describe('browserRowInput: what browser_type types stays out of every row', () => {
+  it('masks it and keeps the rest', () => {
+    expect(browserRowInput('mcp__ezterminal_orchestration__browser_type', { ref: 'e1', text: 'hunter2', submit: true })).toEqual({ ref: 'e1', text: BROWSER_MASK, submit: true });
+  });
+
+  it('whatever shape the AI sent', () => {
+    expect(browserRowInput('browser_type', '{"ref":"e1","text":"hunter2"}', 'ezterminal_orchestration')).toBe(JSON.stringify({ ref: 'e1', text: BROWSER_MASK }));
+    expect(browserRowInput('browser_type', 'not json hunter2', 'ezterminal_orchestration')).toBe(BROWSER_MASK);
+    expect(browserRowInput('browser_type', ['hunter2'], 'ezterminal_orchestration')).toBe(BROWSER_MASK);
+  });
+
+  it('leaves everything else alone', () => {
+    const input = { url: 'http://localhost:5173/' };
+    expect(browserRowInput('mcp__ezterminal_orchestration__browser_navigate', input)).toBe(input);
+    expect(browserRowInput('mcp__playwright__browser_type', { text: 'hello' })).toEqual({ text: 'hello' });
+    expect(browserRowInput('Bash', { command: 'ls' })).toEqual({ command: 'ls' });
+  });
+});
+
+describe('browserWaitingOf: a phone\'s line for what only the desktop answers', () => {
+  const approval = (request: unknown, providerRequestId = browserActionRequestId('call-1')) => ({ providerRequestId, createdAt: '2026-11-02T05:00:00.000Z', request });
+
+  it('says which site and what kind of action, and when it lapses, from what a phone is sent', () => {
+    expect(browserWaitingOf(approval({ v: 1, kind: 'tool', toolName: 'browser_click', target: 'https://staging.example' }))).toEqual({
+      origin: 'https://staging.example', action: 'click', expiresAt: new Date(Date.parse('2026-11-02T05:00:00.000Z') + BROWSER_APPROVAL_HOLD_MS).toISOString(),
+    });
+  });
+
+  it('is nothing for any other approval', () => {
+    expect(browserWaitingOf(approval({ v: 1, kind: 'tool', toolName: 'Bash', target: 'x' }))).toBeUndefined();
+    expect(browserWaitingOf(approval({ v: 1, kind: 'tool', toolName: 'browser_click', target: 'x' }, 'provider-1'))).toBeUndefined();
   });
 });
 

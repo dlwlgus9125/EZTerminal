@@ -1047,6 +1047,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       items,
       // A browser action is answered on the desktop: the phone's dock would draw buttons that fail.
       approvals: phone ? approvals.filter((approval) => !isBrowserActionRequest(approval.providerRequestId)) : approvals,
+      ...(phone ? { desktopOnly: approvals.filter((approval) => isBrowserActionRequest(approval.providerRequestId)) } : {}),
       ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}), ...(browserRows ? { browserRows } : {}),
     }),
     [items, approvals, turns, openLimit, browserRows, phone],

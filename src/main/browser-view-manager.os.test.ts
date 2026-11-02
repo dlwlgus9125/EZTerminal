@@ -387,6 +387,15 @@ describe('what the tools do to a real page, unseen', () => {
     expect(report['tools-crop']).toMatchObject({ smaller: true });
   });
 
+  it('makes a thumbnail a row can carry, or none, whatever the page', () => {
+    const thumb = report['tools-thumb'] as { bytes: number; jpeg: string };
+    expect(thumb.jpeg).toBe('/9j/');
+    expect(thumb.bytes).toBeGreaterThan(0);
+    expect(thumb.bytes).toBeLessThanOrEqual(24_000);
+    const noisy = report['tools-thumb-noisy'];
+    expect(noisy === 'dropped' || (typeof noisy === 'number' && noisy <= 24_000), String(noisy)).toBe(true);
+  });
+
   it('ends a ref at a navigation', () => {
     expect(report['tools-after-navigation']).toBe('stale-ref');
   });
@@ -498,6 +507,18 @@ describe('the page\'s world', () => {
 
   it('downloads nothing', () => {
     expect(report.download).toEqual({ blocked: 'download-blocked', onDisk: [] });
+  });
+});
+
+describe('what a guard reports for the conversation\'s rows', () => {
+  const rows = (): readonly { conversationId: string; reason: string; turnId: string }[] => report['block-rows'] as never;
+
+  it('a stop on a page the AI is at, with its turn', () => {
+    expect(rows()).toContainEqual({ conversationId: 'pane-guard-script', reason: 'site-not-allowed', turnId: 'turn-1' });
+  });
+
+  it('nothing of a person\'s own browsing', () => {
+    expect(rows().filter((row) => row.conversationId === 'pane-world')).toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
-import { BROWSER_TOOLS } from '../shared/browser';
+import { BROWSER_TOOLS, browserRowInput } from '../shared/browser';
 import { PROPOSED_PLAN_REQUEST_PREFIX, clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
 import { addedFileChange, deletedFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
@@ -3342,7 +3342,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'dynamicToolCall': {
         const tool = asString(item.tool) ?? 'tool';
         const server = asString(item.server) ?? asString(item.namespace);
-        const body = providerTranscriptText(started ? item.arguments : item.result ?? item.output ?? item.error);
+        const body = providerTranscriptText(started ? browserRowInput(tool, item.arguments, server) : item.result ?? item.output ?? item.error);
         kind = started ? 'tool-call' : 'tool-result';
         text = `${asString(item.server) ? `${asString(item.server)}/` : ''}${asString(item.tool) ?? 'tool'}: ${asString(item.status) ?? (started ? 'started' : 'completed')}`;
         if (body) text += `\n${body}`;

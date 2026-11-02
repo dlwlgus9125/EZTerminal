@@ -1,6 +1,6 @@
 import type { NativeImage, WebContents } from 'electron';
 
-import type { BrowserRefusal, BrowserSiteClass } from '../shared/browser';
+import { BROWSER_THUMB_BYTES, type BrowserRefusal, type BrowserSiteClass } from '../shared/browser';
 
 /**
  * What the AI's tools do to a page, over the view's own debugger. Screenshots are `capturePage`: `Page.captureScreenshot`
@@ -14,6 +14,8 @@ const CONSOLE_LINES = 200;
 const CONSOLE_LINE_CHARS = 500;
 const SHOT_WIDTH = 1_280;
 const SHOT_QUALITY = 80;
+const THUMB_WIDTH = 360;
+const THUMB_QUALITIES = [60, 40, 25];
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
@@ -485,7 +487,7 @@ export class BrowserCdp {
   }
 
   /** At most `SHOT_WIDTH` wide, in CSS pixels: `capturePage` answers in physical ones. */
-  async screenshot(id?: string): Promise<{ readonly jpegBase64: string; readonly width: number; readonly height: number }> {
+  async screenshot(id?: string): Promise<{ readonly jpegBase64: string; readonly thumbBase64?: string; readonly width: number; readonly height: number }> {
     let rect: { x: number; y: number; width: number; height: number } | undefined;
     if (id !== undefined) {
       const ref = this.ref(id);
@@ -503,6 +505,8 @@ export class BrowserCdp {
     const width = Math.min(SHOT_WIDTH, cssWidth);
     const image = physical.width === width ? captured : captured.resize({ width, quality: 'good' });
     const size = image.getSize();
-    return { jpegBase64: image.toJPEG(SHOT_QUALITY).toString('base64'), width: size.width, height: size.height };
+    const thumb = image.resize({ width: Math.min(THUMB_WIDTH, size.width), quality: 'good' });
+    const thumbJpeg = THUMB_QUALITIES.map((quality) => thumb.toJPEG(quality)).find((jpeg) => jpeg.length <= BROWSER_THUMB_BYTES);
+    return { jpegBase64: image.toJPEG(SHOT_QUALITY).toString('base64'), ...(thumbJpeg ? { thumbBase64: thumbJpeg.toString('base64') } : {}), width: size.width, height: size.height };
   }
 }

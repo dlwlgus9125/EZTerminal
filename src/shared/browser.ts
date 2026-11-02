@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from './approval-request';
+import { parseApprovalRequest, type ApprovalRequest } from './approval-request';
 import { SUGGEST_TASK_SERVER } from './turn-wrap-up';
 
 /**
@@ -26,20 +26,55 @@ export function isBrowserTool(name: string): name is BrowserToolName {
 /** The exact names Claude's `allowedTools` needs: this server's, and never another's `browser_click`. */
 export const BROWSER_CLAUDE_TOOLS: readonly string[] = BROWSER_TOOLS.map((name) => `mcp__${SUGGEST_TASK_SERVER}__${name}`);
 
+/** This app's browser tool under either AI's name, and never another server's `browser_click`. */
+export function hostBrowserTool(name: string, server?: string): BrowserToolName | undefined {
+  const prefix = `mcp__${SUGGEST_TASK_SERVER}__`;
+  const bare = name.startsWith(prefix) ? name.slice(prefix.length) : server === SUGGEST_TASK_SERVER ? name : undefined;
+  return bare !== undefined && isBrowserTool(bare) ? bare : undefined;
+}
+
+/** What stands in a row for a value typed into a page. */
+export const BROWSER_MASK = '••••••••';
+
+/** 24 KB of JPEG, in base64: the most of a screenshot a row carries to a phone. */
+export const BROWSER_THUMB_BYTES = 24_000;
+export const BROWSER_THUMB_CHARS = Math.ceil(BROWSER_THUMB_BYTES / 3) * 4;
+
+/**
+ * A tool's input as a transcript row may hold it. A row is written when the AI asks, before the host can know the field is a
+ * password, and rows reach phones and last, so what `browser_type` types is in none of them. A shape it cannot read goes whole.
+ */
+export function browserRowInput(name: string, input: unknown, server?: string): unknown {
+  if (hostBrowserTool(name, server) !== 'browser_type') return input;
+  if (typeof input === 'string') {
+    try {
+      const parsed = browserRowInput(name, JSON.parse(input), server);
+      return parsed === BROWSER_MASK ? BROWSER_MASK : JSON.stringify(parsed);
+    } catch {
+      return BROWSER_MASK;
+    }
+  }
+  return typeof input === 'object' && input !== null && !Array.isArray(input) ? { ...input, text: BROWSER_MASK } : BROWSER_MASK;
+}
+
 /** How the app classes a site, by name alone. Only `local`, `file` and `allowed` reach the AI's tools. */
 export type BrowserSiteClass = 'local' | 'file' | 'allowed' | 'external';
 
-export type BrowserActionKind = 'navigate' | 'click' | 'type' | 'press';
-export type BrowserStepKind = 'snapshot' | 'screenshot' | 'console' | 'wait' | BrowserActionKind;
+export const BROWSER_ACTION_KINDS = ['navigate', 'click', 'type', 'press'] as const;
+export type BrowserActionKind = (typeof BROWSER_ACTION_KINDS)[number];
+export const BROWSER_STEP_KINDS = ['snapshot', 'screenshot', 'console', 'wait', ...BROWSER_ACTION_KINDS] as const;
+export type BrowserStepKind = (typeof BROWSER_STEP_KINDS)[number];
 
 /**
  * Why the app said no to a browser tool. `stopped`: the person pressed 중지 on the pane during this turn. `browser-off`:
  * the setting is off; the tools stay listed, because the list is frozen for the conversation's prompt cache.
  */
-export type BrowserRefusal =
-  | 'site-not-allowed' | 'plan-mode' | 'unattended' | 'no-page' | 'stale-ref' | 'page-gone' | 'password-field'
-  | 'upload-unsupported' | 'approval-declined' | 'approval-timeout' | 'rebind-suspected' | 'limit' | 'download-blocked' | 'stopped'
-  | 'browser-off';
+export const BROWSER_REFUSALS = [
+  'site-not-allowed', 'plan-mode', 'unattended', 'no-page', 'stale-ref', 'page-gone', 'password-field',
+  'upload-unsupported', 'approval-declined', 'approval-timeout', 'rebind-suspected', 'limit', 'download-blocked', 'stopped',
+  'browser-off',
+] as const;
+export type BrowserRefusal = (typeof BROWSER_REFUSALS)[number];
 
 /** A host approval raised for a browser action carries this prefix in `providerRequestId`. */
 const BROWSER_ACTION_REQUEST = 'browser-action:';
@@ -74,6 +109,19 @@ export interface BrowserActionView {
 const ACTIONS: Readonly<Record<string, BrowserActionKind>> = {
   browser_navigate: 'navigate', browser_click: 'click', browser_type: 'type', browser_press: 'press',
 };
+
+export function browserActionKind(tool: string): BrowserActionKind | undefined {
+  return ACTIONS[tool];
+}
+
+/** The phone's line for a browser action: all it is told, which site and what kind of action, and when the wait ends. */
+export function browserWaitingOf(approval: { readonly providerRequestId?: string; readonly createdAt: string; readonly request?: unknown }): { readonly origin: string; readonly action: BrowserActionKind; readonly expiresAt: string } | undefined {
+  if (!isBrowserActionRequest(approval.providerRequestId)) return undefined;
+  const request = parseApprovalRequest(approval.request);
+  const action = request?.kind === 'tool' ? ACTIONS[request.toolName] : undefined;
+  if (request?.kind !== 'tool' || !request.target || !action) return undefined;
+  return { origin: request.target, action, expiresAt: new Date(Date.parse(approval.createdAt) + BROWSER_APPROVAL_HOLD_MS).toISOString() };
+}
 
 function inputOf(input: string | undefined): Readonly<Record<string, unknown>> | undefined {
   try {

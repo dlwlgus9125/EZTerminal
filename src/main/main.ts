@@ -44,6 +44,8 @@ import { installFileToolsIpc } from './file-tools-ipc';
 import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
+import { BrowserRows } from './browser-rows';
+import { BrowserShots } from './browser-shots';
 import { BrowserLastPages, BrowserSiteStore } from './browser-site-store';
 import { BrowserTools } from './browser-tools';
 import { BrowserViewManager } from './browser-view-manager';
@@ -994,6 +996,12 @@ app.on('ready', async () => {
   const browserSites = new BrowserSiteStore(app.getPath('userData'));
   const browserPages = new BrowserLastPages(app.getPath('userData'));
   await Promise.all([browserSites.load(), browserPages.load()]);
+  const browserShots = new BrowserShots(app.getPath('userData'));
+  const browserRows = new BrowserRows({
+    append: (item) => {
+      void daemonRouterRef.current?.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [{ ...item, createdAt: new Date().toISOString() }] }] }).catch(() => undefined);
+    },
+  });
   /** Who gets the browser tools at launch: the setting, for a conversation a person sees. Step 17 adds the provider's floor here. */
   const browserSessionListed = (sessionId: string): boolean => {
     const router = daemonRouterRef.current;
@@ -4770,6 +4778,7 @@ app.on('ready', async () => {
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:open-pane', conversationId);
     },
     onStopped: (conversationId) => browserApprovalsRef.current?.stopped(conversationId),
+    onBlocked: (conversationId, { origin, reason }, turnId) => browserRows.blocked({ sessionId: conversationId, turnId }, { origin, reason }),
   });
   // A window opened before this line has no later `attach`: every tool would answer no-page.
   if (mainWindowRef) browserView.attach(mainWindowRef);
@@ -4785,6 +4794,13 @@ app.on('ready', async () => {
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     requestApproval: (request) => browserApprovals.request(request),
     siteTrusted: (sessionId, origin) => browserApprovals.siteTrusted(sessionId, origin),
+    onStep: (run, step) => browserRows.step(run, step),
+    onShot: ({ url, ...run }, { jpegBase64, thumbBase64 }) => {
+      const shotId = randomUUID();
+      void browserShots.save(run.sessionId, shotId, jpegBase64).catch(() => undefined);
+      browserRows.shot(run, { shotId, url, ...(thumbBase64 ? { thumbBase64 } : {}) });
+    },
+    onRefused: (run, refusal) => browserRows.blocked(run, refusal),
     turnAttended: (sessionId, turnId) => {
       const snapshot = daemonRouterRef.current!.getSnapshot();
       const turn = snapshot.turns.find((entry) => entry.id === turnId);
@@ -4798,6 +4814,7 @@ app.on('ready', async () => {
     if (event.kind === 'entity.archived' && event.payload.entityType === 'session') {
       browserView?.forget(event.payload.entityId);
       browserPages.forget(event.payload.entityId);
+      void browserShots.forget(event.payload.entityId).catch(() => undefined);
       return;
     }
     if (event.kind !== 'entity.upserted' || event.payload.entityType !== 'turn') return;
@@ -4805,6 +4822,7 @@ app.on('ready', async () => {
     if (!turn || !['completed', 'interrupted', 'failed'].includes(turn.state)) return;
     browserView?.turnEnded(turn.sessionId, turn.id);
     browserTools.turnEnded(turn.id);
+    browserRows.turnEnded(turn.id);
   });
 
   // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──

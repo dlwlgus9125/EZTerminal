@@ -208,6 +208,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
 
   let allowed: string[] = [];
   const states = new Map<string, BrowserViewState>();
+  const blockRows: { readonly conversationId: string; readonly reason: string; readonly turnId: string }[] = [];
   const storeDir = path.join(scratch, 'store');
   const sites = new BrowserSiteStore(storeDir);
   await sites.load();
@@ -216,6 +217,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     allowedOrigins: () => allowed,
     controlPorts: () => new Set([controlPort]),
     onState: (state) => { states.set(state.conversationId, state); },
+    onBlocked: (conversationId, blocked, turnId) => { blockRows.push({ conversationId, reason: blocked.reason, turnId }); },
     suspects: sites,
     partition: () => wrapped,
   });
@@ -630,6 +632,13 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     report['tools-console'] = cdp.consoleLines().filter((line) => line.includes('page says') || line.includes('thrown here'));
     const shot = await cdp.screenshot();
     report['tools-shot'] = { width: shot.width, height: shot.height, jpeg: shot.jpegBase64.slice(0, 4) };
+    report['tools-thumb'] = { bytes: Buffer.from(shot.thumbBase64 ?? '', 'base64').length, jpeg: shot.thumbBase64?.slice(0, 4), noisy: false };
+    // The worst page for a thumbnail: noise, which no JPEG can shrink much.
+    await js(contents, `const c=document.createElement('canvas');c.width=1280;c.height=800;c.style='position:fixed;left:0;top:0';const x=c.getContext('2d');const d=x.createImageData(1280,800);crypto.getRandomValues(d.data.subarray(0,65536));for(let i=0;i<d.data.length;i+=1)d.data[i]=i%4===3?255:Math.random()*256;x.putImageData(d,0,0);document.body.append(c)`);
+    await delay(150);
+    const noisy = await cdp.screenshot();
+    report['tools-thumb-noisy'] = noisy.thumbBase64 === undefined ? 'dropped' : Buffer.from(noisy.thumbBase64, 'base64').length;
+    await js(contents, 'document.querySelector("canvas").remove()');
     const crop = await cdp.screenshot(refOf(first.text, 'button "Save"'));
     report['tools-crop'] = { width: crop.width, height: crop.height, smaller: crop.width < 300 };
     await js(contents, `location.href='/landed?via=refs'`);
@@ -773,6 +782,7 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     manager.forget(id);
   }
 
+  report['block-rows'] = blockRows;
   report.done = true;
   await fs.writeFile(path.join(scratch, 'report.json'), JSON.stringify(report, null, 1));
   server.closeAllConnections();

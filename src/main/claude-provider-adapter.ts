@@ -59,7 +59,7 @@ import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { USAGE_LIMIT_ERROR, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
-import { BROWSER_CLAUDE_TOOLS } from '../shared/browser';
+import { BROWSER_CLAUDE_TOOLS, browserRowInput } from '../shared/browser';
 import { nextPromptText, SUGGEST_TASK_CLAUDE_TOOL } from '../shared/turn-wrap-up';
 import {
   buildProviderProcessEnvironment,
@@ -726,7 +726,8 @@ function firstLine(value: string, limit = 160): string {
 }
 
 /** Legacy `Name\n{json}` body. JSON keeps every field; a Write's path must not collapse into its content. */
-function toolCallText(name: string, input: unknown): string {
+function toolCallText(name: string, rawInput: unknown): string {
+  const input = browserRowInput(name, rawInput);
   return `${name}\n${typeof input === 'object' && input !== null ? JSON.stringify(input, null, 2) : providerTranscriptText(input)}`;
 }
 

@@ -101,8 +101,8 @@ export interface BrowserViewManagerDeps {
   /** The app's own listening ports. */
   readonly controlPorts: () => ReadonlySet<number>;
   readonly onState: (state: BrowserViewState) => void;
-  /** A guard stopped something: where step 12's rows hook in. */
-  readonly onBlocked?: (conversationId: string, blocked: NonNullable<BrowserViewState['blocked']>) => void;
+  /** A guard stopped something during a turn the AI was at this page. What stops a person's own browsing writes no row. */
+  readonly onBlocked?: (conversationId: string, blocked: NonNullable<BrowserViewState['blocked']>, turnId: string) => void;
   /** The person pressed 브라우저만 중지: where a held approval is voided. */
   readonly onStopped?: (conversationId: string) => void;
   /** The AI used this conversation's browser for the first time: its pane opens, without focus. */
@@ -311,7 +311,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
 
   /** A tool asked for a site the host refused: the pane bar says so, and allowing it is the person's. */
   refuseNavigation(conversationId: string, url: string, reason: BrowserRefusal): void {
-    this.block(this.pane(conversationId), url, reason);
+    this.block(this.pane(conversationId), url, reason, false);
   }
 
   // ── The guards ──────────────────────────────────────────────────────────
@@ -574,12 +574,13 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     this.publish(pane);
   }
 
-  private block(pane: Pane, url: string, reason: BrowserRefusal): void {
+  /** `report: false`: the caller reports it, knowing more of what was tried. */
+  private block(pane: Pane, url: string, reason: BrowserRefusal, report = true): void {
     const blocked = { origin: originOf(url) ?? url, reason, serial: (this.blocks += 1) };
     pane.blocked = blocked;
     delete pane.allowedNow;
     this.publish(pane);
-    this.deps.onBlocked?.(pane.conversationId, blocked);
+    if (report && pane.aiTurnId !== undefined) this.deps.onBlocked?.(pane.conversationId, blocked, pane.aiTurnId);
   }
 
   private place(pane: Pane): void {

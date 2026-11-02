@@ -5378,6 +5378,38 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
   }, 10_000);
 });
 
+describe('RemoteBridge — what a phone reads of a held browser action', () => {
+  const held = (providerRequestId: string): DaemonSnapshot['approvals'][number] => ({
+    id: providerRequestId, sessionId: 'chat', turnId: 'turn', providerRequestId, risk: 'write', title: 'browser_type on https://staging.example', state: 'pending', revision: 1,
+    createdAt: '2026-11-02T00:00:00.000Z', updatedAt: '2026-11-02T00:00:00.000Z',
+    request: { v: 1, kind: 'tool', toolName: 'browser_type', target: 'https://staging.example', input: '{"value":"hunter2-secret","element":"textbox \\"Coupon\\""}' },
+  });
+
+  it('holds no typed value, nor any URL or key, on any road a snapshot takes', async () => {
+    const daemon = makeDaemonSource({ ...daemonSnapshot(), approvals: [held('browser-action:call-1')] });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'daemon-snapshot-get', requestId: 'asked' });
+    ws.clientSend({ kind: 'daemon-events-subscribe', afterSequence: 0 });
+    await vi.waitFor(() => { expect(ws.sent.filter((message) => (message as { kind?: string }).kind === 'daemon-snapshot').length).toBeGreaterThanOrEqual(3); });
+    const sent = ws.sent.filter((message) => (message as { kind?: string }).kind === 'daemon-snapshot') as unknown as readonly { snapshot: DaemonSnapshot }[];
+    for (const { snapshot } of sent) {
+      expect(JSON.stringify(snapshot)).not.toContain('hunter2-secret');
+      expect(snapshot.approvals[0]!.request).toEqual({ v: 1, kind: 'tool', toolName: 'browser_type', target: 'https://staging.example' });
+    }
+  });
+
+  it('leaves every other approval as it is', async () => {
+    const other = held('provider-call-1');
+    const daemon = makeDaemonSource({ ...daemonSnapshot(), approvals: [other] });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+    expect(ws.sent).toContainEqual({ kind: 'daemon-snapshot', snapshot: { ...daemonSnapshot(), approvals: [other] } });
+  });
+});
+
 describe('RemoteBridge — daemon protocol v12', () => {
   it('pushes the authoritative daemon snapshot after authentication', async () => {
     const daemon = makeDaemonSource();

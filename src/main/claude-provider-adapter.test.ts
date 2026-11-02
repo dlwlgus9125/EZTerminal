@@ -937,6 +937,23 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('keeps what browser_type types out of the transcript: the host cannot yet know the field is a password', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-type', commandId: 'command-type', prompt: 'Log in' });
+    await inputIterator.next();
+    fixture.query.emit({ type: 'assistant', uuid: 'type-call', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { id: 'msg_type', content: [{ type: 'tool_use', id: 'toolu_type', name: 'mcp__ezterminal_orchestration__browser_type', input: { ref: 'e4', text: 'hunter2-secret', submit: true } }] } });
+    await vi.waitFor(() => {
+      expect(fixture.events.some((event) => event.kind === 'transcript' && event.item.kind === 'tool-call')).toBe(true);
+    });
+    const call = JSON.stringify(fixture.events.find((event) => event.kind === 'transcript' && event.item.kind === 'tool-call'));
+    expect(call).not.toContain('hunter2-secret');
+    expect(call).toContain('e4');
+    await fixture.adapter.dispose();
+  });
+
   it('normalizes assistant text, reasoning, tool calls/results, and turn completion', async () => {
     const fixture = makeAdapter();
     await start(fixture);

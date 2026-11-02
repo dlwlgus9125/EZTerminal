@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { BROWSER_ACTION_KINDS, BROWSER_REFUSALS, BROWSER_STEP_KINDS, BROWSER_THUMB_CHARS } from './browser';
 import { ChatAgentProfileSchema } from './chat-agent-profiles';
 import { APP_SENT_REASONS, STEER_FALLBACKS, USAGE_LIMIT_CHILD_KINDS, USAGE_LIMIT_FAILURES, USAGE_LIMIT_PHASES, USAGE_LIMIT_WINDOWS } from './long-run';
 import { REVIEW_LIMITS, REVIEW_SEVERITIES, REVIEW_STATES } from './review-findings';
@@ -316,6 +317,34 @@ const SteerQueuedPayloadSchema = z.object({
   reason: z.enum(STEER_FALLBACKS),
 }).strict();
 
+/** One browser tool that ran, from the host's log. `pageText` is the page's, quoted by every screen that shows it. */
+const BrowserStepPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('browser-step'),
+  step: z.enum(BROWSER_STEP_KINDS),
+  origin: ShortText,
+  pageText: ShortText.optional(),
+}).strict();
+
+/** A screenshot sent to the AI. The picture stays on the PC; a row carries at most a thumbnail. */
+const BrowserShotPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('browser-shot'),
+  shotId: ShortText,
+  turnId: ShortText,
+  origin: ShortText,
+  thumb: z.string().max(BROWSER_THUMB_CHARS).optional(),
+}).strict();
+
+/** The app refused something: the site and the reason, and never a word of the page. */
+const BrowserBlockedPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('browser-blocked'),
+  site: ShortText,
+  reason: z.enum(BROWSER_REFUSALS),
+  action: z.enum(BROWSER_ACTION_KINDS).optional(),
+}).strict();
+
 export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   ToolPayloadSchema,
   TodoPayloadSchema,
@@ -335,6 +364,9 @@ export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   AppSentPayloadSchema,
   SteerPayloadSchema,
   SteerQueuedPayloadSchema,
+  BrowserStepPayloadSchema,
+  BrowserShotPayloadSchema,
+  BrowserBlockedPayloadSchema,
 ]);
 
 export type TranscriptPayload = z.infer<typeof TranscriptPayloadSchema>;
@@ -356,6 +388,9 @@ export type UsageLimitPayload = z.infer<typeof UsageLimitPayloadSchema>;
 export type AppSentPayload = z.infer<typeof AppSentPayloadSchema>;
 export type SteerPayload = z.infer<typeof SteerPayloadSchema>;
 export type SteerQueuedPayload = z.infer<typeof SteerQueuedPayloadSchema>;
+export type BrowserStepPayload = z.infer<typeof BrowserStepPayloadSchema>;
+export type BrowserShotPayload = z.infer<typeof BrowserShotPayloadSchema>;
+export type BrowserBlockedPayload = z.infer<typeof BrowserBlockedPayloadSchema>;
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
 /** Tolerant parse: unknown versions and malformed values become `undefined`. */

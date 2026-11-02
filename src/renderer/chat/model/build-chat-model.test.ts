@@ -251,6 +251,65 @@ describe('buildChatModel over a Codex session with a sub-agent', () => {
   });
 });
 
+describe('buildChatModel over the in-app browser', () => {
+  const LOCAL = 'http://localhost:5173';
+  const row = (id: string, payload: unknown, kind: DaemonTranscriptItem['kind'] = 'notice', text = 'Browser activity.', sequence = Number(id.replace(/\D/gu, ''))) => ({
+    id, sessionId: 'chat', sequence, turnId: 't1', kind, text, isDelta: false, isSensitive: true, createdAt: `2026-11-02T05:00:${String(sequence).padStart(2, '0')}.000Z`, payload,
+  }) as DaemonTranscriptItem;
+  const step = (id: string, kind: string, origin = LOCAL, pageText?: string) => row(id, { v: 1, type: 'browser-step', step: kind, origin, ...(pageText ? { pageText } : {}) });
+  const shot = (id: string, origin = LOCAL, thumb: string | null = '/9j/thumb') => row(id, { v: 1, type: 'browser-shot', shotId: `shot-${id}`, turnId: 't1', origin, ...(thumb ? { thumb } : {}) });
+  const runs = (rows: readonly ChatRow[]) => rows.filter((entry): entry is Extract<ChatRow, { kind: 'browser-run' }> => entry.kind === 'browser-run');
+
+  it('folds one site\'s steps and shots into one run, from the host\'s log', () => {
+    const { rows } = buildChatModel({ items: [step('a1', 'navigate'), shot('a2'), step('a3', 'snapshot', LOCAL, 'Cart\nPay now'), step('a4', 'click')] });
+    expect(kinds(rows)).toEqual(['browser-run']);
+    const [run] = runs(rows);
+    expect(run!.run.origin).toBe(LOCAL);
+    expect(run!.run.steps.map((entry) => entry.kind)).toEqual(['navigate', 'screenshot', 'snapshot', 'click']);
+    expect(run!.run.steps[2]!.pageText).toBe('Cart\nPay now');
+    expect(run!.run.latestShot).toEqual({ thumb: 'data:image/jpeg;base64,/9j/thumb', takenAt: '2026-11-02T05:00:02.000Z' });
+  });
+
+  it('starts a new run on another site, and after anything else in the conversation', () => {
+    const { rows } = buildChatModel({ items: [
+      step('a1', 'navigate'), step('a2', 'navigate', 'https://staging.example'),
+      row('a3', undefined, 'assistant-message', 'Done.'), step('a4', 'click', 'https://staging.example'),
+    ] });
+    expect(runs(rows)).toHaveLength(3);
+  });
+
+  it('counts a shot too large for a thumbnail, and draws none', () => {
+    const { rows } = buildChatModel({ items: [shot('a1', LOCAL, null)] });
+    expect(runs(rows)[0]!.run.steps).toHaveLength(1);
+    expect(runs(rows)[0]!.run.latestShot).toBeUndefined();
+  });
+
+  it('shows a refusal as its site and reason', () => {
+    const { rows } = buildChatModel({ items: [row('a1', { v: 1, type: 'browser-blocked', site: 'https://evil.example', reason: 'site-not-allowed', action: 'navigate' })] });
+    expect(rows).toEqual([expect.objectContaining({ kind: 'browser-blocked', origin: 'https://evil.example', reason: 'site-not-allowed', action: 'navigate', turnId: 't1' })]);
+  });
+
+  it('hides the AI\'s own tool rows for this app\'s browser tools: the host\'s log says what ran', () => {
+    const tool = (id: string, phase: 'call' | 'result', name: string, server?: string) => row(id, { v: 1, type: 'tool', callId: 'c1', name, category: 'mcp', phase, ...(server ? { server } : {}) }, phase === 'call' ? 'tool-call' : 'tool-result', name);
+    for (const [name, server] of [['mcp__ezterminal_orchestration__browser_click', undefined], ['browser_click', 'ezterminal_orchestration']] as const) {
+      expect(buildChatModel({ items: [tool('a1', 'call', name, server), tool('a2', 'result', name, server)] }).rows).toEqual([]);
+    }
+  });
+
+  it('keeps another server\'s tool of the same name', () => {
+    const other = row('a1', { v: 1, type: 'tool', callId: 'c1', name: 'mcp__playwright__browser_click', category: 'mcp', phase: 'call' }, 'tool-call', 'mcp__playwright__browser_click');
+    expect(buildChatModel({ items: [other] }).rows).not.toEqual([]);
+  });
+
+  it('gives the phone a line for what waits on the desktop, and only that', () => {
+    const approval = (providerRequestId: string, request: unknown) => ({
+      id: providerRequestId, sessionId: 'chat', turnId: 't1', providerRequestId, risk: 'write', title: 't', state: 'pending', request, revision: 1, createdAt: '2026-11-02T05:00:00.000Z', updatedAt: '2026-11-02T05:00:00.000Z',
+    }) as DaemonApproval;
+    const { rows } = buildChatModel({ items: [], desktopOnly: [approval('browser-action:c1', { v: 1, kind: 'tool', toolName: 'browser_click', target: 'https://staging.example' })] });
+    expect(rows).toEqual([expect.objectContaining({ kind: 'browser-waiting', origin: 'https://staging.example', action: 'click', turnId: 't1', expiresAt: '2026-11-02T05:04:00.000Z' })]);
+  });
+});
+
 describe('buildChatModel over a delegated child', () => {
   const base = { isDelta: false, isSensitive: false, createdAt: '2026-10-17T00:00:00.000Z' };
   it('leaves the child’s origin row to its header and labels the reported result in the parent', () => {

@@ -2085,6 +2085,26 @@ describe('CodexProviderAdapter structured transcript', () => {
     await adapter.dispose();
   });
 
+  it.each([
+    ['an object', { ref: 'e4', text: 'hunter2-secret' }],
+    ['a JSON string', '{"ref":"e4","text":"hunter2-secret"}'],
+  ])('keeps what browser_type types out of the row, as %s', async (_shape, typed) => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const call = { id: 'mcp-type', type: 'mcpToolCall', server: 'ezterminal_orchestration', tool: 'browser_type', arguments: typed };
+    await notify('item/started', { startedAtMs: 1, item: { ...call, status: 'inProgress' } });
+    await notify('item/completed', { completedAtMs: 2, item: { ...call, status: 'completed', result: { content: [] } } });
+    expect(JSON.stringify(transcript())).not.toContain('hunter2-secret');
+    await adapter.dispose();
+  });
+
+  it('leaves another server\'s browser_type as it came: its arguments are no secret of the app\'s', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const call = { id: 'mcp-other', type: 'mcpToolCall', server: 'playwright', tool: 'browser_type', arguments: { text: 'hello' } };
+    await notify('item/started', { startedAtMs: 1, item: { ...call, status: 'inProgress' } });
+    expect(JSON.stringify(transcript())).toContain('hello');
+    await adapter.dispose();
+  });
+
   it('maps MCP calls and web searches to structured payloads with readable results', async () => {
     const { adapter, notify, transcript } = await startedTurn();
     const mcp = { id: 'mcp-1', type: 'mcpToolCall', server: 'github', tool: 'search_issues', arguments: { q: 'bug' } };
