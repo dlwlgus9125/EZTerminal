@@ -55,6 +55,11 @@ export interface ProviderSessionContext {
   readonly readOnlyReviewer?: true;
   readonly wrapUp?: ProviderWrapUpContext;
   /**
+   * The in-app browser's tools are on this launch's endpoint. The provider then runs them unasked: no provider layer gates
+   * them on both AIs, so the host's handler is the one gate and a provider prompt would only duplicate it, or not ask at all.
+   */
+  readonly browser?: true;
+  /**
    * Long-run continuity (`long-run-v1`): a usage limit ends the turn with `turn-finished.limit` and leaves the session
    * idle and usable. Absent, as on a provider older than `longRun.minimumVersion`, a limit classifies as any error does.
    */

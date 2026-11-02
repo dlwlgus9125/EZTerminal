@@ -663,6 +663,28 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('approves the browser tools by name only on a launch that has them', async () => {
+    const started = async (session: Parameters<CodexProviderAdapter['createSession']>[0]) => {
+      const connection = new FakeCodexConnection();
+      connection.requestImpl = async (method) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+        throw new Error(`Unexpected request: ${method}`);
+      };
+      const adapter = new CodexProviderAdapter({ connection });
+      await adapter.createSession(session);
+      const request = connection.requests.find((entry) => entry.method === 'thread/start')!;
+      await adapter.dispose();
+      return ((request.params as { config?: { mcp_servers?: { ezterminal_orchestration?: Record<string, unknown> } } }).config?.mcp_servers?.ezterminal_orchestration) ?? {};
+    };
+    const base = context({ orchestration: { endpoint: 'http://127.0.0.1:43111/mcp', bearerToken: 'session-secret' } });
+    const server = await started({ ...base, permissionPreset: 'full-access', browser: true });
+    expect(server.tools).toEqual(Object.fromEntries(
+      ['snapshot', 'screenshot', 'console', 'wait', 'navigate', 'click', 'type', 'press'].map((name) => [`browser_${name}`, { approval_mode: 'approve' }]),
+    ));
+    expect(server.tool_timeout_sec).toBe(300);
+    expect(await started({ ...base, permissionPreset: 'full-access' })).not.toHaveProperty('tools');
+  });
+
   it('runs the thread in every project folder and sends changed folders with the next turn only', async () => {
     const connection = new FakeCodexConnection();
     let turn = 0;

@@ -2281,6 +2281,64 @@ describe('Claude turn wrap-up', () => {
     await fixture.adapter.dispose();
   });
 
+  describe('the in-app browser\'s tools', () => {
+    const orchestration = { endpoint: 'http://127.0.0.1:4321/mcp', bearerToken: 'token-1' };
+    const EIGHT = ['snapshot', 'screenshot', 'console', 'wait', 'navigate', 'click', 'type', 'press'].map((name) => `mcp__ezterminal_orchestration__browser_${name}`);
+
+    it('allows all eight by their exact names when the launch has them', async () => {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession({ ...context, orchestration, browser: true });
+      expect(fixture.query.inputOptions.allowedTools).toEqual(EIGHT);
+      await fixture.adapter.dispose();
+    });
+
+    it('keeps suggest_task beside them', async () => {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession({ ...context, orchestration, browser: true, wrapUp: { suggestTask: true } });
+      expect(fixture.query.inputOptions.allowedTools).toEqual(['mcp__ezterminal_orchestration__suggest_task', ...EIGHT]);
+      await fixture.adapter.dispose();
+    });
+
+    it('allows none without the endpoint, or on a tool-free or reviewing session', async () => {
+      for (const session of [
+        { ...context, browser: true },
+        { ...context, orchestration, toolsDisabled: true, browser: true },
+        { ...context, orchestration, readOnlyReviewer: true, browser: true },
+      ] satisfies ProviderSessionContext[]) {
+        const other = makeAdapter();
+        await other.adapter.createSession(session);
+        expect(other.query.inputOptions.allowedTools).toBeUndefined();
+        await other.adapter.dispose();
+      }
+    });
+
+    const ask = (fixture: ReturnType<typeof makeAdapter>, tool: string, id: string) => fixture.query.inputOptions.canUseTool!(tool, { ref: 'e1' }, { signal: new AbortController().signal, toolUseID: id, requestId: id });
+
+    it('lets them through in plan mode: the host refuses there, and a prompt would be a second, different answer', async () => {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession({ ...context, orchestration, browser: true, permissionPreset: 'plan' });
+      for (const tool of EIGHT) await expect(ask(fixture, tool, tool)).resolves.toMatchObject({ behavior: 'allow', updatedInput: { ref: 'e1' } });
+      expect(fixture.events.some((event) => event.kind === 'approval-requested')).toBe(false);
+      await fixture.adapter.dispose();
+    });
+
+    it.each(['mcp__playwright__browser_click', 'mcp__other_server__browser_navigate', 'browser_click', 'mcp__ezterminal_orchestration__browser_evaluate'])('still asks for %s: only this server\'s exact names pass', async (tool) => {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession({ ...context, orchestration, browser: true });
+      void ask(fixture, tool, 'other').catch(() => undefined);
+      await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(1));
+      await fixture.adapter.dispose();
+    });
+
+    it('asks as ever on a session launched without them', async () => {
+      const fixture = makeAdapter();
+      await fixture.adapter.createSession({ ...context, orchestration });
+      void ask(fixture, EIGHT[5]!, 'without').catch(() => undefined);
+      await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(1));
+      await fixture.adapter.dispose();
+    });
+  });
+
   it('allows suggest_task by its exact name only when the session has the tool and an endpoint', async () => {
     const orchestration = { endpoint: 'http://127.0.0.1:4321/mcp', bearerToken: 'token-1' };
     const fixture = makeAdapter();

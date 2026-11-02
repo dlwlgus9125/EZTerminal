@@ -1,4 +1,5 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
+import { BROWSER_TOOLS } from '../shared/browser';
 import { PROPOSED_PLAN_REQUEST_PREFIX, clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
 import { addedFileChange, deletedFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
@@ -715,6 +716,9 @@ function orchestrationConfig(context: ProviderSessionContext): JsonObject | unde
         http_headers: { Authorization: `Bearer ${context.orchestration.bearerToken}` },
         // Codex stops a tool call after 60s by default; wait_agent may hold up to 240s.
         tool_timeout_sec: 300,
+        // At full access Codex's policy is `never`, which refuses a tool that would ask. This also runs them in plan
+        // mode, measured: the host's handler refuses there, and it is the one gate.
+        ...(context.browser ? { tools: Object.fromEntries(BROWSER_TOOLS.map((name) => [name, { approval_mode: 'approve' }])) } : {}),
       },
     },
   };

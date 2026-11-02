@@ -59,6 +59,7 @@ import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { USAGE_LIMIT_ERROR, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
+import { BROWSER_CLAUDE_TOOLS } from '../shared/browser';
 import { nextPromptText, SUGGEST_TASK_CLAUDE_TOOL } from '../shared/turn-wrap-up';
 import {
   buildProviderProcessEnvironment,
@@ -2234,8 +2235,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ...(mcpServers ? { mcpServers } : {}),
       // Every launch and resume: a session started without it cannot turn it on later, and the first resumed turn gets none.
       ...(context.wrapUp?.promptSuggestions ? { promptSuggestions: true } : {}),
-      // A per-tool MCP policy still asks each time; only this exact name does not (probe P4).
-      ...(context.wrapUp?.suggestTask && mcpServers && !context.toolsDisabled && !context.readOnlyReviewer ? { allowedTools: [SUGGEST_TASK_CLAUDE_TOOL] } : {}),
+      // A per-tool MCP policy still asks each time; only these exact names do not (probe P4).
+      ...(mcpServers && !context.toolsDisabled && !context.readOnlyReviewer && (context.wrapUp?.suggestTask || context.browser)
+        ? { allowedTools: [...(context.wrapUp?.suggestTask ? [SUGGEST_TASK_CLAUDE_TOOL] : []), ...(context.browser ? BROWSER_CLAUDE_TOOLS : [])] }
+        : {}),
       // The project's other folders, as `--add-dir`. CLAUDE.md stays the working folder's: the
       // CLI reads it from added folders only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD.
       ...(context.additionalRoots?.length && !context.toolsDisabled ? { additionalDirectories: [...context.additionalRoots] } : {}),
@@ -2927,6 +2930,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
     const existing = session.pendingApprovals.get(request.requestId);
     if (existing) return existing.promise;
+    // Plan mode still asks past `allowedTools`. The host's handler decides these, plan included, so a prompt here would only add a second, different answer.
+    if (session.context.browser && BROWSER_CLAUDE_TOOLS.includes(toolNameValue)) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input, toolUseID: request.toolUseID });
+    }
     const toolName = safeToolName(toolNameValue);
     const turn = session.activeTurn?.state === 'submitted'
       ? session.activeTurn

@@ -151,6 +151,8 @@ async function harness(options: {
   readonly longRun?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['longRun'];
   readonly canDispatchTurn?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['canDispatchTurn'];
   readonly browser?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['browser'];
+  readonly browserToolsForSession?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['browserToolsForSession'];
+  readonly orchestrationForSession?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['orchestrationForSession'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -4442,6 +4444,32 @@ describe('what a person does in the in-app browser', () => {
       await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
       await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard' });
       expect(await h.execute('browser.action', { sessionId: 'chat', action: 'reload' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('launches with the tools only with an endpoint to reach them on', async () => {
+    const endpoint = { endpoint: 'http://127.0.0.1:1/mcp', bearerToken: 'token' };
+    const launchedWith = async (listed: boolean, orchestrationForSession: () => typeof endpoint | undefined) => {
+      const h = await harness({ browserToolsForSession: () => listed, orchestrationForSession });
+      try {
+        await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+        await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Go' });
+        return vi.mocked(h.codex.createSession).mock.calls[0]![0];
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    };
+    expect(await launchedWith(true, () => endpoint)).toMatchObject({ browser: true, orchestration: endpoint });
+    expect(await launchedWith(false, () => endpoint)).not.toHaveProperty('browser');
+    expect(await launchedWith(true, () => undefined)).not.toHaveProperty('browser');
+  });
+
+  it('asks for an endpoint for the tools alone, with orchestration off', async () => {
+    const orchestrationForSession = vi.fn(() => undefined);
+    const h = await harness({ browserToolsForSession: () => true, orchestrationForSession });
+    try {
+      await h.router.applySystemCommit({ mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: false } }] });
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Go' });
+      expect(orchestrationForSession).toHaveBeenCalledWith('chat');
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 

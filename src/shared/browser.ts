@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from './approval-request';
+import { SUGGEST_TASK_SERVER } from './turn-wrap-up';
 
 /**
  * The in-app browser's contract: the site policy every layer applies, the tools the AI gets, and the words the screens
@@ -21,6 +22,9 @@ export type BrowserToolName = (typeof BROWSER_TOOLS)[number];
 export function isBrowserTool(name: string): name is BrowserToolName {
   return (BROWSER_TOOLS as readonly string[]).includes(name);
 }
+
+/** The exact names Claude's `allowedTools` needs: this server's, and never another's `browser_click`. */
+export const BROWSER_CLAUDE_TOOLS: readonly string[] = BROWSER_TOOLS.map((name) => `mcp__${SUGGEST_TASK_SERVER}__${name}`);
 
 /** How the app classes a site, by name alone. Only `local`, `file` and `allowed` reach the AI's tools. */
 export type BrowserSiteClass = 'local' | 'file' | 'allowed' | 'external';

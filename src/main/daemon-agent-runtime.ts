@@ -2657,6 +2657,7 @@ export class DaemonAgentRuntime {
       ...(model ? { model } : {}),
       permissionPreset,
       ...(orchestration ? { orchestration } : {}),
+      ...(browser && orchestration ? { browser: true as const } : {}),
       // No endpoint means no tool: an instruction to call one that is not there is worse than none.
       ...(wrapUp ? { wrapUp: orchestration ? wrapUp : { ...(wrapUp.promptSuggestions ? { promptSuggestions: wrapUp.promptSuggestions } : {}) } } : {}),
     };
