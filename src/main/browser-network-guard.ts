@@ -127,7 +127,7 @@ export async function requestVerdict(
     readonly url: string;
     readonly resourceType: string;
     readonly referrer?: string;
-    /** The site of the frame that asked; null when that frame is gone. See `frameOf`. */
+    /** The site of the frame that asked; null when no page answers for it. See `frameOf`. */
     readonly frame?: string | null;
   },
   policy: BrowserViewPolicy | undefined,
@@ -152,7 +152,7 @@ export async function requestVerdict(
   if (isLocalHostName(parsed.hostname)) {
     if (top) return PASS;
     const { frame } = request;
-    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { creator: policy.topUrl, controlPorts: environment.controlPorts }) === 'external');
+    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { controlPorts: environment.controlPorts }) === 'external');
     return policy.topExternal || frameExternal ? refuse('site-not-allowed') : PASS;
   }
   // Before the resolver: a clean answer now says nothing about the address it answered from before.
@@ -173,16 +173,26 @@ export async function requestVerdict(
   return refuse('site-not-allowed');
 }
 
+/** A frame with no address of its own: with an opaque origin it can answer only through the frame that holds it. */
+const NO_ADDRESS = /^about:(?:srcdoc|blank)$/u;
+
 /**
- * Who asked, off the requesting frame and not the pane's top page. Measured: a page's `pagehide` request arrives after the pane
- * has committed the next page, with this frame detached, still naming the page that sent it, `no-referrer` or not. An opaque
- * origin (a sandboxed page) falls back to the address. Undefined: no frame is named at all. Null: it went, or reading it threw.
+ * Who asked, read off the requesting frame and never off what the pane shows now. Measured: a page's `pagehide` request arrives
+ * after the pane has committed the next page, with its frame detached, `no-referrer` or not. So a detached frame answers for no
+ * page, and an opaque origin walks up to the nearest frame that has a real one: a sandboxed page in an external frame is external,
+ * on a local page or not. A sandboxed page with an address is read by it. Undefined: no frame is named at all. Null: nothing can
+ * answer for this request, because the frame left, the walk ran out, or a read threw.
  */
 function frameOf(frame: Electron.OnBeforeRequestListenerDetails['frame']): string | null | undefined {
   if (!frame) return frame;
   try {
-    const { origin, url } = frame;
-    return origin && origin !== 'null' ? origin : url;
+    for (let at: typeof frame | null = frame; at; at = at.parent) {
+      if (at.detached) return null;
+      const { origin, url } = at;
+      if (origin && origin !== 'null') return origin;
+      if (!NO_ADDRESS.test(url)) return url;
+    }
+    return null;
   } catch {
     return null;
   }

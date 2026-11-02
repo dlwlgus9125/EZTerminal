@@ -97,11 +97,6 @@ describe('requestVerdict: every request, whoever made it', () => {
       expect(await requestVerdict(asked('https://evil.example'), policy({ guarded: false }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
 
-    it('takes a frame with no address of its own for the page it sits in', async () => {
-      expect(await requestVerdict(asked('about:srcdoc'), policy({ topUrl: 'http://localhost:5173/' }), environment())).toEqual({ cancel: false });
-      expect(await requestVerdict(asked('about:srcdoc'), policy({ topUrl: 'https://elsewhere.example/' }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
-    });
-
     it('fails closed on a frame that is gone', async () => {
       expect(await requestVerdict(asked(null), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
@@ -513,6 +508,38 @@ describe('installBrowserPartitionGuards', () => {
 
     it('by address for an opaque origin: a sandboxed external page hides nothing', async () => {
       expect(await before(guarded().fake, { ...local, frame: { origin: 'null', url: 'https://elsewhere.example/page' } })).toEqual({ cancel: true });
+    });
+
+    describe('a frame with no origin of its own', () => {
+      const live = { detached: false };
+      const localPage = { ...live, origin: 'http://localhost:5173', url: 'http://localhost:5173/', parent: null };
+      const externalFrame = { ...live, origin: 'https://elsewhere.example', url: 'https://elsewhere.example/frame', parent: localPage };
+      const sandboxed = (parent: unknown, url = 'about:srcdoc') => ({ ...live, origin: 'null', url, parent });
+
+      it('answers for the nearest ancestor with one, on a local page', async () => {
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(localPage) })).toEqual({});
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(sandboxed(localPage, 'about:blank')) })).toEqual({});
+      });
+
+      it('and in an external frame on a local page, whatever the pane shows', async () => {
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(externalFrame) })).toEqual({ cancel: true });
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(sandboxed(externalFrame)) })).toEqual({ cancel: true });
+      });
+
+      it('reads a sandboxed page with an address of its own by that address', async () => {
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(localPage, 'https://elsewhere.example/page') })).toEqual({ cancel: true });
+      });
+
+      it('fails closed when the walk cannot finish', async () => {
+        expect(await before(guarded().fake, { ...local, frame: sandboxed(null) }), 'a chain with no real origin').toEqual({ cancel: true });
+        expect(await before(guarded().fake, { ...local, frame: { ...sandboxed(localPage), detached: true } }), 'detached').toEqual({ cancel: true });
+        expect(await before(guarded().fake, { ...local, frame: sandboxed({ get origin(): string { throw new Error('Render frame was disposed'); } }) }), 'a read that throws').toEqual({ cancel: true });
+        expect(await before(guarded().fake, { ...local, frame: sandboxed({ ...sandboxed(localPage), detached: true }) }), 'a detached ancestor').toEqual({ cancel: true });
+      });
+    });
+
+    it('refuses what a document sent on its way out, however local: it answers for no page now', async () => {
+      expect(await before(guarded().fake, { ...local, frame: { origin: 'http://localhost:5173', url: 'http://localhost:5173/', detached: true } })).toEqual({ cancel: true });
     });
 
     it('as gone when it is null, or when reading it throws', async () => {

@@ -117,6 +117,15 @@ async function main(): Promise<void> {
 <script>fetch('${base}/pwn-fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon('${base}/pwn-beacon','x')</script>`);
       case '/with-frames':
         return html(response, `<!doctype html><title>t</title><iframe src="/landed?via=own-frame"></iframe>`);
+      case '/nest-sandbox': {
+        const target = url.searchParams.get('target') ?? '';
+        return html(response, `<!doctype html><title>n</title><iframe sandbox="allow-scripts" srcdoc="&lt;img src=&quot;${target}/nested-img&quot;&gt;&lt;script&gt;fetch(&quot;${target}/nested-fetch&quot;,{mode:&quot;no-cors&quot;}).catch(()=&gt;0)&lt;/script&gt;"></iframe>`);
+      }
+      case '/srcdoc-parting': {
+        const target = url.searchParams.get('target') ?? '';
+        const sandbox = url.searchParams.get('sandbox') === '1' ? ' sandbox="allow-scripts"' : '';
+        return html(response, `<!doctype html><title>p</title><iframe${sandbox} srcdoc="&lt;script&gt;addEventListener(&quot;pagehide&quot;,()=&gt;{fetch(&quot;${target}/srcdoc-fetch&quot;,{mode:&quot;no-cors&quot;,keepalive:true}).catch(()=&gt;0);navigator.sendBeacon(&quot;${target}/srcdoc-beacon&quot;,&quot;x&quot;)})&lt;/script&gt;"></iframe>`);
+      }
       case '/hidden-text':
         return html(response, `<!doctype html><title>h</title><body style="margin:0">
 <p>VISIBLE-WORDS</p>
@@ -183,10 +192,17 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   // Stands in for a site whose public DNS answer differs from where the connection goes. Everything else is the real resolver.
   const publicNames = new Set(['evil', 'allowed', 'other', 'second', 'later', 'wide', 'clean', 'live', 'visit', 'flip', 'split', 'sub.split', 'a.sw'].map((name) => `${name}.example`));
   let secondLayer = false;
+  const guardedRequests: string[] = [];
   const partition = session.fromPartition(BROWSER_PARTITION);
   const wrapped: BrowserPartitionSession = {
     webRequest: {
-      onBeforeRequest: partition.webRequest.onBeforeRequest.bind(partition.webRequest),
+      // What reached the guard, so a case that expects nothing at the server can show the request was really made.
+      onBeforeRequest: ((filter: Electron.WebRequestFilter, listener: (details: Electron.OnBeforeRequestListenerDetails, callback: (response: Electron.CallbackResponse) => void) => void) => {
+        partition.webRequest.onBeforeRequest(filter, (details, callback) => {
+          if (/\/(?:srcdoc|nested)-/u.test(details.url)) guardedRequests.push(new URL(details.url).pathname);
+          listener(details, callback);
+        });
+      }) as unknown as Electron.WebRequest['onBeforeRequest'],
       onResponseStarted: ((filter: Electron.WebRequestFilter, listener: (details: Electron.OnResponseStartedListenerDetails) => void) => {
         partition.webRequest.onResponseStarted(filter, (details) => { if (secondLayer) listener(details); });
       }) as Electron.WebRequest['onResponseStarted'],
@@ -722,6 +738,23 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   // An external top page reaches for this PC.
   await record('external-to-local', async (id) => { await manager.navigateAsPerson(id, `${evil}/reaches-local`); });
   await record('person-site-own-frames', async (id) => { await manager.navigateAsPerson(id, `${evil}/with-frames`); });
+  // What the pane shows now says nothing about who asked: a frame answers for itself, and a document that left for nobody.
+  await record('sandboxed-in-external-frame', async (id, contents) => {
+    await manager.navigateAsPerson(id, `${base}/with-cousin?frame=${encodeURIComponent(`${evil}/nest-sandbox?target=${encodeURIComponent(base)}`)}`);
+    await delay(SETTLE_MS);
+    report['sandboxed-in-external-frame-frames'] = contents.mainFrame.framesInSubtree.length;
+  }, (id) => open(id, `${base}/landed?via=before-nest`));
+  for (const [name, sandbox] of [['srcdoc-parting', '0'], ['srcdoc-parting-sandboxed', '1']] as const) {
+    await record(name, async (id) => {
+      await manager.navigateAsPerson(id, `${base}/landed?via=left-${name}`);
+      await delay(SETTLE_MS);
+    }, async (id) => {
+      const contents = await open(id, `${evil}/srcdoc-parting?sandbox=${sandbox}&target=${encodeURIComponent(base)}`);
+      await delay(SETTLE_MS);
+      return contents;
+    });
+  }
+  report['guarded-requests'] = guardedRequests;
   const parting = (name: string, init: string): string => `addEventListener('pagehide',()=>{fetch(${JSON.stringify(`${base}/parting-${name}`)},{mode:'no-cors',keepalive:true${init}}).catch(()=>0);navigator.sendBeacon(${JSON.stringify(`${base}/parting-beacon-${name}`)},'x')})`;
   await record('external-parting-shot', async (id, contents) => {
     await js(contents, parting('plain', ''));

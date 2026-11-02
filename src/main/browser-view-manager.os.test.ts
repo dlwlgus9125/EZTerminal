@@ -422,6 +422,18 @@ describe('an external top page', () => {
     expect(of(name).all.filter((entry) => entry.startsWith('/parting'))).toEqual([]);
   });
 
+  it('reaches nothing through a sandboxed frame inside an external frame on a local page', () => {
+    expect(report['sandboxed-in-external-frame-frames'], 'all three frames loaded').toBe(3);
+    expect(of('sandboxed-in-external-frame').all.some((entry) => entry.startsWith('/nest-sandbox'))).toBe(true);
+    expect(report['guarded-requests'], 'the frame really tried').toEqual(expect.arrayContaining(['/nested-img', '/nested-fetch']));
+    expect(of('sandboxed-in-external-frame').all.filter((entry) => entry.startsWith('/nested-'))).toEqual([]);
+  });
+
+  it.each(['srcdoc-parting', 'srcdoc-parting-sandboxed'])('%s: a frame of an external page reaches nothing on its way out, as the pane moves to a local page', (name) => {
+    expect(report['guarded-requests'], 'the frame really tried').toEqual(expect.arrayContaining(['/srcdoc-fetch', '/srcdoc-beacon']));
+    expect(of(name).all.filter((entry) => entry.startsWith('/srcdoc-'))).toEqual([]);
+  });
+
   it('keeps its own frames, for the person who went there', () => {
     expect(of('person-site-own-frames').reached).toEqual(['/with-frames', '/landed?via=own-frame']);
   });
