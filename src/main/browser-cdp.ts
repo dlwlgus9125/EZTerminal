@@ -231,6 +231,12 @@ export class BrowserCdp {
     return { text: joined.length > SNAPSHOT_LIMIT ? `${joined.slice(0, SNAPSHOT_LIMIT)}\n…` : joined, truncated: joined.length > SNAPSHOT_LIMIT, unreadFrames };
   }
 
+  /** The words of the main frame, for a wait. It ends no refs. */
+  async pageText(): Promise<string> {
+    const { nodes } = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getFullAXTree');
+    return nodes.filter((node) => !node.ignored).map((node) => text(node.name)).join('\n');
+  }
+
   private appendTree(nodes: readonly AxNode[], frameId: string, frameDepth: number, lines: string[], refs: Map<string, Ref>): void {
     const byId = new Map(nodes.map((node) => [node.nodeId, node]));
     const visit = (node: AxNode, depth: number): void => {

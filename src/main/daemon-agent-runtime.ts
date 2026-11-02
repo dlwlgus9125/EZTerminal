@@ -153,6 +153,8 @@ export interface DaemonAgentRuntimeOptions {
   ) => ProviderSessionContext['orchestration'] | undefined;
   readonly revokeOrchestrationForSession?: (sessionId: string) => void;
   readonly workflowToolsForSession?: (sessionId: string) => boolean;
+  /** This session launches with the in-app browser's tools, on the same endpoint; frozen for that launch. */
+  readonly browserToolsForSession?: (sessionId: string) => boolean;
   /**
    * Settings proposals (`settings-proposal:` approvals the host raises with no turn): who may decide one,
    * and what happens once it is decided. A person applies it; nothing else touches the conversation.
@@ -2639,7 +2641,8 @@ export class DaemonAgentRuntime {
     additionalRoots?: readonly string[],
   ): ProviderSessionContext {
     const wrapUp = this.options.wrapUp?.sessionContext(sessionId);
-    const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId) || wrapUp?.suggestTask
+    const browser = this.options.browserToolsForSession?.(sessionId) === true;
+    const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId) || wrapUp?.suggestTask || browser
       ? this.options.orchestrationForSession?.(sessionId)
       : undefined;
     const prepared = this.options.preparedSessionSettings?.(sessionId);

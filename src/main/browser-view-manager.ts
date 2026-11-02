@@ -95,6 +95,8 @@ export interface BrowserViewManagerDeps {
   readonly onBlocked?: (conversationId: string, blocked: NonNullable<BrowserViewState['blocked']>) => void;
   /** The person pressed 브라우저만 중지: where a held approval is voided. */
   readonly onStopped?: (conversationId: string) => void;
+  /** The AI used this conversation's browser for the first time: its pane opens, without focus. */
+  readonly onFirstUse?: (conversationId: string) => void;
   /** The last page of a conversation, for the pane after a restart. */
   readonly lastUrl?: (conversationId: string) => string | undefined;
   readonly rememberUrl?: (conversationId: string, url: string) => void;
@@ -215,6 +217,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   beginTool(conversationId: string, turnId: string): BrowserRefusal | undefined {
     const pane = this.pane(conversationId);
     if (pane.stoppedTurnId === turnId) return 'stopped';
+    if (!pane.guarded) this.deps.onFirstUse?.(conversationId);
     pane.guarded = true;
     pane.aiTurnId = turnId;
     pane.toolsRunning += 1;
@@ -264,6 +267,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   /** The class of a URL for this conversation. */
   classify(conversationId: string, url: string): BrowserSiteClass {
     return this.site(this.pane(conversationId), url);
+  }
+
+  /** A tool asked for a site the host refused: the pane bar says so, and allowing it is the person's. */
+  refuseNavigation(conversationId: string, url: string, reason: BrowserRefusal): void {
+    this.block(this.pane(conversationId), url, reason);
   }
 
   // ── The guards ──────────────────────────────────────────────────────────

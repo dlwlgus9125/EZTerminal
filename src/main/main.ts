@@ -41,7 +41,9 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
+import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
 import { installBrowserIpc } from './browser-ipc';
+import { BrowserTools } from './browser-tools';
 import { BrowserViewManager } from './browser-view-manager';
 import { installOpenClawChatIpc, installOpenClawManagementIpc, installOpenClawVisibilityIpc } from './openclaw-ipc';
 import { installProjectMapIpc } from './project-map-ipc';
@@ -985,6 +987,14 @@ app.on('ready', async () => {
     || planningRuntimeRef.results?.preparedSessionSettings(sessionId) || settingsRef.advisor?.preparedSessionSettings(sessionId)
     || reviewCoordinator.preparedSessionSettings(sessionId));
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
+  const browserToolsRef: { current?: BrowserTools } = {};
+  /** Who gets the browser tools at launch: the setting, for a conversation a person sees. Step 17 adds the provider's floor here. */
+  const browserSessionListed = (sessionId: string): boolean => {
+    const router = daemonRouterRef.current;
+    if (!router) return false;
+    const snapshot = router.getSnapshot();
+    return snapshot.runtime.browserEnabled && wrapUpAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId) });
+  };
   /** Who sent the turn the conversation runs now: undefined between turns, null when it cannot be told. */
   const settingsTurnPrincipal = (snapshot: DaemonSnapshot, sessionId: string): DaemonPrincipal['kind'] | null | undefined => {
     const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
@@ -1025,6 +1035,10 @@ app.on('ready', async () => {
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
     workflowAllowed: workflowSessionAllowed,
     wrapUp: () => turnWrapUpCoordinator,
+    browser: () => (browserToolsRef.current ? {
+      listed: browserSessionListed,
+      call: (context, name, value, signal) => browserToolsRef.current!.call(context, name, value, signal),
+    } : undefined),
     settings: () => {
       const authority = settingsRef.authority;
       const advisor = settingsRef.advisor;
@@ -1195,6 +1209,7 @@ app.on('ready', async () => {
     ),
     // The same endpoint carries the settings tools for a top-level conversation a person sees.
     workflowToolsForSession: (sessionId) => workflowSessionAllowed(sessionId) || settingsSessionAllowed(sessionId),
+    browserToolsForSession: browserSessionListed,
     settingsProposals: {
       // authorizeProposal answers undefined when the person may decide: only a missing authority refuses here.
       authorize: (input) => (settingsRef.authority ? settingsRef.authority.authorizeProposal(input) : 'Settings proposals are unavailable on this host.'),
@@ -4736,6 +4751,29 @@ app.on('ready', async () => {
       const window = mainWindowRef;
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:view-state', state);
     },
+    onFirstUse: (conversationId) => {
+      const window = mainWindowRef;
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:open-pane', conversationId);
+    },
+  });
+  const browserTools = new BrowserTools({
+    pages: browserView,
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    turnAttended: (sessionId, turnId) => {
+      const snapshot = daemonRouterRef.current!.getSnapshot();
+      const turn = snapshot.turns.find((entry) => entry.id === turnId);
+      const command = turn ? daemonStore.findCommand(turn.commandId)?.command ?? null : null;
+      if (command?.principal.kind === 'cli' && command.principal.id === BROWSER_CHECK_PRINCIPAL) return true;
+      return wrapUpAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), turnCommand: command });
+    },
+  });
+  browserToolsRef.current = browserTools;
+  daemonRouterRef.current?.onEvent((event) => {
+    if (event.kind !== 'entity.upserted' || event.payload.entityType !== 'turn') return;
+    const turn = daemonRouterRef.current?.getSnapshot().turns.find((entry) => entry.id === event.payload.entityId);
+    if (!turn || !['completed', 'interrupted', 'failed'].includes(turn.state)) return;
+    browserView?.turnEnded(turn.sessionId, turn.id);
+    browserTools.turnEnded(turn.id);
   });
 
   // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──

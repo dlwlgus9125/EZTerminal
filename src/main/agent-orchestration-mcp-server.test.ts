@@ -1119,6 +1119,128 @@ describe('AgentOrchestrationMcpServer settings tools (대화로 설정 바꾸기
   });
 });
 
+describe('the browser tools, a session tier', () => {
+  type BrowserHost = NonNullable<ReturnType<NonNullable<ConstructorParameters<typeof AgentOrchestrationMcpServer>[0]['browser']>>>;
+
+  const browserHost = (overrides: Partial<BrowserHost> = {}): BrowserHost => ({
+    listed: () => true,
+    call: vi.fn(async () => ({ content: [{ type: 'text' as const, text: '{"ok":true}' }] })),
+    ...overrides,
+  });
+  const alone = (): DaemonSnapshot => {
+    const current = snapshot();
+    return { ...current, agents: current.agents.map((agent) => ({ ...agent, orchestrationEnabled: false })) };
+  };
+  async function connect(host: () => BrowserHost | undefined, state: { current: DaemonSnapshot } = { current: snapshot() }) {
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => state.current, execute: vi.fn() }, browser: host });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    return {
+      server,
+      initialize: async () => (await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'initialize', {}))).value?.result as { instructions: string },
+      list: async () => ((await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/list'))).value?.result as { tools: Array<Record<string, unknown>> }).tools,
+      call: async (name: string, args: unknown = {}) => (await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/call', { name, arguments: args }))).value?.result as { content: Array<{ text: string }>; isError?: boolean },
+    };
+  }
+
+  it('lists all eight, and says so once in the instructions', async () => {
+    const { list, initialize } = await connect(() => browserHost());
+    expect((await list()).filter((tool) => String(tool.name).startsWith('browser_')).map((tool) => tool.name)).toEqual([
+      'browser_snapshot', 'browser_screenshot', 'browser_console', 'browser_wait', 'browser_navigate', 'browser_click', 'browser_type', 'browser_press',
+    ]);
+    expect((await initialize()).instructions).toContain('preview pane');
+  });
+
+  it('keeps the list as it was at launch: a setting turned off refuses each call, and the cache keeps', async () => {
+    let listed = true;
+    const shown = await connect(() => browserHost({ listed: () => listed }));
+    const before = await shown.list();
+    listed = false;
+    expect(await shown.list()).toEqual(before);
+    expect(before.map((tool) => tool.name)).toContain('browser_click');
+    listed = false;
+    const hidden = await connect(() => browserHost({ listed: () => listed }));
+    const without = await hidden.list();
+    listed = true;
+    expect(await hidden.list()).toEqual(without);
+    expect(without.map((tool) => tool.name)).not.toContain('browser_click');
+  });
+
+  it('adds nothing to a session launched without them', async () => {
+    const { initialize } = await connect(() => browserHost({ listed: () => false }));
+    expect((await initialize()).instructions).not.toContain('preview pane');
+  });
+
+  it('refuses a call on a session launched without them', async () => {
+    const call = vi.fn();
+    let listed = false;
+    const session = await connect(() => browserHost({ listed: () => listed, call }));
+    listed = true;
+    expect(await session.call('browser_click', { ref: 'e1' })).toMatchObject({ isError: true });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('keeps the endpoint alive on its own, with every other tier off', async () => {
+    const { list, call } = await connect(() => browserHost(), { current: alone() });
+    expect((await list()).map((tool) => tool.name)).toContain('browser_snapshot');
+    expect(await call('browser_snapshot')).toEqual({ content: [{ type: 'text', text: '{"ok":true}' }] });
+  });
+
+  it('keeps answering after a setting turns the tier off, so the call can refuse in the host\'s words', async () => {
+    let listed = true;
+    const refuse = vi.fn(async () => ({ content: [{ type: 'text' as const, text: '{"ok":false,"code":"browser-off"}' }], isError: true as const }));
+    const session = await connect(() => browserHost({ listed: () => listed, call: refuse }), { current: alone() });
+    listed = false;
+    expect(await session.call('browser_click', { ref: 'e1' })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('browser-off') }] });
+  });
+
+  it('gives no endpoint to a session no tier wants', async () => {
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: alone, execute: vi.fn() }, browser: () => browserHost({ listed: () => false }) });
+    servers.push(server);
+    await server.start();
+    expect(() => server.descriptorForSession('lead-1')).toThrow();
+  });
+
+  it('hands the host the conversation, its preset and the running turn, from the snapshot and never from the call', async () => {
+    const call = vi.fn<BrowserHost['call']>(async () => ({ content: [{ type: 'text', text: '{}' }] }));
+    const current = snapshot();
+    const state = { current: { ...current, agents: current.agents.map((agent) => ({ ...agent, currentTurnId: 'turn-1', permissionPreset: 'plan' as const })) } };
+    const session = await connect(() => browserHost({ call }), state);
+    await session.call('browser_click', { ref: 'e1', permissionPreset: 'full-access' });
+    expect(call).toHaveBeenCalledWith(
+      { sessionId: 'lead-1', projectId: 'project-1', permissionPreset: 'plan', turnId: 'turn-1' },
+      'browser_click', { ref: 'e1', permissionPreset: 'full-access' }, expect.anything(),
+    );
+  });
+
+  it('returns an image result as it came', async () => {
+    const image = { content: [{ type: 'text' as const, text: 'shot' }, { type: 'image' as const, data: 'SkVH', mimeType: 'image/jpeg' }] };
+    const session = await connect(() => browserHost({ call: vi.fn(async () => image) }));
+    expect(await session.call('browser_screenshot')).toEqual(image);
+  });
+
+  it('is cut off when its caller goes away', async () => {
+    const seen: { signal?: AbortSignal } = {};
+    const held = vi.fn<BrowserHost['call']>((_context, _name, _value, signal) => new Promise((resolve) => {
+      seen.signal = signal;
+      signal?.addEventListener('abort', () => resolve({ content: [{ type: 'text', text: '{}' }] }));
+    }));
+    const session = await connect(() => browserHost({ call: held }));
+    void session.call('browser_click', { ref: 'e1' }).catch(() => undefined);
+    await vi.waitFor(() => { expect(seen.signal).toBeDefined(); });
+    await session.server.stop();
+    await vi.waitFor(() => { expect(seen.signal?.aborted).toBe(true); });
+  });
+
+  it('tells a name it merely shares a prefix with from its own', async () => {
+    const call = vi.fn();
+    const session = await connect(() => browserHost({ call }));
+    expect(await session.call('browser_evaluate')).toMatchObject({ isError: true });
+    expect(call).not.toHaveBeenCalled();
+  });
+});
+
 describe('suggest_task, the turn wrap-up tier', () => {
   type WrapUpHost = NonNullable<ReturnType<NonNullable<ConstructorParameters<typeof AgentOrchestrationMcpServer>[0]['wrapUp']>>>;
   const INPUT = { title: 'Add a unit test', prompt: 'Write a unit test for formatPrice.', rationale: 'formatPrice has no test.' };

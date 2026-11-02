@@ -24,6 +24,8 @@ import type { WorkflowService } from './workflow-service';
 import type { WorkflowAuthority } from './workflow-authority';
 import type { SettingsUndoResult } from '../shared/settings-changes';
 import { ADVISOR_CALLS_PER_CONVERSATION, ADVISOR_CALLS_PER_TURN, type AdvisorResult } from './agent-advisor';
+import { isBrowserTool, type BrowserToolName } from '../shared/browser';
+import { BROWSER_INSTRUCTIONS, BROWSER_TOOL_DEFINITIONS, type BrowserToolContext, type BrowserToolResult } from './browser-tools';
 
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_PROMPT_LENGTH = 200_000;
@@ -88,6 +90,15 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly settings?: () => SettingsToolHost | undefined;
   /** Turn wrap-up's `suggest_task` (TurnWrapUpCoordinator, bound by the host). */
   readonly wrapUp?: () => WrapUpToolHost | undefined;
+  /** The in-app browser's tools. */
+  readonly browser?: () => BrowserToolHost | undefined;
+}
+
+/** What the browser tools call. Every check lives behind `call`: this server only carries them. */
+export interface BrowserToolHost {
+  /** This session gets the tools. Read once per launch and frozen there: a setting turned off later refuses each call, and the list stays. */
+  listed(sessionId: string): boolean;
+  call(context: BrowserToolContext, name: BrowserToolName, value: unknown, signal?: AbortSignal): Promise<BrowserToolResult>;
 }
 
 /** One `suggest_task` call, within TASK_SUGGESTION_LIMITS. */
@@ -162,6 +173,7 @@ interface SessionCapability {
   readonly digest: Buffer;
   readonly projectId: string;
   readonly suggestTask: boolean;
+  readonly browser: boolean;
 }
 
 class McpRequestError extends Error {
@@ -354,6 +366,7 @@ export class AgentOrchestrationMcpServer {
       digest: digestToken(bearerToken),
       projectId: session.projectId,
       suggestTask: this.wrapUpEnabled(sessionId),
+      browser: this.browserEnabled(sessionId),
     });
     return {
       endpoint: `http://${this.host}:${String(this.port)}/mcp/${encodeURIComponent(sessionId)}`,
@@ -364,6 +377,11 @@ export class AgentOrchestrationMcpServer {
   /** This session's running provider was launched with `suggest_task`. */
   suggestTaskListed(sessionId: string): boolean {
     return this.capabilities.get(sessionId)?.suggestTask === true;
+  }
+
+  /** This session's running provider was launched with the browser tools. */
+  browserListed(sessionId: string): boolean {
+    return this.capabilities.get(sessionId)?.browser === true;
   }
 
   revokeSession(sessionId: string): void {
@@ -472,7 +490,7 @@ export class AgentOrchestrationMcpServer {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : LATEST_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'ezterminal-orchestration', version: '1.0.0' },
-        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project. To get a child's result, either call wait_agent (and read_agent) after creating it, or create it with reportBack:true and end your turn: the result then arrives as your next message, so do not also wait on it.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}${this.settingsEnabled(sessionId) ? '\nEZTerminal settings: read settings_read first. settings_apply changes view settings, agents, 단계 연결 and templates now (the person can undo each); permission raises and host or workflow switches go only through settings_propose, which a person applies. Saving an agent or template never runs it.' : ''}`,
+        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project. To get a child's result, either call wait_agent (and read_agent) after creating it, or create it with reportBack:true and end your turn: the result then arrives as your next message, so do not also wait on it.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}${this.settingsEnabled(sessionId) ? '\nEZTerminal settings: read settings_read first. settings_apply changes view settings, agents, 단계 연결 and templates now (the person can undo each); permission raises and host or workflow switches go only through settings_propose, which a person applies. Saving an agent or template never runs it.' : ''}${this.browserListed(sessionId) ? `\n${BROWSER_INSTRUCTIONS}` : ''}`,
       };
     }
     if (request.method === 'ping') return {};
@@ -481,7 +499,8 @@ export class AgentOrchestrationMcpServer {
       const orchestration = snapshot.runtime.orchestrationToolsEnabled && ownerAgent.orchestrationEnabled;
       return { tools: [...(orchestration ? this.toolDefinitions(ownerAgent.permissionPreset) : []), ...(this.workflowEnabled(sessionId) ? this.workflowToolDefinitions() : []),
         ...(this.settingsEnabled(sessionId) ? this.settingsToolDefinitions() : []),
-        ...(this.suggestTaskListed(sessionId) ? [SUGGEST_TASK_DEFINITION] : [])] };
+        ...(this.suggestTaskListed(sessionId) ? [SUGGEST_TASK_DEFINITION] : []),
+        ...(this.browserListed(sessionId) ? BROWSER_TOOL_DEFINITIONS : [])] };
     }
     if (request.method !== 'tools/call') throw new McpRequestError(-32601, 'Method not found.');
     const params = strictObject(request.params, ['name', 'arguments', '_meta']);
@@ -539,6 +558,7 @@ export class AgentOrchestrationMcpServer {
       return toolText(result, !result.ok);
     }
     if (name === SUGGEST_TASK_TOOL) return this.suggestTask(sessionId, ownerAgent, value);
+    if (isBrowserTool(name)) return this.browserTool(sessionId, ownerSession, ownerAgent, name, value, signal);
     if (!snapshot.runtime.orchestrationToolsEnabled || !ownerAgent.orchestrationEnabled) throw new McpRequestError(-32002, 'Agent orchestration is disabled.');
     switch (name) {
       case 'list_agents': {
@@ -867,7 +887,7 @@ export class AgentOrchestrationMcpServer {
       ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
       : undefined;
     if (
-      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId) && !this.settingsEnabled(sessionId) && !this.suggestTaskListed(sessionId) && !this.wrapUpEnabled(sessionId))
+      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId) && !this.settingsEnabled(sessionId) && !this.suggestTaskListed(sessionId) && !this.wrapUpEnabled(sessionId) && !this.browserListed(sessionId) && !this.browserEnabled(sessionId))
       || !provider?.enabled
       || !agent
       || provider.health !== 'ready'
@@ -893,6 +913,28 @@ export class AgentOrchestrationMcpServer {
 
   private wrapUpEnabled(sessionId: string): boolean {
     return this.options.wrapUp?.()?.listed(sessionId) === true;
+  }
+
+  private browserEnabled(sessionId: string): boolean {
+    return this.options.browser?.()?.listed(sessionId) === true;
+  }
+
+  /** The list is frozen with the launch; whether a call runs is the host's, every time. */
+  private async browserTool(
+    sessionId: string,
+    ownerSession: DaemonSnapshot['sessions'][number],
+    ownerAgent: DaemonSnapshot['agents'][number],
+    name: BrowserToolName,
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    const host = this.options.browser?.();
+    if (!host || !this.browserListed(sessionId)) throw new McpRequestError(-32002, 'Browser tools are unavailable for this conversation.');
+    const context: BrowserToolContext = {
+      sessionId, projectId: ownerSession.projectId, permissionPreset: ownerAgent.permissionPreset,
+      ...(ownerAgent.currentTurnId ? { turnId: ownerAgent.currentTurnId } : {}),
+    };
+    return await host.call(context, name, value, signal) as unknown as JsonObject;
   }
 
   /** A proposal on the card of the turn that runs now; nothing runs or changes until a person presses a button. */
