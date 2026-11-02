@@ -35,7 +35,7 @@ import {
   type ConversationCommandAccess,
 } from './conversation-commands';
 import { BROWSER_CAPABILITY } from '../shared/browser';
-import { browserHost } from './browser-commands';
+import { browserPicked } from './browser-commands';
 import { openBrowserPane } from './browser/browser-pane-dock';
 import { longRunHost } from './long-run-commands';
 import {
@@ -350,6 +350,8 @@ export function StructuredAgentDockPanel(
   // The review start form also says which agent another AI reviews as (D8): read where the host reviews, and again
   // each time the form opens (Settings saves 단계 연결 without telling open conversations).
   const reviewsOffered = snapshot?.capabilities?.includes(REVIEW_LOOP_CAPABILITY) === true;
+  // Stable, and up here ahead of the early returns: the composer subscribes on it, and a new one would resubscribe on every snapshot.
+  const onBrowserPicked = useMemo(() => (capabilities.browserPane && sessionId ? browserPicked(sessionId, capabilities.browserPane) : undefined), [capabilities.browserPane, sessionId]);
   const [reviewFormOpens, setReviewFormOpens] = useState(0);
   useEffect(() => {
     if ((!planApprovalPending && !reviewsOffered) || !profileAccess?.phases) return undefined;
@@ -1282,10 +1284,10 @@ export function StructuredAgentDockPanel(
   }) : undefined;
 
   const browserOffered = snapshot?.capabilities?.includes(BROWSER_CAPABILITY) === true;
-  const browser = !historyOnly && owner === 'managed' && browserOffered && capabilities.browserPane ? browserHost({
-    sessionId, pane: capabilities.browserPane,
-    openPane: () => { openBrowserPane(props.containerApi, sessionId, chatCopy(korean ? 'ko' : 'en').browser.pane.label); },
-  }) : undefined;
+  const browser = !historyOnly && owner === 'managed' && browserOffered && onBrowserPicked ? {
+    onPicked: onBrowserPicked,
+    onOpenPane: () => { openBrowserPane(props.containerApi, sessionId, chatCopy(korean ? 'ko' : 'en').browser.pane.label); },
+  } : undefined;
 
   const delegateDialogProps = (forSession: NonNullable<typeof session>) => ({
     profiles: delegateProfiles,

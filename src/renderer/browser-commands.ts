@@ -7,16 +7,7 @@ import type { ChatBrowserProp } from './chat/ChatContext';
  * here reaches it. The rows themselves come from the transcript, with no host help.
  */
 
-export interface BrowserHostInput {
-  readonly sessionId: string;
-  readonly pane: Pick<BrowserPaneAccess, 'onPicked'>;
-  /** A person's way to the pane, beside the conversation. */
-  readonly openPane: () => void;
-}
-
-export function browserHost({ sessionId, pane, openPane }: BrowserHostInput): ChatBrowserProp {
-  return {
-    onOpenPane: openPane,
-    onPicked: (deliver) => pane.onPicked(sessionId, (picked) => deliver(browserElementAttachments(picked, () => crypto.randomUUID()))),
-  };
+/** What a person picks in this conversation's pane, as the attachments the composer takes. */
+export function browserPicked(sessionId: string, pane: Pick<BrowserPaneAccess, 'onPicked'>): NonNullable<ChatBrowserProp['onPicked']> {
+  return (deliver) => pane.onPicked(sessionId, (picked) => deliver(browserElementAttachments(picked, () => crypto.randomUUID())));
 }
