@@ -972,7 +972,7 @@
     },
     {
       "id": "long-run-settings",
-      "title": "Settings › AI › Continuing: the one switch that sends with no press, right after Turn wrap-up",
+      "title": "Settings › AI › Continuing: a switch that sends with no press, right after Turn wrap-up",
       "story": {
         "file": "src/renderer/chat/LongRun.stories.tsx",
         "export": "SettingsLongRunReference"
@@ -1028,6 +1028,126 @@
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-장시간-연속성",
         "decidedAt": "2026-11-01"
+      }
+    },
+    {
+      "id": "browser-pane",
+      "title": "The AI at a conversation's browser pane: opened beside it without focus, the site badge from the current address, and Stop browser only",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "AiDrivingReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--ai-driving-reference",
+        "snapshot": "reference-2-0-browser-pane-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-pane.png",
+        "sha256": "009fec5f1fe998a2e2c6df53c3df1be80da5b523ee4fca2f9040c34a150cf8be"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
+    },
+    {
+      "id": "browser-allow-sheet",
+      "title": "Allowing a site: one exact address for this project only, the warning that allowing is not safety, and full access said plainly",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "AllowSheetFullAccessReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--allow-sheet-full-access-reference",
+        "snapshot": "reference-2-0-browser-allow-sheet-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-allow-sheet.png",
+        "sha256": "25eee3f339e0420b98dfb499d2141772639e5aaee69b5e448c56b729e8b72585"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
+    },
+    {
+      "id": "browser-approval",
+      "title": "An action on an allowed outside site waits on the desktop: what will run as the app holds it, a secret masked, Enter shown, the page's own words apart",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "ApprovalDockSecretReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--approval-dock-secret-reference",
+        "snapshot": "reference-2-0-browser-approval-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-approval.png",
+        "sha256": "8562a1c06d38e31dff62b0a238db40e05e46c335e5af26f1e2955c2a2d994cd9"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
+    },
+    {
+      "id": "browser-blocked",
+      "title": "A site nobody allowed: refused at once, the page stays, and the pane's bar is where a person allows it",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "BlockedBarReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--blocked-bar-reference",
+        "snapshot": "reference-2-0-browser-blocked-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-blocked.png",
+        "sha256": "d61937d2f4e563a06affc88986b1d19c7dac416d3eec0460de48c41b2420e6b1"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
+    },
+    {
+      "id": "browser-rows",
+      "title": "The browser in a conversation: one grouped row per turn and site, with the last screenshot sent to the AI",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "ShotRowReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--shot-row-reference",
+        "snapshot": "reference-2-0-browser-rows-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-rows.png",
+        "sha256": "b8d46742dbf6a3bc897149717038af817e345c4b6da6c534d88143696c1abdbc"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
+    },
+    {
+      "id": "browser-settings",
+      "title": "Settings › AI › In-app browser: off by default, one separate profile, allowed sites per project, and clearing its data",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "SettingsBrowserReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--settings-browser-reference",
+        "snapshot": "reference-2-0-browser-settings-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-settings.png",
+        "sha256": "ba0909c616a8a611129596f7e1234d9bb2f852649c3efd5cae5ad477ebfc300c"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
       }
     }
   ]
