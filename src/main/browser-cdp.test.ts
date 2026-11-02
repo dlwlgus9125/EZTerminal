@@ -4,16 +4,62 @@ import type { WebContents } from 'electron';
 
 import { BrowserCdp, BrowserRefused, parseKeys } from './browser-cdp';
 
+interface CapturedNode {
+  readonly id: number;
+  readonly parent?: number;
+  readonly name?: string;
+  readonly opacity?: string;
+  readonly fontSize?: string;
+  readonly bounds?: readonly number[];
+  /** No layout box. */
+  readonly boxless?: true;
+  readonly text?: true;
+  /** The document this frame element holds. */
+  readonly content?: number;
+}
+
+/** `DOMSnapshot.captureSnapshot` as Chromium shapes it: strings are shared and indexed, and frames hang off `contentDocumentIndex`. */
+function domCapture(documents: readonly { readonly frameId: string; readonly nodes: readonly CapturedNode[] }[]) {
+  const strings: string[] = [];
+  const at = (value: string): number => {
+    if (!strings.includes(value)) strings.push(value);
+    return strings.indexOf(value);
+  };
+  return {
+    strings,
+    documents: documents.map(({ frameId, nodes }) => {
+      const boxed = nodes.flatMap((entry, index) => (entry.boxless ? [] : [{ entry, index }]));
+      const owners = nodes.flatMap((entry, index) => (entry.content === undefined ? [] : [{ index, value: entry.content }]));
+      return {
+        frameId: at(frameId),
+        nodes: {
+          backendNodeId: nodes.map((entry) => entry.id), parentIndex: nodes.map((entry) => entry.parent ?? -1), nodeName: nodes.map((entry) => at(entry.name ?? 'DIV')),
+          nodeType: nodes.map((entry) => (entry.text ? 3 : 1)), contentDocumentIndex: { index: owners.map((owner) => owner.index), value: owners.map((owner) => owner.value) },
+        },
+        layout: {
+          nodeIndex: boxed.map(({ index }) => index),
+          styles: boxed.map(({ entry }) => [at(entry.opacity ?? '1'), at(entry.fontSize ?? '16px'), at('visible')]),
+          bounds: boxed.map(({ entry }) => entry.bounds ?? [10, 10, 100, 20]),
+        },
+      };
+    }),
+  };
+}
+
+/** Every node a test names, shown, in the frames it reads. */
+const EVERYTHING_SHOWN = domCapture(['main', 'own'].map((frameId, document) => ({ frameId, nodes: Array.from({ length: 1_000 }, (_, index) => ({ id: index + 1 + document * 1_000 })) })));
+
 function fake() {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   const sendCommand = vi.fn<(method: string, params?: object) => Promise<unknown>>(async () => ({}));
+  const capture = vi.fn<() => unknown>(() => EVERYTHING_SHOWN);
   const contents = {
     isDestroyed: vi.fn(() => false),
     debugger: {
       isAttached: vi.fn(() => true),
       attach: vi.fn(),
       on: vi.fn((event: string, listener: (...args: unknown[]) => void) => { listeners.set(event, listener); }),
-      sendCommand,
+      sendCommand: async (method: string, params?: object): Promise<unknown> => (method === 'DOMSnapshot.captureSnapshot' ? capture() : sendCommand(method, params)),
     },
   };
   const requested = vi.fn();
@@ -21,7 +67,7 @@ function fake() {
   const cdp = new BrowserCdp(contents as unknown as WebContents, { onNavigationRequested: requested, classify });
   sendCommand.mockClear();
   const emit = (method: string, params: unknown) => listeners.get('message')!({}, method, params);
-  return { cdp, contents, sendCommand, listeners, requested, classify, emit };
+  return { cdp, contents, sendCommand, capture, listeners, requested, classify, emit };
 }
 
 const AX = (nodes: readonly Record<string, unknown>[]) => ({ nodes });
@@ -85,8 +131,8 @@ describe('BrowserCdp', () => {
         expect(params).toEqual({ frameId: 'main' });
         return AX([
           node('1', 'RootWebArea', 'Shop', { childIds: ['2', '3', '4', '5'] }),
-          node('2', 'heading', 'Cart', { parentId: '1', childIds: ['21'] }),
-          node('21', 'StaticText', 'Cart', { parentId: '2', childIds: ['22'] }),
+          node('2', 'heading', 'Cart', { parentId: '1', childIds: ['21'], backendDOMNodeId: 20 }),
+          node('21', 'StaticText', 'Cart', { parentId: '2', childIds: ['22'], backendDOMNodeId: 21 }),
           node('22', 'InlineTextBox', 'Cart', { parentId: '21' }),
           node('3', 'button', 'Pay', { parentId: '1', backendDOMNodeId: 30 }),
           node('4', 'textbox', 'Coupon', { parentId: '1', backendDOMNodeId: 40, value: { value: 'SPRING' } }),
@@ -134,11 +180,189 @@ describe('BrowserCdp', () => {
       sendCommand.mockImplementation(async (method) => {
         if (method === 'Page.getFrameTree') return tree();
         return AX([node('1', 'RootWebArea', '', { childIds: Array.from({ length: 400 }, (_, index) => `n${String(index)}`) }),
-          ...Array.from({ length: 400 }, (_, index) => node(`n${String(index)}`, 'paragraph', 'x'.repeat(100), { parentId: '1' }))]);
+          ...Array.from({ length: 400 }, (_, index) => node(`n${String(index)}`, 'paragraph', 'x'.repeat(100), { parentId: '1', backendDOMNodeId: index + 1 }))]);
       });
       const snapshot = await cdp.snapshot();
       expect(snapshot.truncated).toBe(true);
       expect(snapshot.text.length).toBeLessThan(16_100);
+    });
+
+    describe('what a person cannot see stays out, and the filter never fails open', () => {
+      const page = (handle: ReturnType<typeof fake>, nodes: readonly Record<string, unknown>[], children: readonly unknown[] = []): void => {
+        handle.sendCommand.mockImplementation(async (method) => (method === 'Page.getFrameTree' ? tree(children) : AX([node('root', 'RootWebArea', '', { childIds: nodes.map((entry) => entry.nodeId), backendDOMNodeId: 1 }), ...nodes])));
+      };
+      const reads = (handle: ReturnType<typeof fake>): number => handle.sendCommand.mock.calls.filter(([method]) => method === 'Accessibility.getFullAXTree').length;
+
+      it('refuses the read when the page could not be checked: a filter that failed is no filter', async () => {
+        const handle = fake();
+        page(handle, [node('p', 'paragraph', 'WORDS', { backendDOMNodeId: 2 })]);
+        handle.capture.mockImplementation(() => { throw new Error('DOMSnapshot failed'); });
+        const refused = await handle.cdp.snapshot().catch((error: unknown) => error);
+        expect(refused).toBeInstanceOf(BrowserRefused);
+        expect((refused as BrowserRefused).reason).toBe('page-gone');
+        expect(reads(handle)).toBe(0);
+      });
+
+      it('shows nothing the capture does not name, and has no refs for it', async () => {
+        const handle = fake();
+        page(handle, [node('b', 'button', 'GHOST', { backendDOMNodeId: 7 })]);
+        handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }] }]));
+        const snapshot = await handle.cdp.snapshot();
+        expect(snapshot.text).toBe('');
+        expect(await handle.cdp.target('e1').catch((error: unknown) => (error as BrowserRefused).reason)).toBe('stale-ref');
+      });
+
+      it('shows nothing with no id at all, and does not re-read for it', async () => {
+        const handle = fake();
+        page(handle, [node('b', 'paragraph', 'NO-ID')]);
+        expect((await handle.cdp.snapshot()).text).toBe('');
+        expect(handle.capture).toHaveBeenCalledTimes(1);
+      });
+
+      it('captures again when the read and the capture disagree, once', async () => {
+        const handle = fake();
+        page(handle, [node('b', 'button', 'Pay', { backendDOMNodeId: 7 })]);
+        handle.capture.mockReturnValueOnce(domCapture([{ frameId: 'main', nodes: [{ id: 1 }] }])).mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, { id: 7 }] }]));
+        const snapshot = await handle.cdp.snapshot();
+        expect(snapshot.text).toMatch(/^button "Pay" \[ref=e\d+\]$/u);
+        expect(handle.capture).toHaveBeenCalledTimes(2);
+        expect(reads(handle)).toBe(2);
+      });
+
+      it('stops at one more: what still disagrees stays out', async () => {
+        const handle = fake();
+        page(handle, [node('b', 'button', 'Pay', { backendDOMNodeId: 7 })]);
+        handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }] }]));
+        expect((await handle.cdp.snapshot()).text).toBe('');
+        expect(handle.capture).toHaveBeenCalledTimes(2);
+      });
+
+      it.each<[string, CapturedNode]>([
+        ['transparent', { id: 7, opacity: '0' }], ['off to the left', { id: 7, bounds: [-9999, 10, 100, 20] }], ['off the top', { id: 7, bounds: [10, -9999, 100, 20] }],
+        ['of no size', { id: 7, bounds: [10, 10, 0, 0] }], ['with no box', { id: 7, boxless: true }], ['text of no size', { id: 7, text: true, fontSize: '0px' }],
+      ])('leaves out a node %s', async (_name, entry) => {
+        const handle = fake();
+        page(handle, [node('p', 'paragraph', 'HIDDEN-WORDS', { backendDOMNodeId: 7 })]);
+        handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, entry] }]));
+        expect((await handle.cdp.snapshot()).text).not.toContain('HIDDEN-WORDS');
+      });
+
+      it('takes transparency down a subtree, and not a box\'s font size', async () => {
+        const handle = fake();
+        page(handle, [node('p', 'paragraph', 'UNDER-GLASS', { backendDOMNodeId: 8 }), node('q', 'paragraph', 'RESTORED', { backendDOMNodeId: 10 })]);
+        handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, { id: 7, parent: 0, opacity: '0' }, { id: 8, parent: 1 }, { id: 9, parent: 0, fontSize: '0px' }, { id: 10, parent: 3 }] }]));
+        const { text } = await handle.cdp.snapshot();
+        expect(text).not.toContain('UNDER-GLASS');
+        expect(text).toContain('RESTORED');
+      });
+
+      it('gives an option in a closed select the fate of its select: it has no box of its own', async () => {
+        const handle = fake();
+        const options = [node('o1', 'option', 'SHOWN-SIZE', { backendDOMNodeId: 3 }), node('o2', 'option', 'HIDDEN-SIZE', { backendDOMNodeId: 5 })];
+        page(handle, options);
+        handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [
+          { id: 1 }, { id: 2, parent: 0, name: 'SELECT' }, { id: 3, parent: 1, name: 'OPTION', boxless: true },
+          { id: 4, parent: 0, name: 'SELECT', opacity: '0' }, { id: 5, parent: 3, name: 'OPTION', boxless: true },
+        ] }]));
+        const { text } = await handle.cdp.snapshot();
+        expect(text).toContain('SHOWN-SIZE');
+        expect(text).not.toContain('HIDDEN-SIZE');
+      });
+
+      describe('a frame', () => {
+        const FRAME = { frame: { id: 'own', url: 'about:srcdoc' } };
+        const read = (handle: ReturnType<typeof fake>): readonly unknown[] => handle.sendCommand.mock.calls.filter(([method]) => method === 'Accessibility.getFullAXTree').map(([, params]) => (params as { frameId: string }).frameId);
+
+        it.each<[string, CapturedNode]>([
+          ['transparent', { id: 2, opacity: '0', content: 1 }], ['off the page', { id: 2, bounds: [-9999, 0, 300, 150], content: 1 }],
+          ['of no size', { id: 2, bounds: [10, 10, 0, 0], content: 1 }], ['with no box', { id: 2, boxless: true, content: 1 }],
+        ])('is not read when its element is %s, and is named instead', async (_name, owner) => {
+          const handle = fake();
+          page(handle, [], [FRAME]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, owner] }, { frameId: 'own', nodes: [{ id: 3 }] }]));
+          const snapshot = await handle.cdp.snapshot();
+          expect(read(handle)).toEqual(['main']);
+          expect(snapshot.unreadFrames).toEqual(['about:srcdoc']);
+        });
+
+        it('carries that down: a frame inside a hidden frame is hidden, whatever its own element says', async () => {
+          const handle = fake();
+          page(handle, [], [{ ...FRAME, childFrames: [{ frame: { id: 'deep', url: 'about:srcdoc' } }] }]);
+          handle.capture.mockReturnValue(domCapture([
+            { frameId: 'main', nodes: [{ id: 1, opacity: '0' }, { id: 2, parent: 0, content: 1 }] },
+            { frameId: 'own', nodes: [{ id: 3 }, { id: 4, parent: 0, content: 2 }] },
+            { frameId: 'deep', nodes: [{ id: 5 }] },
+          ]));
+          const snapshot = await handle.cdp.snapshot();
+          expect(read(handle)).toEqual(['main']);
+          expect(snapshot.unreadFrames).toHaveLength(2);
+        });
+
+        it('is read when its element is on show', async () => {
+          const handle = fake();
+          page(handle, [], [FRAME]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, { id: 2, parent: 0, content: 1 }] }, { frameId: 'own', nodes: [{ id: 3 }] }]));
+          expect(read(handle)).toEqual([]);
+          await handle.cdp.snapshot();
+          expect(read(handle)).toEqual(['main', 'own']);
+        });
+
+        it('is not read when the capture does not hold its document', async () => {
+          const handle = fake();
+          page(handle, [], [FRAME]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }] }]));
+          expect((await handle.cdp.snapshot()).unreadFrames).toEqual(['about:srcdoc']);
+        });
+      });
+
+      describe('a name that comes from an element\'s content', () => {
+        const hiding: readonly CapturedNode[] = [{ id: 1 }, { id: 2, parent: 0 }, { id: 3, parent: 1, text: true, fontSize: '0px' }, { id: 4, parent: 1, text: true }];
+        const named = (role: string, name: string): readonly Record<string, unknown>[] => [
+          node('b', role, name, { backendDOMNodeId: 2, childIds: ['t1', 't2'] }),
+          node('t1', 'StaticText', 'HIDDEN-WORDS', { parentId: 'b', backendDOMNodeId: 3 }),
+          node('t2', 'StaticText', 'Buy now', { parentId: 'b', backendDOMNodeId: 4 }),
+        ];
+
+        it.each(['button', 'link', 'heading', 'tab', 'menuitem'])('a %s keeps only the words a person sees', async (role) => {
+          const handle = fake();
+          page(handle, named(role, 'HIDDEN-WORDS Buy now'));
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: hiding }]));
+          const { text } = await handle.cdp.snapshot();
+          expect(text).not.toContain('HIDDEN-WORDS');
+          expect(text).toContain(`${role} "Buy now"`);
+        });
+
+        it('drops the name when no words are left', async () => {
+          const handle = fake();
+          page(handle, [node('b', 'link', 'HIDDEN-WORDS', { backendDOMNodeId: 2, childIds: ['t1'] }), node('t1', 'StaticText', 'HIDDEN-WORDS', { parentId: 'b', backendDOMNodeId: 3 })]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: hiding }]));
+          expect((await handle.cdp.snapshot()).text).toMatch(/^link \[ref=e\d+\]$/u);
+        });
+
+        it('drops words kept in anything hidden under it, an image\'s alt too', async () => {
+          const handle = fake();
+          page(handle, [node('b', 'button', 'HIDDEN-ALT', { backendDOMNodeId: 2, childIds: ['i'] }), node('i', 'image', 'HIDDEN-ALT', { parentId: 'b', backendDOMNodeId: 3 })]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: [{ id: 1 }, { id: 2, parent: 0 }, { id: 3, parent: 1, opacity: '0' }] }]));
+          expect((await handle.cdp.snapshot()).text).toMatch(/^button \[ref=e\d+\]$/u);
+        });
+
+        it('keeps a name nothing hidden went into, an aria-label too', async () => {
+          const handle = fake();
+          page(handle, [node('b', 'button', 'Close the cart', { backendDOMNodeId: 2, childIds: ['t2'] }), node('t2', 'StaticText', 'x', { parentId: 'b', backendDOMNodeId: 4 })]);
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: hiding }]));
+          expect((await handle.cdp.snapshot()).text).toContain('button "Close the cart"');
+        });
+
+        it('hands the rebuilt name to what approves a click', async () => {
+          const handle = fake();
+          page(handle, named('button', 'HIDDEN-WORDS Buy now'));
+          handle.capture.mockReturnValue(domCapture([{ frameId: 'main', nodes: hiding }]));
+          await handle.cdp.snapshot();
+          const reading = handle.sendCommand.getMockImplementation()!;
+          handle.sendCommand.mockImplementation(async (method, params) => (method === 'DOM.describeNode' ? { node: { nodeName: 'BUTTON' } } : reading(method, params)));
+          expect((await handle.cdp.target('e1')).name).toBe('Buy now');
+        });
+      });
     });
   });
 

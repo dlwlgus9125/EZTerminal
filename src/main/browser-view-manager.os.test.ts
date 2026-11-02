@@ -331,6 +331,27 @@ describe('what the tools do to a real page, unseen', () => {
     for (const words of ['OPACITY-WORDS', 'NESTED-OPACITY-WORDS', 'NESTED-BUTTON', 'FONT-ZERO-WORDS', 'OFF-LEFT-WORDS', 'OFF-TOP-WORDS']) expect(text, words).not.toContain(words);
   });
 
+  it('keeps hidden words out of a name that comes from content, and the words a person sees in it', () => {
+    const text = report['hidden-text'] as string;
+    for (const words of ['BUTTON-HIDDEN-WORDS', 'LINK-HIDDEN-WORDS', 'HEADING-HIDDEN-WORDS']) expect(text, words).not.toContain(words);
+    expect(text).toContain('button "Buy now"');
+    expect(text).toMatch(/link \[ref=e\d+\]/u);
+    expect(text).toMatch(/heading "Heading\s+shown"/u);
+  });
+
+  it('keeps what it must: a button in a font-size:0 wrapper, and a closed select\'s options', () => {
+    const text = report['hidden-text'] as string;
+    expect(text).toContain('button "Keep this button"');
+    expect(text).toContain('SIZE-OPTION');
+  });
+
+  it('does not read a frame whose element is hidden, off the page or of no size, or a frame inside one, and names each', () => {
+    const text = report['hidden-text'] as string;
+    expect(text).toContain('SHOWN-FRAME-WORDS');
+    for (const words of ['TRANSPARENT-FRAME-WORDS', 'OFF-PAGE-FRAME-WORDS', 'TINY-FRAME-WORDS', 'NESTED-FRAME-WORDS']) expect(text, words).not.toContain(words);
+    expect(report['hidden-text-unread'] as readonly string[]).toEqual(['about:srcdoc', 'about:srcdoc', 'about:srcdoc', 'about:srcdoc', 'about:srcdoc']);
+  });
+
   it('clicks, types over what a field holds, and presses', () => {
     expect(report['tools-clicked']).toBe(1);
     expect(report['tools-typed']).toBe('Ada');

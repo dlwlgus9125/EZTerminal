@@ -126,7 +126,17 @@ async function main(): Promise<void> {
 <p style="position:absolute;left:-9999px">OFF-LEFT-WORDS</p>
 <p style="position:absolute;top:-9999px">OFF-TOP-WORDS</p>
 <p style="color:#fff;background:#fff">WHITE-WORDS</p>
-<div style="font-size:0"><span style="font-size:16px">RESTORED-WORDS</span></div>`);
+<div style="font-size:0"><span style="font-size:16px">RESTORED-WORDS</span></div>
+<button><span style="font-size:0">BUTTON-HIDDEN-WORDS </span>Buy now</button>
+<a href="#x"><span style="opacity:0">LINK-HIDDEN-WORDS</span></a>
+<h2>Heading <span style="position:absolute;left:-9999px">HEADING-HIDDEN-WORDS</span>shown</h2>
+<div style="font-size:0"><button style="font-size:16px">Keep this button</button></div>
+<select aria-label=Size><option>SIZE-OPTION</option></select>
+<iframe srcdoc="<p>SHOWN-FRAME-WORDS</p>" width=200 height=60></iframe>
+<iframe srcdoc="<p>TRANSPARENT-FRAME-WORDS</p>" style="opacity:0"></iframe>
+<div style="position:absolute;left:-9999px"><iframe srcdoc="<p>OFF-PAGE-FRAME-WORDS</p>"></iframe></div>
+<iframe srcdoc="<p>TINY-FRAME-WORDS</p>" width=0 height=0 style="border:0"></iframe>
+<div style="opacity:0"><iframe srcdoc="&lt;iframe srcdoc='&lt;p&gt;NESTED-FRAME-WORDS&lt;/p&gt;'&gt;&lt;/iframe&gt;"></iframe></div>`);
       case '/workers/page': return html(response, WORKERS_PAGE);
       case '/workers/sw.js':
         response.writeHead(200, { 'content-type': 'text/javascript' });
@@ -633,10 +643,13 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   {
     const id = 'pane-hidden';
     await open(id, `${base}/hidden-text`);
+    await delay(SETTLE_MS);
     manager.beginTool(id, 'turn-1');
     const page = manager.page(id);
     if (!page.ok) throw new Error(page.reason);
-    report['hidden-text'] = (await page.cdp.snapshot()).text;
+    const snapshot = await page.cdp.snapshot();
+    report['hidden-text'] = snapshot.text;
+    report['hidden-text-unread'] = snapshot.unreadFrames;
     manager.endTool(id);
     manager.forget(id);
   }

@@ -21,6 +21,11 @@ const INTERACTIVE_ROLES = new Set([
 ]);
 /** What only structures the page, or repeats its parent's words. */
 const SILENT_ROLES = new Set(['none', 'generic', 'InlineTextBox', 'LineBreak', 'RootWebArea', 'WebArea', 'presentation', 'Iframe', 'IframePresentational']);
+/** Roles whose name comes from what is inside them, so hidden words inside become their name. */
+const NAME_FROM_CONTENT_ROLES = new Set([
+  'button', 'link', 'heading', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'radio', 'checkbox', 'switch', 'treeitem',
+  'cell', 'gridcell', 'columnheader', 'rowheader', 'row', 'tooltip',
+]);
 
 /** A refusal in the tools' own words. */
 export class BrowserRefused extends Error {
@@ -43,13 +48,89 @@ interface AxNode {
 }
 interface FrameTree { readonly frame: { readonly id: string; readonly url: string }; readonly childFrames?: readonly FrameTree[] }
 
-/** The parts of `DOMSnapshot.captureSnapshot` read here. `styles` holds indexes into `strings`, in the order asked for. */
-interface DomSnapshot {
-  readonly strings: readonly string[];
-  readonly documents: readonly {
-    readonly nodes: { readonly parentIndex?: readonly number[]; readonly backendNodeId?: readonly number[] };
-    readonly layout: { readonly nodeIndex: readonly number[]; readonly styles: readonly (readonly number[])[]; readonly bounds: readonly (readonly number[])[] };
-  }[];
+const CAPTURED_STYLES = ['opacity', 'font-size', 'visibility'];
+const TEXT_NODE = 3;
+
+/** The parts of `DOMSnapshot.captureSnapshot` read here. `styles` holds indexes into `strings`, in the order of `CAPTURED_STYLES`. */
+interface DomDocument {
+  readonly frameId: number;
+  readonly nodes: {
+    readonly parentIndex?: readonly number[];
+    readonly backendNodeId?: readonly number[];
+    readonly nodeName?: readonly number[];
+    readonly nodeType?: readonly number[];
+    /** Which of `nodes` hold which of `documents`. */
+    readonly contentDocumentIndex?: { readonly index: readonly number[]; readonly value: readonly number[] };
+  };
+  readonly layout: { readonly nodeIndex: readonly number[]; readonly styles: readonly (readonly number[])[]; readonly bounds: readonly (readonly number[])[] };
+}
+interface DomCapture { readonly strings: readonly string[]; readonly documents: readonly DomDocument[] }
+
+/** What a capture says a person can see. Whatever it does not name is not shown: that is the rule, and it cannot fail open. */
+interface PageVisibility {
+  /** Backend node ids positively on show. */
+  readonly shown: ReadonlySet<number>;
+  /** Every id the capture holds, on show or not: an id outside it means the page moved between the two reads. */
+  readonly known: ReadonlySet<number>;
+  readonly frames: ReadonlySet<string>;
+}
+
+/** Which nodes of one document a person could see, were the document itself on show. */
+function shownInDocument({ nodes, layout }: DomDocument, strings: readonly string[]): (node: number) => boolean {
+  const parents = nodes.parentIndex ?? [];
+  const transparent = new Set<number>();
+  const onShow = new Set<number>();
+  layout.nodeIndex.forEach((node, at) => {
+    const [opacity, fontSize, visibility] = (layout.styles[at] ?? []).map((style) => strings[style] ?? '');
+    const [x = 0, y = 0, width = 0, height = 0] = layout.bounds[at] ?? [];
+    if (Number.parseFloat(opacity ?? '') === 0) transparent.add(node);
+    // `font-size` hides words and no box: a button in a whitespace-trick wrapper is on show.
+    const wordless = nodes.nodeType?.[node] === TEXT_NODE && Number.parseFloat(fontSize ?? '') === 0;
+    if (!wordless && visibility === 'visible' && width > 0 && height > 0 && x + width > 0 && y + height > 0) onShow.add(node);
+  });
+  const ancestors = function* (node: number): Generator<number> {
+    for (let at = node; at >= 0; at = parents[at] ?? -1) yield at;
+  };
+  const tag = (node: number): string | undefined => strings[nodes.nodeName?.[node] ?? -1];
+  return (node) => {
+    // An option in a closed select has no box of its own: it is as seen as its select.
+    const box = [...ancestors(node)].find((at) => tag(at) === 'SELECT') ?? node;
+    return onShow.has(box) && ![...ancestors(box)].some((at) => transparent.has(at));
+  };
+}
+
+function pageVisibility({ strings, documents }: DomCapture): PageVisibility {
+  const owners = new Map<number, { readonly document: number; readonly node: number }>();
+  documents.forEach(({ nodes }, document) => {
+    const { index = [], value = [] } = nodes.contentDocumentIndex ?? {};
+    index.forEach((node, at) => { if (value[at] !== undefined) owners.set(value[at], { document, node }); });
+  });
+  const shownIn = documents.map((document) => shownInDocument(document, strings));
+  // Opacity and position do not cross a frame's edge, so what hides a frame element is carried down by hand.
+  const documentOnShow = (document: number): boolean => {
+    const owner = owners.get(document);
+    return !owner || (documentOnShow(owner.document) && shownIn[owner.document]!(owner.node));
+  };
+  const shown = new Set<number>();
+  const known = new Set<number>();
+  const frames = new Set<string>();
+  documents.forEach(({ frameId, nodes }, document) => {
+    const onShow = documentOnShow(document);
+    if (onShow && strings[frameId] !== undefined) frames.add(strings[frameId]);
+    nodes.backendNodeId?.forEach((id, node) => {
+      known.add(id);
+      if (onShow && shownIn[document]!(node)) shown.add(id);
+    });
+  });
+  return { shown, known, frames };
+}
+
+/** One read of the page: its words, its refs, and whether the two reads behind it saw the same page. */
+interface PageRead {
+  readonly lines: string[];
+  readonly refs: Map<string, Ref>;
+  readonly unreadFrames: string[];
+  disagreed: boolean;
 }
 
 interface Ref {
@@ -207,27 +288,34 @@ export class BrowserCdp {
     }
   }
 
-  /** The accessibility tree of each frame the AI may read; refs from any earlier snapshot end here. */
+  /** The accessibility tree of each frame on show that the AI may read; refs from any earlier snapshot end here. */
   async snapshot(): Promise<BrowserSnapshot> {
+    const first = await this.readPage();
+    // A page that moved between the two reads gets one more look. What still disagrees stays out.
+    const { lines, refs, unreadFrames } = first.disagreed ? await this.readPage() : first;
+    this.refs = refs;
+    const joined = lines.join('\n');
+    return { text: joined.length > SNAPSHOT_LIMIT ? `${joined.slice(0, SNAPSHOT_LIMIT)}\n…` : joined, truncated: joined.length > SNAPSHOT_LIMIT, unreadFrames };
+  }
+
+  private async readPage(): Promise<PageRead> {
     const { frameTree } = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree');
-    const hidden = await this.hiddenNodes();
-    const refs = new Map<string, Ref>();
-    const unreadFrames: string[] = [];
-    const lines: string[] = [];
+    const visibility = await this.visibility();
+    const read: PageRead = { lines: [], refs: new Map(), unreadFrames: [], disagreed: false };
     const walk = async (tree: FrameTree, creator: string, depth: number): Promise<void> => {
       const url = tree.frame.url;
       const blank = /^about:/iu.test(url);
       const site = this.options.classify(blank ? creator : url);
-      if (depth > 0) lines.push(`${'  '.repeat(depth - 1)}frame ${quoted(url)}`);
-      if (site === 'external') {
-        unreadFrames.push(url);
+      if (depth > 0) read.lines.push(`${'  '.repeat(depth - 1)}frame ${quoted(url)}`);
+      if (site === 'external' || !visibility.frames.has(tree.frame.id)) {
+        read.unreadFrames.push(url);
       } else {
-        const read = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getFullAXTree', { frameId: tree.frame.id }).catch((error: unknown) => {
+        const axTree = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getFullAXTree', { frameId: tree.frame.id }).catch((error: unknown) => {
           if (error instanceof BrowserRefused) throw error;
           return undefined; // Another process: a cross-origin frame answers with nothing.
         });
-        if (read) this.appendTree(read.nodes, tree.frame.id, depth, lines, refs, hidden);
-        else unreadFrames.push(url);
+        if (axTree) this.appendTree(axTree.nodes, tree.frame.id, depth, read, visibility);
+        else read.unreadFrames.push(url);
       }
       for (const child of tree.childFrames ?? []) await walk(child, blank ? creator : url, depth + 1);
     };
@@ -235,40 +323,21 @@ export class BrowserCdp {
     // A cross-origin frame runs in another process: this debugger's tree does not hold it, and it is named here instead.
     const inTree = (tree: FrameTree): readonly string[] => [tree.frame.url, ...(tree.childFrames ?? []).flatMap(inTree)];
     const walked = new Set(inTree(frameTree));
-    for (const frame of this.contents.mainFrame?.framesInSubtree ?? []) if (!walked.has(frame.url)) unreadFrames.push(frame.url);
-    this.refs = refs;
-    const joined = lines.join('\n');
-    return { text: joined.length > SNAPSHOT_LIMIT ? `${joined.slice(0, SNAPSHOT_LIMIT)}\n…` : joined, truncated: joined.length > SNAPSHOT_LIMIT, unreadFrames };
+    for (const frame of this.contents.mainFrame?.framesInSubtree ?? []) if (!walked.has(frame.url)) read.unreadFrames.push(frame.url);
+    return read;
   }
 
   /**
-   * Nodes a person cannot see that the accessibility tree still reads (measured): transparent, of no size, or off the page.
-   * This is what a page hides, not all it could: white on white stays, and nothing here claims to detect anything. `opacity`
-   * reaches a node's whole subtree. `font-size` and position do not: a child restores the one and has its own bounds for the other.
+   * What a person can see. The accessibility tree reads more than that (measured): transparent text, text of no size, text off
+   * the page, whole frames behind any of those. This covers what a page hides, not all it could: white on white stays, and
+   * nothing here claims to detect anything. A capture that fails refuses the read: the words would go out unfiltered, unsaid.
    */
-  private async hiddenNodes(): Promise<ReadonlySet<number>> {
-    const snapshot = await this.send<DomSnapshot>('DOMSnapshot.captureSnapshot', { computedStyles: ['opacity', 'font-size'] }).catch((error: unknown) => {
+  private async visibility(): Promise<PageVisibility> {
+    const capture = await this.send<DomCapture>('DOMSnapshot.captureSnapshot', { computedStyles: CAPTURED_STYLES }).catch((error: unknown) => {
       if (error instanceof BrowserRefused) throw error;
-      return undefined;
+      throw new BrowserRefused('page-gone', 'The page could not be checked for hidden text, so it was not read.');
     });
-    const hidden = new Set<number>();
-    for (const { nodes, layout } of snapshot?.documents ?? []) {
-      const transparent = new Set<number>();
-      const small = new Set<number>();
-      layout.nodeIndex.forEach((index, at) => {
-        const [opacity, fontSize] = (layout.styles[at] ?? []).map((style) => Number.parseFloat(snapshot?.strings[style] ?? ''));
-        const [x = 0, y = 0, width = 0, height = 0] = layout.bounds[at] ?? [];
-        if (opacity === 0) transparent.add(index);
-        if (fontSize === 0 || x + width <= 0 || y + height <= 0) small.add(index);
-      });
-      const parents = nodes.parentIndex ?? [];
-      const under = (index: number): boolean => {
-        for (let at = index; at >= 0; at = parents[at] ?? -1) if (transparent.has(at)) return true;
-        return false;
-      };
-      nodes.backendNodeId?.forEach((id, index) => { if (small.has(index) || under(index)) hidden.add(id); });
-    }
-    return hidden;
+    return pageVisibility(capture);
   }
 
   /** The words of the main frame, for a wait. It ends no refs. */
@@ -277,14 +346,34 @@ export class BrowserCdp {
     return nodes.filter((node) => !node.ignored).map((node) => text(node.name)).join('\n');
   }
 
-  private appendTree(nodes: readonly AxNode[], frameId: string, frameDepth: number, lines: string[], refs: Map<string, Ref>, hidden: ReadonlySet<number>): void {
+  private appendTree(nodes: readonly AxNode[], frameId: string, frameDepth: number, read: PageRead, visibility: PageVisibility): void {
+    const { lines, refs } = read;
     const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const onShow = (node: AxNode): boolean => node.backendDOMNodeId !== undefined && visibility.shown.has(node.backendDOMNodeId);
+    /** Only what a person sees of a name made from content. No part hidden, the page's own name stands: it may be an `aria-label`. */
+    const nameOf = (node: AxNode, role: string): string => {
+      const name = text(node.name);
+      if (!NAME_FROM_CONTENT_ROLES.has(role)) return name;
+      const words: string[] = [];
+      let hidden = false;
+      const collect = (entry: AxNode): void => {
+        for (const child of (entry.childIds ?? []).flatMap((id) => byId.get(id) ?? [])) {
+          const said = text(child.name);
+          if (said && !child.ignored && !onShow(child)) hidden = true;
+          else if (said && text(child.role) === 'StaticText') words.push(said);
+          if (text(child.role) !== 'StaticText') collect(child);
+        }
+      };
+      collect(node);
+      return hidden ? words.join(' ') : name;
+    };
     const visit = (node: AxNode, depth: number): void => {
       const role = text(node.role);
-      const name = text(node.name);
+      const name = nameOf(node, role);
       const value = text(node.value);
-      const unseen = node.backendDOMNodeId !== undefined && hidden.has(node.backendDOMNodeId);
-      const shown = !node.ignored && !unseen && !SILENT_ROLES.has(role) && (name !== '' || value !== '' || INTERACTIVE_ROLES.has(role));
+      const worthShowing = !node.ignored && !SILENT_ROLES.has(role) && (name !== '' || value !== '' || INTERACTIVE_ROLES.has(role));
+      if (worthShowing && node.backendDOMNodeId !== undefined && !visibility.known.has(node.backendDOMNodeId)) read.disagreed = true;
+      const shown = worthShowing && onShow(node);
       if (shown) {
         const indent = '  '.repeat(depth + frameDepth);
         if (role === 'StaticText') {
