@@ -18,7 +18,7 @@ const scratch = process.argv[process.argv.indexOf('--scratch') + 1]!;
 app.setPath('userData', path.join(scratch, 'profile'));
 app.setPath('sessionData', path.join(scratch, 'profile'));
 app.setPath('downloads', path.join(scratch, 'downloads'));
-app.commandLine.appendSwitch('host-resolver-rules', 'MAP *.example 127.0.0.1');
+app.commandLine.appendSwitch('host-resolver-rules', 'MAP *.example 127.0.0.1, MAP gone.test ~NOTFOUND');
 
 const SETTLE_MS = 400;
 const delay = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -291,6 +291,24 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   await record('script-anchor-without-input', scripted('document.getElementById("link").click()'), shownPad);
   await record('never-driven', scripted(`location.href=${JSON.stringify(`${evil}/landed?via=person-only`)}`), (id) => open(id, `${base}/pad`));
   await record('popup-local-opens-here', scripted(`window.open(${JSON.stringify(`${base}/landed?via=popup`)})`));
+
+  // The person's pass ends with their navigation, whatever shape it took: a back that stays in the document commits nothing.
+  await record('person-pass-ends', async (id, contents) => {
+    await contents.executeJavaScript('history.pushState({}, "", "/pad?step=2")', true);
+    await delay(100);
+    report['person-pass-ends-could-go-back'] = contents.navigationHistory.canGoBack();
+    manager.goBackAsPerson(id);
+    await delay(SETTLE_MS);
+    manager.beginTool(id, 'turn-1');
+    await manager.navigateForTool(id, `${base}/redirect-302?to=${encodeURIComponent(`${evil}/landed?via=stale-pass`)}`);
+    await delay(SETTLE_MS);
+    manager.endTool(id);
+  });
+  await record('name-that-does-not-resolve', async (id) => {
+    await manager.navigateAsPerson(id, `http://gone.test:${String(port)}/`);
+    await delay(SETTLE_MS);
+    report['name-that-does-not-resolve-fault'] = manager.state(id).fault ?? null;
+  });
 
   // DNS rebinding, both layers.
   await record('rebind-before-request', async (id) => { await manager.navigateAsPerson(id, `http://rebind.example:${String(port)}/landed`); });

@@ -222,6 +222,8 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     if (pane.stoppedTurnId === turnId) return 'stopped';
     if (!pane.guarded) this.deps.onFirstUse?.(conversationId);
     pane.guarded = true;
+    // The person's pass never carries over to a tool, whatever became of their navigation.
+    pane.personNavigating = false;
     pane.aiTurnId = turnId;
     pane.toolsRunning += 1;
     pane.usedAt = (this.uses += 1);
@@ -272,6 +274,12 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     return this.site(this.pane(conversationId), url);
   }
 
+  /** This site answered from where it must not, on this pane. It stays suspect until the person goes elsewhere. */
+  suspected(conversationId: string, url: string): boolean {
+    const origin = this.pane(conversationId).rebindOrigin;
+    return origin !== undefined && originOf(url) === origin;
+  }
+
   /** A person changed a project's list: every open page of it shows its class now. The guards read the list themselves. */
   sitesChanged(projectId: string, origin: string, action: 'allow' | 'revoke'): void {
     for (const pane of this.panes.values()) {
@@ -307,8 +315,13 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   onBlocked(webContentsId: number | undefined, blocked: { readonly url: string; readonly resourceType: string; readonly reason: BrowserRequestReason }): void {
     const pane = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
     if (!pane || (blocked.resourceType !== 'mainFrame' && blocked.resourceType !== 'subFrame')) return;
-    if (blocked.reason === 'unresolved') return;
-    this.block(pane, blocked.url, blocked.reason === 'rebind-suspected' ? 'rebind-suspected' : 'site-not-allowed');
+    if (blocked.reason !== 'unresolved') {
+      this.block(pane, blocked.url, blocked.reason === 'rebind-suspected' ? 'rebind-suspected' : 'site-not-allowed');
+    } else if (blocked.resourceType === 'mainFrame') {
+      // Nothing was stopped: a name with no address is a server that is not there.
+      pane.fault = 'server-down';
+      this.publish(pane);
+    }
   }
 
   onRebind(webContentsId: number | undefined, origin: string): void {
@@ -456,6 +469,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     });
     contents.on('did-stop-loading', () => {
       pane.loading = false;
+      pane.personNavigating = false;
       this.publish(pane);
     });
     contents.on('did-navigate', (_event, url) => {
@@ -464,7 +478,10 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       this.remember(pane, url);
     });
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (isMainFrame) this.remember(pane, url);
+      if (!isMainFrame) return;
+      // A back or forward inside the document is a navigation that commits nothing: the pass ends here too.
+      pane.personNavigating = false;
+      this.remember(pane, url);
     });
     contents.on('did-fail-load', (_event, code, _text, _url, isMainFrame) => {
       if (!isMainFrame) return;

@@ -55,6 +55,7 @@ function harness(options: Options = {}) {
     classify: vi.fn((_id: string, target: string) => siteOf(target)),
     navigateForTool: vi.fn(async () => ({ isLoading: () => false }) as unknown as Electron.WebContents),
     refuseNavigation: vi.fn(),
+    suspected: vi.fn(() => false),
     state: vi.fn(() => ({ conversationId: 'chat', url, loading: false, canBack: false, canForward: false, ai: 'driving' as const })),
   };
   const agent = options.agent === null ? [] : [{ sessionId: 'chat', state: 'working', currentTurnId: 'turn-1', ...options.agent }];
@@ -381,6 +382,13 @@ describe('the other refusals', () => {
     expect(driver.screenshot).toHaveBeenCalledTimes(30);
     tools.turnEnded('turn-1');
     expect(code(await call('browser_screenshot'))).toBe('ran');
+  });
+
+  it('browser_navigate will not go back to a site that answered from where it must not', async () => {
+    const { call, pages } = harness();
+    vi.mocked(pages.suspected).mockReturnValue(true);
+    expect(code(await call('browser_navigate', { url: ALLOWED }))).toBe('rebind-suspected');
+    expect(pages.navigateForTool).not.toHaveBeenCalled();
   });
 
   it.each(['javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'not a url'])('browser_navigate refuses %s', async (url) => {

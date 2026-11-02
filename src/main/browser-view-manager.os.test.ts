@@ -148,6 +148,16 @@ describe('only a navigation the person made is excepted', () => {
     expect(of('script-anchor-without-input').reached).toEqual([]);
   });
 
+  it('the pass ends with the person\'s navigation, even one that commits nothing', () => {
+    expect(report['person-pass-ends-could-go-back'], 'the back really went').toBe(true);
+    expect(of('person-pass-ends').reached).toEqual([]);
+    expect(of('person-pass-ends').blocked).toBe('site-not-allowed');
+  });
+
+  it('a name that does not resolve reads as a server that is not there', () => {
+    expect(report['name-that-does-not-resolve-fault']).toBe('server-down');
+  });
+
   it('a pane no AI has driven is the person\'s', () => {
     expect(of('never-driven').reached).toEqual(['/landed?via=person-only']);
   });

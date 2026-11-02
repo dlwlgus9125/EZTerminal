@@ -89,6 +89,8 @@ export interface BrowserToolPages {
   classify(conversationId: string, url: string): BrowserSiteClass;
   navigateForTool(conversationId: string, url: string): Promise<Electron.WebContents | undefined>;
   refuseNavigation(conversationId: string, url: string, reason: BrowserRefusal): void;
+  /** This site answered from where it must not, on this pane. */
+  suspected(conversationId: string, url: string): boolean;
   state(conversationId: string): BrowserViewState;
 }
 
@@ -326,6 +328,7 @@ export class BrowserTools {
       this.deps.pages.refuseNavigation(sessionId, url, 'site-not-allowed');
       throw new BrowserRefused('site-not-allowed');
     }
+    if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
     const origin = originOf(url);
     if (this.asks(context, site, origin)) {
       await this.approve(context, turnId, { origin, tool: 'browser_navigate', action: 'navigate', run: { kind: 'navigate', url } }, signal);
