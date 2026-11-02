@@ -1,0 +1,324 @@
+/* The in-app browser in the conversation: a run of its tools, a refused action, the automatic check's byline, the phone's
+ * waiting line and the decision dock's body.
+ *
+ * Shared with Android (WebView 74 floor): no color-mix(), :has(), flexbox `gap`, `inset` shorthand or aspect-ratio;
+ * spacing between flex children uses margins. Colours come only from --ui-* tokens. Full 1px borders only. The warning
+ * (amber) role is the phone's waiting line alone: that one waits on a person. A page's text and pictures sit in their own
+ * inset so the app's words never run into them. */
+
+/* ── A run of browser tools ──────────────────────────────────────────── */
+.chat-browser-run {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body);
+}
+
+.chat-browser-run > .chat-browser-run__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+}
+
+.chat-browser-run__head > * {
+  margin-right: var(--ui-space-2);
+}
+
+.chat-browser-run__head > svg {
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  color: var(--ui-text-muted);
+}
+
+.chat-browser-run__head > strong {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-label);
+  font-weight: 600;
+}
+
+.chat-browser-run__head > code {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.chat-browser-shot {
+  max-width: 22.5rem;
+  margin: var(--ui-space-2) 0 0;
+}
+
+.chat-browser-shot > figcaption {
+  margin-bottom: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-browser-shot > img {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: auto;
+  padding: var(--ui-space-1);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.chat-browser-run__toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-top: var(--ui-space-1);
+  padding: 0 var(--ui-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: none;
+  color: var(--ui-text-secondary);
+  font: inherit;
+  font-size: var(--ui-font-size-xs);
+  cursor: pointer;
+}
+
+.chat-browser-run__toggle:hover {
+  background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
+}
+
+.chat-browser-run__toggle:focus-visible {
+  border-color: var(--ui-focus);
+  box-shadow: var(--ui-focus-ring);
+  outline: none;
+}
+
+.chat-browser-run__toggle[aria-expanded='true'] > .chat-chevron {
+  transform: rotate(90deg);
+}
+
+.chat-browser-run__steps {
+  margin: var(--ui-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-browser-step + .chat-browser-step {
+  margin-top: var(--ui-space-1);
+}
+
+.chat-browser-step > p {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-browser-step time {
+  flex: none;
+  margin-left: var(--ui-space-3);
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-mono);
+}
+
+/* The page's words: its own inset, under the app's line that says whose they are. */
+.chat-browser-page-text {
+  margin: var(--ui-space-1) 0 0;
+}
+
+.chat-browser-page-text > span {
+  display: block;
+  margin-bottom: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-browser-page-text > p {
+  margin: 0;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* ── A refused action ────────────────────────────────────────────────── */
+.chat-browser-blocked {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body);
+}
+
+.chat-browser-blocked[data-tone='danger'] {
+  border-color: var(--ui-danger-border);
+}
+
+.chat-browser-blocked > svg {
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin-top: 0.1875rem;
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-muted);
+}
+
+.chat-browser-blocked[data-tone='danger'] > svg {
+  color: var(--ui-danger);
+}
+
+.chat-browser-blocked > .chat-browser-blocked__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-browser-blocked__text > p {
+  margin: 0;
+}
+
+.chat-browser-blocked__head > strong {
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.chat-browser-blocked__head > code {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.chat-browser-blocked > .chat-link-button {
+  flex: none;
+  margin-left: var(--ui-space-2);
+}
+
+.chat-browser-blocked > time {
+  flex: none;
+  margin-left: var(--ui-space-2);
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* ── CLI ─────────────────────────────────────────────────────────────── */
+.chat-cli-browser .chat-browser-shot {
+  margin-top: 0;
+}
+
+.chat-cli-browser .chat-browser-run__toggle {
+  margin-left: var(--ui-space-3);
+  font-family: var(--ui-font-mono);
+}
+
+.chat-cli-browser .chat-browser-run__steps {
+  margin-left: var(--ui-space-3);
+}
+
+/* ── The automatic check ─────────────────────────────────────────────── */
+.chat-action-card__body > .chat-browser-check__who {
+  margin: 0 0 var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* ── The phone: waiting on the desktop ───────────────────────────────── */
+.chat-browser-waiting {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-warning-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-warning-muted);
+  color: var(--ui-text-primary);
+  font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body);
+}
+
+.chat-browser-waiting > p {
+  margin: 0;
+}
+
+.chat-browser-waiting > .chat-browser-waiting__head {
+  display: flex;
+  align-items: center;
+}
+
+.chat-browser-waiting__head > .ez-ui-led {
+  flex: none;
+  margin-right: var(--ui-space-2);
+}
+
+.chat-browser-waiting__head > strong {
+  font-weight: 600;
+}
+
+.chat-browser-waiting > .chat-browser-waiting__what {
+  margin-top: var(--ui-space-1);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.chat-browser-waiting > .chat-browser-waiting__note {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* ── The decision dock ───────────────────────────────────────────────── */
+.chat-dock__browser > .chat-dock__browser-site {
+  margin: 0 0 var(--ui-space-2);
+}
+
+.chat-dock__browser-site > span {
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+}
+
+.chat-dock__browser-site > code {
+  font-family: var(--ui-font-mono);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.chat-dock__browser > .chat-dock__browser-page {
+  margin: 0 0 var(--ui-space-2);
+}
+
+.chat-dock__browser-page > span {
+  display: block;
+  margin-bottom: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-dock__browser-page > q {
+  display: block;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  quotes: none;
+}
+
+/* ── A phone: every action is a thumb target ─────────────────────────── */
+.structured-agent[data-variant='mobile'] .chat-browser-run__toggle,
+.structured-agent[data-variant='mobile'] .chat-browser-blocked .chat-link-button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}

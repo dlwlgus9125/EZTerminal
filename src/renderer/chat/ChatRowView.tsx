@@ -9,6 +9,7 @@ import {
 import {
   CliActivity, CliAssistant, CliChanges, CliNotice, CliPlan, CliQuestion, CliTodo, CliTurnStatus, CliUser,
 } from './rows/CliRows';
+import { BrowserBlockedRow, BrowserCheckCard, BrowserRunRow, BrowserWaitingRow } from './rows/BrowserRows';
 import { RecapCard } from './rows/RecapCard';
 import { ReviewCard } from './rows/ReviewCard';
 import { TaskSuggestionsCard } from './rows/TaskSuggestionsCard';
@@ -34,6 +35,10 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
       case 'task-suggestions': return <TaskSuggestionsCard row={row} />;
       case 'recap': return <RecapCard row={row} />;
       case 'usage-limit': return <UsageLimitCard row={row} />;
+      case 'browser-run': return <BrowserRunRow row={row} />;
+      case 'browser-blocked': return <BrowserBlockedRow row={row} />;
+      case 'browser-check': return <BrowserCheckCard row={row} />;
+      case 'browser-waiting': return <BrowserWaitingRow row={row} />;
       case 'notice':
       case 'child':
       case 'error': return <CliNotice row={row} />;
@@ -52,6 +57,10 @@ export const ChatRowView = memo(function ChatRowView({ row, providerLabel }: {
     case 'task-suggestions': return <TaskSuggestionsCard row={row} />;
     case 'recap': return <RecapCard row={row} />;
     case 'usage-limit': return <UsageLimitCard row={row} />;
+    case 'browser-run': return <BrowserRunRow row={row} />;
+    case 'browser-blocked': return <BrowserBlockedRow row={row} />;
+    case 'browser-check': return <BrowserCheckCard row={row} />;
+    case 'browser-waiting': return <BrowserWaitingRow row={row} />;
     case 'notice':
     case 'child': return <BubbleNotice row={row} />;
     case 'error': return <BubbleError row={row} />;

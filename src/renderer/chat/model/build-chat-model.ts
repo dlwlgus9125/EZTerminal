@@ -18,6 +18,8 @@ export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
+  /** 시안: rows the browser stories place where a `notice` item sits; there is no payload for these yet. */
+  readonly browserRows?: ReadonlyMap<string, ChatRow>;
   /** This conversation's open limit in the snapshot: where it stands in the line of sends, which no row says. */
   readonly openLimit?: OpenUsageLimit;
 }
@@ -357,7 +359,7 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [], openLimit }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], openLimit, browserRows }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
@@ -602,6 +604,11 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit }:
         break;
       }
       case 'notice': {
+        const placed = browserRows?.get(item.id);
+        if (placed) {
+          push(placed);
+          break;
+        }
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
         if (payload?.type === 'todo') {
           recordTodo(item, [...payload.items]);

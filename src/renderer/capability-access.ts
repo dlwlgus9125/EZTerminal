@@ -5,6 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
+import type { BrowserProjectSites, BrowserSettings } from '../shared/browser';
 import type { LongRunSettings } from '../shared/long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
@@ -301,9 +302,18 @@ export interface CapabilityAccess {
   readonly turnWrapUp?: TurnWrapUpAccess;
   /** Settings › 에이전트 › 이어서 하기, on a host with `long-run-v1`. Optional so test doubles need not supply it. */
   readonly longRun?: LongRunAccess;
+  /** 시안: only the stories pass this; there is no host behind it yet. */
+  readonly browser?: BrowserAccess;
 }
 
 /** The one long-run setting. */
+export interface BrowserAccess {
+  readonly load: () => Promise<{ readonly settings: BrowserSettings; readonly sites: readonly BrowserProjectSites[] }>;
+  readonly save: (settings: BrowserSettings) => Promise<BrowserSettings>;
+  readonly revokeSite: (projectId: string, origin: string) => Promise<readonly BrowserProjectSites[]>;
+  readonly clearData: () => Promise<void>;
+}
+
 export interface LongRunAccess {
   readonly load: () => Promise<LongRunSettings>;
   readonly save: (settings: LongRunSettings) => Promise<LongRunSettings>;

@@ -1,5 +1,6 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
 import type { ChatMessageContext } from '../../../shared/chat-message';
+import type { BrowserActionKind, BrowserRefusal, BrowserSiteClass, BrowserStepKind } from '../../../shared/browser';
 import type { DaemonApproval, DaemonTurn } from '../../../shared/daemon-protocol';
 import type { RecordedFileChange } from '../../../shared/conversation-changes';
 import type { AppSentReason, OpenUsageLimit, SteerLanding } from '../../../shared/long-run';
@@ -138,6 +139,39 @@ export interface ChatReviewTurn {
   readonly focus?: string;
 }
 
+/** A picture of a page the app took and sent to the AI. `thumb`: a small image URL. */
+export interface ChatBrowserShot {
+  readonly thumb: string;
+  readonly takenAt: string;
+}
+
+/** One browser tool call the app ran. `pageText`: what the page said, quoted, never the app's words. */
+export interface ChatBrowserStep {
+  readonly id: string;
+  readonly kind: BrowserStepKind;
+  readonly at: string;
+  readonly pageText?: string;
+}
+
+/** A run of browser tool calls on one site, read from the host's call log: what ran, not what the AI says it saw. */
+export interface ChatBrowserRun {
+  readonly origin: string;
+  readonly site: BrowserSiteClass;
+  readonly steps: readonly ChatBrowserStep[];
+  readonly latestShot?: ChatBrowserShot;
+}
+
+/** The one automatic check after a turn that changed files. `calls` comes from the host's log. */
+export interface ChatBrowserCheck {
+  readonly state: 'running' | 'done' | 'failed';
+  readonly origin: string;
+  readonly providerId: string;
+  /** Browser tool calls in that turn; none means the AI did not look, whatever it says. */
+  readonly calls: { readonly screenshots: number; readonly reads: number };
+  readonly summary?: string;
+  readonly reason?: string;
+}
+
 interface RowBase {
   /** Stable React key. */
   readonly id: string;
@@ -159,7 +193,7 @@ export type ChatRow =
        */
       readonly origin?: 'parent-agent' | 'subagent-report' | 'review-fix' | 'review-request' | 'app-resume';
       /** Why the app sent it (`app-resume`). */
-      readonly appSent?: AppSentReason;
+      readonly appSent?: AppSentReason | 'browser-check';
       /** The person put it into a running turn and it landed here, at its real place. */
       readonly steer?: SteerLanding;
       readonly from?: ChatSubagentLink;
@@ -225,7 +259,12 @@ export type ChatRow =
    * One card per stop, from its latest row, after the last message of the turn that row names. `approvalOpen`: an
    * approval waits now, so a skipped resume says so and leads there.
    */
-  | (RowBase & { readonly kind: 'usage-limit'; readonly turnId: string; readonly limit: OpenUsageLimit; readonly approvalOpen?: boolean });
+  | (RowBase & { readonly kind: 'usage-limit'; readonly turnId: string; readonly limit: OpenUsageLimit; readonly approvalOpen?: boolean })
+  /** The in-app browser: a run of its tools, one line that the app refused an action, the automatic check, and the phone's line for a decision only the desktop can answer. */
+  | (RowBase & { readonly kind: 'browser-run'; readonly run: ChatBrowserRun })
+  | (RowBase & { readonly kind: 'browser-blocked'; readonly origin: string; readonly reason: BrowserRefusal; readonly action?: BrowserActionKind })
+  | (RowBase & { readonly kind: 'browser-check'; readonly check: ChatBrowserCheck })
+  | (RowBase & { readonly kind: 'browser-waiting'; readonly origin: string; readonly action: BrowserActionKind });
 
 export type ChatRowKind = ChatRow['kind'];
 

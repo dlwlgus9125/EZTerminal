@@ -2,6 +2,7 @@ import { Glyph, glyphIcon, type GlyphIcon } from '../../ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
+import { browserActionOf, isBrowserActionRequest, type BrowserActionView } from '../../../shared/browser';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { ACCESS_LEVELS, agentPermissionCopy, type AccessLevel } from '../../agent-permission-copy';
 import { Button } from '../../ui';
@@ -75,6 +76,26 @@ function riskIcon(kind: string | undefined): GlyphIcon {
     case 'plan': return glyphIcon('edit');
     default: return glyphIcon('q');
   }
+}
+
+/**
+ * A browser action on an allowed outside site: the app's facts, then what the page calls the element, set apart. The
+ * name comes from the page, so it reads as the page's words and nothing here vouches for it.
+ */
+function BrowserActionBody({ action }: { readonly action: BrowserActionView }): JSX.Element {
+  const copy = useChatCopy().browser.approval;
+  return (
+    <div className="chat-dock__detail chat-dock__browser" data-testid="chat-dock-browser">
+      <p className="chat-dock__browser-site"><span>{copy.site}</span><code>{action.origin}</code></p>
+      {action.pageElement && (
+        <blockquote className="chat-dock__browser-page">
+          <span>{copy.pageElement}</span>
+          <q>{action.pageElement}</q>
+        </blockquote>
+      )}
+      <p className="chat-dock__meta">{copy.why}</p>
+    </div>
+  );
 }
 
 function FeedbackForm({ label, submitLabel, busy, onSubmit, onCancel }: {
@@ -248,8 +269,9 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   // A settings change the conversation's AI proposed: applied (as the person who presses it) or declined, once.
   const settingsProposal = isSettingsProposalRequest(approval.providerRequestId);
   const proposalView = useSettingsProposal(approval.id);
-  const Icon = settingsProposal ? glyphIcon('set') : riskIcon(request?.kind);
-  const title = settingsProposal ? proposalView?.proposal.title ?? approval.title : dockTitle(pending, copy);
+  const browserAction = isBrowserActionRequest(approval.providerRequestId) ? browserActionOf(request) : undefined;
+  const Icon = browserAction ? glyphIcon('globe') : settingsProposal ? glyphIcon('set') : riskIcon(request?.kind);
+  const title = browserAction ? copy.browser.approval.title[browserAction.action] : settingsProposal ? proposalView?.proposal.title ?? approval.title : dockTitle(pending, copy);
   const resolve = async (decision: 'allow' | 'deny', response?: ApprovalResponse): Promise<void> => {
     if (busy || disabled) return;
     setBusy(true);
@@ -278,6 +300,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   }
 
   const body = (() => {
+    if (browserAction) return <BrowserActionBody action={browserAction} />;
     if (settingsProposal) {
       return (
         <div className="chat-dock__detail" data-testid="chat-dock-settings-proposal">
@@ -319,7 +342,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
           )}
           <p className="chat-dock__title">{title}</p>
           {/* A question or a plan is not an access request; its risk label would mislead. */}
-          {!plan && !question && <p className="chat-dock__risk">{settingsProposal ? copy.approval.settingsRisk : copy.approval.risk[approval.risk]}</p>}
+          {!plan && !question && <p className="chat-dock__risk">{browserAction ? copy.browser.approval.risk : settingsProposal ? copy.approval.settingsRisk : copy.approval.risk[approval.risk]}</p>}
         </div>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>
@@ -359,6 +382,11 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
           {canRespond && canAllowForSession && (request?.kind === 'command' || request?.kind === 'file-change') && (
             <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('allow', { kind: 'session' })} data-testid="chat-dock-allow-session">
               {request.kind === 'file-change' ? copy.approval.allowEditsForSession : copy.approval.allowForSession}
+            </Button>
+          )}
+          {canRespond && browserAction && (
+            <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('allow', { kind: 'session' })} data-testid="chat-dock-allow-site">
+              {copy.browser.approval.allowSite}
             </Button>
           )}
           <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')} data-dock-primary="">

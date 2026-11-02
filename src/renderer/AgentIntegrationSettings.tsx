@@ -10,6 +10,7 @@ import {
 import { rendererCapabilities, type AgentManagementAccess, type CapabilityAccess } from './capability-access';
 import { AgentManagementSettings, agentManagementInputs } from './AgentManagementSettings';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import { BROWSER_CAPABILITY } from '../shared/browser';
 import { LONG_RUN_CAPABILITY } from '../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY } from '../shared/turn-wrap-up';
 import { useAppTranslation } from './i18n';
@@ -20,6 +21,7 @@ import { StructuredProviderSettings } from './StructuredProviderSettings';
 import { ChatAgentCollaborationSettings } from './ChatAgentCollaborationSettings';
 import { TurnWrapUpSettings } from './TurnWrapUpSettings';
 import { LongRunSettings } from './LongRunSettings';
+import { BrowserSettingsSection } from './browser/BrowserSettings';
 
 const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
@@ -320,6 +322,7 @@ export function AgentIntegrationSettings({
       <ChatAgentCollaborationSettings capabilities={capabilities} />
       {capabilities.turnWrapUp && offered.includes(TURN_WRAP_UP_CAPABILITY) && <TurnWrapUpSettings access={capabilities.turnWrapUp} />}
       {capabilities.longRun && offered.includes(LONG_RUN_CAPABILITY) && <LongRunSettings access={capabilities.longRun} />}
+      {capabilities.browser && offered.includes(BROWSER_CAPABILITY) && <BrowserSettingsSection access={capabilities.browser} />}
       <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}

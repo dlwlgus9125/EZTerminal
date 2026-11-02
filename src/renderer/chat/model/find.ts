@@ -36,6 +36,12 @@ export function rowSearchText(row: ChatRow): string {
       return row.recap.text ?? '';
     case 'usage-limit':
       return '';
+    case 'browser-run':
+    case 'browser-blocked':
+    case 'browser-waiting':
+      return row.kind === 'browser-run' ? row.run.origin : row.origin;
+    case 'browser-check':
+      return row.check.summary ?? '';
   }
 }
 

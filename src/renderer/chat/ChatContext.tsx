@@ -5,6 +5,7 @@ import type { SuggestedTaskStart, SuggestedTaskWhere } from '../../shared/turn-w
 import type { ResolveFileLink } from './markdown/file-links';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 import type { ChatLocale } from './model/summary';
+import type { ChatRow } from './model/types';
 
 export type ChatSkin = 'bubble' | 'cli';
 
@@ -39,6 +40,12 @@ export type ChatWrapUpAction =
   | { readonly kind: 'task-retry'; readonly turnId: string; readonly taskId: string; readonly start: SuggestedTaskStart }
   | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
   | { readonly kind: 'recap-retry'; readonly turnId: string };
+
+/** 시안, the in-app browser: rows the stories place, by transcript item, and the way from a row to the pane. */
+export interface ChatBrowserProp {
+  readonly rows?: ReadonlyMap<string, ChatRow>;
+  readonly onOpenPane?: () => void;
+}
 
 /**
  * What the person did on a usage limit card. `limit-try-now` and `limit-resume` send "Continue." now; the first is
@@ -77,6 +84,8 @@ export interface ChatContextValue {
   readonly onWrapUpAction?: (action: ChatWrapUpAction) => void;
   /** 시안: usage limit card actions. Absent: the card is read-only. */
   readonly onLongRunAction?: (action: ChatLongRunAction) => void;
+  /** 시안, the in-app browser: from a row to the pane beside the conversation. */
+  readonly onOpenBrowserPane?: () => void;
   readonly wrapUpPending?: ChatWrapUpPending;
   /** A failed recap can be written again now; absent, its line says why it failed and offers nothing that could only fail. */
   readonly recapRetry?: boolean;
@@ -103,7 +112,7 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({
   children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-  onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision,
+  onReviewAction, onWrapUpAction, onLongRunAction, onOpenBrowserPane, wrapUpPending, recapRetry, taskStart, onFocusDecision,
 }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
@@ -124,10 +133,10 @@ export function ChatProvider({
   // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
   const context = useMemo<ChatContextValue>(() => ({
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, onLongRunAction, onOpenBrowserPane, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   }), [
     skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
-    onReviewAction, onWrapUpAction, onLongRunAction, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
+    onReviewAction, onWrapUpAction, onLongRunAction, onOpenBrowserPane, wrapUpPending, recapRetry, taskStart, onFocusDecision, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }

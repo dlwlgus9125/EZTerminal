@@ -1,7 +1,7 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import type { OpenUsageLimit, SteeredMessage } from '../shared/long-run';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
-import { ChatProvider, type ChatLongRunAction, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
+import { ChatProvider, type ChatBrowserProp, type ChatLongRunAction, type ChatReviewAction, type ChatTaskDefaults, type ChatWrapUpAction, type ChatWrapUpPending } from './chat/ChatContext';
 import { SteerTray } from './chat/long-run/SteerTray';
 import { ChatTranscript } from './chat/ChatTranscript';
 import type { ChatTailDock } from './chat/ChatViewport';
@@ -10,6 +10,7 @@ import type { NextPromptSuggestion } from '../shared/turn-wrap-up';
 import { latestReviewPayload } from './review-commands';
 import { chatCopy, useChatLocale } from './chat/copy';
 import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
+import { isBrowserActionRequest } from '../shared/browser';
 import { proposedPlan, withoutRow } from './chat/model/proposed-plan';
 import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, type AccessLevel } from './agent-permission-copy';
 import { readLastAccess, readPlanAccess, writeLastAccess, writePlanAccess } from './agent-plan-access';
@@ -985,6 +986,8 @@ export interface StructuredAgentTranscriptProps {
   readonly longRun?: { readonly openLimit?: OpenUsageLimit; readonly onAction?: (action: ChatLongRunAction) => void };
   /** The phone: where its next-prompt chip floats, and the scroll room for it. */
   readonly tailDock?: ChatTailDock;
+  /** 시안, the in-app browser: see the panel's `browser`. */
+  readonly browser?: ChatBrowserProp & { readonly phone?: boolean };
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -1030,13 +1033,21 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onFocusDecision,
   longRun,
   tailDock,
+  browser,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
   const openLimit = longRun?.openLimit;
+  const browserRows = browser?.rows;
+  const phoneBrowser = browser?.phone === true;
   const built = useMemo(
-    () => buildChatModel({ items, approvals, ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}) }),
-    [items, approvals, turns, openLimit],
+    () => buildChatModel({
+      items,
+      // A browser action is answered on the desktop: the phone's dock would draw buttons that fail.
+      approvals: phoneBrowser ? approvals.filter((approval) => !isBrowserActionRequest(approval.providerRequestId)) : approvals,
+      ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}), ...(browserRows ? { browserRows } : {}),
+    }),
+    [items, approvals, turns, openLimit, browserRows, phoneBrowser],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -1076,6 +1087,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(onReviewAction ? { onReviewAction } : {})}
       {...(wrapUp?.onAction ? { onWrapUpAction: wrapUp.onAction } : {})}
       {...(longRun?.onAction ? { onLongRunAction: longRun.onAction } : {})}
+      {...(browser?.onOpenPane ? { onOpenBrowserPane: browser.onOpenPane } : {})}
       {...(wrapUp?.pending ? { wrapUpPending: wrapUp.pending } : {})}
       {...(wrapUp?.recapRetry ? { recapRetry: true } : {})}
       {...(wrapUp?.taskStart ? { taskStart: wrapUp.taskStart } : {})}
@@ -2102,6 +2114,8 @@ export interface StructuredAgentSessionPanelProps {
     readonly asks?: boolean;
     readonly limitHint?: boolean;
   };
+  /** 시안, the in-app browser: without it the panel is today's. */
+  readonly browser?: ChatBrowserProp;
   readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
@@ -2269,6 +2283,7 @@ export function StructuredAgentSessionPanel({
   onArchive,
   onDetach,
   variant = 'desktop',
+  browser,
   presentation = 'full',
   compactHeader = false,
   headerLeading,
@@ -3198,6 +3213,7 @@ export function StructuredAgentSessionPanel({
         onFocusDecision={focusDecision}
         {...(longRun ? { longRun: transcriptLongRun } : {})}
         {...(tailDock ? { tailDock } : {})}
+        {...(browser ? { browser: { ...browser, phone: variant === 'mobile' } } : {})}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -3276,7 +3292,7 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || lockedByTurn, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
-          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (variant === 'mobile' && browser && approvals.some((approval) => isBrowserActionRequest(approval.providerRequestId)) ? chatCopy(chatLocale).browser.waiting.hint : full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
           {...(longRunHint ? { statusHint: longRunHint } : {})}
           {...(composerSteer ? { steer: composerSteer } : {})}
           {...(full ? { onFocusDecision: focusDecision } : {})}
