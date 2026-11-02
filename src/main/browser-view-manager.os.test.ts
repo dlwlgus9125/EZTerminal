@@ -405,6 +405,99 @@ describe('what the tools do to a real page, unseen', () => {
   });
 });
 
+describe('an approval holds for what the person saw, and no more', () => {
+  const bound = (name: string): { readonly code: string; readonly facts: Record<string, unknown> } => report[name] as never;
+
+  it.each(['bound-press-unchanged', 'bound-click-unchanged'])('%s runs: nothing moved', (name) => {
+    expect(bound(name).code).toBe('ran');
+  });
+
+  it('a press once the page moved to another page of the same site runs nothing', () => {
+    expect(bound('bound-press-same-origin')).toMatchObject({ code: 'approval-void', facts: { path: '/bound-next', pressed: 0 } });
+  });
+
+  it('a press once the focus moved runs nothing', () => {
+    expect(bound('bound-press-focus')).toMatchObject({ code: 'approval-void', facts: { pressed: 0, second: 0 } });
+  });
+
+  it.each(['bound-click-renamed', 'bound-click-role', 'bound-click-replaced'])('%s: a click on what is no longer what was shown runs nothing', (name) => {
+    expect(bound(name)).toMatchObject({ code: 'approval-void', facts: { clicked: 0 } });
+  });
+
+  it('typing once the page moved runs nothing', () => {
+    expect(bound('bound-type-same-origin').code).toBe('approval-void');
+    expect(bound('bound-type-same-origin').facts.first).toBe('');
+  });
+
+  it('a press once the address changed runs nothing, though the document did not', () => {
+    expect(bound('bound-press-pushed')).toEqual(expect.objectContaining({ code: 'approval-void', facts: expect.objectContaining({ pressed: 0 }) as unknown }));
+  });
+
+  it.each(['bound-click-href', 'bound-click-formaction', 'bound-click-form-action', 'bound-click-disabled'])('%s: what the element would do changed, though what it says did not', (name) => {
+    expect(bound(name)).toEqual(expect.objectContaining({ code: 'approval-void', facts: expect.objectContaining({ clicked: 0 }) as unknown }));
+  });
+
+  it('the same goes for the focused element, under a press', () => {
+    expect(bound('bound-press-focus-attribute')).toEqual(expect.objectContaining({ code: 'approval-void', facts: expect.objectContaining({ pressed: 0 }) as unknown }));
+  });
+
+  it('a key goes on into a frame the host can read', () => {
+    expect(bound('bound-press-readable-frame')).toEqual(expect.objectContaining({ code: 'ran', facts: expect.objectContaining({ pressed: 1 }) as unknown }));
+  });
+
+  it.each(['bound-press-closed-shadow', 'bound-press-foreign-frame'])('%s: a key whose target the host cannot read is void, and nobody is asked', (name) => {
+    expect(bound(name)).toEqual(expect.objectContaining({ code: 'approval-void', asked: 0, facts: expect.objectContaining({ pressed: 0 }) as unknown }));
+  });
+});
+
+describe('what a page left behind', () => {
+  it('no line of an earlier document reads as this one\'s, and this one\'s own lines stay', () => {
+    const lines = report['console-after-leaving'] as readonly string[];
+    expect(lines.join('\n')).not.toContain('EVIL-CONSOLE-WORDS');
+    expect(lines.join('\n')).not.toContain('EVIL-THROWN-WORDS');
+    expect(lines.join('\n')).toContain('LOCAL-CONSOLE-WORDS');
+  });
+
+  it('a frame of a site the AI may not read logs nothing it can read, in the same process', () => {
+    expect(report['console-cousin-frames']).toBe(2);
+    expect((report['console-cousin'] as readonly string[]).join('\n')).not.toContain('COUSIN-CONSOLE-WORDS');
+  });
+
+  it('a screenshot is refused while such a frame is in the page, and says which', () => {
+    expect(report['shot-unread-frame']).toEqual({ reason: 'unread-frame', detail: { unreadFrames: [expect.stringContaining('evil.example')] } });
+    expect(report['shot-after-frame-left']).toBe('captured');
+  });
+});
+
+describe('a site reaches nothing on this PC, allowed or not', () => {
+  const pwned = (name: string): readonly string[] => of(name).all.filter((entry) => entry.startsWith('/pwn'));
+
+  it.each(['external-script-to-local', 'external-meta-to-local', 'external-redirect-to-local', 'external-open-to-local', 'allowed-script-to-local', 'allowed-open-to-local', 'external-frame-moves-top'])('%s: refused, and nothing arrives', (name) => {
+    expect(pwned(name)).toEqual([]);
+  });
+
+  it('nor by what an allowed page pulls in: XHR, WebSocket, image, beacon, frame', () => {
+    expect(pwned('allowed-subresources-to-local')).toEqual([]);
+  });
+
+  it('nor by a redirect on the AI\'s own way to an allowed site', () => {
+    expect(pwned('tool-allowed-redirect-to-local')).toEqual([]);
+    expect(of('tool-allowed-redirect-to-local').all.some((entry) => entry.startsWith('/redirect-302'))).toBe(true);
+  });
+
+  it.each([['person-click-external-to-local', '/person-click'], ['person-bar-external-to-local', '/person-bar'], ['tool-from-allowed-to-local', '/tool-from-allowed']])('%s: not the page\'s doing, so it goes', (name, target) => {
+    expect(of(name).all).toContain(target);
+  });
+});
+
+describe('a socket that answers from where it must not', () => {
+  it.each(['rebind-socket-other', 'rebind-socket-own'])('%s: the site is suspect and the view goes', (name) => {
+    expect(report[`${name}-opened`], 'the handshake really completed').toBe('open');
+    expect(report[`${name}-suspect`]).toBe(true);
+    expect(report[`${name}-ended`]).toBe(true);
+  });
+});
+
 describe('the app\'s own ports', () => {
   it('no resource type reaches them, from a local page or from the person', () => {
     expect(report.controlHits).toBe(0);

@@ -660,7 +660,40 @@ describe('installBrowserPartitionGuards', () => {
       const onRebind = vi.fn();
       installBrowserPartitionGuards(session, host({ onRebind }));
       started(fake, { url: `${ALLOWED}/`, ip: '127.0.0.1', fromCache: false, webContentsId: 3, resourceType: 'mainFrame' });
-      expect(onRebind).toHaveBeenCalledWith(3, ALLOWED);
+      expect(onRebind).toHaveBeenCalledWith(3, ALLOWED, false);
+    });
+
+    describe('a socket, whose response carries no address (measured)', () => {
+      const settled = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
+      const answering = (resolveHost: () => Promise<{ endpoints: readonly { address: string }[] }>) => {
+        const { session, fake } = fakeSession();
+        const onRebind = vi.fn();
+        (session as { resolveHost: unknown }).resolveHost = vi.fn(resolveHost);
+        installBrowserPartitionGuards(session, host({ onRebind }));
+        return { fake, onRebind };
+      };
+
+      it.each([['ws', 'http'], ['wss', 'https']])('%s: a name that now leads here is suspect under its page form, and the page that opened it goes', async (scheme, page) => {
+        const { fake, onRebind } = answering(async () => ({ endpoints: [{ address: '127.0.0.1' }] }));
+        started(fake, { url: `${scheme}://site.example/socket`, fromCache: false, webContentsId: 3 });
+        await settled();
+        expect(onRebind).toHaveBeenCalledWith(3, `${page}://site.example`, true);
+      });
+
+      it('fails closed when the name no longer answers: a failure on cue must not hide it', async () => {
+        const { fake, onRebind } = answering(async () => { throw new Error('net::ERR_NAME_NOT_RESOLVED'); });
+        started(fake, { url: 'ws://site.example/socket', fromCache: false, webContentsId: 3 });
+        await settled();
+        expect(onRebind).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves a public answer and a local server alone', async () => {
+        const { fake, onRebind } = answering(async () => ({ endpoints: [{ address: PUBLIC }] }));
+        started(fake, { url: 'ws://site.example/socket', fromCache: false, webContentsId: 3 });
+        started(fake, { url: 'ws://localhost:5173/hmr', fromCache: false, webContentsId: 3 });
+        await settled();
+        expect(onRebind).not.toHaveBeenCalled();
+      });
     });
 
     it('leaves a local server, a public answer and a cached response alone', () => {

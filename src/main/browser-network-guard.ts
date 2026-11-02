@@ -263,8 +263,11 @@ export interface BrowserNetworkGuardHost {
   /** The app's own listening ports, read per request: some open later. */
   controlPorts(): ReadonlySet<number>;
   onBlocked(webContentsId: number | undefined, blocked: { readonly url: string; readonly resourceType: string; readonly reason: BrowserRequestReason }): void;
-  /** A response arrived from where this site must not be: the second layer. No pane need own it. */
-  onRebind(webContentsId: number | undefined, origin: string): void;
+  /**
+   * A response arrived from where this site must not be: the second layer. No pane need own it. `socket`: what answered stays
+   * open, and stopping a page closes no socket, so the page that opened it goes too.
+   */
+  onRebind(webContentsId: number | undefined, origin: string, socket?: boolean): void;
   /** A page of the person's is on its way: the one road to a suspect site, and it opens before anything of that page can ask. */
   onPersonNavigation(webContentsId: number | undefined, url: string): void;
   onDownloadBlocked(webContentsId: number, url: string): void;
@@ -306,14 +309,23 @@ export function installBrowserPartitionGuards(session: BrowserPartitionSession, 
   session.webRequest.onResponseStarted({ urls: ['<all_urls>'] }, (details) => {
     // `ip` is on this event at runtime (measured) though Electron's types leave it out.
     const { url, ip, fromCache, webContentsId } = details as typeof details & { readonly ip?: string };
-    if (!ip || fromCache) return;
     let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
       return;
     }
-    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || isLocalHostName(parsed.hostname) || isPublicAddress(ip)) return;
-    host.onRebind(webContentsId, parsed.origin);
+    if (isLocalHostName(parsed.hostname)) return;
+    // Measured: a socket's handshake reports no address on any event, so the resolver the connection used is asked again. A name
+    // that turned here and back before this look passes: that is what remains of risk 2 for sockets, and they stay open after it.
+    if (parsed.protocol === 'ws:' || parsed.protocol === 'wss:') {
+      void resolve(hostForResolver(parsed.hostname)).then((addresses) => addresses.length > 0 && addresses.every(isPublicAddress), () => false).then((clean) => {
+        if (!clean) host.onRebind(webContentsId, originOf(url), true);
+      });
+      return;
+    }
+    if (!ip || fromCache) return;
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || isPublicAddress(ip)) return;
+    host.onRebind(webContentsId, originOf(url), false);
   });
 }

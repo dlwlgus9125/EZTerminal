@@ -4,6 +4,7 @@
  * "reached" means is read off the server's own log, never off a page, a tool or a model.
  */
 import { app, BrowserWindow, session, type WebContents } from 'electron';
+import { createHash } from 'node:crypto';
 import { promises as fs, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { BROWSER_PARTITION, type BrowserPickedElement, type BrowserViewState } f
 import { BrowserRefused, parseKeys } from './browser-cdp';
 import type { BrowserPartitionSession } from './browser-network-guard';
 import { BrowserSiteStore } from './browser-site-store';
+import { BrowserTools, type BrowserToolResult } from './browser-tools';
 import { BrowserViewManager } from './browser-view-manager';
 
 const scratch = process.argv[process.argv.indexOf('--scratch') + 1]!;
@@ -75,7 +77,16 @@ function startServer(record: Hit[], respond: (url: URL, response: http.ServerRes
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end('<!doctype html><title>landed</title><p>landed</p>');
   });
-  server.on('upgrade', (request, socket) => { record.push({ host: String(request.headers.host ?? '').split(':')[0]!, path: request.url ?? '', method: 'UPGRADE' }); socket.destroy(); });
+  server.on('upgrade', (request, socket) => {
+    record.push({ host: String(request.headers.host ?? '').split(':')[0]!, path: request.url ?? '', method: 'UPGRADE' });
+    if (!request.url?.startsWith('/ws-accept')) {
+      socket.destroy();
+      return;
+    }
+    // A real handshake: a socket that opens is the case the second layer must see.
+    const accept = createHash('sha1').update(`${String(request.headers['sec-websocket-key'])}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  });
   return new Promise((resolve) => { server.listen(0, '127.0.0.1', () => resolve(server)); });
 }
 
@@ -176,6 +187,26 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
 <div id=cover style="display:none;position:fixed;left:0;top:0;width:100%;height:100%;background:#fff"></div>`);
       case '/counter':
         return html(response, `<!doctype html><title>c</title><body style="margin:0"><button id=go style="position:fixed;left:20px;top:20px;font-size:22px" onclick="window.clicked=(window.clicked||0)+1">go</button>`);
+      // Two pages of one site that read alike, for an approval the page moves under.
+      case '/bound':
+      case '/bound-next':
+        return html(response, `<!doctype html><title>b</title><body style="margin:0">
+<input id=first aria-label=First onkeydown="if(event.key==='Enter')window.pressed=(window.pressed||0)+1">
+<input id=second aria-label=Second onkeydown="if(event.key==='Enter')window.pressedSecond=(window.pressedSecond||0)+1">
+<button id=act style="position:fixed;left:10px;top:100px;font-size:22px" onclick="window.clicked=(window.clicked||0)+1">Save</button>
+<a id=link href="/one" onclick="event.preventDefault();window.clicked=(window.clicked||0)+1" style="position:fixed;left:10px;top:140px;font-size:22px">Go on</a>
+<form id=owner action="/one" onsubmit="event.preventDefault();window.clicked=(window.clicked||0)+1" style="position:fixed;left:10px;top:180px"><button id=send style="font-size:22px">Send</button></form>
+<div id=closed></div>
+<iframe id=frame srcdoc="<input id=inner aria-label=Inner onkeydown=&quot;if(event.key==='Enter')parent.pressed=(parent.pressed||0)+1&quot;>" style="position:fixed;left:10px;top:240px;width:200px;height:50px"></iframe>
+<script>document.getElementById('first').focus();
+const shadow=document.getElementById('closed').attachShadow({mode:'closed'});shadow.innerHTML='<input aria-label=Sealed onkeydown="if(event.key===\\'Enter\\')window.pressed=(window.pressed||0)+1">';window.focusSealed=()=>shadow.querySelector('input').focus();
+${url.searchParams.get('foreign') ? `const f=document.createElement('iframe');f.id='foreign';f.src=${JSON.stringify(url.searchParams.get('foreign')).replaceAll('</', '<\\/')};document.body.append(f);` : ''}</script>`);
+      case '/link-to':
+        return html(response, `<!doctype html><title>l</title><body style="margin:0"><a id=out href="${url.searchParams.get('to') ?? ''}" style="position:fixed;left:10px;top:10px;font-size:22px">out</a>`);
+      case '/frame-moves-top':
+        return html(response, `<!doctype html><title>m</title><body style="margin:0;height:100vh" onclick="top.location=${JSON.stringify(url.searchParams.get('to') ?? '').replaceAll('"', '&quot;')}">frame`);
+      case '/frame-logs':
+        return html(response, '<!doctype html><title>f</title><script>console.log("COUSIN-CONSOLE-WORDS")</script>');
       default: return false;
     }
   });
@@ -191,6 +222,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
 
   // Stands in for a site whose public DNS answer differs from where the connection goes. Everything else is the real resolver.
   const publicNames = new Set(['evil', 'allowed', 'other', 'second', 'later', 'wide', 'clean', 'live', 'visit', 'flip', 'split', 'sub.split', 'a.sw'].map((name) => `${name}.example`));
+  const turning = new Set<string>();
   let secondLayer = false;
   const guardedRequests: string[] = [];
   const partition = session.fromPartition(BROWSER_PARTITION);
@@ -207,9 +239,12 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
         partition.webRequest.onResponseStarted(filter, (details) => { if (secondLayer) listener(details); });
       }) as Electron.WebRequest['onResponseStarted'],
     },
-    resolveHost: (host, options) => (publicNames.has(host)
-      ? Promise.resolve({ endpoints: [{ address: '93.184.216.34', family: 'ipv4' }] })
-      : partition.resolveHost(host, options)),
+    resolveHost: (host, options) => {
+      if (!publicNames.has(host)) return partition.resolveHost(host, options);
+      // One clean answer, then the truth: a name that turns to this PC once it has passed the check before the request.
+      if (turning.delete(host)) publicNames.delete(host);
+      return Promise.resolve({ endpoints: [{ address: '93.184.216.34', family: 'ipv4' }] });
+    },
     setPermissionRequestHandler: partition.setPermissionRequestHandler.bind(partition),
     setPermissionCheckHandler: partition.setPermissionCheckHandler.bind(partition),
     setDevicePermissionHandler: partition.setDevicePermissionHandler.bind(partition),
@@ -378,6 +413,17 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   }, shownPad);
   await record('script-anchor-without-input', scripted('document.getElementById("link").click()'), shownPad);
   await record('never-driven', scripted(`location.href=${JSON.stringify(`${evil}/landed?via=person-only`)}`), (id) => open(id, `${base}/pad`));
+  // A real click out of a site, and one that only a frame of that site heard: real input lands only before the window is minimized below.
+  await record('person-click-external-to-local', async (_id, contents) => personClick(contents, '#out'), (id) => open(id, `${evil}/link-to?to=${encodeURIComponent(`${base}/person-click`)}`, true));
+  await record('external-frame-moves-top', async (_id, contents) => {
+    await delay(SETTLE_MS);
+    const { x, y } = await centre(contents, 'iframe');
+    contents.focus();
+    contents.sendInputEvent({ type: 'mouseMove', x, y });
+    await delay(60);
+    contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  }, (id) => open(id, `${base}/with-cousin?frame=${encodeURIComponent(`${evil}/frame-moves-top?to=${encodeURIComponent(`${base}/pwn-frame-top`)}`)}`, true));
   await record('popup-local-opens-here', scripted(`window.open(${JSON.stringify(`${base}/landed?via=popup`)})`));
 
   // The person's pass ends with their navigation, whatever shape it took: a back that stays in the document commits nothing.
@@ -696,6 +742,9 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     report['tools-chooser'] = { opened: cdp.fileChooserOpened(), url: contents.mainFrame.url.replace(String(port), 'PORT') };
     report['tools-poisoned'] = await js(contents, 'return window.poisoned ?? 0');
     report['tools-console'] = cdp.consoleLines().filter((line) => line.includes('page says') || line.includes('thrown here'));
+    // This page's external frame loaded before the first tool, so a picture of it stays with the person. Without it, the rest.
+    await js(contents, 'document.querySelector(\'iframe[src*="evil.example"]\').remove()');
+    await delay(100);
     const shot = await cdp.screenshot();
     report['tools-shot'] = { width: shot.width, height: shot.height, jpeg: shot.jpegBase64.slice(0, 4) };
     report['tools-thumb'] = { bytes: Buffer.from(shot.thumbBase64 ?? '', 'base64').length, jpeg: shot.thumbBase64?.slice(0, 4), noisy: false };
@@ -728,6 +777,156 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     manager.endTool(id);
     manager.forget(id);
   }
+
+  // Earlier cases left `allowedOrigin` suspect, so these keep to a name of their own.
+  publicNames.add('kept.example');
+  const keptOrigin = siteOn('kept');
+  const allowedBefore = allowed;
+
+  // What a person approved must still be what runs. The real tools on a real page, which moves while they ask.
+  {
+    allowed = [keptOrigin];
+    let whileAsked: ((contents: WebContents) => Promise<void>) | undefined;
+    let held: WebContents | undefined;
+    let current = '';
+    let asked = 0;
+    const tools = new BrowserTools({
+      pages: manager,
+      getSnapshot: () => ({ runtime: { browserEnabled: true }, agents: [{ sessionId: current, state: 'working', currentTurnId: 'turn-bound' }] }) as never,
+      turnAttended: () => true,
+      requestApproval: async () => {
+        asked += 1;
+        await whileAsked?.(held!);
+        await delay(SETTLE_MS);
+        return 'allow';
+      },
+    });
+    const call = (id: string, name: Parameters<BrowserTools['call']>[1], value: unknown): Promise<BrowserToolResult> => tools.call({ sessionId: id, projectId: `project-of-${id}`, permissionPreset: 'standard', turnId: 'turn-bound' }, name, value);
+    const codeOf = (result: BrowserToolResult): string => {
+      const first = result.content[0];
+      return result.isError && first?.type === 'text' ? String((JSON.parse(first.text) as { code?: string }).code) : 'ran';
+    };
+    type Moves = (contents: WebContents) => Promise<unknown>;
+    const bound = async (name: string, tool: 'browser_press' | 'browser_click' | 'browser_type', args: (ref: (label: string) => string) => unknown, moves?: Moves, options: { readonly before?: Moves; readonly query?: string } = {}): Promise<void> => {
+      const id = `pane-${name}`;
+      current = id;
+      const contents = await open(id, `${keptOrigin}/bound${options.query ?? ''}`);
+      held = contents;
+      await delay(100);
+      await options.before?.(contents);
+      const read = await call(id, 'browser_snapshot', {});
+      const words = read.content[0]?.type === 'text' ? read.content[0].text : '';
+      const refOf = (label: string): string => new RegExp(`${label}[^\\[]*\\[ref=(e\\d+)\\]`, 'u').exec(words)?.[1] ?? '';
+      asked = 0;
+      whileAsked = moves ? async (page) => { await moves(page); } : undefined;
+      const answer = await call(id, tool, args(refOf));
+      await delay(150);
+      report[name] = { code: codeOf(answer), asked, facts: await js(contents, 'return {pressed:window.pressed??0,second:window.pressedSecond??0,clicked:window.clicked??0,first:document.getElementById("first").value,path:location.pathname}') };
+      manager.forget(id);
+    };
+    const enter = (): unknown => ({ key: 'Enter' });
+    const click = (label: string) => (ref: (label: string) => string): unknown => ({ ref: ref(label) });
+    await bound('bound-press-unchanged', 'browser_press', enter);
+    await bound('bound-press-same-origin', 'browser_press', enter, (contents) => js(contents, 'location.href="/bound-next"'));
+    await bound('bound-press-focus', 'browser_press', enter, (contents) => js(contents, 'document.getElementById("second").focus()'));
+    await bound('bound-click-unchanged', 'browser_click', click('Save'));
+    await bound('bound-click-renamed', 'browser_click', click('Save'), (contents) => js(contents, 'document.getElementById("act").textContent="Delete everything"'));
+    await bound('bound-click-role', 'browser_click', click('Save'), (contents) => js(contents, 'document.getElementById("act").setAttribute("role","link")'));
+    await bound('bound-click-replaced', 'browser_click', click('Save'), (contents) => js(contents, 'const b=document.getElementById("act");const n=b.cloneNode(true);b.replaceWith(n)'));
+    await bound('bound-type-same-origin', 'browser_type', (ref) => ({ ref: ref('First'), text: 'x' }), (contents) => js(contents, 'location.href="/bound-next"'));
+    // The same document, reading differently: its address, and what the element would do.
+    await bound('bound-press-pushed', 'browser_press', enter, (contents) => js(contents, 'history.pushState(null,"","/bound?to=other")'));
+    await bound('bound-click-href', 'browser_click', click('Go on'), (contents) => js(contents, 'document.getElementById("link").href="/elsewhere"'));
+    await bound('bound-click-formaction', 'browser_click', click('Send'), (contents) => js(contents, 'document.getElementById("send").setAttribute("formaction","/elsewhere")'));
+    await bound('bound-click-form-action', 'browser_click', click('Send'), (contents) => js(contents, 'document.getElementById("owner").setAttribute("action","/elsewhere")'));
+    await bound('bound-click-disabled', 'browser_click', click('Save'), (contents) => js(contents, 'document.getElementById("act").disabled=true'));
+    await bound('bound-press-focus-attribute', 'browser_press', enter, (contents) => js(contents, 'document.getElementById("first").setAttribute("formaction","/elsewhere")'));
+    // Where the keyboard is, when the host cannot read it: no key goes there on a person's say-so.
+    await bound('bound-press-readable-frame', 'browser_press', enter, undefined, { before: (contents) => js(contents, 'const f=document.getElementById("frame");f.contentDocument.getElementById("inner").focus()') });
+    await bound('bound-press-closed-shadow', 'browser_press', enter, undefined, { before: (contents) => js(contents, 'window.focusSealed()') });
+    await bound('bound-press-foreign-frame', 'browser_press', enter, undefined, { query: `?foreign=${encodeURIComponent(`${evil}/landed?via=foreign`)}`, before: async (contents) => { await delay(SETTLE_MS); await js(contents, 'document.getElementById("foreign").focus()'); } });
+  }
+
+  // What a page left behind stays with it: no line of it reads as the next page's, and no capture holds a site the AI may not read.
+  {
+    const id = 'pane-console-left';
+    const contents = await open(id, `${evil}/landed?via=console`);
+    await js(contents, 'console.log("EVIL-CONSOLE-WORDS");setTimeout(()=>{throw new Error("EVIL-THROWN-WORDS")},0)');
+    await delay(150);
+    await manager.navigateAsPerson(id, `${base}/landed?via=after-console`);
+    await delay(SETTLE_MS);
+    await js(contents, 'console.log("LOCAL-CONSOLE-WORDS")');
+    await delay(150);
+    const page = manager.page(id);
+    report['console-after-leaving'] = page.ok ? page.cdp.consoleLines() : page.reason;
+    manager.forget(id);
+  }
+  {
+    const id = 'pane-console-cousin';
+    allowed = [siteOn('split')];
+    await open(id, `${siteOn('split')}/with-cousin?frame=${encodeURIComponent(`${siteOn('sub.split')}/frame-logs`)}`);
+    await delay(SETTLE_MS);
+    const page = manager.page(id);
+    report['console-cousin'] = page.ok ? page.cdp.consoleLines() : page.reason;
+    report['console-cousin-frames'] = page.ok ? page.contents.mainFrame.framesInSubtree.length : 0;
+    manager.forget(id);
+    allowed = [keptOrigin];
+  }
+  {
+    const id = 'pane-shot-frame';
+    const contents = await open(id, `${base}/with-cousin?frame=${encodeURIComponent(`${evil}/frame-text`)}`);
+    await delay(SETTLE_MS);
+    manager.beginTool(id, 'turn-1');
+    const page = manager.page(id);
+    if (!page.ok) throw new Error(page.reason);
+    report['shot-unread-frame'] = await page.cdp.screenshot().then(() => 'captured', (error: unknown) => (error instanceof BrowserRefused ? { reason: error.reason, detail: error.detail } : String(error)));
+    await js(contents, 'document.querySelector("iframe").remove()');
+    await delay(100);
+    report['shot-after-frame-left'] = await page.cdp.screenshot().then(() => 'captured', (error: unknown) => (error instanceof BrowserRefused ? error.reason : String(error)));
+    manager.endTool(id);
+    manager.forget(id);
+  }
+
+  // Allowing a site is not letting it at this PC. A person went to each page here; nothing else came from a person.
+  {
+    const onEvil = (id: string): Promise<WebContents> => open(id, `${evil}/landed?via=start`);
+    const onAllowed = (id: string): Promise<WebContents> => open(id, `${keptOrigin}/landed?via=start`);
+    const out = (name: string): string => `${base}/pwn-${name}`;
+    await record('external-script-to-local', scripted(`location.href=${JSON.stringify(out('script'))}`), onEvil);
+    await record('external-meta-to-local', scripted(`const m=document.createElement('meta');m.httpEquiv='refresh';m.content=${JSON.stringify(`0;url=${out('meta')}`)};document.head.append(m)`), onEvil);
+    await record('external-redirect-to-local', scripted(`location.href=${JSON.stringify(`${evil}/redirect-302?to=${encodeURIComponent(out('redirect'))}`)}`), onEvil);
+    await record('external-open-to-local', scripted(`window.open(${JSON.stringify(out('open'))})`), onEvil);
+    await record('allowed-subresources-to-local', scripted(`const b=${JSON.stringify(base)};fetch(b+'/pwn-fetch',{mode:'no-cors'}).catch(()=>0);const x=new XMLHttpRequest();x.open('GET',b+'/pwn-xhr');x.send();new Image().src=b+'/pwn-img';navigator.sendBeacon(b+'/pwn-beacon','x');new WebSocket(b.replace('http','ws')+'/pwn-ws');const f=document.createElement('iframe');f.src=b+'/pwn-frame';document.body.append(f)`), onAllowed);
+    await record('allowed-script-to-local', scripted(`location.href=${JSON.stringify(out('allowed-script'))}`), onAllowed);
+    await record('allowed-open-to-local', scripted(`window.open(${JSON.stringify(out('allowed-open'))})`), onAllowed);
+    await record('tool-allowed-redirect-to-local', async (id) => {
+      await manager.navigateForTool(id, `${keptOrigin}/redirect-302?to=${encodeURIComponent(out('tool-redirect'))}`);
+    });
+    // The person's own, and the AI's own: neither is the page's.
+    await record('person-bar-external-to-local', async (id) => { await manager.navigateAsPerson(id, `${base}/person-bar`); }, onEvil);
+    await record('tool-from-allowed-to-local', async (id) => {
+      manager.beginTool(id, 'turn-1');
+      await manager.navigateForTool(id, `${base}/tool-from-allowed`);
+      manager.endTool(id);
+    }, onAllowed);
+  }
+
+  // A socket that opens from an address it must not: the name passes the resolver here, and the connection lands on loopback.
+  for (const [name, own] of [['rebind-socket-other', false], ['rebind-socket-own', true]] as const) {
+    const target = own ? 'socket-own' : 'socket-other';
+    publicNames.add(`${target}.example`);
+    await record(name, async (id, contents) => {
+      secondLayer = true;
+      turning.add(`${target}.example`);
+      const socket = `${siteOn(target).replace('http', 'ws')}/ws-accept`;
+      report[`${name}-opened`] = await contents.executeJavaScript(`new Promise((ok)=>{const s=new WebSocket(${JSON.stringify(socket)});window.socket=s;s.onopen=()=>ok('open');s.onerror=()=>ok('error');setTimeout(()=>ok('no answer'),1500)})`, true).catch(() => 'gone');
+      await delay(SETTLE_MS);
+      report[`${name}-suspect`] = manager.suspected(id, `${siteOn(target)}/`);
+      report[`${name}-ended`] = contents.isDestroyed();
+      secondLayer = false;
+    }, (id) => open(id, `${siteOn(own ? target : 'clean')}/landed?via=socket`));
+  }
+  allowed = allowedBefore;
 
   // The app's own ports, from a local page and for the person.
   await record('control-subresources', scripted(`const c=${JSON.stringify(controlBase)};new Image().src=c+'/img';fetch(c+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(c+'/beacon','x');const s=document.createElement('script');s.src=c+'/s.js';document.body.append(s);try{new WebSocket(c.replace('http','ws')+'/ws')}catch{}const f=document.createElement('iframe');f.src=c+'/frame';document.body.append(f)`));

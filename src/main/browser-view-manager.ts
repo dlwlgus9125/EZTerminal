@@ -421,7 +421,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   }
 
   /** The site is in doubt on every pane from here on, and no page of it stays up, a visit of the person's included. */
-  onRebind(webContentsId: number | undefined, origin: string): void {
+  onRebind(webContentsId: number | undefined, origin: string, socket = false): void {
     const owner = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
     if (!this.suspects.has(origin)) {
       this.suspects.add(origin);
@@ -434,7 +434,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       if (pane === owner) contents?.stop();
       if (pane === owner || there) this.block(pane, origin, 'rebind-suspected');
       // Closed, not sent elsewhere: nothing of it runs on, there is no Back into it, and the pane shows the app's own state.
-      if (there) this.teardown(pane, true);
+      if (there || (socket && pane === owner)) this.teardown(pane, true);
     }
   }
 
