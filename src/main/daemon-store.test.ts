@@ -669,6 +669,87 @@ describe('DaemonStore', { timeout: 20_000 }, () => {
     await store.close();
   });
 
+  describe('a browser action\'s typed value', () => {
+    const VALUE = 'typed-value-that-must-not-outlive-its-approval';
+    const browserRequest = { v: 1, kind: 'tool', toolName: 'browser_type', target: 'http://site.example', input: JSON.stringify({ value: VALUE, element: 'textbox "Token"' }) } as const;
+    const held = (id: string, request = browserRequest) => ({
+      id, sessionId: 'session-1', providerRequestId: `browser-action:${id}`, risk: 'write' as const,
+      title: 'browser_type on http://site.example', state: 'pending' as const, request,
+    });
+    const rowOf = (store: DaemonStore, id: string) => store.readPlanningExecution((database) => (
+      database.prepare('SELECT state, title, request_json FROM approvals WHERE id = ?').get(id)
+    ));
+    /** Every file SQLite keeps it in: a nulled column alone stays readable in the page it left and in the write-ahead log. */
+    const onDisk = (directory: string, value: string) => [DAEMON_DATABASE_FILE_NAME, `${DAEMON_DATABASE_FILE_NAME}-wal`]
+      .filter((name) => existsSync(path.join(directory, name)) && readFileSync(path.join(directory, name)).includes(value));
+    async function storeWithSession(directory: string): Promise<DaemonStore> {
+      const store = new DaemonStore(directory);
+      await store.init();
+      await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation()] });
+      return store;
+    }
+
+    it.each(['allowed', 'denied', 'expired'] as const)('is gone from the row and the files once it is %s', async (state) => {
+      const directory = makeDirectory();
+      const store = await storeWithSession(directory);
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: held('a') }] });
+      expect(store.getSnapshot().approvals[0]).toMatchObject({ request: browserRequest });
+
+      // The runtime rebuilds the value without `request` when it resolves, and the row stays for history.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { request: _omitted, ...withoutRequest } = held('a');
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...withoutRequest, state, resolvedAt: FIXED_TIME } }] });
+
+      expect(rowOf(store, 'a')).toMatchObject({ state, title: 'browser_type on http://site.example', request_json: null });
+      expect(onDisk(directory, VALUE)).toEqual([]);
+      await store.close();
+      expect(onDisk(directory, VALUE)).toEqual([]);
+    });
+
+    it('is gone when the row settles as it lands, and when a long value spills past its page', async () => {
+      const directory = makeDirectory();
+      const store = await storeWithSession(directory);
+      const long = `${VALUE}-${'x'.repeat(3_950)}`;
+      const longRequest = { ...browserRequest, input: JSON.stringify({ value: long }) };
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: held('long', longRequest) }] });
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...held('long', longRequest), state: 'expired', resolvedAt: FIXED_TIME } }] });
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...held('settled'), state: 'expired', resolvedAt: FIXED_TIME } }] });
+
+      expect(rowOf(store, 'long')).toMatchObject({ request_json: null });
+      expect(rowOf(store, 'settled')).toMatchObject({ request_json: null });
+      expect(onDisk(directory, VALUE)).toEqual([]);
+      await store.close();
+    });
+
+    // A close moves the log into the main file, so here it is the freed pages that hold the value, past the longest the tool takes.
+    it.each([['short', VALUE], ['long', `${VALUE}-${'x'.repeat(3_950)}`]])('is gone when a restart finds a %s value still waiting', async (_size, value) => {
+      const directory = makeDirectory();
+      const request = { ...browserRequest, input: JSON.stringify({ value }) };
+      const first = await storeWithSession(directory);
+      await first.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: held('a', request) }] });
+      await first.close();
+      expect(onDisk(directory, VALUE)).toEqual([DAEMON_DATABASE_FILE_NAME]);
+
+      const second = new DaemonStore(directory);
+      await second.init();
+      await second.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...held('a', request), state: 'expired', resolvedAt: FIXED_TIME } }] });
+      expect(rowOf(second, 'a')).toMatchObject({ state: 'expired', request_json: null });
+      expect(onDisk(directory, VALUE)).toEqual([]);
+      await second.close();
+    });
+
+    it('leaves a provider\'s approval its request, kept for history', async () => {
+      const directory = makeDirectory();
+      const store = await storeWithSession(directory);
+      const request = { v: 1, kind: 'command', command: 'pnpm test', cwd: 'C:\\repo', callId: 'toolu_1' } as const;
+      const pending = { id: 'provider', sessionId: 'session-1', providerRequestId: 'provider-request', risk: 'danger' as const, title: 'Run command', state: 'pending' as const, request };
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: pending }] });
+      await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...pending, state: 'allowed', resolvedAt: FIXED_TIME } }] });
+      expect(rowOf(store, 'provider')).toMatchObject({ state: 'allowed', request_json: expect.stringContaining('pnpm test') as string });
+      await store.close();
+    });
+  });
+
   it('stores a transcript item even when its payload is malformed', async () => {
     const store = new DaemonStore(makeDirectory());
     await store.init();

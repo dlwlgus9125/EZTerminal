@@ -7,7 +7,7 @@ import { ChatMessageContextSchema } from '../shared/chat-message';
 import { TRANSCRIPT_PAYLOAD_CAPABILITY, TranscriptPayloadSchema, parseTranscriptPayload } from '../shared/transcript-payload';
 import { SETTINGS_PROPOSAL_CAPABILITY } from '../shared/settings-changes';
 import { REVIEW_LOOP_CAPABILITY } from '../shared/review-findings';
-import { BROWSER_CAPABILITY } from '../shared/browser';
+import { BROWSER_CAPABILITY, isBrowserActionRequest } from '../shared/browser';
 import { LONG_RUN_CAPABILITY } from '../shared/long-run';
 import { TURN_WRAP_UP_CAPABILITY } from '../shared/turn-wrap-up';
 
@@ -574,6 +574,7 @@ export class DaemonStore {
   private readonly recovery: DaemonStoreRecovery;
   private readonly maxTranscriptBatchItems: number;
   private readonly maxTranscriptBatchUtf8Bytes: number;
+  private logHoldsScrubbedValue = false;
   private database: DatabaseSync | undefined;
   private initializationFailure: DaemonStoreInitializationError | undefined;
   private state: 'uninitialized' | 'ready' | 'failed' | 'closing' | 'closed' = 'uninitialized';
@@ -807,6 +808,8 @@ export class DaemonStore {
       database.exec('PRAGMA foreign_keys = ON');
       database.exec('PRAGMA journal_mode = WAL');
       database.exec('PRAGMA synchronous = FULL');
+      // Freed cells are zeroed: a value scrubbed from a row must not stay readable in the page it left.
+      database.exec('PRAGMA secure_delete = ON');
       phase = 'migrating';
       this.runMigrations(database);
       phase = 'recovering';
@@ -1214,6 +1217,7 @@ export class DaemonStore {
           WHERE command_id = ? AND state IN ('pending', 'sent')
         `).run(JSON.stringify(receipt), now, now, commandId);
         database.exec('COMMIT');
+        this.truncateLogAfterScrub(database);
         return receipt;
       } catch (error) {
         database.exec('ROLLBACK');
@@ -1379,6 +1383,7 @@ export class DaemonStore {
           'UPDATE runtime_settings SET revision = ?, event_sequence = ?, updated_at = ? WHERE singleton = 1',
         ).run(revision, eventSequence, now);
         database.exec('COMMIT');
+        this.truncateLogAfterScrub(database);
         return { applied: true, revision, eventSequence, value: plan.value };
       } catch (error) {
         database.exec('ROLLBACK');
@@ -1728,6 +1733,17 @@ export class DaemonStore {
     return sequence;
   }
 
+  /** The write-ahead log still holds what the row held, the pending insert included, until it is checkpointed and emptied. */
+  private truncateLogAfterScrub(database: DatabaseSync): void {
+    if (!this.logHoldsScrubbedValue) return;
+    this.logHoldsScrubbedValue = false;
+    try {
+      database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      // The commit stands; the next checkpoint or the close empties the log.
+    }
+  }
+
   private applyMutation(
     database: DatabaseSync,
     mutation: DaemonStoreMutation,
@@ -1882,6 +1898,11 @@ export class DaemonStore {
           value.detail ?? null, value.state, value.resolvedAt ?? null, revision, now, now,
           serializedApprovalRequest(value.request),
         );
+        // What a browser action would have typed ends with the question: the row stays, the value does not.
+        if (value.state !== 'pending' && isBrowserActionRequest(value.providerRequestId)) {
+          database.prepare('UPDATE approvals SET request_json = NULL WHERE id = ?').run(value.id);
+          this.logHoldsScrubbedValue = true;
+        }
         return [
           { kind: 'entity.upserted', payload: { entityType: 'approval', entityId: value.id } },
           { kind: 'approval.changed', payload: { approvalId: value.id, sessionId: value.sessionId } },
