@@ -70,6 +70,8 @@ export interface DaemonCommandRouterOptions {
   readonly steers?: (snapshot: DaemonSnapshot) => DaemonSnapshot['steers'];
   /** Which AIs run long-run continuity now (LongRunCoordinator.support); `long-run-v1`. */
   readonly longRunSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['longRunSupport'];
+  /** Which AIs get the browser tools now; `in-app-browser-v1`. */
+  readonly browserSupport?: (snapshot: DaemonSnapshot) => DaemonSnapshot['browserSupport'];
 }
 
 function commandError(
@@ -199,6 +201,7 @@ export class DaemonCommandRouter {
   private readonly usageLimits: DaemonCommandRouterOptions['usageLimits'];
   private readonly steers: DaemonCommandRouterOptions['steers'];
   private readonly longRunSupport: DaemonCommandRouterOptions['longRunSupport'];
+  private readonly browserSupport: DaemonCommandRouterOptions['browserSupport'];
   private acceptingCommands = true;
 
   constructor(
@@ -216,6 +219,7 @@ export class DaemonCommandRouter {
     this.usageLimits = options.usageLimits;
     this.steers = options.steers;
     this.longRunSupport = options.longRunSupport;
+    this.browserSupport = options.browserSupport;
   }
 
   getSnapshot(): DaemonSnapshot {
@@ -229,6 +233,7 @@ export class DaemonCommandRouter {
     const usageLimits = this.usageLimits?.(snapshot);
     const steers = this.steers?.(snapshot);
     const longRunSupport = this.longRunSupport?.(snapshot);
+    const browserSupport = this.browserSupport?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
@@ -240,6 +245,7 @@ export class DaemonCommandRouter {
       ...(usageLimits ? { usageLimits } : {}),
       ...(steers ? { steers } : {}),
       ...(longRunSupport && Object.keys(longRunSupport).length ? { longRunSupport } : {}),
+      ...(browserSupport && Object.keys(browserSupport).length ? { browserSupport } : {}),
     };
   }
 

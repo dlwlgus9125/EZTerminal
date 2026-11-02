@@ -26,7 +26,6 @@ import {
   BROWSER_ROOT, browserChat, browserFeedSnapshot, LOCAL_ORIGIN, NAVIGATE_URL, OUTSIDE_ORIGIN, SECRET_VALUE, STAGING_ORIGIN,
   type BrowserChatVariant, type BrowserFixture, type BrowserLanguage, type BrowserProvider, type BrowserThumbs,
 } from './browser/browser-fixtures';
-import { chatCopy } from './copy';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import '../index.css';
 import '../structured-agent.css';
@@ -596,8 +595,7 @@ export const ComposerElement: Story = { render: (args) => <ComposerScreen args={
 
 // ── 14, 15. Can't, and went wrong ──────────────────────────────────────────────────────────────────────
 function NotSupportedScreen({ args }: { readonly args: Args }): JSX.Element {
-  const reason = chatCopy(useContext(StoryLocale)).browser.pane.strip.belowFloor('Claude', '2.1.300', '2.1.312');
-  return <Workbench args={args} options={{ strip: { kind: 'unsupported', reason } }} />;
+  return <Workbench args={args} options={{ strip: { kind: 'unsupported', providerId: 'claude', version: '2.1.300', minimum: '2.1.312' } }} />;
 }
 /** D14: the pane works and the tools are off, with the reason. */
 export const AiNotSupported: Story = { render: (args) => <NotSupportedScreen args={args} /> };

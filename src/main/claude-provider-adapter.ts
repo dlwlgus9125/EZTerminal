@@ -95,6 +95,8 @@ export const CLAUDE_REVIEW_MINIMUM_VERSION = '2.1.312';
 export const CLAUDE_WRAP_UP_MINIMUM_VERSION = '2.1.312';
 /** The version a limit's frames and a steer were measured on (`long-run-v1`). */
 export const CLAUDE_LONG_RUN_MINIMUM_VERSION = '2.1.312';
+/** The version the browser tools were measured on (`in-app-browser-v1`). */
+export const CLAUDE_BROWSER_MINIMUM_VERSION = '2.1.312';
 /**
  * The only live switch for suggestions (probe P7): `promptSuggestionEnabled` does nothing though `getSettings`
  * says it did, and `env: null` does not restore them. `'true'` beats the CLI's own stop at its first usage warning
@@ -1209,6 +1211,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   readonly reviewMinimumVersion = CLAUDE_REVIEW_MINIMUM_VERSION;
   readonly wrapUp = { suggestions: 'native', recapWhileBlocked: true, minimumVersion: CLAUDE_WRAP_UP_MINIMUM_VERSION } as const;
   readonly longRun = { minimumVersion: CLAUDE_LONG_RUN_MINIMUM_VERSION } as const;
+  readonly browser = { minimumVersion: CLAUDE_BROWSER_MINIMUM_VERSION } as const;
   readonly providerId = 'claude';
 
   private readonly enablementStore: ClaudeProviderEnablementStore;

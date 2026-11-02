@@ -3014,6 +3014,7 @@ describe('Codex side questions (/btw)', () => {
     const { adapter } = await sideQuestionFixture();
     expect(adapter.wrapUp).toEqual({ suggestions: 'fork', recapWhileBlocked: true, minimumVersion: '0.165.0' });
     expect(adapter.longRun).toEqual({ minimumVersion: '0.165.0' });
+    expect(adapter.browser).toEqual({ minimumVersion: '0.165.0' });
     await adapter.dispose();
   });
 });

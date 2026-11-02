@@ -100,6 +100,17 @@ describe('browserPaneStrip', () => {
     expect(browserPaneStrip(state({ ai: 'driving', waiting: true }))).toEqual({ kind: 'waiting' });
   });
 
+  it('says why the tools are off for this AI, and the pane goes on', () => {
+    const belowFloor = { providerId: 'codex', version: '0.160.0', minimum: '0.165.0' };
+    expect(browserPaneStrip(state({ belowFloor }))).toEqual({ kind: 'unsupported', ...belowFloor });
+    expect(browserPaneBody(state({ belowFloor }))).toEqual({ kind: 'page' });
+  });
+
+  it('puts what stopped something ahead of that reason', () => {
+    const belowFloor = { providerId: 'codex', version: '0.160.0', minimum: '0.165.0' };
+    expect(browserPaneStrip(state({ belowFloor, blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 1 } }))).toEqual({ kind: 'blocked', origin: 'https://evil.example' });
+  });
+
   it('says who is at the page', () => {
     expect(browserPaneStrip(state({ ai: 'driving' }))).toEqual({ kind: 'driving' });
     expect(browserPaneStrip(state({ ai: 'stopped' }))).toEqual({ kind: 'stopped' });
@@ -278,6 +289,17 @@ describe('BrowserPanel', () => {
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-answer"]')!.click(); });
     expect(setActive).toHaveBeenCalledTimes(1);
     expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it('writes the reason out, with the AI\'s name and both versions', async () => {
+    const { capabilities, props, push } = harness();
+    await render(<BrowserPanel {...props} capabilities={capabilities} />);
+    push(state({ belowFloor: { providerId: 'codex', version: '0.160.0', minimum: '0.165.0' } }));
+    await settle();
+    const strip = container.querySelector('[data-testid="browser-strip"]')!.textContent;
+    expect(strip).toContain('Codex');
+    expect(strip).toContain('0.160.0');
+    expect(strip).toContain('0.165.0');
   });
 
   it('asks the host to pick, and to stop, as a person', async () => {

@@ -183,6 +183,29 @@ describe('AgentProviderRegistry', () => {
     expect(at('9.0.0', 'unknown')).toBeUndefined();
   });
 
+  it('gives an AI the browser tools only from the version they were measured on, and only if it declares them', () => {
+    const browser = { minimumVersion: '0.165.0' };
+    const registry = new AgentProviderRegistry([adapter({ browser }), adapter({ providerId: 'plain' })]);
+    const snapshot = (executableVersion: string, providerId = 'codex') => ({ providers: [{ id: providerId, executableVersion }] }) as unknown as Pick<DaemonSnapshot, 'providers'>;
+    const at = (executableVersion: string, providerId = 'codex') => registry.browserCapability(snapshot(executableVersion, providerId), providerId);
+    expect(at('0.164.9')).toBeUndefined();
+    expect(at('0.165.0')).toBe(browser);
+    expect(at('0.166.0')).toBe(browser);
+    expect(at('0.166.0-alpha.1')).toBeUndefined();
+    expect(at('unknown')).toBeUndefined();
+    expect(at('9.0.0', 'plain')).toBeUndefined();
+    expect(at('9.0.0', 'unknown')).toBeUndefined();
+  });
+
+  it('says what a version falls short of, and nothing when the AI has no floor to fall short of', () => {
+    const registry = new AgentProviderRegistry([adapter({ browser: { minimumVersion: '0.165.0' } }), adapter({ providerId: 'plain' })]);
+    const below = (executableVersion: string | undefined, providerId = 'codex') => registry.browserFloor({ providers: [{ id: providerId, ...(executableVersion ? { executableVersion } : {}) }] } as unknown as Pick<DaemonSnapshot, 'providers'>, providerId);
+    expect(below('0.160.0')).toEqual({ version: '0.160.0', minimum: '0.165.0' });
+    expect(below('0.165.0')).toBeUndefined();
+    expect(below(undefined)).toBeUndefined();
+    expect(below('0.160.0', 'plain')).toBeUndefined();
+  });
+
   it('disposes every adapter and reports aggregate failures', async () => {
     const first = adapter({ providerId: 'first', dispose: vi.fn(async () => { throw new Error('first failed'); }) });
     const second = adapter({ providerId: 'second', dispose: vi.fn(async () => { throw new Error('second failed'); }) });

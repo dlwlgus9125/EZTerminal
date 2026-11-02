@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { BROWSER_CAPABILITY } from '../shared/browser';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { LONG_RUN_CAPABILITY } from '../shared/long-run';
 import { DEFAULT_TURN_WRAP_UP_SETTINGS, TURN_WRAP_UP_CAPABILITY } from '../shared/turn-wrap-up';
@@ -36,6 +37,7 @@ async function show(getSnapshot: CapabilityAccess['daemon']['getSnapshot']): Pro
     agentIntegrations: { ...rendererCapabilities.agentIntegrations, load: async () => null },
     turnWrapUp: { load, save: async (settings) => settings },
     longRun: { load: async () => ({ autoResume: true }), save: async (settings) => settings },
+    browser: { load: async () => ({ settings: { enabled: false, autoCheck: false }, sites: [] }), save: async (settings) => settings, revokeSite: async () => [], clearData: async () => undefined },
   };
   await act(async () => {
     root.render(<AppI18nProvider locale="en" languages={['en']}><AgentIntegrationSettings capabilities={capabilities} /></AppI18nProvider>);
@@ -50,6 +52,17 @@ const offering = (capabilities: readonly string[]) => async () => ({
 }) as unknown as DaemonSnapshot;
 
 const longRunSection = (): Element | null => container.querySelector('[data-testid="long-run-settings"]');
+
+describe('Settings › 에이전트 › 내장 브라우저', () => {
+  const browserSection = (): Element | null => container.querySelector('[data-testid="browser-settings"]');
+
+  it('is there on a host that offers the browser, and not on an older one', async () => {
+    await show(offering([BROWSER_CAPABILITY]));
+    expect(browserSection()).not.toBeNull();
+    await show(offering([LONG_RUN_CAPABILITY]));
+    expect(browserSection()).toBeNull();
+  });
+});
 
 describe('Settings › 에이전트 › 이어서 하기', () => {
   it('is there on a host that offers long-run continuity, and each section answers for itself', async () => {

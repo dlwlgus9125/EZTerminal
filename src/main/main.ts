@@ -1040,12 +1040,14 @@ app.on('ready', async () => {
       void daemonRouterRef.current?.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [{ ...item, createdAt: new Date().toISOString() }] }] }).catch(() => undefined);
     },
   });
-  /** Who gets the browser tools at launch: the setting, for a conversation a person sees. Step 17 adds the provider's floor here. */
+  /** Who gets the browser tools at launch: the setting, for a conversation a person sees, on an AI at or above its floor. */
   const browserSessionListed = (sessionId: string): boolean => {
     const router = daemonRouterRef.current;
     if (!router) return false;
     const snapshot = router.getSnapshot();
-    return snapshot.runtime.browserEnabled && wrapUpAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId) });
+    const providerId = snapshot.agents.find((entry) => entry.sessionId === sessionId)?.providerId;
+    return snapshot.runtime.browserEnabled && providerId !== undefined && snapshot.browserSupport?.[providerId] === true
+      && wrapUpAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId) });
   };
   /** Who sent the turn the conversation runs now: undefined between turns, null when it cannot be told. */
   const settingsTurnPrincipal = (snapshot: DaemonSnapshot, sessionId: string): DaemonPrincipal['kind'] | null | undefined => {
@@ -1309,6 +1311,7 @@ app.on('ready', async () => {
     usageLimits: (snapshot) => longRunCoordinator.usageLimits(snapshot),
     steers: (snapshot) => longRunCoordinator.steers(snapshot),
     longRunSupport: (snapshot) => longRunCoordinator.support(snapshot),
+    browserSupport: (snapshot) => Object.fromEntries(snapshot.providers.map((provider) => [provider.id, providerRegistry.browserCapability(snapshot, provider.id) !== undefined])),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -4831,6 +4834,12 @@ app.on('ready', async () => {
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:picked', picked);
     },
     candidates: browserCandidates,
+    belowFloor: (conversationId) => {
+      const snapshot = daemonRouterRef.current?.getSnapshot();
+      const providerId = snapshot?.agents.find((entry) => entry.sessionId === conversationId)?.providerId;
+      const floor = snapshot && providerId ? providerRegistry.browserFloor(snapshot, providerId) : undefined;
+      return floor && providerId ? { providerId, ...floor } : undefined;
+    },
   });
   // A window opened before this line has no later `attach`: every tool would answer no-page.
   if (mainWindowRef) browserView.attach(mainWindowRef);

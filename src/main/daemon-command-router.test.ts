@@ -15,6 +15,19 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
+describe('the browser in the snapshot', () => {
+  it('says which AIs get the tools, and nothing on a host with none to say', async () => {
+    const { router, store } = await runtime({ browserSupport: () => ({ claude: true, codex: false }) });
+    try {
+      expect(router.getSnapshot()).toMatchObject({ browserSupport: { claude: true, codex: false } });
+    } finally { await store.close(); }
+    const empty = await runtime({ browserSupport: () => ({}) });
+    try {
+      expect(empty.router.getSnapshot()).not.toHaveProperty('browserSupport');
+    } finally { await empty.store.close(); }
+  });
+});
+
 describe('long-run state in the snapshot', () => {
   const limit = { stopId: 'stop', turnId: 'turn', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: '2026-11-01T10:00:00.000Z' } as const;
 

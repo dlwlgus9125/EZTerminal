@@ -325,6 +325,8 @@ export interface BrowserViewState {
   readonly picking?: boolean;
   /** An action on this page waits on a person. */
   readonly waiting?: boolean;
+  /** This conversation's AI is older than the tools were measured on: they are off, and the pane is not. */
+  readonly belowFloor?: { readonly providerId: string; readonly version: string; readonly minimum: string };
   /** Who is at the page: `driving`, a tool ran this turn; `stopped`, the person pressed 브라우저만 중지 this turn. */
   readonly ai: 'none' | 'driving' | 'stopped';
   /** The last thing the guards stopped, for the pane bar. `serial` tells one stop from the next, so a closed bar stays closed. */

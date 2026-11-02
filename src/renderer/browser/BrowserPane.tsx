@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefOb
 
 import type { BrowserDevCandidate, BrowserSiteClass } from '../../shared/browser';
 import { useChatCopy, type ChatCopy } from '../chat/copy';
+import { providerName } from '../chat/review/review-presentation';
 import { Button, IconButton } from '../ui';
 import { Glyph, glyphIcon, Led, type GlyphName, type LedTone } from '../ui/Glyph';
 import { VisuallyHidden } from '../ui/VisuallyHidden';
@@ -22,7 +23,7 @@ export type BrowserPaneStrip =
   | { readonly kind: 'blocked'; readonly origin: string }
   | { readonly kind: 'not-read'; readonly origin: string }
   | { readonly kind: 'allowed'; readonly origin: string }
-  | { readonly kind: 'unsupported'; readonly reason: string };
+  | { readonly kind: 'unsupported'; readonly providerId: string; readonly version: string; readonly minimum: string };
 
 export type BrowserPaneBody =
   | { readonly kind: 'empty'; readonly candidates: readonly BrowserDevCandidate[] }
@@ -135,7 +136,7 @@ function stripView(strip: BrowserPaneStrip, copy: ChatCopy['browser']['pane']['s
     case 'allowed':
       return { tone: 'plain', glyph: 'key', title: copy.allowed, detail: copy.allowedDetail, origin: strip.origin, actions: [{ label: copy.dismiss, action: { kind: 'dismiss' }, testId: 'browser-dismiss' }] };
     case 'unsupported':
-      return { tone: 'plain', glyph: 'eyeOff', title: copy.unsupported, detail: `${strip.reason} ${copy.unsupportedDetail}`, actions: [] };
+      return { tone: 'plain', glyph: 'eyeOff', title: copy.unsupported, detail: `${copy.belowFloor(providerName(strip.providerId), strip.version, strip.minimum)} ${copy.unsupportedDetail}`, actions: [] };
   }
 }
 

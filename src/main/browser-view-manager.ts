@@ -115,6 +115,8 @@ export interface BrowserViewManagerDeps {
   readonly onFirstUse?: (conversationId: string) => void;
   /** A person picked an element, on a page the AI may read. */
   readonly onPicked?: (picked: BrowserPickedElement) => void;
+  /** The AI of this conversation is below the tools' floor. */
+  readonly belowFloor?: (conversationId: string) => BrowserViewState['belowFloor'];
   /** Addresses to offer in this conversation's empty pane. */
   readonly candidates?: (conversationId: string) => readonly BrowserDevCandidate[];
   /** The last page of a conversation, for the pane after a restart. */
@@ -713,10 +715,12 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const url = pane.lastUrl;
     const ai = pane.aiTurnId !== undefined ? 'driving' : pane.stoppedTurnId !== undefined ? 'stopped' : 'none';
     const candidates = this.deps.candidates?.(pane.conversationId) ?? [];
+    const belowFloor = this.deps.belowFloor?.(pane.conversationId);
     return {
       conversationId: pane.conversationId,
       url,
       ...(candidates.length > 0 ? { candidates } : {}),
+      ...(belowFloor ? { belowFloor } : {}),
       ...(pane.picking ? { picking: true } : {}),
       ...(pane.waiting ? { waiting: true } : {}),
       // Always the current URL's class, never the last action's.

@@ -54,6 +54,7 @@ export function browserPaneStrip(state: BrowserViewState | null, dismissed?: { r
   if (state.waiting) return { kind: 'waiting' };
   if (state.ai === 'driving') return { kind: 'driving' };
   if (state.ai === 'stopped') return { kind: 'stopped' };
+  if (state.belowFloor) return { kind: 'unsupported', ...state.belowFloor };
   // Always the current URL's class: an external page is one the AI does not read.
   const origin = originOf(state.url);
   if (state.site === 'external' && state.url && allowableOrigin(origin)) return { kind: 'not-read', origin };

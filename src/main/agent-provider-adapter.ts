@@ -364,6 +364,11 @@ export interface AgentProviderAdapter {
    * absent. Read it through `AgentProviderRegistry.longRunCapability`. Absent: this provider does not run it.
    */
   readonly longRun?: { readonly minimumVersion: string };
+  /**
+   * `in-app-browser-v1`. `minimumVersion`: the version the tools were measured on; below it the pane still works and the
+   * AI's tools are not listed. Read it through `AgentProviderRegistry.browserCapability`. Absent: this provider has none.
+   */
+  readonly browser?: { readonly minimumVersion: string };
   /** Where the limit stands when a stop's own frames named no reset. Undefined when it cannot be told. Never rejects. */
   recoverLimit?(sessionId: string, providerSessionId: string): Promise<UsageLimitReading | undefined>;
   /** Live switch for `native` suggestions; a session not launched eligible ignores it. Never rejects. */

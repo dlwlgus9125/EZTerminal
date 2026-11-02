@@ -72,6 +72,8 @@ export const CODEX_REVIEW_MINIMUM_VERSION = '0.165.0';
 export const CODEX_WRAP_UP_MINIMUM_VERSION = '0.165.0';
 /** The version a limit's frames and `turn/steer` were measured on (`long-run-v1`). */
 export const CODEX_LONG_RUN_MINIMUM_VERSION = '0.165.0';
+/** The version the browser tools were measured on (`in-app-browser-v1`). */
+export const CODEX_BROWSER_MINIMUM_VERSION = '0.165.0';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 /** Opening tabs and starting conversations ask Codex for the plan limits at most this often. */
@@ -978,6 +980,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly reviewMinimumVersion = CODEX_REVIEW_MINIMUM_VERSION;
   readonly wrapUp = { suggestions: 'fork', recapWhileBlocked: true, minimumVersion: CODEX_WRAP_UP_MINIMUM_VERSION } as const;
   readonly longRun = { minimumVersion: CODEX_LONG_RUN_MINIMUM_VERSION } as const;
+  readonly browser = { minimumVersion: CODEX_BROWSER_MINIMUM_VERSION } as const;
 
   private readonly toldThreads: CodexToldThreads;
   private readonly executable: string;

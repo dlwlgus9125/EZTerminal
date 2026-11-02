@@ -2379,6 +2379,7 @@ describe('Claude turn wrap-up', () => {
   it('declares how it wraps up: its own suggestions, and recaps while a turn is stopped', () => {
     expect(makeAdapter().adapter.wrapUp).toEqual({ suggestions: 'native', recapWhileBlocked: true, minimumVersion: '2.1.312' });
     expect(makeAdapter().adapter.longRun).toEqual({ minimumVersion: '2.1.312' });
+    expect(makeAdapter().adapter.browser).toEqual({ minimumVersion: '2.1.312' });
   });
 });
 

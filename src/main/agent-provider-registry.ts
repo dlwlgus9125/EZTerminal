@@ -283,6 +283,24 @@ export class AgentProviderRegistry {
     return capability;
   }
 
+  /** Whether this provider gets the browser tools (`in-app-browser-v1`). Undefined when it does not, or is older than they were measured on. */
+  browserCapability(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): AgentProviderAdapter['browser'] {
+    const capability = this.adapters.get(providerId)?.browser;
+    const provider = snapshot.providers.find((candidate) => candidate.id === providerId);
+    if (!capability || !provider) return undefined;
+    const version = semanticVersion(provider.executableVersion);
+    const minimum = semanticVersion(capability.minimumVersion);
+    if (!version || !minimum || version.prerelease !== undefined || compareSemanticVersions(version, minimum) < 0) return undefined;
+    return capability;
+  }
+
+  /** What an AI's version falls short of, for the pane to say so. Undefined when it meets the floor, or nothing can be said. */
+  browserFloor(snapshot: Pick<DaemonSnapshot, 'providers'>, providerId: string): { readonly version: string; readonly minimum: string } | undefined {
+    const floor = this.adapters.get(providerId)?.browser;
+    const version = snapshot.providers.find((candidate) => candidate.id === providerId)?.executableVersion;
+    return floor && version && !this.browserCapability(snapshot, providerId) ? { version, minimum: floor.minimumVersion } : undefined;
+  }
+
   async listModels(
     snapshot: Pick<DaemonSnapshot, 'providers'>,
     providerId: string,
