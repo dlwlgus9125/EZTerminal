@@ -869,7 +869,7 @@ export const SettingsLongRun: Story = {
   play: async ({ canvasElement }) => {
     const toggle = await showSwitch(canvasElement);
     const section = within(canvasElement).getByTestId('long-run-settings');
-    await expect(section).toHaveTextContent('사람이 누르지 않아도 메시지가 나가는 유일한 곳입니다.');
+    await expect(section).toHaveTextContent('사람이 누르지 않아도 메시지가 나갑니다.');
     await expect(section).toHaveTextContent('앱이 그 대화에 "Continue."를 보냅니다.');
     await expect(section).toHaveTextContent('사람이 보낸 최상위 대화에만, 해제 예정 시각을 알고 6시간 안인 한도에만');
     await expect(section).toHaveTextContent('주간 한도, 더 먼 시각, 시각을 모르는 한도는 먼저 묻습니다.');

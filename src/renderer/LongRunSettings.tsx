@@ -45,7 +45,7 @@ function LongRunSwitch({ access }: { readonly access: LongRunAccess }): JSX.Elem
 
 /**
  * Settings › 에이전트 › 이어서 하기, right after 턴 마무리 (D9). Not inside it: that section promises nothing goes
- * out until the person presses a button, and this switch is the one thing that does.
+ * out until the person presses a button, and this switch sends one without a press.
  */
 export function LongRunSettings({ access }: { readonly access: LongRunAccess }): JSX.Element {
   const { i18n } = useAppTranslation();
@@ -56,8 +56,8 @@ export function LongRunSettings({ access }: { readonly access: LongRunAccess }):
       <div>
         <h2 className="status-section-title" id={titleId}>{ko ? '이어서 하기' : 'Continuing'}</h2>
         <p className="settings-hint">{ko
-          ? '사용량 한도로 멈춘 턴을 앱이 이어서 합니다. 사람이 누르지 않아도 메시지가 나가는 유일한 곳입니다.'
-          : 'The app continues a turn that stopped at a usage limit. This is the one place a message goes out without a press.'}</p>
+          ? '사용량 한도로 멈춘 턴을 앱이 이어서 합니다. 사람이 누르지 않아도 메시지가 나갑니다.'
+          : 'The app continues a turn that stopped at a usage limit. A message goes out without a press.'}</p>
       </div>
       <LongRunSwitch access={access} />
     </section>

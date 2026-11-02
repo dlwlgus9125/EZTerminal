@@ -60,6 +60,11 @@ describe('long-run wording', () => {
     expect(`${en.behind.codexTool} ${en.hint.codex} ${en.hintMobile.codex}`).not.toMatch(/tool ends/iu);
   });
 
+  it('does not call itself the one place a message goes out: the automatic screen check is another', () => {
+    expect(settings).not.toContain('유일한');
+    expect(settings).not.toMatch(/the one (?:place|thing)/iu);
+  });
+
   it('says the 6-hour rule in Settings too, and what turning it off does', () => {
     expect(settings).toContain('6시간');
     expect(settings).toContain('6 hours');
