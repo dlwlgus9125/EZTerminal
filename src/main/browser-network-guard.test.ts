@@ -22,7 +22,7 @@ const CONTROL_PORT = 4100;
 const ALLOWED = 'https://staging.cart-kit.example';
 
 function policy(patch: Partial<BrowserViewPolicy> = {}): BrowserViewPolicy {
-  return { guarded: true, personNavigating: false, topUrl: 'http://localhost:5173/', topExternal: false, allowedOrigins: [ALLOWED], roots: [], ...patch };
+  return { guarded: true, personNavigating: false, topUrl: 'http://localhost:5173/', topExternal: false, allowedOrigins: [ALLOWED], roots: [], suspectOrigins: new Set(), ...patch };
 }
 
 function environment(answers: Readonly<Record<string, readonly string[]>> = {}) {
@@ -160,6 +160,29 @@ describe('requestVerdict: every request, whoever made it', () => {
     });
   });
 
+  describe('a site that answered from where it must not', () => {
+    const suspect = { suspectOrigins: new Set([ALLOWED]) };
+    const env = () => environment({ 'staging.cart-kit.example': [PUBLIC] });
+
+    it('is refused as a page and as a frame, however clean its name resolves now', async () => {
+      expect(await requestVerdict(request(`${ALLOWED}/`), policy(suspect), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
+      expect(await requestVerdict(request(`${ALLOWED}/`, 'subFrame'), policy(suspect), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
+    });
+
+    it('is refused on a pane no AI has driven too', async () => {
+      expect(await requestVerdict(request(`${ALLOWED}/`), policy({ ...suspect, guarded: false }), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
+    });
+
+    it('excepts the person\'s own navigation, for the top page only', async () => {
+      expect(await requestVerdict(request(`${ALLOWED}/`), policy({ ...suspect, personNavigating: true }), env())).toEqual({ cancel: false });
+      expect(await requestVerdict(request(`${ALLOWED}/`, 'subFrame'), policy({ ...suspect, personNavigating: true }), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
+    });
+
+    it('leaves another origin of the same name alone', async () => {
+      expect(await requestVerdict(request('https://staging.cart-kit.example:8443/', 'subFrame'), policy({ ...suspect, guarded: false }), env())).toEqual({ cancel: false });
+    });
+  });
+
   it('leaves a pane no AI has driven to the person', async () => {
     const env = environment({ 'evil.example': [PUBLIC] });
     expect(await requestVerdict(request('http://evil.example/'), policy({ guarded: false }), env)).toEqual({ cancel: false });
@@ -217,6 +240,34 @@ describe('navigationRefusal: the view\'s own hooks, first', () => {
 
   it.each(['javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'view-source:http://localhost/', 'about:config'])('never lets a top page be %s', (url) => {
     expect(navigationRefusal(url, 'top', policy({ guarded: false }), ports, true)).toBe('site-not-allowed');
+  });
+
+  describe('a site that answered from where it must not', () => {
+    const suspect = policy({ suspectOrigins: new Set([ALLOWED]) });
+
+    it('is refused for a page and a frame, though the list still allows it', () => {
+      expect(navigationRefusal(`${ALLOWED}/cart`, 'top', suspect, ports, false)).toBe('rebind-suspected');
+      expect(navigationRefusal(`${ALLOWED}/cart`, 'sub', suspect, ports, false)).toBe('rebind-suspected');
+    });
+
+    it('is refused as a blob made from it', () => {
+      expect(navigationRefusal(`blob:${ALLOWED}/9e4c`, 'top', suspect, ports, false)).toBe('rebind-suspected');
+    });
+
+    it('is refused on a pane no AI has driven too', () => {
+      expect(navigationRefusal(`${ALLOWED}/cart`, 'top', { ...suspect, guarded: false }, ports, false)).toBe('rebind-suspected');
+    });
+
+    it('excepts the person\'s own navigation, for the top page only', () => {
+      expect(navigationRefusal(`${ALLOWED}/cart`, 'top', suspect, ports, true)).toBeUndefined();
+      expect(navigationRefusal(`${ALLOWED}/cart`, 'sub', suspect, ports, true)).toBe('rebind-suspected');
+    });
+
+    it('holds for each suspect, not only the latest', () => {
+      const two = policy({ suspectOrigins: new Set([ALLOWED, 'https://other.example']) });
+      expect(navigationRefusal(`${ALLOWED}/`, 'top', two, ports, false)).toBe('rebind-suspected');
+      expect(navigationRefusal('https://other.example/', 'sub', two, ports, false)).toBe('rebind-suspected');
+    });
   });
 
   it('leaves a pane no AI has driven to the person', () => {

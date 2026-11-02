@@ -334,6 +334,7 @@ export class BrowserTools {
       await this.approve(context, turnId, { origin, tool: 'browser_navigate', action: 'navigate', run: { kind: 'navigate', url } }, signal);
       // The wait can outlast a revoke: the same question again, at the moment it counts.
       if (this.deps.pages.classify(sessionId, url) === 'external') throw new BrowserRefused('site-not-allowed');
+      if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
     }
     const contents = await this.deps.pages.navigateForTool(sessionId, url);
     if (!contents) throw new BrowserRefused('no-page');

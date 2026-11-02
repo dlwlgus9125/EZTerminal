@@ -190,6 +190,28 @@ describe('DNS rebinding', () => {
     expect(report['rebind-later-page']).toBe('rebind-suspected');
   });
 
+  describe('a suspect site is out of reach by every road', () => {
+    it.each(['suspect-script', 'suspect-redirect', 'suspect-click', 'suspect-iframe', 'suspect-window-open'])('%s', (name) => {
+      expect(of(name).reached).toEqual([]);
+      expect(of(name).blocked).toBe('rebind-suspected');
+      expect(of(name).url).toContain('/pad');
+    });
+
+    it('except the person going to it, which ends the suspicion of that site', () => {
+      expect(of('suspect-person').reached).toEqual(['/landed?via=suspect-person']);
+      expect(report['suspect-person-cleared']).toBe(true);
+    });
+
+    it('every suspect stays one: a second cannot overwrite the first', () => {
+      expect(report['suspects-page']).toBe('rebind-suspected');
+      expect(report['suspects-both']).toEqual([true, true]);
+    });
+
+    it('going elsewhere, or closing the pane, ends nothing', () => {
+      expect(report['suspect-outlives']).toBe(true);
+    });
+  });
+
   it('an allowed site with a public answer loads, its own frames too', () => {
     expect(report['allowed-loads-site']).toBe('allowed');
     expect(of('allowed-loads').reached).toEqual(['/with-frames', '/landed?via=own-frame']);

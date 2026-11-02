@@ -77,6 +77,8 @@ export interface BrowserViewPolicy {
   readonly allowedOrigins: readonly string[];
   /** Real paths (`realRoots`). */
   readonly roots: readonly string[];
+  /** Sites that answered from where they must not. Out of reach as a page or a frame, whatever the list says, until a person goes there. */
+  readonly suspectOrigins: ReadonlySet<string>;
 }
 
 export type BrowserRequestReason = 'site-not-allowed' | 'rebind-suspected' | 'control-port' | 'file-outside' | 'unresolved';
@@ -97,6 +99,15 @@ function sameOrigin(left: string, right: string): boolean {
     return new URL(left).origin === new URL(right).origin;
   } catch {
     return false;
+  }
+}
+
+/** A `blob:` has the origin of the page that made it. */
+export function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
   }
 }
 
@@ -125,6 +136,8 @@ export async function requestVerdict(
   const top = resourceType === 'mainFrame';
   if (isLocalHostName(parsed.hostname)) return policy?.topExternal === true && !top ? refuse('site-not-allowed') : PASS;
   if (!policy) return refuse('site-not-allowed');
+  // Before the resolver: a clean answer now says nothing about the address it answered from before.
+  if ((top ? !policy.personNavigating : resourceType === 'subFrame') && policy.suspectOrigins.has(parsed.origin)) return refuse('rebind-suspected');
 
   let addresses: readonly string[];
   try {
@@ -147,7 +160,8 @@ const TOP_PAGE = /^(?:https?:|file:|blob:|about:blank$|about:srcdoc$)/iu;
 /**
  * Whether a view's own navigation hooks stop this navigation, and why. These run first: a stopped navigation leaves the
  * page where it was, where a cancelled request would commit an error page at the banned URL. `personMade` is the only
- * exception, and only for an external top page: the page then stays unread by the AI because its class says so.
+ * exception, and only for a top page: the page then stays unread by the AI because its class says so. A suspect site is
+ * refused on any pane, guarded or not: it is the site that is in doubt, not who is at the page.
  */
 export function navigationRefusal(
   url: string,
@@ -155,10 +169,11 @@ export function navigationRefusal(
   policy: BrowserViewPolicy,
   controlPorts: ReadonlySet<number>,
   personMade: boolean,
-): 'site-not-allowed' | undefined {
+): 'site-not-allowed' | 'rebind-suspected' | undefined {
   if (frame === 'top' && !TOP_PAGE.test(url)) return 'site-not-allowed';
   if (isControlPortUrl(url, controlPorts)) return 'site-not-allowed';
   if (/^file:/iu.test(url) && !fileInsideRoots(url, policy.roots)) return 'site-not-allowed';
+  if (!(frame === 'top' && personMade) && policy.suspectOrigins.has(originOf(url))) return 'rebind-suspected';
   if (!policy.guarded) return undefined;
   if (siteClass(url, policy.allowedOrigins, { creator: policy.topUrl, controlPorts }) !== 'external') return undefined;
   return (frame === 'top' ? personMade : sameOrigin(url, policy.topUrl)) ? undefined : 'site-not-allowed';

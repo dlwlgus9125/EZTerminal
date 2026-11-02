@@ -115,10 +115,11 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   const base = `http://127.0.0.1:${String(port)}`;
   const evil = `http://evil.example:${String(port)}`;
   const allowedOrigin = `http://allowed.example:${String(port)}`;
+  const otherOrigin = `http://other.example:${String(port)}`;
   const controlBase = `http://127.0.0.1:${String(controlPort)}`;
 
   // Stands in for a site whose public DNS answer differs from where the connection goes. Everything else is the real resolver.
-  const publicNames = new Set(['evil.example', 'allowed.example']);
+  const publicNames = new Set(['evil.example', 'allowed.example', 'other.example']);
   let secondLayer = false;
   const partition = session.fromPartition(BROWSER_PARTITION);
   const wrapped: BrowserPartitionSession = {
@@ -347,6 +348,51 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     report['rebind-later-page'] = page.ok ? page.site : page.reason;
     secondLayer = false;
   }, (id) => open(id, `${allowedOrigin}/landed?via=up`));
+
+  // A suspect site is out of reach by every road, not only the tool's own, and stays so until the person goes to it.
+  allowed = [allowedOrigin, otherOrigin];
+  const suspectPad = async (id: string): Promise<WebContents> => {
+    const contents = await drivenPad(id);
+    manager.onRebind(contents.id, allowedOrigin);
+    await delay(50);
+    return contents;
+  };
+  const toSuspect = (via: string): string => `${allowedOrigin}/landed?via=${via}`;
+  await record('suspect-script', scripted(`location.href=${JSON.stringify(toSuspect('suspect-script'))}`), suspectPad);
+  await record('suspect-redirect', async (id) => {
+    manager.beginTool(id, 'turn-1');
+    await manager.navigateForTool(id, `${base}/redirect-302?to=${encodeURIComponent(toSuspect('suspect-redirect'))}`);
+    await delay(SETTLE_MS);
+    manager.endTool(id);
+  }, suspectPad);
+  await record('suspect-click', async (id, contents) => {
+    await js(contents, `const a=document.createElement('a');a.id='to-suspect';a.href=${JSON.stringify(toSuspect('suspect-click'))};a.textContent='go';a.style='position:fixed;left:10px;top:300px;font-size:22px';document.body.append(a)`);
+    manager.beginTool(id, 'turn-1');
+    await toolClick(contents, '#to-suspect');
+    manager.endTool(id);
+  }, suspectPad);
+  await record('suspect-iframe', scripted(`const f=document.createElement('iframe');f.src=${JSON.stringify(toSuspect('suspect-iframe'))};document.body.append(f)`), suspectPad);
+  await record('suspect-window-open', scripted(`window.open(${JSON.stringify(toSuspect('suspect-window-open'))})`), suspectPad);
+  await record('suspect-person', async (id) => {
+    await manager.navigateAsPerson(id, toSuspect('suspect-person'));
+    await delay(SETTLE_MS);
+    report['suspect-person-cleared'] = !manager.suspected(id, toSuspect('x'));
+  }, suspectPad);
+  await record('suspects-accumulate', async (id, contents) => {
+    manager.onRebind(contents.id, allowedOrigin);
+    manager.onRebind(contents.id, otherOrigin);
+    const page = manager.page(id);
+    report['suspects-page'] = page.ok ? page.site : page.reason;
+    report['suspects-both'] = [manager.suspected(id, `${allowedOrigin}/a`), manager.suspected(id, `${otherOrigin}/b`)];
+  }, (id) => open(id, `${allowedOrigin}/landed?via=two`));
+  await record('suspect-outlives-elsewhere', async (id) => {
+    await manager.navigateAsPerson(id, `${base}/landed?via=elsewhere`);
+    await delay(SETTLE_MS);
+    await manager.navigateAsPerson(id, `${otherOrigin}/landed?via=other-site`);
+    await delay(SETTLE_MS);
+    manager.close(id);
+    report['suspect-outlives'] = manager.suspected(id, toSuspect('x'));
+  }, suspectPad);
   allowed = [];
 
   // A tool's input reaches a pane no one has ever seen, with the app minimized too.

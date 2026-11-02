@@ -306,6 +306,18 @@ describe('approval', () => {
       expect(h.driver.click).not.toHaveBeenCalled();
     });
 
+    it('the site turned suspect before a navigation', async () => {
+      const h = during(({ pages }) => { vi.mocked(pages.suspected).mockReturnValue(true); });
+      expect(code(await h.call('browser_navigate', { url: ALLOWED }))).toBe('rebind-suspected');
+      expect(h.pages.navigateForTool).not.toHaveBeenCalled();
+    });
+
+    it('the site turned suspect before an action', async () => {
+      const h = during(({ live }) => { live.current = { ok: false, reason: 'rebind-suspected' }; });
+      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('rebind-suspected');
+      expect(h.driver.click).not.toHaveBeenCalled();
+    });
+
     it('the site was revoked before a navigation', async () => {
       const h = during(({ pages }) => { vi.mocked(pages.classify).mockReturnValue('external'); });
       expect(code(await h.call('browser_navigate', { url: ALLOWED }))).toBe('site-not-allowed');

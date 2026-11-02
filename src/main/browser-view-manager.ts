@@ -6,6 +6,7 @@ import {
   fileInsideRoots,
   installBrowserPartitionGuards,
   navigationRefusal,
+  originOf as guardOrigin,
   realRoots,
   type BrowserNetworkGuardHost,
   type BrowserPartitionSession,
@@ -63,8 +64,8 @@ interface Pane {
   aiTurnId?: string;
   /** The person pressed 브라우저만 중지 during this turn: its tools are refused until it ends. */
   stoppedTurnId?: string;
-  /** This site answered from where it must not; tools refuse it until the person goes elsewhere. */
-  rebindOrigin?: string;
+  /** Sites that answered from where they must not. A set: a second must not overwrite the first. Only the person going to one clears it. */
+  readonly suspects: Set<string>;
   blocked?: BrowserViewState['blocked'];
   /** The site the person allowed from this pane, until something else happens to it. */
   allowedNow?: string;
@@ -172,7 +173,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const pane = this.pane(conversationId);
     const contents = await this.readyView(pane);
     if (!contents) return false;
-    delete pane.rebindOrigin;
+    pane.suspects.delete(guardOrigin(url));
     delete pane.blocked;
     delete pane.fault;
     pane.personNavigating = true;
@@ -254,7 +255,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     if (!contents || !pane.cdp) return { ok: false, reason: 'no-page' };
     const url = contents.mainFrame.url;
     if (!url || url === 'about:blank') return { ok: false, reason: 'no-page' };
-    if (pane.rebindOrigin !== undefined && originOf(url) === pane.rebindOrigin) return { ok: false, reason: 'rebind-suspected' };
+    if (pane.suspects.has(guardOrigin(url))) return { ok: false, reason: 'rebind-suspected' };
     return { ok: true, contents, cdp: pane.cdp, url, site: this.site(pane, url) };
   }
 
@@ -274,10 +275,9 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     return this.site(this.pane(conversationId), url);
   }
 
-  /** This site answered from where it must not, on this pane. It stays suspect until the person goes elsewhere. */
+  /** This site answered from where it must not, on this pane. It stays suspect until the person goes to it themselves. */
   suspected(conversationId: string, url: string): boolean {
-    const origin = this.pane(conversationId).rebindOrigin;
-    return origin !== undefined && originOf(url) === origin;
+    return this.pane(conversationId).suspects.has(guardOrigin(url));
   }
 
   /** A person changed a project's list: every open page of it shows its class now. The guards read the list themselves. */
@@ -327,7 +327,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   onRebind(webContentsId: number | undefined, origin: string): void {
     const pane = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
     if (!pane) return;
-    pane.rebindOrigin = origin;
+    pane.suspects.add(origin);
     this.liveContents(pane)?.stop();
     this.block(pane, origin, 'rebind-suspected');
   }
@@ -343,7 +343,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       const lastUrl = this.deps.lastUrl?.(conversationId) ?? '';
       pane = {
         conversationId, view: null, host: null, lastUrl, guarded: false, personNavigating: false, toolsRunning: 0, toolEndedAt: 0,
-        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [],
+        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [], suspects: new Set(),
       };
       this.panes.set(conversationId, pane);
     }
@@ -375,6 +375,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       topExternal: siteClass(topUrl, allowedOrigins, { controlPorts: this.deps.controlPorts() }) === 'external',
       allowedOrigins,
       roots: pane.roots,
+      suspectOrigins: pane.suspects,
     };
   }
 
@@ -514,6 +515,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   private openInPlace(pane: Pane, contents: WebContents, url: string): void {
     const site = this.site(pane, url);
     if (site === 'external') this.block(pane, url, 'site-not-allowed');
+    else if (pane.suspects.has(guardOrigin(url))) this.block(pane, url, 'rebind-suspected');
     else this.load(pane, contents, url);
   }
 
