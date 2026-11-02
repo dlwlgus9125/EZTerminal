@@ -112,18 +112,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 702,
-          "endLine": 858,
+          "startLine": 707,
+          "endLine": 863,
           "lineDigest": "sha256:14cb70fefa7bdb7b96b8be1cf75f2c9878896600f5c0329c441368e58c26ccc6",
           "claim": "Exact-envelope creation recovery retains its authority checks and same Session ID; selected skill text and references seed the created conversation without auto-submission."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 1225,
-          "endLine": 1455,
-          "lineDigest": "sha256:a185003130bf2365e21ca66f07c5e967bbbc842b9cc8571ef87c117833171e18",
-          "claim": "The shared Session surface keeps transcript and encrypted drafts, scoped history, profile hand-off, /clear restart, in-memory /btw, host reviews, wrap-up cards, the long-run tray and limit cards, and the workflow reference and send gates."
+          "startLine": 1230,
+          "endLine": 1467,
+          "lineDigest": "sha256:a8ed523712420713cf5248fd96ba9da0bdfe7741345cf00782280ffb3f46c440",
+          "claim": "The shared Session surface keeps transcript, encrypted drafts, scoped history, profile hand-off, /clear restart, /btw, host reviews, wrap-up cards, long-run tray and limit cards, browser pane and picks, workflow reference and send gates."
         },
         {
           "rootAlias": "app",
@@ -147,16 +147,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1958,
-          "endLine": 1995,
+          "startLine": 1976,
+          "endLine": 2013,
           "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
           "claim": "The remote bridge binds an authenticated Android identity to each parsed v12-compatible daemon command and returns the authority receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 502,
-          "endLine": 509,
+          "startLine": 520,
+          "endLine": 527,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source records a successful launch with its exact target and a successful resume with its exact history identity."
         },
@@ -244,16 +244,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2401,
-          "endLine": 2460,
+          "startLine": 2504,
+          "endLine": 2563,
           "lineDigest": "sha256:cec29e4966315609b3617e033447dd0b5f350957c59e2a0dd04405d5723a353d",
           "claim": "Only after Project preflight and ordered MCP, Agent, review, wrap-up, long-run and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1919,
-          "endLine": 2029,
+          "startLine": 2022,
+          "endLine": 2132,
           "lineDigest": "sha256:f7370e46d70e7d0705763f51e9508b7bf8425b72581f70db23ce9332994bdeb9",
           "claim": "The closeable Project FIFO serializes discovery and fresh-snapshot sync, propagates cancellation, and passes reactivation ids only for explicit user intent."
         }
@@ -271,24 +271,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 277,
-          "endLine": 308,
+          "startLine": 283,
+          "endLine": 314,
           "lineDigest": "sha256:bfaa739fa5148e0281ecdc518bb0e6322811862a6ba5db2a83793560a584861c",
           "claim": "The router strictly parses every command, serializes accepted work, and can close external ingress without discarding its accepted FIFO prefix."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 426,
-          "endLine": 512,
+          "startLine": 432,
+          "endLine": 518,
           "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
           "claim": "Authorization, idempotency, outbox delivery state, durable commit, and event publication remain inside one exclusive command transaction."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 310,
-          "endLine": 319,
+          "startLine": 316,
+          "endLine": 325,
           "lineDigest": "sha256:d58fef03bf6d17c6363c2fc592862f46b409e57291182888d372a06712680480",
           "claim": "A system transition planner derives its commit from the fresh snapshot only after entering the same serialized router gate."
         }
@@ -314,10 +314,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 777,
-          "endLine": 814,
-          "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
-          "claim": "The SQLite owner enables foreign keys and WAL with full synchronization, migrates, recovers uncertain commands, and publishes ready state only afterward."
+          "startLine": 779,
+          "endLine": 818,
+          "lineDigest": "sha256:8c3ac6a57f3f41e5abe6b07b9ab7d79ea1758024b5a4905222641506677190d0",
+          "claim": "The SQLite owner enables foreign keys, WAL with full synchronization and secure delete, migrates, recovers uncertain commands, and publishes ready state only afterward."
         },
         {
           "rootAlias": "app",
@@ -411,24 +411,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 405,
-          "endLine": 534,
-          "lineDigest": "sha256:f6f5a9a615e46c9ed2935b59927dcc815ed635b2a1a007973e7387afaab4dcc4",
-          "claim": "One runtime exposes Agent, provider, review, wrap-up and long-run handlers, rehydrates durable state at startup, and serializes provider events through system transitions; usage readings are saved beside the store and announced by refresh."
+          "startLine": 431,
+          "endLine": 564,
+          "lineDigest": "sha256:53b760b0cafcd3018b7aa1494ec5a4260c6379e43c7436a132cab879bde9f73f",
+          "claim": "One runtime exposes Agent, provider, review, wrap-up, long-run and browser handlers, rehydrates durable state at startup and serializes provider events through system transitions; usage readings are saved and announced by refresh."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1665,
-          "endLine": 1766,
+          "startLine": 1701,
+          "endLine": 1802,
           "lineDigest": "sha256:a39f7cacd3a1c1bb4cace532a5bc1f8f98ccb4b5bba8be9c98054cd60bc47c72",
           "claim": "Cancel commits every queued turn as interrupted and clears the queue; the adjacent turn-scoped interrupt contract explicitly preserves queued successors and the Provider Session."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 2411,
-          "endLine": 2510,
+          "startLine": 2555,
+          "endLine": 2654,
           "lineDigest": "sha256:d8d546d66d59dd37fbe17416e86f7d56c917d3fc9372fa8c8bcf9025e934dd40",
           "claim": "Provider disable commits unavailable state before advancing its generation, revoking Session capabilities, and deactivating the captured adapter; re-enable pumps only the current generation."
         }
@@ -446,18 +446,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 280,
-          "endLine": 390,
-          "lineDigest": "sha256:f97e7d99bd6715de83a070003b67b9de8a621a8d1ed27ad569df76aab8af9bed",
+          "startLine": 292,
+          "endLine": 413,
+          "lineDigest": "sha256:b1d258725b9d8ce38ecb40290f3dc9dd4ae1a431359972736c9d3aab290c066c",
           "claim": "The loopback authority issues a memory-only bearer only for a live managed Session, binds its Project, and revokes one Session, every capability for a Project, or all capabilities on stop."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 844,
-          "endLine": 884,
-          "lineDigest": "sha256:716cbf158f8b7b2ac9f047046e2cb036b7dc52bf2cc4ca93bca2446320c4c87e",
-          "claim": "MCP scope rechecks active project/workspace, owner session and provider; ordinary workflow tools and the frozen suggest_task tool are independently admitted while subagent orchestration keeps its own permission gate."
+          "startLine": 869,
+          "endLine": 909,
+          "lineDigest": "sha256:39dd343965d72efe4b3bda705180616ee5dfaca01686ce08e37b49be3f599ab2",
+          "claim": "MCP scope rechecks active project/workspace, owner session and provider; workflow tools and the frozen suggest_task and browser tools are admitted independently, while subagent orchestration keeps its own permission gate."
         }
       ]
     },
@@ -500,24 +500,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1310,
-          "endLine": 1346,
+          "startLine": 1317,
+          "endLine": 1353,
           "lineDigest": "sha256:e7b07a9f36e99cdad3f1b7dbb573fbdf63af3b56017ae296f7618e257978f614",
           "claim": "Codex thread creation uses the reviewed model, effort, sandbox, environment and managed-execution delegation restriction, carries wrap-up instructions, turns a read-only reviewer's MCP servers off, then reports model and effort."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1407,
-          "endLine": 1671,
+          "startLine": 1414,
+          "endLine": 1678,
           "lineDigest": "sha256:bcff4a98b82705d2bd13d3ce45e21ade0dd5a9be3b9abf6dc71c1ab1d8bccaf8",
           "claim": "Codex submit revalidates native skills before turn/start, sends skill paths with context/images, model settings, plan mode for attended turns, a reviewer's schema and wrap-up context once, then correlates the turn; turn/steer follows."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 2173,
-          "endLine": 2242,
+          "startLine": 2180,
+          "endLine": 2249,
           "lineDigest": "sha256:9d25e49d7a30fa7f4122b30c52cfdbffd8738723c7ffdb7e6a9f78441e6ceed4",
           "claim": "Deactivation advances the lifecycle, settles pending interrupts and side questions, clears approvals and thread ownership, closes app-server, and leaves reviewed configuration reusable."
         }
@@ -535,16 +535,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 2211,
-          "endLine": 2266,
-          "lineDigest": "sha256:a065336545bef1854545fb52f2293aef239eb4cbad4ee9a9ba40b80589e707ac",
-          "claim": "Claude sessions share native settings and model, effort and permission controls; wrap-up adds suggestions and suggest_task; tool-free planning drops settings, tools, MCP, plugins, agents; a reviewer gets read-only tools, no MCP, the schema."
+          "startLine": 2218,
+          "endLine": 2275,
+          "lineDigest": "sha256:12a0391ba08897299f83a4c719946dbae23cd514a7e8befdd8279ab18435f36f",
+          "claim": "Claude sessions share native settings, model, effort and permissions; suggest_task and browser tools pass by exact name; tool-free planning drops settings, tools, MCP, plugins, agents; a reviewer gets read-only tools, no MCP, the schema."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 2116,
-          "endLine": 2139,
+          "startLine": 2123,
+          "endLine": 2146,
           "lineDigest": "sha256:2d3f81b4bdc15a8f11d1ce8010bc9d9d6bc2f4dce7048486368d5c7bfc597e0b",
           "claim": "Deactivation aborts metadata discovery and closes live SDK queries under the serialized lifecycle; permanent disposal clears listeners after draining."
         }
@@ -639,8 +639,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1139,
-          "endLine": 1258,
+          "startLine": 1157,
+          "endLine": 1276,
           "lineDigest": "sha256:bd31319ec7f1d81bdf52d5ca0fbc696ae4c75cffc2f1e9973ff056bc8663bf42",
           "claim": "A single auth offer negotiates a supported version after validating credentials and client identity. Failed negotiation consumes no pairing code and returns failure instead of retrying a lower version."
         }
@@ -656,8 +656,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-cli-control.ts",
-          "startLine": 1190,
-          "endLine": 1216,
+          "startLine": 1191,
+          "endLine": 1217,
           "lineDigest": "sha256:c4fe99c3ffbbe0e6091a084c816270f21c5388e8230b06fd909ff39769d71bba",
           "claim": "CLI mutations receive a Session-bound CLI principal and current expected revision, then execute through the shared daemon authority with bounded conflict retries."
         }
@@ -673,10 +673,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1138,
-          "endLine": 1264,
-          "lineDigest": "sha256:b0db15373eb14f2be7326c7583ab9cf73f8825285cf829b77079265a47b1e9e1",
-          "claim": "One provider runtime receives SQLite transitions, a usage file, frozen settings, workflow MCP admission, archived checks, stage references, a report path, subagent-record checks and the review, wrap-up and long-run coordinators."
+          "startLine": 1222,
+          "endLine": 1367,
+          "lineDigest": "sha256:fef5b7a315737a52b87c1e8cff731f30573003dabc5897678102e8017fcac116",
+          "claim": "One provider runtime receives SQLite transitions, a usage file, frozen settings, workflow MCP admission, archived checks, stage references, a report path, subagent-record checks, browser hooks and review, wrap-up and long-run coordinators."
         }
       ]
     },
@@ -690,8 +690,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2241,
-          "endLine": 2396,
+          "startLine": 2344,
+          "endLine": 2499,
           "lineDigest": "sha256:aec722e17dc73aaec4827ac9482ffae3d2cc86e067a25fb7d978d0dbf168b54f",
           "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
         }
@@ -724,8 +724,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 441,
-          "endLine": 511,
+          "startLine": 447,
+          "endLine": 517,
           "lineDigest": "sha256:d16089a5ac01092a0791a46c15e041b93e1217385289b7c630c4ae779b03ce6c",
           "claim": "The router binds idempotency, persists provider-dispatch intent, atomically commits or rejects the command, then publishes resulting events."
         },
@@ -757,16 +757,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2089,
-          "endLine": 2219,
+          "startLine": 2192,
+          "endLine": 2322,
           "lineDigest": "sha256:f413e4b30da9c13756c3aa31a25071a66eeb6ae3d5134eb739c9277499ee2dd8",
           "claim": "Project save stops active orchestration when authority shrinks, retires obsolete daemon descendants and capabilities, clears removed consent and auxiliary authority, then publishes and explicitly reactivates the replacement."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2300,
-          "endLine": 2338,
+          "startLine": 2403,
+          "endLine": 2441,
           "lineDigest": "sha256:74a21e03bc0ef6f81e53fdbb270edc7a2757b88d7d971b4f2c949b7192d70c50",
           "claim": "Full removal stops Project runs, applies the fail-closed daemon transition, revokes MCP and Agent-control tokens, and only then removes consent, coordination, orchestration, and history records."
         }
@@ -799,24 +799,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 882,
-          "endLine": 1027,
+          "startLine": 912,
+          "endLine": 1057,
           "lineDigest": "sha256:e6d720407be9983610a982e44787ea49bcca95499b1f96be166454909bf13b72",
           "claim": "Creation validates Workspace ownership and records a child's origin and report-back choice; a suggested task needs its open card, asks first on one press or phone, and commits started with the child. Prepared Sessions disable orchestration."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1115,
-          "endLine": 1470,
-          "lineDigest": "sha256:9f2a4cbd57357a6dc3bd00cff4614b01fc41e3a9c0d5ccc22f80b221de0c482f",
-          "claim": "Submit refuses review conversations and a task its card forbids; it and review.fix verify ownership and stage state, reject client snapshots and reports, resolve references, validate context and retire a plan. Steer checks the same."
+          "startLine": 1145,
+          "endLine": 1506,
+          "lineDigest": "sha256:47d54e52e02c9cc5b68d136f08b001b749f78cd15fee40805573a3ac46aa2752",
+          "claim": "Submit refuses review conversations, a task its card forbids and a screen check not from the host; it and review.fix check ownership and stage state, reject client snapshots, resolve references, validate context; steer checks the same."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 2739,
-          "endLine": 2888,
+          "startLine": 2885,
+          "endLine": 3034,
           "lineDigest": "sha256:751acf1f0699d5d27ddbe073bc038c7c86514269910278ef403272964f8e3c8f",
           "claim": "Queued turns must pass concurrency, active ownership and archived-stage gates before submission; host-managed attempts retain frozen settings and stage context."
         }
@@ -832,8 +832,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 549,
-          "endLine": 631,
+          "startLine": 555,
+          "endLine": 637,
           "lineDigest": "sha256:880318b4a5b8a3fea1ea03e2c5bf988b8e31689ebd68ab6079d6fda532e0722c",
           "claim": "Project archive atomically archives child Workspaces, while Session creation admits only a Workspace under the requested active Project."
         }
@@ -849,10 +849,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 844,
-          "endLine": 884,
-          "lineDigest": "sha256:716cbf158f8b7b2ac9f047046e2cb036b7dc52bf2cc4ca93bca2446320c4c87e",
-          "claim": "MCP scope rechecks active project/workspace, owner session and provider; ordinary workflow tools and the frozen suggest_task tool are independently admitted while subagent orchestration keeps its own permission gate."
+          "startLine": 869,
+          "endLine": 909,
+          "lineDigest": "sha256:39dd343965d72efe4b3bda705180616ee5dfaca01686ce08e37b49be3f599ab2",
+          "claim": "MCP scope rechecks active project/workspace, owner session and provider; workflow tools and the frozen suggest_task and browser tools are admitted independently, while subagent orchestration keeps its own permission gate."
         }
       ]
     },
@@ -866,8 +866,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2036,
-          "endLine": 2068,
+          "startLine": 2139,
+          "endLine": 2171,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Launch, resume, and Project or worker activity records enter the same main-owned FIFO; only direct-directory launch conveys explicit Project re-registration intent before sync."
         },
@@ -899,16 +899,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1138,
-          "endLine": 1220,
-          "lineDigest": "sha256:59b5dbccae00ffdf72f7da53dffd5cc5ca994926e5b11ff9e5dfc7f5c2a8c21f",
-          "claim": "One provider runtime receives SQLite transitions, a usage file, frozen settings, workflow MCP admission, archived checks, stage references, a report path, subagent-record checks and the review, wrap-up and long-run coordinators."
+          "startLine": 1222,
+          "endLine": 1323,
+          "lineDigest": "sha256:8da8a1a9eaecb6a5f66e457fbf5af9867d664df137ed3177565165c52651c9bc",
+          "claim": "One provider runtime receives SQLite transitions, a usage file, frozen settings, workflow MCP admission, archived checks, stage references, a report path, subagent-record checks, browser hooks and review, wrap-up and long-run coordinators."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1516,
-          "endLine": 1554,
+          "startLine": 1552,
+          "endLine": 1590,
           "lineDigest": "sha256:5596bb4f0d91d83d3168f9853eb4c18de0105ca234f26957e2bd36a22eb56bef",
           "claim": "Queued requests are managed by the host with exact turn revisions. Promotion rotates durable FIFO positions and reuses the existing interruption lifecycle; removal retains the accepted transcript."
         }
@@ -924,8 +924,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 508,
-          "endLine": 537,
+          "startLine": 538,
+          "endLine": 567,
           "lineDigest": "sha256:10fd08f97e6090963eabc17a2777624918f940b156aa9a33b59ddf818bdc6840",
           "claim": "Startup restores saved usage, settles provider-native children, expires approvals, repairs unattached claims, rehydrates provider Sessions, reconciles unsettled work, and resumes the queue; turns carry no elapsed-time deadline."
         }
@@ -941,10 +941,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 2582,
-          "endLine": 2609,
-          "lineDigest": "sha256:b1afc5431fde0c8e3885f776095daa810523b526f4aaf700db3e4170b1b81337",
-          "claim": "Session context overlays frozen settings and wrap-up and long-run launch state; MCP capabilities are attached for authorized orchestration, ordinary workflow tools or suggest_task, retaining provider and host ownership checks."
+          "startLine": 2726,
+          "endLine": 2755,
+          "lineDigest": "sha256:7587d135c2fe8875e460cedd527052bfb798f7bd18d184374cfc7f143a487d5d",
+          "claim": "Session context overlays frozen settings and wrap-up and long-run launch state; MCP capabilities attach for authorized orchestration, workflow tools, suggest_task or browser tools, keeping provider and host ownership checks."
         }
       ]
     },
@@ -958,8 +958,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 574,
-          "endLine": 840,
+          "startLine": 599,
+          "endLine": 865,
           "lineDigest": "sha256:61348b05833950788033fe3e23c2360facf07835906830aea48b69315c53ae60",
           "claim": "MCP tools create direct children (optionally from a profile or in another active workspace of the Project) within the owner's permission ceiling, read and wait on managed descendants, create worktrees, and reauthorize before mutation."
         }
@@ -975,8 +975,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 2739,
-          "endLine": 2888,
+          "startLine": 2885,
+          "endLine": 3034,
           "lineDigest": "sha256:751acf1f0699d5d27ddbe073bc038c7c86514269910278ef403272964f8e3c8f",
           "claim": "Queued turns must pass concurrency, active ownership and archived-stage gates before submission; host-managed attempts retain frozen settings and stage context."
         }
@@ -992,24 +992,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-provider-adapter.ts",
-          "startLine": 142,
-          "endLine": 285,
+          "startLine": 147,
+          "endLine": 290,
           "lineDigest": "sha256:5de3cbc08e35cbfbc75ae9aacc94ba354d9db1673fe6f27c91d3ce498b9beea7",
           "claim": "The provider-neutral error event can identify a local turn, a Provider turn, or both, while leaving Session-wide failures explicitly unscoped."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 3411,
-          "endLine": 3540,
+          "startLine": 3557,
+          "endLine": 3686,
           "lineDigest": "sha256:e6a7710a7b8fcb8ecbbc04ede7ddb1b3f0799dad2fd205610aefe338cf308d30",
           "claim": "Scoped errors resolve one active turn and mutate Agent and Session only when current; recoverable scoped or Session-wide errors preserve an existing interrupt fence, and a recoverable one with no running turn adds only its row."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 4308,
-          "endLine": 4374,
+          "startLine": 4454,
+          "endLine": 4520,
           "lineDigest": "sha256:69865f8c2d18eab45c905c880ee93363f29cee142d01fe0cbfea1c1082556027",
           "claim": "Late interrupt failure commits delivery-uncertain only when the expected turn is still current and non-terminal, preventing stale callbacks from corrupting successors."
         }
@@ -1025,8 +1025,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 622,
-          "endLine": 650,
+          "startLine": 625,
+          "endLine": 653,
           "lineDigest": "sha256:87838dcdf26bf8a5f6813f33f0bd75638d0ae83560b6762f50e5fb889964efbf",
           "claim": "Codex accepts only its labeled stable semantic version at or above the observed app-server baseline, while malformed output, prereleases, and older versions fail closed."
         },
@@ -1041,8 +1041,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1035,
-          "endLine": 1090,
+          "startLine": 1042,
+          "endLine": 1097,
           "lineDigest": "sha256:d9cbbe05b3b11bb23c8cc8ffa7758344f85331ba087514e59488b8cd873c6f13",
           "claim": "Codex accepts only an absolute reviewed app-server launch descriptor with the fixed process contract and stable version floor, then reports the current compatible version and capabilities."
         }
@@ -1058,8 +1058,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1339,
-          "endLine": 1382,
+          "startLine": 1346,
+          "endLine": 1389,
           "lineDigest": "sha256:29cedf01d29574da23cc9c1b68d497329738f1f4e3461e1c48b3b55412a1f9c5",
           "claim": "Claude accepts only the reviewed SDK executable contract and persists consent policy without implementing an OAuth or login flow."
         }
@@ -1075,8 +1075,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1911,
-          "endLine": 1917,
+          "startLine": 2014,
+          "endLine": 2020,
           "lineDigest": "sha256:45e1aa66606870c1719bd6ca9c34b7fa825b62f74f061c3f806d7ee7d865f812",
           "claim": "Main binds the history service to the existing daemon, SQLite store, provider runtime and lightweight workflow lineage service."
         }
@@ -1092,8 +1092,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 845,
-          "endLine": 881,
+          "startLine": 875,
+          "endLine": 911,
           "lineDigest": "sha256:4cabf4f30ab5600366eca7557a21da382549124e8378c5f758b991e6b4a9d2a0",
           "claim": "Native adoption rechecks exact active workspace and provider identity, atomically saves the ownership claim, source receipt and transcript, then rehydrates the provider without submitting a message."
         }

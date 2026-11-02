@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2db2b97ec6047b60aa2bee6f4d5dd641221ece265bf42097b4c2692ab9083aad",
+        "inputDigest": "sha256:d0833105dcce3c5b0994fe7a8175b0bbd76d604eff4a9c32ddea5b065fdb5e6c",
         "decision": "map-updated",
-        "reason": "Long-run continuity: main builds a long-run coordinator, gives it to the provider runtime and the queue gate, and loads it before the first pump; the snapshot carries limits and steers, adapters report both, and the claims say so."
+        "reason": "In-app browser: the runtime adds browser handlers and refuses a screen check the host did not send, main gives the provider runtime its browser hooks, MCP scope and Claude admit the browser tools, and the store turns on secure delete; the claims say so."
       }
     },
     {
@@ -241,9 +241,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6bca85d49e766c497b7f731c5e8e66feed20dae7a98615aee8aeca004a26cb9d",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-2): Block has one markup (the instrument block) for the desktop and phone terminals; the old default variant and its prop are gone. PTY sequencing is unchanged."
+        "inputDigest": "sha256:d1876a6bf76de71eddcf0a4842e0d24ea7b976a3a52a115136ead4a5d79b5c7b",
+        "decision": "map-updated",
+        "reason": "In-app browser: PtySession now reports the dev-server addresses a program prints as it reads child bytes; the session claim says so, and the step that turns bytes into pty-data frames is unchanged."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9b2e4079ca2d8b92fc9823133e70919b2f557698bc05328f16412544fb8c9286",
+        "inputDigest": "sha256:b77379b8e6ec21232955d233e3a246c869cac608b0056d233f98956a776141f9",
         "decision": "map-updated",
-        "reason": "Long-run continuity: ordered authority startup now loads and starts the long-run coordinator before ready; the startup claim says so, and the sibling claim on the same block is unchanged."
+        "reason": "In-app browser: the store opens with secure delete on, so a value scrubbed from a row does not stay in a freed page; that claim says so, and startup ordering is unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:611f9472d4563b87c5aa79c12da42fb34e45d3f5f0e3e8dc47c5d2b7855e666e",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (long-run continuity): the protocol adds steer and limit commands and host-memory snapshot fields, kept from scoped readers and the offline cache; the auth, session and transport flows the map claims are unchanged and its anchors only moved."
+        "inputDigest": "sha256:262f7c206b54832a1d585be43e13b9c84ad330becbd671d2ac67060d00741195",
+        "decision": "map-updated",
+        "reason": "In-app browser: the snapshot sent after authentication drops the input of every browser approval; that claim says so. The other auth, session and transport flows are unchanged and their anchors only moved."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d8886d6a2b2b9128bc352802b1c01b31e60090a63634d85f1ee8805e7deb8d9d",
+        "inputDigest": "sha256:ea43cc4db238bd2ad73c275f98c00755647e1fb19c7b8a331dd1c665ae20de40",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (turn wrap-up): a suggested task adds a person-started child through the existing agent.create path; the roles, approvals and report flows the map claims are unchanged and its anchors only moved."
+        "reason": "Reviewed (in-app browser): the app adds the browser pane panel and its IPC around the anchored blocks; the agent control and collaboration flows the map claims are unchanged and the anchors only moved."
       }
     },
     {
@@ -657,9 +657,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c94f69665b57f1a51134151715f9e03799166c20cffa703ce96e4a9a86e451b2",
+        "inputDigest": "sha256:a4ac98c6199d0d6a130b54276ad5d228a78edab2ad143761ab48886c67b8b52e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (long-run continuity): the conversation header can take a limit's amber and the surface adds the tray and limit card; planning runs, delivery and the change review the map claims are unchanged."
+        "reason": "Reviewed (in-app browser): the conversation header adds a button that opens the browser pane; planning runs, delivery and the change review the map claims are unchanged and the anchors only moved."
       }
     },
     {
@@ -741,9 +741,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8d21d7f0738a5517cd079d88539d0759e9c93fd93b146f63e8204fd93406db66",
+        "inputDigest": "sha256:e7045b4f216f123ab8c528bdf1abc5bbe925f6efb587fd74428bbe387b9fa5f1",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (long-run continuity): adapters add limit and steer paths around the anchored blocks; workflow tools, previews and runs read the same through the same host services and the anchors only moved."
+        "reason": "Reviewed (in-app browser): the MCP handler hands browser tools to their own service and the adapters list them; workflow tools, previews and runs read the same through the same host services and the anchors only moved."
       }
     }
   ]

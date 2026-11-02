@@ -124,18 +124,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 689,
-          "endLine": 774,
+          "startLine": 691,
+          "endLine": 776,
           "lineDigest": "sha256:553d740f99709fd3be92e2000da2f830413ad7136f3bd5033b9a434adb37cd95",
           "claim": "Initialization validates containment and existing database material, rejects future schemas, and requires a verified migration or legacy backup before mutation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 777,
-          "endLine": 814,
-          "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
-          "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
+          "startLine": 779,
+          "endLine": 818,
+          "lineDigest": "sha256:8c3ac6a57f3f41e5abe6b07b9ab7d79ea1758024b5a4905222641506677190d0",
+          "claim": "The store opens with strict SQLite options, enables WAL, full synchronization and secure delete, migrates, recovers uncertain commands, then marks itself ready."
         },
         {
           "rootAlias": "app",
@@ -158,24 +158,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2340,
-          "endLine": 2460,
+          "startLine": 2443,
+          "endLine": 2563,
           "lineDigest": "sha256:983e6875cbeace8f17ded3f98ab99cbbaa3dac0ebe6112b89b06c7f02bbb5d07",
           "claim": "Main marks prior-process legacy terminals interrupted, recovers pending consent, and synchronizes Projects before ordered MCP, Agent, review, wrap-up, long-run and automation startup publishes ready and binds the shutdown barrier."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 512,
-          "endLine": 537,
+          "startLine": 542,
+          "endLine": 567,
           "lineDigest": "sha256:363a86de313f36d2afe8b354b2654dd4d595bffa12c1d4c9c82392e52a30c6a2",
           "claim": "Agent startup restores saved usage, settles provider-native children, restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, and reconciles unsettled work; turns carry no elapsed-time deadline."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1919,
-          "endLine": 1952,
+          "startLine": 2022,
+          "endLine": 2055,
           "lineDigest": "sha256:4aa5ef82af26651b2557828ce4eca703a91ab92700f343749c0170c62f888d58",
           "claim": "The Project-operation FIFO rejects new work after shutdown begins, preserves its exact accepted prefix, and serializes both successful and failed predecessors."
         }
@@ -208,8 +208,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2451,
-          "endLine": 2459,
+          "startLine": 2554,
+          "endLine": 2562,
           "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
           "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
         }
@@ -286,8 +286,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2968,
-          "endLine": 3119,
+          "startLine": 3071,
+          "endLine": 3222,
           "lineDigest": "sha256:5c10035d5209b5419c24b23ec5d08b0ba630202d832ef9ff33176fcaa0fdbbbb",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier and its service goes after its coordinator."
         },
@@ -314,8 +314,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 666,
-          "endLine": 686,
+          "startLine": 668,
+          "endLine": 688,
           "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
           "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
         }
@@ -332,8 +332,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2340,
-          "endLine": 2460,
+          "startLine": 2443,
+          "endLine": 2563,
           "lineDigest": "sha256:983e6875cbeace8f17ded3f98ab99cbbaa3dac0ebe6112b89b06c7f02bbb5d07",
           "claim": "Successful database, prior-process legacy terminal recovery, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
         }
@@ -350,8 +350,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2444,
-          "endLine": 2459,
+          "startLine": 2547,
+          "endLine": 2562,
           "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
           "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
         }
@@ -404,8 +404,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2978,
-          "endLine": 3018,
+          "startLine": 3081,
+          "endLine": 3121,
           "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
           "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
         }
@@ -474,8 +474,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2968,
-          "endLine": 3119,
+          "startLine": 3071,
+          "endLine": 3222,
           "lineDigest": "sha256:5c10035d5209b5419c24b23ec5d08b0ba630202d832ef9ff33176fcaa0fdbbbb",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier and its service goes after its coordinator."
         }

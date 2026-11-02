@@ -83,8 +83,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/interpreter-broker.ts",
-          "startLine": 518,
-          "endLine": 551,
+          "startLine": 522,
+          "endLine": 555,
           "lineDigest": "sha256:cd5458b7f310ae71ce7d536e78a838ce406ca8e6718647086e0990c5fd531892",
           "claim": "The broker creates a MessageChannel and transfers port2 with the typed run message."
         }
@@ -98,8 +98,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/interpreter-process.ts",
-          "startLine": 1088,
-          "endLine": 1134,
+          "startLine": 1089,
+          "endLine": 1135,
           "lineDigest": "sha256:489749075dc83f715f4019ce2fde4afec1c2dfa59a3323dab5efbf20214bcbd6",
           "claim": "The utility runtime accepts typed parent-port requests and posts bounded replies."
         }
@@ -113,10 +113,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/pty-session.ts",
-          "startLine": 428,
-          "endLine": 464,
-          "lineDigest": "sha256:0fe18dd9db987e4aa2e68fecf676a49d410d9728aaaf4a64b49b8c566099f7ae",
-          "claim": "PtySession observes child bytes, updates terminal modes, emits frames, and applies high-water pausing."
+          "startLine": 432,
+          "endLine": 469,
+          "lineDigest": "sha256:1e36f07d4e6d0725425210093938b3b1a9c46f6bba20ace069caacfa1264847b",
+          "claim": "PtySession observes child bytes, updates terminal modes, reports the dev-server addresses it prints, emits frames, and applies high-water pausing."
         }
       ]
     }
@@ -169,8 +169,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/interpreter-broker.ts",
-          "startLine": 529,
-          "endLine": 545,
+          "startLine": 533,
+          "endLine": 549,
           "lineDigest": "sha256:74481166c5b0c8a02ac7748cd5b9399f63e0e68db1ca1ac233e65a0de5bc1823",
           "claim": "The broker posts the run envelope with one end of a new MessageChannel."
         }
@@ -205,8 +205,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/interpreter-process.ts",
-          "startLine": 1214,
-          "endLine": 1260,
+          "startLine": 1215,
+          "endLine": 1261,
           "lineDigest": "sha256:cf918282513f475625374ce14cd92d5cf945520dfd4d252cf3d40126c6528f5d",
           "claim": "A run message enters the interpreter execution path that owns its transferred port."
         }
@@ -223,9 +223,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/pty-session.ts",
-          "startLine": 428,
-          "endLine": 445,
-          "lineDigest": "sha256:e28937b4ee094568a1bc33dda8eeee399f997dfca45a1741d3d956d4ae5534b1",
+          "startLine": 432,
+          "endLine": 450,
+          "lineDigest": "sha256:b67d8cabb75a9673b4e1e1224d6c863f96194dac84c39de7e20bfaaae6f89b21",
           "claim": "PTY output bytes become pty-data frames after terminal-mode detection."
         }
       ]
@@ -259,8 +259,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/pty-session.ts",
-          "startLine": 520,
-          "endLine": 532,
+          "startLine": 525,
+          "endLine": 537,
           "lineDigest": "sha256:fdfe328190b08954d0492f3e32321a9a02ee08672b1eb8cf167e9966c139548d",
           "claim": "Monotonic acknowledgements resume a paused PTY once the low-water threshold is reached."
         }

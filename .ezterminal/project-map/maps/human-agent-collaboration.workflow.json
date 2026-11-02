@@ -183,8 +183,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/App.tsx",
-          "startLine": 2084,
-          "endLine": 2092,
+          "startLine": 2091,
+          "endLine": 2099,
           "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
           "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
         },
@@ -283,8 +283,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 526,
-          "endLine": 535,
+          "startLine": 531,
+          "endLine": 540,
           "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
           "claim": "The capability-bound Agent endpoint returns the repository-native guide only for a closed Project Map type."
         }
@@ -329,8 +329,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 537,
-          "endLine": 588,
+          "startLine": 542,
+          "endLine": 593,
           "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
           "claim": "The loopback check accepts an explicit Draft or Production profile and returns verification, provenance, or structured diagnostics."
         }
@@ -611,8 +611,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 526,
-          "endLine": 535,
+          "startLine": 531,
+          "endLine": 540,
           "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
           "claim": "The Agent can retrieve the native map-type contract through its scoped loopback capability."
         }
@@ -662,8 +662,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 537,
-          "endLine": 588,
+          "startLine": 542,
+          "endLine": 593,
           "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
           "claim": "Draft and Production are closed request values passed to the same main-owned validation service."
         }
@@ -696,8 +696,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 591,
-          "endLine": 616,
+          "startLine": 596,
+          "endLine": 621,
           "lineDigest": "sha256:e648a232119be5278658426b17aaefa9efe346b5f061223467f856286fad4c9f",
           "claim": "The scoped Agent reports validating-production then awaiting-review against the persisted job."
         }
