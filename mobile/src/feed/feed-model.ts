@@ -43,6 +43,8 @@ export interface FeedWaitingItem {
   readonly requestKind?: WaitingItem['kind'];
   /** A flow stage that waits for an answer (내 답변) rather than an approval. */
   readonly asks?: 'answer';
+  /** A browser action: it shows here, and only the desktop answers it. */
+  readonly desktopOnly?: true;
   readonly sessionId?: string;
   readonly approvalId?: string;
   readonly activityId?: string;
@@ -114,7 +116,7 @@ export function feedWaiting(
       ...(projectId ? { projectId, ...(names.has(projectId) ? { projectName: names.get(projectId)! } : {}) } : {}),
       providerId: item.providerId, requestKind: item.kind, sessionId: item.sessionId, approvalId: item.approvalId,
       ...(item.limit ? { limit: item.limit } : {}),
-      ...(CARD_DECIDES.has(item.kind) ? { decide: { target: 'conversation' as const, approvalId: item.approvalId } } : {}),
+      ...(item.desktopOnly ? { desktopOnly: true as const } : CARD_DECIDES.has(item.kind) ? { decide: { target: 'conversation' as const, approvalId: item.approvalId } } : {}),
     };
   });
   const activities = new Map(terminalAgents.map((activity) => [activity.id, activity]));

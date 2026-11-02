@@ -277,19 +277,46 @@
 }
 
 /* ── The decision dock ───────────────────────────────────────────────── */
-.chat-dock__browser > .chat-dock__browser-site {
-  margin: 0 0 var(--ui-space-2);
+.chat-dock__browser > .chat-dock__browser-facts {
+  margin: 0 0 var(--ui-space-1);
 }
 
-.chat-dock__browser-site > span {
+.chat-dock__browser-facts > div {
+  display: flex;
+  align-items: baseline;
+}
+
+.chat-dock__browser-facts > div + div {
+  margin-top: var(--ui-space-1);
+}
+
+.chat-dock__browser-facts dt {
+  flex: none;
+  min-width: 5rem;
   margin-right: var(--ui-space-2);
   color: var(--ui-text-secondary);
 }
 
-.chat-dock__browser-site > code {
+.chat-dock__browser-facts dd {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.chat-dock__browser-facts code {
   font-family: var(--ui-font-mono);
   overflow-wrap: break-word;
   overflow-wrap: anywhere;
+}
+
+.chat-dock__browser-facts .chat-dock__browser-masked {
+  margin-left: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.chat-dock__browser-facts .ez-ui-button {
+  margin-left: var(--ui-space-2);
 }
 
 .chat-dock__browser > .chat-dock__browser-page {

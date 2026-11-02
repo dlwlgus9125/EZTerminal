@@ -203,6 +203,10 @@ export function BrowserCheckCard({ row }: { readonly row: RowOf<'browser-check'>
     >
       {lines.length > 0 && (cli ? (
         <ul className="chat-cli-recap" aria-label={copy.check.aiSaid(provider)}>
+          <li className="chat-cli-result">
+            <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
+            <div className="chat-cli-result__body"><span className="chat-cli-result__line chat-cli-dim">{copy.check.aiSaid(provider)}</span></div>
+          </li>
           {lines.map((line, index) => (
             // Index keys: the lines of one summary, written once.
             <li key={index} className="chat-cli-result">
@@ -229,11 +233,12 @@ export function BrowserCheckCard({ row }: { readonly row: RowOf<'browser-check'>
  */
 export function BrowserWaitingRow({ row }: { readonly row: RowOf<'browser-waiting'> }): JSX.Element {
   const copy = useChatCopy().browser.waiting;
+  const { locale } = useChatContext();
   return (
     <section className="chat-browser-waiting" aria-label={copy.title} data-testid="chat-browser-waiting">
       <p className="chat-browser-waiting__head"><Led tone="amber" /><strong>{copy.title}</strong></p>
       <p className="chat-browser-waiting__what">{copy.what[row.action](row.origin)}</p>
-      <p className="chat-browser-waiting__note">{copy.note}</p>
+      <p className="chat-browser-waiting__note">{copy.note(formatClock(row.expiresAt, locale))}</p>
     </section>
   );
 }

@@ -1,6 +1,7 @@
 import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { DaemonApproval, DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { OpenUsageLimit } from '../../shared/long-run';
+import { isBrowserActionRequest } from '../../shared/browser';
 import { blockingRunOf } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowSnapshot } from '../../shared/workflow';
 import { currentFlowRun, flowRunNumber, runStageConversation } from '../../shared/workflow-run-view';
@@ -58,6 +59,8 @@ export interface WaitingItem {
   readonly flow?: { readonly subprojectId: string; readonly nodeId: string; readonly runId?: string };
   /** A flow stage that waits for an answer (내 답변) rather than an approval. */
   readonly asks?: 'answer';
+  /** A browser action: only the desktop answers it. */
+  readonly desktopOnly?: true;
   /** `usage-limit`: its one line is said where the language is known. */
   readonly limit?: OpenUsageLimit;
 }
@@ -184,6 +187,7 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
       return [{
         approvalId: approval.id, sessionId: approval.sessionId, title: session.title, providerId: agent.providerId,
         kind: waitingKind(approval), detail, at: approval.createdAt,
+        ...(isBrowserActionRequest(approval.providerRequestId) ? { desktopOnly: true as const } : {}),
       }];
     });
   return [...approvals, ...limits].sort((left, right) => right.at.localeCompare(left.at));

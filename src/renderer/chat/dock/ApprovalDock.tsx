@@ -2,7 +2,7 @@ import { Glyph, glyphIcon, type GlyphIcon } from '../../ui/Glyph';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
-import { browserActionOf, isBrowserActionRequest, type BrowserActionView } from '../../../shared/browser';
+import { browserActionOf, isBrowserActionRequest, looksSecret, type BrowserActionRun, type BrowserActionView } from '../../../shared/browser';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { ACCESS_LEVELS, agentPermissionCopy, type AccessLevel } from '../../agent-permission-copy';
 import { Button } from '../../ui';
@@ -78,22 +78,41 @@ function riskIcon(kind: string | undefined): GlyphIcon {
   }
 }
 
+/** What will run, from the host's own call. A value that reads as a credential starts masked. */
+function BrowserRunValue({ run }: { readonly run: BrowserActionRun }): JSX.Element {
+  const copy = useChatCopy().browser.approval;
+  const [shown, setShown] = useState(false);
+  if (run.kind === 'click') return <span>{copy.clickRun}</span>;
+  const value = run.kind === 'navigate' ? run.url : run.kind === 'type' ? run.value : run.keys;
+  if (run.kind !== 'type' || !looksSecret(value)) return <code>{value}</code>;
+  return (
+    <>
+      {shown ? <code>{value}</code> : <><code aria-hidden="true">••••••••••••</code><span className="chat-dock__browser-masked">{copy.masked}</span></>}
+      <Button variant="ghost" size="sm" aria-pressed={shown} onClick={() => setShown(!shown)} data-testid="chat-dock-browser-reveal">{shown ? copy.hide : copy.reveal}</Button>
+    </>
+  );
+}
+
 /**
- * A browser action on an allowed outside site: the app's facts, then what the page calls the element, set apart. The
- * name comes from the page, so it reads as the page's words and nothing here vouches for it.
+ * A browser action on an allowed outside site: the app's facts and what will run, then what the page calls the element,
+ * set apart. The name comes from the page, so it reads as the page's words and nothing here vouches for it.
  */
 function BrowserActionBody({ action }: { readonly action: BrowserActionView }): JSX.Element {
   const copy = useChatCopy().browser.approval;
   return (
     <div className="chat-dock__detail chat-dock__browser" data-testid="chat-dock-browser">
-      <p className="chat-dock__browser-site"><span>{copy.site}</span><code>{action.origin}</code></p>
+      <dl className="chat-dock__browser-facts">
+        <div><dt>{copy.site}</dt><dd><code>{action.origin}</code></dd></div>
+        <div data-testid="chat-dock-browser-run"><dt>{copy.run[action.action]}</dt><dd><BrowserRunValue run={action.run} /></dd></div>
+      </dl>
+      <p className="chat-dock__meta">{copy.held}</p>
       {action.pageElement && (
         <blockquote className="chat-dock__browser-page">
           <span>{copy.pageElement}</span>
           <q>{action.pageElement}</q>
         </blockquote>
       )}
-      <p className="chat-dock__meta">{copy.why}</p>
+      <p className="chat-dock__meta">{copy.why} {copy.voided}</p>
     </div>
   );
 }
@@ -300,7 +319,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   }
 
   const body = (() => {
-    if (browserAction) return <BrowserActionBody action={browserAction} />;
+    if (browserAction) return <BrowserActionBody key={approval.id} action={browserAction} />;
     if (settingsProposal) {
       return (
         <div className="chat-dock__detail" data-testid="chat-dock-settings-proposal">

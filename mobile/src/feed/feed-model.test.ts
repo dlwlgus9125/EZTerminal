@@ -76,6 +76,17 @@ describe('feedWaiting', () => {
     expect(expired.find((item) => item.kind === 'terminal-agent')?.decide).toBeUndefined();
   });
 
+  it('never lets a card answer a browser action: it is answered on the desktop, wherever it shows', () => {
+    const base = withAttention();
+    const held = base.approvals.map((approval) => (approval.id === 'a-command' ? { ...approval, providerRequestId: 'browser-action:call-9', request: { v: 1 as const, kind: 'tool' as const, toolName: 'browser_click', target: 'https://staging.cart-kit.example' } } : approval));
+    const item = feedWaiting({ ...base, approvals: held }, []).find((entry) => entry.approvalId === 'a-command');
+    expect(item).toMatchObject({ kind: 'approval', desktopOnly: true, sessionId: 's-notify' });
+    expect(item?.decide).toBeUndefined();
+    // Any other tool still decides on its card.
+    const other = base.approvals.map((approval) => (approval.id === 'a-command' ? { ...approval, request: { v: 1 as const, kind: 'tool' as const, toolName: 'Bash' } } : approval));
+    expect(feedWaiting({ ...base, approvals: other }, []).find((entry) => entry.approvalId === 'a-command')?.decide).toEqual({ target: 'conversation', approvalId: 'a-command' });
+  });
+
   it('names a flow approval by its flow once that flow was read, with the stage below', () => {
     const workflows = new Map([['p-kestrel', { subprojects: [{ ...shellWorkflow().subprojects[0]!, id: 'login', title: '로그인 개선' }] }]]);
     const flow = feedWaiting(withAttention(), [], workflows).find((item) => item.kind === 'flow-approval');

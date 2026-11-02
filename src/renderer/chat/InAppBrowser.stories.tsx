@@ -2,11 +2,13 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
+import { MobileFeedView } from '../../../mobile/src/feed/MobileFeedView';
+import { feedWaiting } from '../../../mobile/src/feed/feed-model';
 import { MobileConversationReviewProvider } from '../../../mobile/src/MobileConversationReviewProvider';
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
 import { MobileStructuredAgentSession } from '../../../mobile/src/MobileStructuredAgentSession';
 import { MobileToastProvider } from '../../../mobile/src/MobileToast';
-import { BROWSER_CAPABILITY, type BrowserProjectSites, type BrowserSettings, type BrowserSiteClass } from '../../shared/browser';
+import { BROWSER_CAPABILITY, siteClass, type BrowserProjectSites, type BrowserSettings } from '../../shared/browser';
 import type { ChatComposerDraft } from '../../shared/chat-message';
 import type { ApprovalResponse } from '../../shared/approval-request';
 import { BrowserAllowSheet, type BrowserAllowPreset } from '../browser/BrowserAllowSheet';
@@ -21,7 +23,7 @@ import { DialogPortalContext } from '../ui/Dialog';
 import { DesktopUiPreferencesProvider } from '../ui-preferences';
 import { SidebarShell } from '../workbench/SidebarShell';
 import {
-  BROWSER_ROOT, browserChat, LOCAL_ORIGIN, OUTSIDE_ORIGIN, STAGING_ORIGIN,
+  BROWSER_ROOT, browserChat, browserFeedSnapshot, LOCAL_ORIGIN, NAVIGATE_URL, OUTSIDE_ORIGIN, SECRET_VALUE, STAGING_ORIGIN,
   type BrowserChatVariant, type BrowserFixture, type BrowserLanguage, type BrowserProvider, type BrowserThumbs,
 } from './browser/browser-fixtures';
 import { chatCopy } from './copy';
@@ -47,6 +49,7 @@ interface Args {
   readonly onPaneAction: (action: BrowserPaneAction) => void;
   readonly onAllow: (origin: string) => void;
   readonly onPicked: (selector: string) => void;
+  readonly onOpenWaiting: () => void;
   readonly onResolveApproval: (id: string, decision: 'allow' | 'deny', response?: ApprovalResponse) => void;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
 }
@@ -58,6 +61,7 @@ const meta = {
     onPaneAction: fn(),
     onAllow: fn(),
     onPicked: fn(),
+    onOpenWaiting: fn(),
     onResolveApproval: fn(),
     onSend: fn(async (): Promise<StructuredAgentUiResult> => ({ ok: true })),
   },
@@ -181,7 +185,6 @@ const MODELS: Readonly<Record<BrowserProvider, { readonly id: string; readonly l
   codex: { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
 };
 const TITLE = { ko: '장바구니 합계 고치기', en: 'Fix the cart total' } as const;
-const SITE_OF: Readonly<Record<string, BrowserSiteClass>> = { [LOCAL_ORIGIN]: 'local', [STAGING_ORIGIN]: 'allowed', [OUTSIDE_ORIGIN]: 'external' };
 
 function panelProps(sessionId: string, fixture: BrowserFixture, provider: BrowserProvider, locale: BrowserLanguage, args: Args, preset: 'standard' | 'full-access'): StructuredAgentSessionPanelProps {
   return {
@@ -222,7 +225,7 @@ function ChatOnly({ id, variant, args, ...options }: ChatOptions & { readonly id
   return <Desk width={1000} height={820}><Chat id={id} variant={variant} args={args} {...options} /></Desk>;
 }
 
-function PhoneScreen({ id, variant, args }: { readonly id: string; readonly variant: BrowserChatVariant; readonly args: Args }): JSX.Element {
+function PhoneScreen({ id, variant, args, bare = false }: { readonly id: string; readonly variant: BrowserChatVariant; readonly args: Args; readonly bare?: boolean }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = `in-app-browser-story-${id}`;
   const fixture = useMemo(() => browserChat(locale, variant, THUMBS), [locale, variant]);
@@ -232,7 +235,7 @@ function PhoneScreen({ id, variant, args }: { readonly id: string; readonly vari
         <MobileConversationReviewProvider>
           <MobileToastProvider>
             <div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-browser-frame" style={{ width: 360, height: 800 }}>
-              <MobileStructuredAgentSession {...panelProps(sessionId, fixture, 'claude', locale, args, 'standard')} folders={undefined} browser={{ rows: fixture.rows }} skin="bubble" onBack={fn()} />
+              <MobileStructuredAgentSession {...panelProps(sessionId, fixture, 'claude', locale, args, 'standard')} folders={undefined} browser={bare ? undefined : { rows: fixture.rows }} skin="bubble" onBack={fn()} />
             </div>
           </MobileToastProvider>
         </MobileConversationReviewProvider>
@@ -253,8 +256,8 @@ interface PaneOptions {
   readonly page?: 'cart' | 'status';
   readonly preset?: BrowserAllowPreset;
   readonly variant?: BrowserChatVariant;
-  /** Who answers 중지. */
-  readonly stops?: 'browser' | 'turn';
+  /** The pane is this wide (px), as in a narrow window or at 200% zoom. */
+  readonly paneWidth?: number;
 }
 
 const CROP_WORDS = { ko: '결제하기', en: 'Pay now' } as const;
@@ -297,8 +300,9 @@ function Workbench({ args, options, draft: openingDraft }: { readonly args: Args
   const [picking, setPicking] = useState(options.picking ?? false);
   const [sheet, setSheet] = useState(options.sheet);
   const [draft, setDraft] = useState(openingDraft);
-  const origin = new URL(address || LOCAL_ORIGIN).origin;
-  const [site, setSite] = useState<BrowserSiteClass | undefined>(address ? SITE_OF[origin] : undefined);
+  const [allowedOrigins, setAllowedOrigins] = useState<readonly string[]>([STAGING_ORIGIN]);
+  // What the current URL is, every time: allowing some other site says nothing about this one.
+  const site = address ? siteClass(address, allowedOrigins) : undefined;
   const onAction = useCallback((action: BrowserPaneAction) => {
     args.onPaneAction(action);
     switch (action.kind) {
@@ -319,7 +323,7 @@ function Workbench({ args, options, draft: openingDraft }: { readonly args: Args
   const pageView = page === 'status' ? <StatusPage /> : <CartPage picking={picking} preselect={options.preselect ?? false} onPick={onPick} />;
   return (
     <Desk>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 46fr) minmax(0, 54fr)', columnGap: 8, height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: options.paneWidth ? `minmax(0, 1fr) ${String(options.paneWidth)}px` : 'minmax(0, 46fr) minmax(0, 54fr)', columnGap: 8, height: '100%', minHeight: 0 }}>
         <div style={{ minWidth: 0, minHeight: 0, display: 'flex' }}>
           <Chat id={`workbench-${variant}`} variant={variant} args={args} preset={preset === 'full-access' ? 'full-access' : 'standard'} {...(draft ? { draft } : {})} />
         </div>
@@ -331,7 +335,7 @@ function Workbench({ args, options, draft: openingDraft }: { readonly args: Args
           onAllow={(allowed) => {
             args.onAllow(allowed);
             setSheet(undefined);
-            setSite('allowed');
+            setAllowedOrigins((current) => [...current, allowed]);
             setStrip({ kind: 'allowed', origin: allowed });
           }} />
       )}
@@ -420,12 +424,16 @@ export const AiDriving: Story = pane({ variant: 'driving', strip: { kind: 'drivi
 export const AltStopEndsTurn: Story = pane({ variant: 'driving', strip: { kind: 'driving', scope: 'turn' } });
 /** 중지 (real interaction): the AI is off the page for the rest of the turn, and the strip says so and what is left running. */
 export const StopFlow: Story = pane({ variant: 'driving', strip: { kind: 'driving' } }, async ({ canvasElement, args }) => {
-  await userEvent.click(await findIn(canvasElement, testId('browser-stop')));
+  const stop = await findIn(canvasElement, testId('browser-stop'));
+  await expect(stop).toHaveTextContent('브라우저만 중지');
+  await expect(stop).toHaveAccessibleName('브라우저만 중지');
+  await userEvent.click(stop);
   await expect(args.onPaneAction).toHaveBeenCalledWith({ kind: 'stop-ai' });
   await expect(args.onPaneAction).toHaveBeenCalledTimes(1);
   const strip = await findIn(canvasElement, testId('browser-strip'));
   await expect(strip).toHaveTextContent('AI의 브라우저 사용을 멈췄습니다.');
   await expect(strip).toHaveTextContent('이번 턴이 끝날 때까지');
+  await expect(strip).toHaveTextContent('허용하지 않은 사이트로 가는 이동은 계속 막습니다');
   await expect(canvasElement.querySelector(testId('browser-stop'))).toBeNull();
   await waitFor(() => expect(document.activeElement?.closest(testId('browser-strip'))).not.toBeNull());
 });
@@ -441,16 +449,52 @@ export const AllowFlow: Story = pane({ variant: 'blocked', strip: { kind: 'block
   await userEvent.click(await findIn(canvasElement, testId('browser-allow-open')));
   const sheet = within(page);
   await waitFor(() => expect(sheet.getByTestId('browser-allow-cancel')).toHaveFocus());
-  await expect(sheet.getByTestId('browser-allow-sheet')).toHaveTextContent(OUTSIDE_ORIGIN);
+  const dialog = sheet.getByTestId('browser-allow-sheet');
+  await expect(dialog).toHaveTextContent(OUTSIDE_ORIGIN);
   await expect(sheet.getByTestId('browser-allow-warning')).toHaveTextContent('페이지의 글과 그림이 AI를 움직이려 할 수 있고');
+  // Focus lands on Cancel, so the reader's way in is the description: the origin, then the warning.
+  const heard = (dialog.getAttribute('aria-describedby') ?? '').split(' ').map((id) => page.ownerDocument.getElementById(id)?.textContent ?? '').join(' ');
+  await expect(heard.indexOf(OUTSIDE_ORIGIN)).toBeGreaterThanOrEqual(0);
+  await expect(heard.indexOf('페이지의 글과 그림이')).toBeGreaterThan(heard.indexOf(OUTSIDE_ORIGIN));
+  // No one-side rail from the shared dialog; the full border and the words carry it.
+  const style = getComputedStyle(dialog);
+  await expect(getComputedStyle(dialog, '::before').content).toBe('none');
+  await expect(new Set([style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]).size).toBe(1);
+  await expect(style.borderTopWidth).toBe('1px');
   await userEvent.click(sheet.getByTestId('browser-allow-cancel'));
   await expect(args.onAllow).not.toHaveBeenCalled();
+  await waitFor(() => expect(canvasElement.querySelector(testId('browser-allow-open'))).toHaveFocus());
   await userEvent.click(await findIn(canvasElement, testId('browser-allow-open')));
   await userEvent.click(await sheet.findByTestId('browser-allow-confirm'));
   await expect(args.onAllow).toHaveBeenCalledTimes(1);
   await expect(args.onAllow).toHaveBeenCalledWith(OUTSIDE_ORIGIN);
-  await expect(await findIn(canvasElement, testId('browser-strip'))).toHaveTextContent('AI가 저절로 다시 시도하지 않습니다');
-  await expect(await findIn(canvasElement, testId('browser-site-badge'))).toHaveTextContent('허용됨');
+  const strip = await findIn(canvasElement, testId('browser-strip'));
+  await expect(strip).toHaveTextContent('AI가 저절로 다시 시도하지 않습니다');
+  await waitFor(() => expect(document.activeElement?.closest(testId('browser-strip'))).not.toBeNull());
+  // The page is still localhost: the badge says what the current URL is, not what was just allowed.
+  await expect(await findIn(canvasElement, testId('browser-site-badge'))).toHaveTextContent('로컬');
+  // The strip's button goes with it: focus lands where the person can go on.
+  await userEvent.click(await findIn(canvasElement, testId('browser-dismiss')));
+  await waitFor(() => expect(canvasElement.querySelector(testId('browser-address'))).toHaveFocus());
+});
+/** Allowing the site the person is on: now the current URL's class is allowed, so the badge changes and the picker opens. */
+export const AllowCurrentSiteFlow: Story = pane({ address: `${OUTSIDE_ORIGIN}/status`, page: 'status', strip: { kind: 'not-read', origin: OUTSIDE_ORIGIN } }, async ({ canvasElement }) => {
+  const badge = await findIn(canvasElement, testId('browser-site-badge'));
+  await expect(badge).toHaveTextContent('허용 안 됨');
+  await expect(await findIn(canvasElement, testId('browser-pick'))).toBeDisabled();
+  await userEvent.click(await findIn(canvasElement, testId('browser-allow-open')));
+  await userEvent.click(await within(dialogHost(canvasElement)).findByTestId('browser-allow-confirm'));
+  await waitFor(() => expect(badge).toHaveTextContent('허용됨'));
+  await expect(await findIn(canvasElement, testId('browser-pick'))).toBeEnabled();
+});
+/** A narrow pane, as beside a conversation in a small window or at 200% zoom: the longest strip, nothing pushed off the edge. */
+export const NarrowPane: Story = pane({ variant: 'blocked', strip: { kind: 'blocked', origin: OUTSIDE_ORIGIN }, paneWidth: 360 }, async ({ canvasElement }) => {
+  const pane = await findIn(canvasElement, testId('browser-pane'));
+  const right = pane.getBoundingClientRect().right + 1;
+  for (const element of pane.querySelectorAll<HTMLElement>('*')) await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(right);
+  await expect((await findIn(canvasElement, testId('browser-address'))).getBoundingClientRect().width).toBeGreaterThanOrEqual(200);
+  await expect(await findIn(canvasElement, testId('browser-allow-open'))).toBeVisible();
+  await expect(await findIn(canvasElement, testId('browser-site-badge'))).toHaveTextContent('로컬');
 });
 /** D5: the person may look; the AI may not, reads included, and the pane says so. The picker is off too, so that stays true. */
 export const PersonOnUnallowed: Story = pane({ address: `${OUTSIDE_ORIGIN}/status`, page: 'status', strip: { kind: 'not-read', origin: OUTSIDE_ORIGIN } });
@@ -458,6 +502,23 @@ export const PersonOnUnallowed: Story = pane({ address: `${OUTSIDE_ORIGIN}/statu
 // ── 8. Approval dock ───────────────────────────────────────────────────────────────────────────────────
 /** D8: a click on an allowed outside site at standard. The name of the element is the page's, so it sits apart. */
 export const ApprovalDockExternal: Story = pane({ address: `${STAGING_ORIGIN}/cart`, variant: 'approval', strip: { kind: 'waiting' } });
+/** D8: going to a page. The whole address is what the host will load, query included. */
+export const ApprovalDockNavigate: Story = pane({ address: `${STAGING_ORIGIN}/cart`, variant: 'approval-navigate', strip: { kind: 'waiting' } }, async ({ canvasElement }) => {
+  await expect(await findIn(canvasElement, testId('chat-dock-browser-run'))).toHaveTextContent(NAVIGATE_URL);
+});
+/** D8: typing a value that reads as a secret. It starts masked and shows only when asked; the field's name stays the page's. */
+export const ApprovalDockSecret: Story = pane({ address: `${STAGING_ORIGIN}/cart`, variant: 'approval-type', strip: { kind: 'waiting' } }, async ({ canvasElement }) => {
+  const run = await findIn(canvasElement, testId('chat-dock-browser-run'));
+  await expect(run).not.toHaveTextContent(SECRET_VALUE);
+  await expect(run.closest('blockquote')).toBeNull();
+  const reveal = await findIn(canvasElement, testId('chat-dock-browser-reveal'));
+  await expect(reveal).toHaveAttribute('aria-pressed', 'false');
+  await userEvent.click(reveal);
+  await expect(run).toHaveTextContent(SECRET_VALUE);
+  await expect(reveal).toHaveAttribute('aria-pressed', 'true');
+  await userEvent.click(reveal);
+  await expect(run).not.toHaveTextContent(SECRET_VALUE);
+});
 
 // ── 9, 10, 13. Rows, both skins ────────────────────────────────────────────────────────────────────────
 const showRun: Story['play'] = async ({ canvasElement }) => { scrollToTop(await findIn(canvasElement, testId('chat-browser-run'))); };
@@ -484,7 +545,11 @@ const showCheck: Story['play'] = async ({ canvasElement }) => {
 export const AutoCheck: Story = rows('check', 'check', {}, showCheck);
 /** The same check when the AI called no browser tool: the app's log decides, whatever the AI wrote. */
 export const AutoCheckNoCalls: Story = rows('check-no-calls', 'check-no-calls', {}, showCheck);
-export const CliAutoCheck: Story = rows('cli-check', 'check', { skin: 'cli' }, showCheck);
+/** CLI: the AI's words are labelled here too, so its conclusion never reads as the app's log. */
+export const CliAutoCheck: Story = rows('cli-check', 'check', { skin: 'cli' }, async (context) => {
+  await showCheck!(context);
+  await expect(await findIn(context.canvasElement, testId('chat-browser-check'))).toHaveTextContent('Claude의 말');
+});
 
 // ── 11, 12. Picker and composer ────────────────────────────────────────────────────────────────────────
 /** D11: picking. The instruction is the app's, above the page; the box on the page is Chromium's inspect overlay in the app. */
@@ -500,6 +565,10 @@ export const PickerFlow: Story = pane({}, async ({ canvasElement, args }) => {
   await expect(args.onPaneAction).toHaveBeenCalledWith({ kind: 'cancel-pick' });
   await waitFor(() => expect(canvasElement.querySelector(testId('browser-strip'))).toBeNull());
   await expect(args.onPicked).not.toHaveBeenCalled();
+  // The strip's 취소 goes with the strip: focus returns to the toggle that started it.
+  await userEvent.click(toggle);
+  await userEvent.click(await findIn(canvasElement, testId('browser-pick-cancel')));
+  await waitFor(() => expect(toggle).toHaveFocus());
   await userEvent.click(toggle);
   await userEvent.click(within(await findIn(canvasElement, testId('fixture-page'))).getByRole('button'));
   await expect(args.onPicked).toHaveBeenCalledWith('button.pay');
@@ -530,6 +599,46 @@ export const PageCrashed: Story = pane({ body: { kind: 'gone' } });
 // ── 16. The phone ──────────────────────────────────────────────────────────────────────────────────────
 /** D16: rows only. The approval never reaches this dock; the row says who it waits on and what happens if nobody answers. */
 export const PhoneRows360: Story = { render: (args) => <PhoneScreen id="phone-rows" variant="phone" args={args} /> };
+/** 240 s on: the host voided it, the waiting row is gone, and a refused row stands where the answer would have gone. A late answer is refused by the host. */
+export const PhoneRowsExpired360: Story = { render: (args) => <PhoneScreen id="phone-rows-expired" variant="phone-expired" args={args} /> };
+/** A phone never gets the decision dock for a browser action, with or without the browser rows beside it. */
+export const PhoneNoDock: Story = {
+  render: (args) => <PhoneScreen id="phone-no-dock" variant="phone" args={args} bare />,
+  play: async ({ canvasElement }) => {
+    await findIn(canvasElement, testId('phone-browser-frame'));
+    await findIn(canvasElement, '[data-testid="structured-agent-composer-input"]');
+    await expect(canvasElement.querySelector('.chat-dock')).toBeNull();
+    await expect(await findIn(canvasElement, '[data-testid="structured-agent-composer-hint"]')).toHaveTextContent('데스크톱에서 답을 기다립니다');
+  },
+};
+function PhoneFeedScreen({ args }: { readonly args: Args }): JSX.Element {
+  const locale = useContext(StoryLocale);
+  const waiting = useMemo(() => feedWaiting(browserFeedSnapshot(locale), []), [locale]);
+  return (
+    <AppI18nProvider locale={locale} languages={[locale]}>
+      <MobileNavigationHistoryProvider>
+        <div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-browser-frame" style={{ width: 360, height: 800 }}>
+          <MobileFeedView projects={[{ id: 'cart-kit', name: 'cart-kit' }]} scope="cart-kit" onScopeChange={() => undefined} host={{ tone: 'on', label: locale === 'ko' ? '작업 PC · 18ms' : 'Work PC · 18ms' }} waiting={waiting} flows={[]}
+            conversations={{ items: [], total: 0 }} usage={{ fiveHour: { usedPercent: 31 }, weekly: { usedPercent: 24 } }}
+            onDecide={async () => ({ ok: false })} onOpenWaiting={args.onOpenWaiting} onOpenConversation={() => undefined} onOpenFlow={() => undefined} onSeeAllConversations={() => undefined} onNewConversation={() => undefined} />
+        </div>
+      </MobileNavigationHistoryProvider>
+    </AppI18nProvider>
+  );
+}
+/** D16 on the feed: the card says who answers and opens the conversation; it has no 허용·거부. */
+export const PhoneFeedReadOnly360: Story = {
+  render: (args) => <PhoneFeedScreen args={args} />,
+  play: async ({ canvasElement, args }) => {
+    const card = await findIn(canvasElement, testId('mobile-feed-waiting'));
+    await expect(card).toHaveTextContent('데스크톱에서 승인 대기');
+    await expect(card).toHaveTextContent('폰에서는 답할 수 없습니다');
+    await expect(canvasElement.querySelector(testId('mobile-feed-allow'))).toBeNull();
+    await expect(canvasElement.querySelector(testId('mobile-feed-deny'))).toBeNull();
+    await userEvent.click(card);
+    await expect(args.onOpenWaiting).toHaveBeenCalledTimes(1);
+  },
+};
 
 // ── Reference variants (the Storybook locale picks the language) ───────────────────────────────────────
 function ReferenceFrame({ locale, children }: { readonly locale: BrowserLanguage; readonly children: ReactNode }): JSX.Element {
@@ -551,8 +660,11 @@ export const BlockedBarReference = reference(BlockedBar);
 export const AllowSheetFullAccessReference = reference(AllowSheetFullAccess);
 export const PersonOnUnallowedReference = reference(PersonOnUnallowed);
 export const ApprovalDockExternalReference = reference(ApprovalDockExternal);
+export const ApprovalDockSecretReference = reference({ ...ApprovalDockSecret, play: undefined });
 export const ShotRowReference = reference(ShotRow);
 export const RefusedRowsReference = reference(RefusedRows);
 export const PickerOverlayReference = reference(PickerOverlay);
 export const AutoCheckReference = reference(AutoCheck);
 export const PhoneRowsReference = reference(PhoneRows360);
+export const PhoneRowsExpiredReference = reference(PhoneRowsExpired360);
+export const PhoneFeedReadOnlyReference = reference({ ...PhoneFeedReadOnly360, play: undefined });

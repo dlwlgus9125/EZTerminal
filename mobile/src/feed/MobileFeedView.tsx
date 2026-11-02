@@ -46,7 +46,8 @@ const GLYPH: Record<FeedWaitingItem['kind'], 'ok' | 'q' | 'flow' | 'term' | 'clo
 };
 
 function waitingKicker(item: FeedWaitingItem, text: ShellText): string {
-  const kind = item.kind === 'approval' ? waitingKindText(item.requestKind ?? 'other', text)
+  const kind = item.desktopOnly ? text('데스크톱에서 승인 대기', 'Waiting for approval on the desktop')
+    : item.kind === 'approval' ? waitingKindText(item.requestKind ?? 'other', text)
     : item.kind === 'question' ? waitingKindText('question', text)
       : item.kind === 'plan' ? waitingKindText('plan', text)
         : waitingKindText(item.kind, text, item.asks);
@@ -96,6 +97,7 @@ function WaitingCard({ item, showProject, onDecide, onOpen }: {
         {kicker}
         <span className="mob-feed__t">{item.title}</span>
         {waitingDetailText(item, text) && <span className="mob-feed__m">{waitingDetailText(item, text)}</span>}
+        {item.desktopOnly && <span className="mob-feed__m">{text('폰에서는 답할 수 없습니다.', 'This cannot be answered on the phone.')}</span>}
       </button>
     );
   }

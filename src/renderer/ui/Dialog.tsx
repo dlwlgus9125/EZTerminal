@@ -35,6 +35,8 @@ export interface DialogProps {
   /** Optional severity glyph beside the title. Presentation only. */
   readonly icon?: ReactNode;
   readonly description?: ReactNode;
+  /** Ids in the body a reader should hear on opening, in order, when the body says what matters and first focus is elsewhere. */
+  readonly describedBy?: string;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
   readonly size?: 'sm' | 'md' | 'lg';
@@ -67,6 +69,7 @@ export function Dialog({
   footer,
   icon,
   initialFocusRef,
+  describedBy,
   onOpenChange,
   open,
   ownerDocument,
@@ -186,7 +189,7 @@ export function Dialog({
         role={role}
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
+        aria-describedby={describedBy ?? (description ? descriptionId : undefined)}
         tabIndex={-1}
       >
         <header className="ez-ui-dialog__header">

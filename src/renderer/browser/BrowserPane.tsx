@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 
 import type { BrowserSiteClass } from '../../shared/browser';
 import { useChatCopy, type ChatCopy } from '../chat/copy';
@@ -71,7 +71,7 @@ function SiteBadge({ site, copy }: { readonly site: BrowserSiteClass; readonly c
   );
 }
 
-function Toolbar({ address, site, canBack = false, canForward = false, picking = false, loaded, onAction, copy }: {
+function Toolbar({ address, site, canBack = false, canForward = false, picking = false, loaded, onAction, copy, addressRef, pickRef }: {
   readonly address: string;
   readonly site?: BrowserSiteClass;
   readonly canBack?: boolean;
@@ -80,6 +80,8 @@ function Toolbar({ address, site, canBack = false, canForward = false, picking =
   readonly loaded: boolean;
   readonly onAction: BrowserPaneProps['onAction'];
   readonly copy: ChatCopy['browser']['pane'];
+  readonly addressRef: RefObject<HTMLInputElement>;
+  readonly pickRef: RefObject<HTMLButtonElement>;
 }): JSX.Element {
   const [draft, setDraft] = useState(address);
   useEffect(() => setDraft(address), [address]);
@@ -95,10 +97,10 @@ function Toolbar({ address, site, canBack = false, canForward = false, picking =
       <IconButton size="sm" variant="ghost" aria-label={copy.forward} title={copy.forward} icon={glyphIcon('next')} disabled={!canForward} onClick={() => onAction({ kind: 'forward' })} />
       <IconButton size="sm" variant="ghost" aria-label={copy.reload} title={copy.reload} icon={glyphIcon('refresh')} disabled={!loaded} onClick={() => onAction({ kind: 'reload' })} />
       <form className="browser-pane__address" onSubmit={go}>
-        <input aria-label={copy.address} value={draft} placeholder={copy.address} spellCheck={false} autoComplete="off" onChange={(event) => setDraft(event.target.value)} data-testid="browser-address" />
+        <input ref={addressRef} aria-label={copy.address} value={draft} placeholder={copy.address} spellCheck={false} autoComplete="off" onChange={(event) => setDraft(event.target.value)} data-testid="browser-address" />
       </form>
       {site && <SiteBadge site={site} copy={fullCopy} />}
-      <IconButton size="sm" variant={picking ? 'secondary' : 'ghost'} aria-label={copy.pick} title={pickable ? copy.pick : copy.pickOff} aria-pressed={picking} icon={glyphIcon('pointer')}
+      <IconButton ref={pickRef} size="sm" variant={picking ? 'secondary' : 'ghost'} aria-label={copy.pick} title={pickable ? copy.pick : copy.pickOff} aria-pressed={picking} icon={glyphIcon('pointer')}
         disabled={!pickable} onClick={() => onAction({ kind: picking ? 'cancel-pick' : 'pick' })} data-testid="browser-pick" />
     </div>
   );
@@ -120,7 +122,7 @@ function stripView(strip: BrowserPaneStrip, copy: ChatCopy['browser']['pane']['s
       const turn = strip.scope === 'turn';
       return {
         tone: 'live', lamp: 'on', title: copy.driving,
-        actions: [{ label: turn ? copy.stopTurn : copy.stop, ariaLabel: turn ? copy.stopTurnLabel : copy.stopLabel, action: { kind: turn ? 'stop-turn' : 'stop-ai' }, testId: 'browser-stop' }],
+        actions: [{ label: turn ? copy.stopTurn : copy.stop, ...(turn ? { ariaLabel: copy.stopTurnLabel } : {}), action: { kind: turn ? 'stop-turn' : 'stop-ai' }, testId: 'browser-stop' }],
       };
     }
     case 'stopped':
@@ -226,6 +228,14 @@ function FaultBody({ glyph, title, detail, ai, label, action, onAction }: {
 
 export function BrowserPane({ address, site, body, strip, canBack, canForward, picking = false, pageHidden = false, page, onAction }: BrowserPaneProps): JSX.Element {
   const copy = useChatCopy().browser.pane;
+  const addressRef = useRef<HTMLInputElement>(null);
+  const pickRef = useRef<HTMLButtonElement>(null);
+  const pressStrip = (action: BrowserPaneAction): void => {
+    onAction(action);
+    // These buttons go with their strip: focus moves to where the person can go on.
+    if (action.kind === 'dismiss') addressRef.current?.focus();
+    if (action.kind === 'cancel-pick') pickRef.current?.focus();
+  };
   useEffect(() => {
     if (!picking) return undefined;
     // In the app the page has the keyboard, so the host forwards Esc; this covers focus left in the app's own chrome.
@@ -237,10 +247,10 @@ export function BrowserPane({ address, site, body, strip, canBack, canForward, p
   const stopped = strip?.kind === 'stopped' || strip?.kind === 'allowed';
   return (
     <section className="browser-pane" aria-label={copy.label} data-testid="browser-pane">
-      <Toolbar key={address} address={address} {...(site ? { site } : {})} canBack={canBack ?? false} canForward={canForward ?? false} picking={picking} loaded={body.kind === 'page'} onAction={onAction} copy={copy} />
+      <Toolbar key={address} address={address} {...(site ? { site } : {})} canBack={canBack ?? false} canForward={canForward ?? false} picking={picking} loaded={body.kind === 'page'} onAction={onAction} copy={copy} addressRef={addressRef} pickRef={pickRef} />
       {picking
-        ? <Strip view={{ tone: 'live', lamp: 'on', title: copy.strip.picking, detail: copy.strip.pickingDetail, actions: [{ label: copy.strip.pickCancel, action: { kind: 'cancel-pick' }, testId: 'browser-pick-cancel' }] }} onAction={onAction} />
-        : view && <Strip view={view} onAction={onAction} focus={stopped} />}
+        ? <Strip view={{ tone: 'live', lamp: 'on', title: copy.strip.picking, detail: copy.strip.pickingDetail, actions: [{ label: copy.strip.pickCancel, action: { kind: 'cancel-pick' }, testId: 'browser-pick-cancel' }] }} onAction={pressStrip} />
+        : view && <Strip view={view} onAction={pressStrip} focus={stopped} />}
       <div className="browser-pane__page" data-testid="browser-page" data-hidden={pageHidden || undefined}>
         {body.kind === 'empty' && <EmptyBody candidates={body.candidates} onAction={onAction} copy={copy.empty} />}
         {body.kind === 'server-down' && <FaultBody glyph="offline" title={copy.fault.downTitle} detail={copy.fault.down(body.origin)} ai={copy.fault.ai} label={copy.fault.retry} action={{ kind: 'retry' }} onAction={onAction} />}

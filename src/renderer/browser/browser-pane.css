@@ -5,6 +5,7 @@
  * --ui-* tokens. Amber is the waiting strip alone: that one waits on a person. */
 
 .browser-pane {
+  container: browser-pane / inline-size;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -91,6 +92,24 @@
   color: var(--ui-text-primary);
 }
 
+/* A narrow pane, or 200% zoom: the address gets its own row, and a strip's buttons their own. The badge keeps its words. */
+@container browser-pane (max-width: 480px) {
+  .browser-pane__bar {
+    flex-wrap: wrap;
+  }
+
+  .browser-pane__bar > .browser-pane__address {
+    flex: 1 0 100%;
+    order: 1;
+    margin-top: var(--ui-space-1);
+    margin-left: 0;
+  }
+
+  .browser-pane__bar > .browser-pane__site {
+    margin-left: auto;
+  }
+}
+
 /* ── Strip ───────────────────────────────────────────────────────────── */
 .browser-pane__strip {
   display: flex;
@@ -164,6 +183,23 @@
 
 .browser-pane__strip-actions > * + * {
   margin-left: var(--ui-space-2);
+}
+
+@container browser-pane (max-width: 480px) {
+  .browser-pane__strip {
+    flex-wrap: wrap;
+  }
+
+  .browser-pane__strip > .browser-pane__strip-text {
+    flex: 1 1 calc(100% - 2rem);
+  }
+
+  .browser-pane__strip > .browser-pane__strip-actions {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    margin-top: var(--ui-space-2);
+    margin-left: 0;
+  }
 }
 
 /* ── Page ────────────────────────────────────────────────────────────── */
@@ -267,6 +303,11 @@
 }
 
 /* ── Allow sheet ─────────────────────────────────────────────────────── */
+/* The shared dialog's severity rail is a one-side stripe. Off for this dialog only: its full border, glyph and words stay. */
+.ez-ui-dialog.browser-allow-dialog[data-tone]::before {
+  content: none;
+}
+
 .browser-allow > * + * {
   margin-top: var(--ui-space-3);
 }

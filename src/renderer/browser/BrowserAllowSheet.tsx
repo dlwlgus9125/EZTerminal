@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 
 import { useChatCopy } from '../chat/copy';
 import { Button, Dialog } from '../ui';
@@ -19,14 +19,18 @@ export interface BrowserAllowSheetProps {
 /**
  * The person allows one exact origin for one project (D7). It is a choice the app can only partly back up, so the sheet
  * says what it does not do: allowing a site makes nothing on it safe, and a page can try to steer the AI. Cancel takes the
- * first focus.
+ * first focus, so a reader hears the origin and then the warning as the dialog's description. No one-side rail: the
+ * shared dialog's is switched off here, and the full border, the glyph and the words say it.
  */
 export function BrowserAllowSheet({ origin, projectName, preset, onCancel, onAllow }: BrowserAllowSheetProps): JSX.Element {
   const copy = useChatCopy().browser.allow;
   const cancel = useRef<HTMLButtonElement>(null);
   const full = preset === 'full-access';
+  const siteId = useId();
+  const warningId = useId();
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }} title={copy.title} tone={full ? 'danger' : 'warning'} initialFocusRef={cancel} testId="browser-allow-sheet"
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }} title={copy.title} tone={full ? 'danger' : 'warning'} icon={<Glyph name="warn" />} className="browser-allow-dialog"
+      describedBy={`${siteId} ${warningId}`} initialFocusRef={cancel} testId="browser-allow-sheet"
       footer={(
         <>
           <Button ref={cancel} variant="secondary" onClick={onCancel} data-testid="browser-allow-cancel">{copy.cancel}</Button>
@@ -34,10 +38,10 @@ export function BrowserAllowSheet({ origin, projectName, preset, onCancel, onAll
         </>
       )}>
       <div className="browser-allow">
-        <p className="browser-allow__site"><span>{copy.site}</span><code>{origin}</code></p>
+        <p className="browser-allow__site" id={siteId}><span>{copy.site}</span><code>{origin}</code></p>
         <p>{copy.scope(projectName)}</p>
         <p>{copy.does[preset]}{full ? '' : ` ${copy.projectWide}`}</p>
-        <section className="browser-allow__warn" data-level={full ? 'full' : 'plain'} data-testid="browser-allow-warning">
+        <section className="browser-allow__warn" id={warningId} data-level={full ? 'full' : 'plain'} data-testid="browser-allow-warning">
           <Glyph name="warn" size={16} />
           <div>
             <p><strong>{copy.warnTitle}</strong></p>

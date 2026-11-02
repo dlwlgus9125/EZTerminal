@@ -50,12 +50,30 @@ describe('in-app browser wording', () => {
     expect(chatCopy('en').browser.pane.strip.allowedDetail).toContain('does not try again');
   });
 
-  it('keeps the phone from implying it can answer, and says what no answer does', () => {
+  it('keeps the phone from implying it can answer, and says what no answer does and by when', () => {
     const ko = chatCopy('ko').browser.waiting;
     expect(ko.title).toBe('데스크톱에서 승인 대기');
-    expect(ko.note).toContain('폰에서는 답할 수 없습니다');
-    expect(ko.note).toContain('실행되지 않고 시간 초과');
-    expect(chatCopy('en').browser.waiting.note).toContain('does not run and it times out');
+    expect(ko.note('14:45')).toContain('폰에서는 답할 수 없습니다');
+    expect(ko.note('14:45')).toContain('14:45까지');
+    expect(ko.note('14:45')).toContain('실행되지 않고 시간 초과');
+    expect(chatCopy('en').browser.waiting.note('14:45')).toContain('does not run and it times out');
+  });
+
+  it('names what 중지 stops before it is pressed, and says the guard stays on after', () => {
+    const ko = chatCopy('ko').browser.pane.strip;
+    expect(ko.stop).toBe('브라우저만 중지');
+    expect(ko.stoppedDetail).toContain('허용하지 않은 사이트로 가는 이동은 계속 막습니다');
+    const en = chatCopy('en').browser.pane.strip;
+    expect(en.stop).toBe('Stop browser only');
+    expect(en.stoppedDetail).toContain('stays blocked');
+  });
+
+  it('says whose values an approval shows, and that a change voids it', () => {
+    const ko = chatCopy('ko').browser.approval;
+    expect(ko.held).toContain('앱이 보관한');
+    expect(ko.voided).toContain('무효');
+    expect(chatCopy('en').browser.approval.held).toContain('Held by the app');
+    expect(chatCopy('en').browser.approval.voided).toContain('void');
   });
 
   it('says the automatic check runs once and that its turn is the AI asked, not the page confirmed', () => {

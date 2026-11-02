@@ -987,7 +987,9 @@ export interface StructuredAgentTranscriptProps {
   /** The phone: where its next-prompt chip floats, and the scroll room for it. */
   readonly tailDock?: ChatTailDock;
   /** 시안, the in-app browser: see the panel's `browser`. */
-  readonly browser?: ChatBrowserProp & { readonly phone?: boolean };
+  readonly browser?: ChatBrowserProp;
+  /** A browser action is answered on the desktop only, so on a phone it never reaches the decision dock. */
+  readonly phone?: boolean;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -1034,20 +1036,20 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   longRun,
   tailDock,
   browser,
+  phone = false,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
   const openLimit = longRun?.openLimit;
   const browserRows = browser?.rows;
-  const phoneBrowser = browser?.phone === true;
   const built = useMemo(
     () => buildChatModel({
       items,
       // A browser action is answered on the desktop: the phone's dock would draw buttons that fail.
-      approvals: phoneBrowser ? approvals.filter((approval) => !isBrowserActionRequest(approval.providerRequestId)) : approvals,
+      approvals: phone ? approvals.filter((approval) => !isBrowserActionRequest(approval.providerRequestId)) : approvals,
       ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}), ...(browserRows ? { browserRows } : {}),
     }),
-    [items, approvals, turns, openLimit, browserRows, phoneBrowser],
+    [items, approvals, turns, openLimit, browserRows, phone],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -3213,7 +3215,8 @@ export function StructuredAgentSessionPanel({
         onFocusDecision={focusDecision}
         {...(longRun ? { longRun: transcriptLongRun } : {})}
         {...(tailDock ? { tailDock } : {})}
-        {...(browser ? { browser: { ...browser, phone: variant === 'mobile' } } : {})}
+        {...(browser ? { browser } : {})}
+        phone={variant === 'mobile'}
       />}
       {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -3292,7 +3295,7 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || lockedByTurn, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
-          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (variant === 'mobile' && browser && approvals.some((approval) => isBrowserActionRequest(approval.providerRequestId)) ? chatCopy(chatLocale).browser.waiting.hint : full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (variant === 'mobile' && approvals.some((approval) => isBrowserActionRequest(approval.providerRequestId)) ? chatCopy(chatLocale).browser.waiting.hint : full ? copy.decisionHint : copy.decisionElsewhereHint) : queueSettings ? copy.settingsQueuedDuringTurn : copy.settingsLockedDuringTurn } : {})}
           {...(longRunHint ? { statusHint: longRunHint } : {})}
           {...(composerSteer ? { steer: composerSteer } : {})}
           {...(full ? { onFocusDecision: focusDecision } : {})}

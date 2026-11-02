@@ -263,7 +263,7 @@ export type ChatRow =
   | (RowBase & { readonly kind: 'browser-run'; readonly run: ChatBrowserRun })
   | (RowBase & { readonly kind: 'browser-blocked'; readonly origin: string; readonly reason: BrowserRefusal; readonly action?: BrowserActionKind })
   | (RowBase & { readonly kind: 'browser-check'; readonly check: ChatBrowserCheck })
-  | (RowBase & { readonly kind: 'browser-waiting'; readonly origin: string; readonly action: BrowserActionKind });
+  | (RowBase & { readonly kind: 'browser-waiting'; readonly origin: string; readonly action: BrowserActionKind; readonly expiresAt: string });
 
 export type ChatRowKind = ChatRow['kind'];
 
