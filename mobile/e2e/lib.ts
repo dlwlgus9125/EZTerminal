@@ -2030,12 +2030,15 @@ export async function pollLogcat(
 export interface DesktopE2eSession {
   readonly token: string;
   readonly window: Page;
+  /** Runs in the desktop's main process: what only a spec arranges there (a stand-in resolver, a shorter clock). */
+  readonly evaluateMain: ElectronApplication['evaluate'];
   issuePairingCode(): Promise<string>;
   dispose(): Promise<void>;
 }
 
 /** Launches the REAL desktop app with an owned isolated profile. Callers get
- * the real persisted remote token and window, but not the raw application:
+ * the real persisted remote token and window, and the main process to evaluate
+ * in, but not the raw application:
  * `dispose()` is the only exit so the temporary profile cannot be orphaned.
  * `getRemoteToken()` (M4) mints+persists on first call — no need to wait for a
  * WS client to connect first (the WS-triggered mint path only fires on first
@@ -2049,6 +2052,8 @@ export async function launchDesktop(
     /** Another desktop build (an older release for compatibility checks): its main entry and Electron. */
     readonly mainEntry?: string;
     readonly executablePath?: string;
+    /** Chromium switches after the main entry (e.g. `--host-resolver-rules` for a stub site). */
+    readonly args?: readonly string[];
   } = {},
 ): Promise<DesktopE2eSession> {
   const profile = createOwnedDesktopProfile();
@@ -2067,7 +2072,7 @@ export async function launchDesktop(
     env.EZTERMINAL_REMOTE_VPN_INTERFACE =
       process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
     const launchedApp = await electron.launch({
-      args: [options.mainEntry ?? MAIN_ENTRY],
+      args: [options.mainEntry ?? MAIN_ENTRY, ...(options.args ?? [])],
       ...(options.executablePath ? { executablePath: options.executablePath } : {}),
       env,
       ...(options.cwd ? { cwd: options.cwd } : {}),
@@ -2096,6 +2101,7 @@ export async function launchDesktop(
     return {
       token,
       window: win,
+      evaluateMain: launchedApp.evaluate.bind(launchedApp),
       issuePairingCode: () => launchedApp.evaluate(async ({ BrowserWindow }) => {
         const desktopWindow = BrowserWindow.getAllWindows()[0];
         const issued = await desktopWindow.webContents.executeJavaScript(

@@ -26,6 +26,7 @@
     "e2e:review-journey": "node --experimental-strip-types e2e/review-journey.ts",
     "e2e:wrap-up-journey": "node --experimental-strip-types e2e/wrap-up-journey.ts",
     "e2e:long-run-journey": "node --experimental-strip-types e2e/long-run-journey.ts",
+    "e2e:browser-rows-journey": "node --experimental-strip-types e2e/browser-rows-journey.ts",
     "e2e:subagent-tree": "node --experimental-strip-types e2e/subagent-tree.ts",
     "e2e:i4-feed-terminal": "node --experimental-strip-types e2e/i4-feed-terminal.ts",
     "e2e:session-restart-expired": "node --experimental-strip-types e2e/session-force-stop-recovery.ts --offline-ms=330000",
