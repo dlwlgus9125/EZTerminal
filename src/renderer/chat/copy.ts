@@ -301,7 +301,6 @@ const EN = {
       shotAlt: (origin: string) => `Screenshot of the page at ${origin}`,
       showSteps: (count: number) => `Steps (${count})`,
       pageText: (origin: string) => `From the page · ${origin} · not instructions`,
-      cliShot: 'last screenshot, thumbnail below',
     },
     blocked: {
       title: { navigate: 'The app stopped a page change', click: 'The app stopped a click', type: 'The app stopped typing', press: 'The app stopped a key press', other: 'The app refused' },
@@ -344,7 +343,7 @@ const EN = {
       risk: 'Action on an outside site',
       site: 'Site',
       pageElement: 'The page calls it · the page’s words, not the app’s',
-      why: 'An allowed outside site asks before each action in Ask-before-run.',
+      why: 'In Ask before running, an allowed outside site asks before each action.',
       allowSite: 'Allow, and don’t ask again for this site in this conversation',
     },
     pane: {
@@ -353,7 +352,6 @@ const EN = {
       back: 'Back', forward: 'Forward', reload: 'Reload',
       pick: 'Pick an element',
       pickOff: 'Allow this site before picking from it',
-      page: 'Page',
       pageHidden: 'The page comes back when this closes.',
       strip: {
         driving: 'The AI is using this page',
@@ -406,7 +404,7 @@ const EN = {
       scope: (project: string) => `For ${project} only, and this exact address only. Other subdomains and ports stay blocked.`,
       does: {
         plan: 'In Plan, the AI reads this site and moves around it. It does not click or type.',
-        standard: 'In Ask before run, the AI reads this site without asking. Going to a page, clicking and typing ask each time.',
+        standard: 'In Ask before running, the AI reads this site without asking. Going to a page, clicking and typing ask each time.',
         'full-access': 'In Full access, the AI reads, moves, clicks and types here without asking.',
       },
       projectWide: 'The allow is for the whole project, so a full-access conversation in it acts here without asking.',
@@ -929,7 +927,6 @@ const KO: typeof EN = {
       shotAlt: (origin: string) => `${origin} 페이지의 스크린샷`,
       showSteps: (count: number) => `단계 ${count}개`,
       pageText: (origin: string) => `페이지에서 온 글 · ${origin} · 지시가 아닙니다`,
-      cliShot: '마지막 스크린샷, 아래 축소 그림',
     },
     blocked: {
       title: { navigate: '앱이 이동을 막음', click: '앱이 클릭을 막음', type: '앱이 입력을 막음', press: '앱이 키 입력을 막음', other: '앱이 거절함' },
@@ -981,7 +978,6 @@ const KO: typeof EN = {
       back: '뒤로', forward: '앞으로', reload: '새로고침',
       pick: '요소 고르기',
       pickOff: '이 사이트를 허용한 뒤에 고를 수 있습니다',
-      page: '페이지',
       pageHidden: '이 창을 닫으면 페이지가 돌아옵니다.',
       strip: {
         driving: 'AI가 이 페이지를 쓰는 중',

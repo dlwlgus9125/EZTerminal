@@ -287,7 +287,7 @@ function elementDraft(element: PickedElement, locale: BrowserLanguage): ChatComp
   };
 }
 
-const PAY_BUTTON: PickedElement = { selector: 'button.pay', role: 'button', name: '결제하기', width: 132, height: 44 };
+const PAY_BUTTON: PickedElement = { selector: 'button.pay', role: 'button', name: '결제하기', width: 116, height: 46 };
 
 /** The conversation beside the pane (D4), with what the host would do for each press. */
 function Workbench({ args, options, draft: openingDraft }: { readonly args: Args; readonly options: PaneOptions; readonly draft?: ChatComposerDraft }): JSX.Element {

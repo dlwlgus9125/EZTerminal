@@ -91,8 +91,7 @@ function placed(rows: Map<string, ChatRow>, sequence: number, row: ChatRow, turn
 }
 
 const localRun = (lang: BrowserLanguage, sequence: number, thumbs: BrowserThumbs): ChatBrowserRun => ({
-  origin: LOCAL_ORIGIN, site: 'local',
-  steps: [step('s1', 'navigate', sequence), step('s2', 'screenshot', sequence), step('s3', 'snapshot', sequence, TEXT[lang].pageText), step('s4', 'click', sequence + 1), step('s5', 'screenshot', sequence + 1)],
+  origin: LOCAL_ORIGIN,   steps: [step('s1', 'navigate', sequence), step('s2', 'screenshot', sequence), step('s3', 'snapshot', sequence, TEXT[lang].pageText), step('s4', 'click', sequence + 1), step('s5', 'screenshot', sequence + 1)],
   latestShot: { thumb: thumbs.after, takenAt: at(sequence + 1) },
 });
 
@@ -124,11 +123,11 @@ export function browserChat(lang: BrowserLanguage, variant: BrowserChatVariant, 
     case 'idle':
       return { items: opening(lang, 'turn-run'), turns: [finished], state: 'idle', rows };
     case 'driving': {
-      const run: ChatBrowserRun = { origin: LOCAL_ORIGIN, site: 'local', steps: [step('s1', 'navigate', 3), step('s2', 'screenshot', 3)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
+      const run: ChatBrowserRun = { origin: LOCAL_ORIGIN, steps: [step('s1', 'navigate', 3), step('s2', 'screenshot', 3)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
       return { items: [...opening(lang, 'turn-run'), placed(rows, 3, runRow(3, 'turn-run', run), 'turn-run')], turns: [running], state: 'working', rows };
     }
     case 'blocked': {
-      const run: ChatBrowserRun = { origin: LOCAL_ORIGIN, site: 'local', steps: [step('s1', 'navigate', 3), step('s2', 'snapshot', 3, text.injected)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
+      const run: ChatBrowserRun = { origin: LOCAL_ORIGIN, steps: [step('s1', 'navigate', 3), step('s2', 'snapshot', 3, text.injected)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
       return {
         items: [
           ...opening(lang, 'turn-run'), placed(rows, 3, runRow(3, 'turn-run', run), 'turn-run'),
@@ -139,7 +138,7 @@ export function browserChat(lang: BrowserLanguage, variant: BrowserChatVariant, 
       };
     }
     case 'approval': {
-      const run: ChatBrowserRun = { origin: STAGING_ORIGIN, site: 'allowed', steps: [step('s1', 'screenshot', 3), step('s2', 'snapshot', 3, text.pageText)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
+      const run: ChatBrowserRun = { origin: STAGING_ORIGIN, steps: [step('s1', 'screenshot', 3), step('s2', 'snapshot', 3, text.pageText)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
       return { items: [...opening(lang, 'turn-run'), placed(rows, 3, runRow(3, 'turn-run', run), 'turn-run')], turns: [turn('turn-run', 'blocked', started)], approvals: [approval(lang)], state: 'blocked', rows };
     }
     case 'shot':
@@ -172,7 +171,7 @@ export function browserChat(lang: BrowserLanguage, variant: BrowserChatVariant, 
       const appSent = item(5, 'notice', CHECK_TEXT, { turnId: 'turn-check' });
       rows.set(appSent.id, { kind: 'user', id: `user:${appSent.id}`, turnId: 'turn-check', createdAt: sent.createdAt, text: CHECK_TEXT, origin: 'app-resume', appSent: 'browser-check', messageId: appSent.id, anchorId: appSent.id, sensitive: false });
       const run: ChatBrowserRun = {
-        origin: LOCAL_ORIGIN, site: 'local', steps: [step('s6', 'snapshot', 6, text.pageText), step('s7', 'screenshot', 6)], latestShot: { thumb: thumbs.before, takenAt: at(6) },
+        origin: LOCAL_ORIGIN, steps: [step('s6', 'snapshot', 6, text.pageText), step('s7', 'screenshot', 6)], latestShot: { thumb: thumbs.before, takenAt: at(6) },
       };
       return {
         items: [
@@ -184,7 +183,7 @@ export function browserChat(lang: BrowserLanguage, variant: BrowserChatVariant, 
       };
     }
     case 'phone': {
-      const run: ChatBrowserRun = { origin: STAGING_ORIGIN, site: 'allowed', steps: [step('s1', 'screenshot', 3), step('s2', 'snapshot', 3, text.pageText)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
+      const run: ChatBrowserRun = { origin: STAGING_ORIGIN, steps: [step('s1', 'screenshot', 3), step('s2', 'snapshot', 3, text.pageText)], latestShot: { thumb: thumbs.before, takenAt: at(3) } };
       const waiting: ChatRow = { kind: 'browser-waiting', id: 'browser-waiting:1', turnId: 'turn-run', createdAt: at(5), origin: STAGING_ORIGIN, action: 'click' };
       return {
         items: [

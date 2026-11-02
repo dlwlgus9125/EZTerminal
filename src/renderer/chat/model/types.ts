@@ -1,6 +1,6 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
 import type { ChatMessageContext } from '../../../shared/chat-message';
-import type { BrowserActionKind, BrowserRefusal, BrowserSiteClass, BrowserStepKind } from '../../../shared/browser';
+import type { BrowserActionKind, BrowserRefusal, BrowserStepKind } from '../../../shared/browser';
 import type { DaemonApproval, DaemonTurn } from '../../../shared/daemon-protocol';
 import type { RecordedFileChange } from '../../../shared/conversation-changes';
 import type { AppSentReason, OpenUsageLimit, SteerLanding } from '../../../shared/long-run';
@@ -156,7 +156,6 @@ export interface ChatBrowserStep {
 /** A run of browser tool calls on one site, read from the host's call log: what ran, not what the AI says it saw. */
 export interface ChatBrowserRun {
   readonly origin: string;
-  readonly site: BrowserSiteClass;
   readonly steps: readonly ChatBrowserStep[];
   readonly latestShot?: ChatBrowserShot;
 }
