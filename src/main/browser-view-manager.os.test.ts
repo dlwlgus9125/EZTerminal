@@ -378,6 +378,10 @@ describe('an external top page', () => {
     expect(of('external-to-local').all.filter((entry) => entry.includes('pwn'))).toEqual([]);
   });
 
+  it.each(['external-parting-shot', 'external-parting-shot-hidden'])('%s: reaches nothing on this PC on its way out, as the pane moves to a local page', (name) => {
+    expect(of(name).all.filter((entry) => entry.startsWith('/parting'))).toEqual([]);
+  });
+
   it('keeps its own frames, for the person who went there', () => {
     expect(of('person-site-own-frames').reached).toEqual(['/with-frames', '/landed?via=own-frame']);
   });

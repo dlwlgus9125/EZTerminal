@@ -86,6 +86,32 @@ describe('requestVerdict: every request, whoever made it', () => {
     expect(await requestVerdict(request('http://localhost:5173/'), policy({ topUrl: 'https://elsewhere.example/', topExternal: true }), environment())).toEqual({ cancel: false });
   });
 
+  describe('the frame that asked, which need not be the page the pane shows now', () => {
+    const asked = (frame: string | null) => ({ ...request('http://localhost:5173/admin', 'xhr'), frame });
+
+    it('refuses an external page\'s parting request, though the pane has moved to a local page', async () => {
+      expect(await requestVerdict(asked('https://elsewhere.example'), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('refuses an external frame in a local page', async () => {
+      expect(await requestVerdict(asked('https://evil.example'), policy({ guarded: false }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('fails closed on a frame that is gone', async () => {
+      expect(await requestVerdict(asked(null), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('lets a local page, a file and an allowed site ask as they did', async () => {
+      for (const frame of ['http://localhost:5173', 'file://', ALLOWED]) {
+        expect(await requestVerdict(asked(frame), policy(), environment()), frame).toEqual({ cancel: false });
+      }
+    });
+
+    it('takes no frame for a page\'s own navigation: that is the person leaving', async () => {
+      expect(await requestVerdict({ ...request('http://localhost:5173/'), frame: 'https://elsewhere.example' }, policy(), environment())).toEqual({ cancel: false });
+    });
+  });
+
   it.each([
     ['a loopback answer', ['127.0.0.1']],
     ['a private answer', ['192.168.77.7']],
@@ -465,6 +491,29 @@ describe('installBrowserPartitionGuards', () => {
     expect(response).toEqual({ cancel: true });
     expect(fake.resolveHost).toHaveBeenCalledWith('rebind.example');
     expect(onBlocked).toHaveBeenCalledWith(3, { url: 'http://rebind.example/', resourceType: 'mainFrame', reason: 'rebind-suspected' });
+  });
+
+  describe('reads who asked off the requesting frame', () => {
+    const local = { url: 'http://localhost:5173/admin', resourceType: 'xhr', webContentsId: 3 };
+    const guarded = (): ReturnType<typeof fakeSession> => {
+      const made = fakeSession();
+      installBrowserPartitionGuards(made.session, host());
+      return made;
+    };
+
+    it('by origin, even of a frame already detached', async () => {
+      expect(await before(guarded().fake, { ...local, frame: { origin: 'https://elsewhere.example', url: 'https://elsewhere.example/page', detached: true } })).toEqual({ cancel: true });
+      expect(await before(guarded().fake, { ...local, frame: { origin: 'http://localhost:5173', url: 'http://localhost:5173/' } })).toEqual({});
+    });
+
+    it('by address for an opaque origin: a sandboxed external page hides nothing', async () => {
+      expect(await before(guarded().fake, { ...local, frame: { origin: 'null', url: 'https://elsewhere.example/page' } })).toEqual({ cancel: true });
+    });
+
+    it('as gone when it is null, or when reading it throws', async () => {
+      expect(await before(guarded().fake, { ...local, frame: null })).toEqual({ cancel: true });
+      expect(await before(guarded().fake, { ...local, frame: { get origin(): string { throw new Error('Render frame was disposed'); } } })).toEqual({ cancel: true });
+    });
   });
 
   it('judges a request no pane owns by the referrer Electron gives it', async () => {

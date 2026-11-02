@@ -628,6 +628,15 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   // An external top page reaches for this PC.
   await record('external-to-local', async (id) => { await manager.navigateAsPerson(id, `${evil}/reaches-local`); });
   await record('person-site-own-frames', async (id) => { await manager.navigateAsPerson(id, `${evil}/with-frames`); });
+  const parting = (name: string, init: string): string => `addEventListener('pagehide',()=>{fetch(${JSON.stringify(`${base}/parting-${name}`)},{mode:'no-cors',keepalive:true${init}}).catch(()=>0);navigator.sendBeacon(${JSON.stringify(`${base}/parting-beacon-${name}`)},'x')})`;
+  await record('external-parting-shot', async (id, contents) => {
+    await js(contents, parting('plain', ''));
+    await manager.navigateAsPerson(id, `${base}/landed?via=left-external`);
+  }, (id) => open(id, `${evil}/landed?via=parting`));
+  await record('external-parting-shot-hidden', async (id, contents) => {
+    await js(contents, parting('hidden', `,referrerPolicy:'no-referrer'`));
+    await manager.navigateAsPerson(id, `${base}/landed?via=left-external-2`);
+  }, (id) => open(id, `${evil}/landed?via=parting-2`));
 
   // What runs with no frame. The worker's own answer says what it managed; the server's log says what really arrived.
   const fromPage = (contents: WebContents, code: string): Promise<unknown> => contents.executeJavaScript(code, true) as Promise<unknown>;

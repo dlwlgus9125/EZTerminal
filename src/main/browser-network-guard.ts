@@ -123,7 +123,13 @@ export interface BrowserRequestEnvironment {
  * reaches this PC on its name alone: only what a local page started, by a referrer no worker can forge across origins.
  */
 export async function requestVerdict(
-  request: { readonly url: string; readonly resourceType: string; readonly referrer?: string },
+  request: {
+    readonly url: string;
+    readonly resourceType: string;
+    readonly referrer?: string;
+    /** The site of the frame that asked; null when that frame is gone. See `frameOf`. */
+    readonly frame?: string | null;
+  },
   policy: BrowserViewPolicy | undefined,
   environment: BrowserRequestEnvironment,
 ): Promise<BrowserRequestVerdict> {
@@ -143,7 +149,12 @@ export async function requestVerdict(
     return isLocalHostName(parsed.hostname) && fromLocalPage ? PASS : refuse('site-not-allowed');
   }
   const top = resourceType === 'mainFrame';
-  if (isLocalHostName(parsed.hostname)) return policy.topExternal && !top ? refuse('site-not-allowed') : PASS;
+  if (isLocalHostName(parsed.hostname)) {
+    if (top) return PASS;
+    const { frame } = request;
+    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { controlPorts: environment.controlPorts }) === 'external');
+    return policy.topExternal || frameExternal ? refuse('site-not-allowed') : PASS;
+  }
   // Before the resolver: a clean answer now says nothing about the address it answered from before.
   if (!(top && policy.personNavigating) && policy.suspectOrigins.has(originOf(url))) return refuse('rebind-suspected');
 
@@ -160,6 +171,21 @@ export async function requestVerdict(
   if (siteClass(url, policy.allowedOrigins) !== 'external') return PASS;
   if (top ? policy.personNavigating : sameOrigin(url, policy.topUrl)) return PASS;
   return refuse('site-not-allowed');
+}
+
+/**
+ * Who asked, off the requesting frame and not the pane's top page. Measured: a page's `pagehide` request arrives after the pane
+ * has committed the next page, with this frame detached, still naming the page that sent it, `no-referrer` or not. An opaque
+ * origin (a sandboxed page) falls back to the address. Undefined: no frame is named at all. Null: it went, or reading it threw.
+ */
+function frameOf(frame: Electron.OnBeforeRequestListenerDetails['frame']): string | null | undefined {
+  if (!frame) return frame;
+  try {
+    const { origin, url } = frame;
+    return origin && origin !== 'null' ? origin : url;
+  } catch {
+    return null;
+  }
 }
 
 /** Where a top page may go at all. `about:` here is what a page makes of itself; the rest of `about:` is the browser's. */
@@ -238,9 +264,10 @@ export function installBrowserPartitionGuards(session: BrowserPartitionSession, 
   const resolve = async (name: string): Promise<readonly string[]> => (await session.resolveHost(name)).endpoints.map((endpoint) => endpoint.address);
   session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
     const { url, resourceType, webContentsId, referrer } = details;
+    const frame = frameOf(details.frame);
     void (async () => {
       const policy = host.policyFor(webContentsId);
-      const verdict = await requestVerdict({ url, resourceType, referrer }, policy, { controlPorts: host.controlPorts(), resolve });
+      const verdict = await requestVerdict({ url, resourceType, referrer, ...(frame === undefined ? {} : { frame }) }, policy, { controlPorts: host.controlPorts(), resolve });
       if (verdict.cancel) host.onBlocked(webContentsId, { url, resourceType, reason: verdict.reason });
       else if (resourceType === 'mainFrame' && policy?.personNavigating) host.onPersonNavigation(webContentsId, url);
       return verdict.cancel;
