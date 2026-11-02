@@ -9,6 +9,7 @@ import {
   type DaemonCommand,
   type DaemonCommandType,
   type DaemonPrincipal,
+  type DaemonSnapshot,
 } from '../shared/daemon-protocol';
 import type {
   AgentProviderAdapter,
@@ -4387,7 +4388,7 @@ it('persists empty Agents across restart and dispatches only the first submitted
 
 
 describe('what a person does in the in-app browser', () => {
-  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn() });
+  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved: vi.fn() });
   const started = async (browser: ReturnType<typeof browserHost>) => {
     const h = await harness({ browser });
     await h.prepareWorkspace();
@@ -4479,6 +4480,139 @@ describe('what a person does in the in-app browser', () => {
     try {
       expect(await h.execute('browser.action', { sessionId: 'chat', action: 'pick' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
     } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
+
+describe('a browser action waiting on a person', () => {
+  const REQUEST = 'browser-action:call-1';
+  const approvalRequest = { v: 1 as const, kind: 'tool' as const, toolName: 'browser_click', target: 'https://staging.cart-kit.example', input: '{"element":"button \\"Pay\\""}' };
+  const held = async () => {
+    const approvalResolved = vi.fn();
+    const browser = { navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved };
+    const h = await harness({ browser });
+    await h.prepareWorkspace();
+    await h.enable(h.codex, 'codex');
+    await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Go' });
+    const agent = (): DaemonSnapshot['agents'][number] => h.router.getSnapshot().agents.find((entry) => entry.sessionId === 'chat')!;
+    const turnId = agent().currentTurnId!;
+    const approvalId = await h.runtime.raiseHostApproval({ sessionId: 'chat', turnId, providerRequestId: REQUEST, risk: 'write', title: 'browser_click on https://staging.cart-kit.example', request: approvalRequest });
+    const approval = () => h.router.getSnapshot().approvals.find((entry) => entry.id === approvalId);
+    const turn = () => h.router.getSnapshot().turns.find((entry) => entry.id === turnId)!;
+    const session = () => h.router.getSnapshot().sessions.find((entry) => entry.id === 'chat')!;
+    return { h, approvalId: approvalId!, approval, agent, turn, turnId, session, approvalResolved };
+  };
+  const done = async (h: Awaited<ReturnType<typeof harness>>): Promise<void> => { await h.runtime.dispose(); await h.store.close(); };
+
+  it('stops the turn on the person, with the host\'s own request and its turn', async () => {
+    const { h, approval, agent, turn, turnId, session } = await held();
+    try {
+      expect(approval()).toMatchObject({ state: 'pending', turnId, providerRequestId: REQUEST, request: approvalRequest });
+      expect(agent().state).toBe('blocked');
+      expect(turn().state).toBe('blocked');
+      expect(session().state).toBe('needs-attention');
+    } finally { await done(h); }
+  });
+
+  it('goes back to work on a person\'s answer at the desktop, and reaches no provider', async () => {
+    const { h, approvalId, approval, agent, turn, session, approvalResolved } = await held();
+    try {
+      expect(await h.execute('permission.resolve', { approvalId, decision: 'allow', response: { kind: 'session' } }, { kind: 'desktop', id: 'renderer-agent-ui' })).toMatchObject({ ok: true });
+      expect(approval()?.state).toBe('allowed');
+      expect(agent().state).toBe('working');
+      expect(turn().state).toBe('working');
+      expect(session().state).toBe('running');
+      expect(approvalResolved).toHaveBeenCalledWith(REQUEST, 'allow', { kind: 'session' });
+      expect(h.codex.resolveApproval).not.toHaveBeenCalled();
+    } finally { await done(h); }
+  });
+
+  it('takes a decline the same way', async () => {
+    const { h, approvalId, approval, agent, approvalResolved } = await held();
+    try {
+      await h.execute('permission.resolve', { approvalId, decision: 'deny' }, { kind: 'desktop', id: 'renderer-agent-ui' });
+      expect(approval()?.state).toBe('denied');
+      expect(agent().state).toBe('working');
+      expect(approvalResolved).toHaveBeenCalledWith(REQUEST, 'deny', undefined);
+    } finally { await done(h); }
+  });
+
+  it.each<[string, DaemonPrincipal, string]>([
+    ['a phone, even to allow', { kind: 'android', id: 'paired-phone' }, 'unauthorized'],
+    ['an AI\'s own shell', { kind: 'cli', id: 'chat', sessionId: 'chat' }, 'unauthorized'],
+    ['an AI\'s MCP capability', { kind: 'mcp', id: 'session-chat', sessionId: 'chat' }, 'unauthorized'],
+    ['the host\'s own turns', { kind: 'cli', id: 'browser-check-runtime' }, 'unauthorized'],
+  ])('refuses %s', async (_who, principal, code) => {
+    const { h, approvalId, approval, agent, approvalResolved } = await held();
+    try {
+      for (const decision of ['allow', 'deny'] as const) {
+        expect(await h.execute('permission.resolve', { approvalId, decision }, principal)).toMatchObject({ ok: false, error: { code } });
+      }
+      expect(approval()?.state).toBe('pending');
+      expect(agent().state).toBe('blocked');
+      expect(approvalResolved).not.toHaveBeenCalled();
+    } finally { await done(h); }
+  });
+
+  it('expires nobody\'s answer, and a late answer finds nothing', async () => {
+    const { h, approvalId, approval, agent, turn, approvalResolved } = await held();
+    try {
+      await h.runtime.expireHostApproval(approvalId);
+      expect(approval()?.state).toBe('expired');
+      expect(agent().state).toBe('working');
+      expect(turn().state).toBe('working');
+      expect(await h.execute('permission.resolve', { approvalId, decision: 'allow' }, { kind: 'desktop', id: 'renderer-agent-ui' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+      expect(approval()?.state).toBe('expired');
+      expect(approvalResolved).not.toHaveBeenCalled();
+    } finally { await done(h); }
+  });
+
+  it('expires with the turn when the person stops it', async () => {
+    const { h, approval } = await held();
+    try {
+      await h.execute('agent.interrupt', { sessionId: 'chat' });
+      expect(approval()?.state).toBe('expired');
+    } finally { await done(h); }
+  });
+
+  it('leaves an answered approval alone when it expires late', async () => {
+    const { h, approvalId, approval } = await held();
+    try {
+      await h.execute('permission.resolve', { approvalId, decision: 'allow' }, { kind: 'desktop', id: 'renderer-agent-ui' });
+      await h.runtime.expireHostApproval(approvalId);
+      expect(approval()?.state).toBe('allowed');
+    } finally { await done(h); }
+  });
+
+  it('is refused for a turn that is no longer the one running', async () => {
+    const { h, turnId } = await held();
+    try {
+      expect(await h.runtime.raiseHostApproval({ sessionId: 'chat', turnId: 'another-turn', providerRequestId: 'browser-action:call-2', risk: 'write', title: 't' })).toBeUndefined();
+      expect(await h.runtime.raiseHostApproval({ sessionId: 'chat', providerRequestId: 'browser-action:call-3', risk: 'write', title: 't' })).toBeUndefined();
+      expect(turnId).toBeTruthy();
+    } finally { await done(h); }
+  });
+
+  it('accepts no other prefix', async () => {
+    const { h, turnId } = await held();
+    try {
+      expect(await h.runtime.raiseHostApproval({ sessionId: 'chat', turnId, providerRequestId: 'call-9', risk: 'write', title: 't' })).toBeUndefined();
+    } finally { await done(h); }
+  });
+
+  it('does not stop a conversation for a recap', async () => {
+    const { h, approval } = await held();
+    try {
+      const { stoppingApproval } = await import('./turn-wrap-up-coordinator');
+      expect(stoppingApproval(approval()!)).toBe(false);
+    } finally { await done(h); }
+  });
+
+  it('expires at a restart', async () => {
+    const { h, approval } = await held();
+    try {
+      await (h.runtime as unknown as { expirePersistedApprovals(): Promise<void> }).expirePersistedApprovals();
+      expect(approval()?.state).toBe('expired');
+    } finally { await done(h); }
   });
 });
 

@@ -17,6 +17,7 @@ import {
 } from '../shared/daemon-protocol';
 import { isStructuredDaemonAgentSession } from '../shared/daemon-session-visibility';
 import { resumedByHost } from '../shared/long-run';
+import { isBrowserActionRequest } from '../shared/browser';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import {
   parseTranscriptPayload,
@@ -237,9 +238,13 @@ export function readTaskCard(read: TranscriptReader, sessionId: string, taskId: 
   return task ? { task, ...(status ? { status } : {}), ...(sendTurnId ? { sendTurnId } : {}) } : undefined;
 }
 
-/** A pending request that stops a conversation on the person. A settings proposal stops nothing; a subagent's stops only the subagent. */
+/**
+ * A pending request that stops a conversation on the person. A settings proposal stops nothing; a subagent's stops only the
+ * subagent. A browser action is over in minutes at most, with its own answer in the same turn: it gets no recap.
+ */
 export function stoppingApproval(approval: DaemonApproval): boolean {
-  return approval.state === 'pending' && !isSettingsProposalRequest(approval.providerRequestId) && approval.request?.subagent === undefined;
+  return approval.state === 'pending' && !isSettingsProposalRequest(approval.providerRequestId) && !isBrowserActionRequest(approval.providerRequestId)
+    && approval.request?.subagent === undefined;
 }
 
 function waitingKind(approval: DaemonApproval): TurnRecapWaiting {

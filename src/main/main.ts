@@ -42,6 +42,7 @@ import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
 import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
+import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
 import { BrowserTools } from './browser-tools';
 import { BrowserViewManager } from './browser-view-manager';
@@ -988,6 +989,7 @@ app.on('ready', async () => {
     || reviewCoordinator.preparedSessionSettings(sessionId));
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
   const browserToolsRef: { current?: BrowserTools } = {};
+  const browserApprovalsRef: { current?: BrowserApprovals } = {};
   /** Who gets the browser tools at launch: the setting, for a conversation a person sees. Step 17 adds the provider's floor here. */
   const browserSessionListed = (sessionId: string): boolean => {
     const router = daemonRouterRef.current;
@@ -1168,6 +1170,7 @@ app.on('ready', async () => {
       forward: (conversationId) => browserView?.goForwardAsPerson(conversationId),
       stop: (conversationId) => browserView?.stopAi(conversationId),
       close: (conversationId) => browserView?.close(conversationId),
+      approvalResolved: (providerRequestId, decision, response) => browserApprovalsRef.current?.resolved(providerRequestId, decision, response),
     },
     providers: providerRegistry,
     agentUsageStore: {
@@ -4755,10 +4758,20 @@ app.on('ready', async () => {
       const window = mainWindowRef;
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:open-pane', conversationId);
     },
+    onStopped: (conversationId) => browserApprovalsRef.current?.stopped(conversationId),
   });
+  const browserApprovals = new BrowserApprovals({
+    raise: (input) => daemonAgentRuntime.raiseHostApproval(input),
+    expire: (approvalId) => daemonAgentRuntime.expireHostApproval(approvalId),
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+  });
+  browserApprovalsRef.current = browserApprovals;
   const browserTools = new BrowserTools({
     pages: browserView,
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    requestApproval: (request) => browserApprovals.request(request),
+    siteTrusted: (sessionId, origin) => browserApprovals.siteTrusted(sessionId, origin),
     turnAttended: (sessionId, turnId) => {
       const snapshot = daemonRouterRef.current!.getSnapshot();
       const turn = snapshot.turns.find((entry) => entry.id === turnId);

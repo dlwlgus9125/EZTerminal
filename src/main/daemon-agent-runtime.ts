@@ -1,5 +1,5 @@
 import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
-import { addressBarUrl } from '../shared/browser';
+import { addressBarUrl, isBrowserActionRequest } from '../shared/browser';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
@@ -104,6 +104,8 @@ export interface DaemonBrowserHost {
   forward(conversationId: string): void;
   stop(conversationId: string): void;
   close(conversationId: string): void;
+  /** A person answered a `browser-action:` approval, and the answer committed. */
+  approvalResolved(providerRequestId: string, decision: 'allow' | 'deny', response?: ApprovalResponse): void;
 }
 
 export interface DaemonAgentRuntimeOptions {
@@ -1499,7 +1501,7 @@ export class DaemonAgentRuntime {
       mutations.push({ kind: 'turn.upsert', value: turnInput(currentTurn, {
         state: 'delivery-uncertain',
         errorCode: 'interrupt-requested',
-      }) });
+      }) }, ...this.voidBrowserActions(snapshot, session.id));
     }
     mutations.push(
       { kind: 'agent.upsert', value: agentInput(agent, {
@@ -1835,6 +1837,7 @@ export class DaemonAgentRuntime {
           state: 'delivery-uncertain',
           errorCode: 'interrupt-requested',
         }) },
+        ...this.voidBrowserActions(snapshot, session.id),
         { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
         { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
       ] },
@@ -2290,6 +2293,7 @@ export class DaemonAgentRuntime {
     const approval = context.snapshot.approvals.find((entry) => entry.id === command.payload.approvalId);
     if (!approval || approval.state !== 'pending') return commandError('not-found', 'Pending approval was not found.');
     if (isSettingsProposalRequest(approval.providerRequestId)) return this.resolveSettingsProposal(command, approval);
+    if (isBrowserActionRequest(approval.providerRequestId)) return this.resolveBrowserAction(command, approval, context);
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === approval.sessionId);
     const session = context.snapshot.sessions.find((entry) => entry.id === approval.sessionId);
     if (!agent?.providerSessionId) return commandError('invalid-state', 'Approval Agent is unavailable.');
@@ -2390,6 +2394,58 @@ export class DaemonAgentRuntime {
   }
 
   /**
+   * A browser action: a person at the desktop, who can see the page, and nobody else. Not the phone, which cannot see it; not
+   * a `cli` principal, which may be an AI's own shell. No provider is involved: the tool call is held in the host.
+   */
+  private resolveBrowserAction(
+    command: DaemonCommand,
+    approval: DaemonSnapshot['approvals'][number],
+    context: DaemonCommandExecutionContext,
+  ): DaemonCommandExecutionResult {
+    if (command.type !== 'permission.resolve') return commandError('invalid-command', 'Unexpected approval command.');
+    if (command.principal.kind !== 'desktop') return commandError('unauthorized', 'Only a person at the desktop answers for a page.');
+    const { decision, response } = command.payload;
+    return {
+      ok: true,
+      commit: { mutations: this.settleBrowserAction(context.snapshot, approval, decision === 'allow' ? 'allowed' : 'denied') },
+      afterCommit: () => this.options.browser?.approvalResolved(approval.providerRequestId, decision, response),
+    };
+  }
+
+  /** The approval, and the turn back to work: it never stopped running, only waited on the person. */
+  private settleBrowserAction(snapshot: DaemonSnapshot, approval: DaemonSnapshot['approvals'][number], state: 'allowed' | 'denied' | 'expired'): DaemonStoreMutation[] {
+    const agent = snapshot.agents.find((entry) => entry.sessionId === approval.sessionId);
+    const session = snapshot.sessions.find((entry) => entry.id === approval.sessionId);
+    const turn = approval.turnId ? snapshot.turns.find((entry) => entry.id === approval.turnId) : undefined;
+    const live = turn !== undefined && !TERMINAL_TURN_STATES.has(turn.state) && agent?.currentTurnId === turn.id && !this.pendingApprovalElsewhere(snapshot, approval);
+    return [
+      { kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, state, this.isoNow()) },
+      ...(live && agent && session ? [
+        { kind: 'turn.upsert' as const, value: turnInput(turn, { state: 'working' }) },
+        { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'working' }) },
+        { kind: 'session.upsert' as const, value: sessionInput(session, 'running') },
+      ] : []),
+    ];
+  }
+
+  /** A Stop ends the question at once: the wait is the host's own, and owes nothing to the provider's answer. */
+  private voidBrowserActions(snapshot: DaemonSnapshot, sessionId: string): DaemonStoreMutation[] {
+    const now = this.isoNow();
+    return snapshot.approvals
+      .filter((approval) => approval.sessionId === sessionId && approval.state === 'pending' && isBrowserActionRequest(approval.providerRequestId))
+      .map((approval): DaemonStoreMutation => ({ kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, 'expired', now) }));
+  }
+
+  /** Ends a `browser-action:` approval nobody answered, if it still waits. A later answer finds nothing to answer. */
+  async expireHostApproval(approvalId: string): Promise<void> {
+    await this.transition((snapshot) => {
+      const approval = snapshot.approvals.find((entry) => entry.id === approvalId);
+      if (approval?.state !== 'pending' || !isBrowserActionRequest(approval.providerRequestId)) return undefined;
+      return { mutations: this.settleBrowserAction(snapshot, approval, 'expired') };
+    });
+  }
+
+  /**
    * A settings proposal: only a person decides it, never for the whole conversation; the decision touches
    * no turn, agent or provider. An allow applies the change shown, as that person, after the commit.
    */
@@ -2412,18 +2468,21 @@ export class DaemonAgentRuntime {
   }
 
   /**
-   * Raises a host approval with no turn in a live conversation (a settings proposal). It does not block the
-   * agent: the AI's turn goes on, and the proposal waits for the person.
+   * Raises an approval the host holds itself. A settings proposal has no turn and blocks nothing: the AI goes on, and the
+   * proposal waits for the person. A browser action belongs to the running turn and stops it on the person, as a provider's
+   * approval does, so a parallel tool call and the composer agree; it is refused if that turn is no longer the one running.
    */
   async raiseHostApproval(input: {
     readonly sessionId: string;
+    readonly turnId?: string;
     readonly providerRequestId: string;
     readonly risk: 'read' | 'write' | 'danger';
     readonly title: string;
     readonly detail?: string;
     readonly request?: ApprovalRequest;
   }): Promise<string | undefined> {
-    if (!isSettingsProposalRequest(input.providerRequestId)) return undefined;
+    const browserAction = isBrowserActionRequest(input.providerRequestId);
+    if (!isSettingsProposalRequest(input.providerRequestId) && !browserAction) return undefined;
     const approvalId = stableId('approval', 'host', input.sessionId, input.providerRequestId);
     let raised = false;
     await this.transition((snapshot) => {
@@ -2431,17 +2490,24 @@ export class DaemonAgentRuntime {
       const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
       if (!session || !agent || TERMINAL_SESSION_STATES.has(session.state) || TERMINAL_AGENT_STATES.has(agent.state)) return undefined;
       if (snapshot.approvals.some((entry) => entry.id === approvalId)) return undefined;
+      const turn = browserAction ? snapshot.turns.find((entry) => entry.id === input.turnId) : undefined;
+      if (browserAction && (!turn || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id)) return undefined;
       raised = true;
       return { mutations: [{ kind: 'approval.upsert', value: {
         id: approvalId,
         sessionId: input.sessionId,
+        ...(turn ? { turnId: turn.id } : {}),
         providerRequestId: input.providerRequestId,
         risk: input.risk,
         title: input.title.slice(0, 2_000),
         ...(input.detail ? { detail: input.detail.slice(0, 2_000) } : {}),
         ...(input.request ? { request: input.request } : {}),
         state: 'pending',
-      } }] };
+      } }, ...(turn ? [
+        { kind: 'turn.upsert' as const, value: turnInput(turn, { state: 'blocked' }) },
+        { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'blocked' }) },
+        { kind: 'session.upsert' as const, value: sessionInput(session, 'needs-attention') },
+      ] : [])] };
     });
     return raised ? approvalId : undefined;
   }

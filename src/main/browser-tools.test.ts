@@ -252,6 +252,26 @@ describe('approval', () => {
     }
   });
 
+  it('lets the person use the pane while they decide: no tool runs during the wait', async () => {
+    const { call, order, requestApproval } = harness({ url: ALLOWED });
+    requestApproval.mockImplementation(async () => { order.push('asked'); return 'allow'; });
+    await call('browser_click', { ref: 'e1' });
+    expect(order).toEqual(['begin', 'end', 'asked', 'begin', 'end']);
+  });
+
+  it('runs nothing if the person pressed 중지 during the wait, whatever the answer was', async () => {
+    const { call, pages, driver, requestApproval } = harness({ url: ALLOWED });
+    requestApproval.mockImplementation(async () => { vi.mocked(pages.beginTool).mockReturnValue('stopped'); return 'allow'; });
+    expect(code(await call('browser_click', { ref: 'e1' }))).toBe('stopped');
+    expect(driver.click).not.toHaveBeenCalled();
+  });
+
+  it('reports a stop that ended the wait', async () => {
+    const { call, driver } = harness({ url: ALLOWED, answer: 'stopped' as never });
+    expect(code(await call('browser_click', { ref: 'e1' }))).toBe('stopped');
+    expect(driver.click).not.toHaveBeenCalled();
+  });
+
   it('declines on a host with nobody to ask', async () => {
     const { pages, snapshot, driver } = harness({ url: ALLOWED });
     const tools = new BrowserTools({ pages, getSnapshot: () => snapshot, turnAttended: () => true, delay: async () => undefined });

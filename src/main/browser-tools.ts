@@ -105,7 +105,7 @@ export interface BrowserApprovalRequest {
   readonly signal?: AbortSignal;
 }
 
-export type BrowserApprovalAnswer = 'allow' | 'approval-declined' | 'approval-timeout';
+export type BrowserApprovalAnswer = 'allow' | 'approval-declined' | 'approval-timeout' | 'stopped';
 
 export interface BrowserToolsDeps {
   readonly pages: BrowserToolPages;
@@ -306,10 +306,14 @@ export class BrowserTools {
   }
 
   private async approve(context: BrowserToolContext, turnId: string, request: Omit<BrowserApprovalRequest, 'sessionId' | 'turnId' | 'signal'>, signal?: AbortSignal): Promise<void> {
-    const answer = this.deps.requestApproval
-      ? await this.deps.requestApproval({ sessionId: context.sessionId, turnId, ...request, ...(signal ? { signal } : {}) })
-      : 'approval-declined';
+    const { pages, requestApproval } = this.deps;
+    if (!requestApproval) throw new BrowserRefused('approval-declined');
+    // No tool runs while the person decides: a click of theirs in the pane meanwhile is theirs.
+    pages.endTool(context.sessionId);
+    const answer = await requestApproval({ sessionId: context.sessionId, turnId, ...request, ...(signal ? { signal } : {}) });
+    const stopped = pages.beginTool(context.sessionId, turnId);
     if (answer !== 'allow') throw new BrowserRefused(answer);
+    if (stopped) throw new BrowserRefused(stopped);
   }
 
   private async navigate(context: BrowserToolContext, turnId: string, value: string, signal?: AbortSignal): Promise<BrowserToolResult> {
