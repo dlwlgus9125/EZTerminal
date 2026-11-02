@@ -393,6 +393,7 @@ export class DaemonCliControl {
     delete (rest as { usageLimits?: unknown }).usageLimits;
     delete (rest as { steers?: unknown }).steers;
     delete (rest as { longRunSupport?: unknown }).longRunSupport;
+    delete (rest as { browserSupport?: unknown }).browserSupport;
     const scopedUsage = agentUsage
       ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
       : {};

@@ -17,7 +17,7 @@ const queues=new Map<string,Promise<void>>();
  * Usage, live /btw availability, next-message guesses and long-run state are shown only while connected: the phone
  * keeps no copy. A steer holds the person's words, and the transcript's rows already tell what a limit did.
  */
-const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds','nextPromptSuggestions','usageLimits','steers','longRunSupport']);
+const USAGE_KEYS=new Set(['agentUsage','providerUsage','sideQuestionSessionIds','nextPromptSuggestions','usageLimits','steers','longRunSupport','browserSupport']);
 const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => Object.keys(snapshot).some(key => USAGE_KEYS.has(key))
   ? Object.fromEntries(Object.entries(snapshot).filter(([key]) => !USAGE_KEYS.has(key))) as unknown as DaemonSnapshot
   : snapshot;

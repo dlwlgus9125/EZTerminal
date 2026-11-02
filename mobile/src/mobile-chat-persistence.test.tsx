@@ -99,12 +99,14 @@ describe('encrypted offline transcript cache', () => {
     const secure = new SecureMemory(); const store = new MobileOfflineChatCacheStore(secure);
     const steers: DaemonSnapshot['steers'] = { chat: [{ id: 'steer-1', text: 'Use the other file.', state: 'on-its-way', sentAt: NOW }] };
     const usageLimits: DaemonSnapshot['usageLimits'] = { chat: { stopId: 'stop-1', turnId: 'turn-1', providerId: 'claude', phase: 'waiting', window: 'five-hour', stoppedAt: NOW } };
-    const held = (): boolean => [...secure.values.values()].some((raw) => raw.includes('Use the other file.') || raw.includes('stop-1') || raw.includes('longRunSupport'));
+    const held = (): boolean => [...secure.values.values()].some((raw) => raw.includes('Use the other file.') || raw.includes('stop-1') || raw.includes('longRunSupport') || raw.includes('browserSupport'));
     await store.saveSnapshot(AUTHORITY, { ...snapshot, steers });
     expect(held()).toBe(false);
     await store.saveSnapshot(AUTHORITY, { ...snapshot, usageLimits });
     expect(held()).toBe(false);
     await store.saveSnapshot(AUTHORITY, { ...snapshot, longRunSupport: { claude: true } });
+    expect(held()).toBe(false);
+    await store.saveSnapshot(AUTHORITY, { ...snapshot, browserSupport: { claude: true } });
     expect(held()).toBe(false);
     expect((await store.load(AUTHORITY))?.snapshot).toEqual(snapshot);
 

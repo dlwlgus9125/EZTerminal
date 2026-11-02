@@ -1,11 +1,26 @@
 import type { ApprovalRequest } from './approval-request';
 
 /**
- * 시안: the words the in-app browser's screens share. Types and the approval prefix only: the site policy, the tools and
- * the host come with the implementation. Nothing in production writes these yet.
+ * The in-app browser's contract: the site policy every layer applies, the tools the AI gets, and the words the screens
+ * share. Pure, so the host, the screens and the tests read one rule.
  */
 
 export const BROWSER_CAPABILITY = 'in-app-browser-v1';
+
+/** One profile for every project: separate from the app and from OpenClaw, and nothing is ever imported into it. */
+export const BROWSER_PARTITION = 'persist:ezterminal-browser';
+
+/** The principal of the one turn the host sends to check a change on screen. */
+export const BROWSER_CHECK_PRINCIPAL = 'browser-check-runtime';
+
+export const BROWSER_READ_TOOLS = ['browser_snapshot', 'browser_screenshot', 'browser_console', 'browser_wait'] as const;
+export const BROWSER_ACTION_TOOLS = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press'] as const;
+export const BROWSER_TOOLS = [...BROWSER_READ_TOOLS, ...BROWSER_ACTION_TOOLS] as const;
+export type BrowserToolName = (typeof BROWSER_TOOLS)[number];
+
+export function isBrowserTool(name: string): name is BrowserToolName {
+  return (BROWSER_TOOLS as readonly string[]).includes(name);
+}
 
 /** How the app classes a site, by name alone. Only `local`, `file` and `allowed` reach the AI's tools. */
 export type BrowserSiteClass = 'local' | 'file' | 'allowed' | 'external';
@@ -13,16 +28,24 @@ export type BrowserSiteClass = 'local' | 'file' | 'allowed' | 'external';
 export type BrowserActionKind = 'navigate' | 'click' | 'type' | 'press';
 export type BrowserStepKind = 'snapshot' | 'screenshot' | 'console' | 'wait' | BrowserActionKind;
 
-/** Why the app said no to a browser tool. `stopped`: the person pressed 중지 on the pane during this turn. */
+/**
+ * Why the app said no to a browser tool. `stopped`: the person pressed 중지 on the pane during this turn. `browser-off`:
+ * the setting is off; the tools stay listed, because the list is frozen for the conversation's prompt cache.
+ */
 export type BrowserRefusal =
   | 'site-not-allowed' | 'plan-mode' | 'unattended' | 'no-page' | 'stale-ref' | 'page-gone' | 'password-field'
-  | 'upload-unsupported' | 'approval-declined' | 'approval-timeout' | 'rebind-suspected' | 'limit' | 'download-blocked' | 'stopped';
+  | 'upload-unsupported' | 'approval-declined' | 'approval-timeout' | 'rebind-suspected' | 'limit' | 'download-blocked' | 'stopped'
+  | 'browser-off';
 
 /** A host approval raised for a browser action carries this prefix in `providerRequestId`. */
 const BROWSER_ACTION_REQUEST = 'browser-action:';
 
 export function isBrowserActionRequest(id: string | undefined): boolean {
   return id?.startsWith(BROWSER_ACTION_REQUEST) === true;
+}
+
+export function browserActionRequestId(callId: string): string {
+  return `${BROWSER_ACTION_REQUEST}${callId}`;
 }
 
 /** How long the host holds a browser action for an answer; then it is void and the tool refuses. */
@@ -87,23 +110,71 @@ export function looksSecret(value: string): boolean {
   return /^\S{20,}$/u.test(text) && /[a-z]/iu.test(text) && /\d/u.test(text);
 }
 
-/**
- * The class of a URL, by name alone: it never resolves DNS, and anything that only looks local fails closed. `file` here
- * is the scheme; whether the file sits inside the conversation's folders is the host's check.
- */
-export function siteClass(url: string, allowedOrigins: readonly string[]): BrowserSiteClass {
+const LOCAL_NAMES = /^(?:localhost|.+\.localhost|\[::1\]|127\.\d+\.\d+\.\d+)$/u;
+
+/** A host that is this PC by its name alone. `localhost.`, `0.0.0.0` and `[::ffff:…]` only look it, and are not. */
+export function isLocalHostName(hostname: string): boolean {
+  return LOCAL_NAMES.test(hostname.toLowerCase());
+}
+
+/** The URL a request's site is judged on: a socket has the site of its page. */
+function webForm(url: string): string {
+  return url.replace(/^ws(s?):/iu, 'http$1:');
+}
+
+export interface SiteClassOptions {
+  /** The page that made an `about:blank` or `about:srcdoc`: they take its class. */
+  readonly creator?: string;
+  /** The app's own listening ports: never `local`, whoever asks. */
+  readonly controlPorts?: ReadonlySet<number>;
+}
+
+/** A URL on one of the app's own listening ports. Named, so every layer refuses the same thing. */
+export function isControlPortUrl(url: string, controlPorts: ReadonlySet<number>): boolean {
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(webForm(url));
+  } catch {
+    return false;
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isLocalHostName(parsed.hostname)) return false;
+  return controlPorts.has(Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80));
+}
+
+/**
+ * The class of a URL, by name alone: it never resolves DNS, and anything that only looks local fails closed. `file` here
+ * is the scheme; whether the file sits inside the conversation's folders is the host's check. `blob:` and `about:` take
+ * their creator's class.
+ */
+export function siteClass(url: string, allowedOrigins: readonly string[], options: SiteClassOptions = {}): BrowserSiteClass {
+  let parsed: URL;
+  try {
+    parsed = new URL(webForm(url));
   } catch {
     return 'external';
   }
+  const ports = options.controlPorts ? { controlPorts: options.controlPorts } : {};
+  if (parsed.protocol === 'about:') return options.creator ? siteClass(options.creator, allowedOrigins, ports) : 'external';
+  if (parsed.protocol === 'blob:') return siteClass(parsed.origin, allowedOrigins, ports);
   if (parsed.username || parsed.password) return 'external';
-  if (parsed.protocol === 'file:') return 'file';
+  // A `file://server/share` goes over the network, and would hand it this PC's credentials.
+  if (parsed.protocol === 'file:') return parsed.hostname ? 'external' : 'file';
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'external';
-  const host = parsed.hostname.toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/u.test(host)) return 'local';
+  if (isLocalHostName(parsed.hostname)) return options.controlPorts && isControlPortUrl(url, options.controlPorts) ? 'external' : 'local';
   return allowedOrigins.includes(parsed.origin) ? 'allowed' : 'external';
+}
+
+/** The exact origin a person may allow, or undefined: an http(s) site with no credentials or path, that needs allowing at all. */
+export function allowableOrigin(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') return undefined;
+  return siteClass(parsed.origin, []) === 'external' ? parsed.origin : undefined;
 }
 
 /** Settings › 에이전트 › 내장 브라우저. */
@@ -117,4 +188,44 @@ export interface BrowserProjectSites {
   readonly projectId: string;
   readonly projectName: string;
   readonly origins: readonly string[];
+}
+
+/** What the pane shows of one conversation's page: pushed over IPC, never in the daemon snapshot. */
+export interface BrowserViewState {
+  readonly conversationId: string;
+  readonly url: string;
+  readonly site?: BrowserSiteClass;
+  readonly loading: boolean;
+  readonly canBack: boolean;
+  readonly canForward: boolean;
+  /** Who is at the page: `driving`, a tool ran this turn; `stopped`, the person pressed 브라우저만 중지 this turn. */
+  readonly ai: 'none' | 'driving' | 'stopped';
+  /** The last thing the guards stopped, for the pane bar. */
+  readonly blocked?: { readonly origin: string; readonly reason: BrowserRefusal };
+  readonly fault?: 'server-down' | 'gone';
+  /** `url` is the last page. The app never reloads it unasked after a restart or an eviction. */
+  readonly needsReopen?: boolean;
+}
+
+/** A pane's place on screen, as the renderer reports it. */
+export interface BrowserSurfaceSnapshot {
+  readonly conversationId: string;
+  readonly instanceId: string;
+  readonly revision: number;
+  readonly mounted: boolean;
+  readonly windowName: string;
+  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  readonly visible: boolean;
+}
+
+export function isBrowserSurfaceSnapshot(value: unknown): value is BrowserSurfaceSnapshot {
+  if (typeof value !== 'object' || value === null) return false;
+  const surface = value as Record<string, unknown>;
+  const bounds = surface.bounds as Record<string, unknown> | undefined;
+  const whole = (entry: unknown): boolean => typeof entry === 'number' && Number.isSafeInteger(entry);
+  return typeof surface.conversationId === 'string' && surface.conversationId.length > 0 && surface.conversationId.length <= 256
+    && typeof surface.instanceId === 'string' && surface.instanceId.length > 0 && surface.instanceId.length <= 128
+    && whole(surface.revision) && typeof surface.mounted === 'boolean' && typeof surface.visible === 'boolean'
+    && typeof surface.windowName === 'string' && surface.windowName.length <= 256
+    && typeof bounds === 'object' && bounds !== null && [bounds.x, bounds.y, bounds.width, bounds.height].every(whole);
 }

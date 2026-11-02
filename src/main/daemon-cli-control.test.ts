@@ -161,6 +161,14 @@ describe('DaemonCliControl', () => {
     for (const secret of ['The other project says this.', 'stop-elsewhere', 'steer-elsewhere', 'provider-elsewhere']) expect(serialized).not.toContain(secret);
   });
 
+  it('keeps browser support out of a project-scoped snapshot: it is the host\'s, not one project\'s', async () => {
+    const { control, setSnapshot } = fixture();
+    setSnapshot({ ...snapshot(), browserSupport: { 'provider-elsewhere': true } });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped).not.toHaveProperty('browserSupport');
+    expect(JSON.stringify(scoped)).not.toContain('provider-elsewhere');
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

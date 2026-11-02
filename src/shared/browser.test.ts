@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ApprovalRequest } from './approval-request';
-import { browserActionOf, isBrowserActionRequest, looksSecret, siteClass } from './browser';
+import {
+  allowableOrigin, BROWSER_TOOLS, browserActionOf, browserActionRequestId, isBrowserActionRequest, isBrowserTool, isControlPortUrl,
+  isLocalHostName, looksSecret, siteClass,
+} from './browser';
 
 const ALLOWED = ['https://staging.cart-kit.example'];
 
@@ -34,6 +37,110 @@ describe('siteClass: the class of the current URL, by name alone', () => {
     'not a url',
   ])('%s is external', (url) => {
     expect(siteClass(url, ALLOWED)).toBe('external');
+  });
+
+  it.each([
+    // The URL parser turns these spellings into 127.0.0.1, so they are local by what they are.
+    ['http://2130706433/', 'local'],
+    ['http://0x7f.0.0.1/', 'local'],
+    ['http://LOCALHOST:3000/', 'local'],
+    // What only looks like a name of this PC.
+    ['http://localhost.evil.example/', 'external'],
+    ['http://127.0.0.1.evil.example/', 'external'],
+    ['http://evil.example/127.0.0.1', 'external'],
+    ['http://[::]/', 'external'],
+    ['http://169.254.169.254/', 'external'],
+  ] as const)('%s is %s by the name alone', (url, expected) => {
+    expect(siteClass(url, ALLOWED)).toBe(expected);
+  });
+
+  it('never calls a network file a local file', () => {
+    expect(siteClass('file://server/share/page.html', ALLOWED)).toBe('external');
+    expect(siteClass('file:///C:/page.html', ALLOWED)).toBe('file');
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'view-source:http://localhost/', 'ftp://localhost/', 'mailto:a@example.invalid'])('%s is external', (url) => {
+    expect(siteClass(url, ALLOWED)).toBe('external');
+  });
+
+  it('gives a socket the class of its site', () => {
+    expect(siteClass('ws://localhost:5173/hmr', ALLOWED)).toBe('local');
+    expect(siteClass('wss://staging.cart-kit.example/socket', ALLOWED)).toBe('allowed');
+    expect(siteClass('wss://elsewhere.example/socket', ALLOWED)).toBe('external');
+  });
+
+  it('gives blob: and about: the class of their creator', () => {
+    expect(siteClass('blob:http://localhost:5173/9e4cc490', ALLOWED)).toBe('local');
+    expect(siteClass('blob:https://staging.cart-kit.example/9e4cc490', ALLOWED)).toBe('allowed');
+    expect(siteClass('blob:https://elsewhere.example/9e4cc490', ALLOWED)).toBe('external');
+    expect(siteClass('about:blank', ALLOWED, { creator: 'http://localhost:5173/' })).toBe('local');
+    expect(siteClass('about:srcdoc', ALLOWED, { creator: 'https://elsewhere.example/' })).toBe('external');
+    expect(siteClass('about:blank', ALLOWED)).toBe('external');
+  });
+
+  it('keeps the app\'s own ports out of local, whatever name reaches them', () => {
+    const controlPorts = new Set([4100, 80]);
+    expect(siteClass('http://localhost:4100/mcp/x', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('http://127.0.0.1:4100/', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('http://[::1]:4100/', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('http://foo.localhost:4100/', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('http://localhost/', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('ws://localhost:4100/', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('blob:http://localhost:4100/x', ALLOWED, { controlPorts })).toBe('external');
+    expect(siteClass('about:blank', ALLOWED, { creator: 'http://localhost:4100/', controlPorts })).toBe('external');
+    expect(siteClass('http://localhost:5173/', ALLOWED, { controlPorts })).toBe('local');
+  });
+});
+
+describe('isControlPortUrl', () => {
+  const ports = new Set([4100, 443]);
+
+  it('names the app\'s ports on this PC only', () => {
+    expect(isControlPortUrl('http://127.8.8.8:4100/', ports)).toBe(true);
+    expect(isControlPortUrl('wss://localhost/', ports)).toBe(true);
+    expect(isControlPortUrl('https://localhost/', ports)).toBe(true);
+    expect(isControlPortUrl('http://localhost/', ports)).toBe(false);
+    expect(isControlPortUrl('http://evil.example:4100/', ports)).toBe(false);
+    expect(isControlPortUrl('file:///C:/x', ports)).toBe(false);
+    expect(isControlPortUrl('not a url', ports)).toBe(false);
+  });
+});
+
+describe('isLocalHostName', () => {
+  it.each(['localhost', 'a.b.localhost', '[::1]', '127.0.0.1', '127.255.0.9'])('%s is this PC', (host) => {
+    expect(isLocalHostName(host)).toBe(true);
+  });
+
+  it.each(['localhost.', 'localhost.evil.example', '[::ffff:7f00:1]', '0.0.0.0', '127.0.0.1.example', 'xlocalhost', '.localhost'])('%s is not', (host) => {
+    expect(isLocalHostName(host)).toBe(false);
+  });
+});
+
+describe('allowableOrigin: what a person may add to a project\'s list', () => {
+  it('takes one exact http(s) origin', () => {
+    expect(allowableOrigin('https://staging.cart-kit.example')).toBe('https://staging.cart-kit.example');
+    expect(allowableOrigin('https://staging.cart-kit.example/')).toBe('https://staging.cart-kit.example');
+    expect(allowableOrigin('http://staging.cart-kit.example:8443')).toBe('http://staging.cart-kit.example:8443');
+  });
+
+  it.each([
+    'https://staging.cart-kit.example/cart', 'https://staging.cart-kit.example/?a=1', 'https://a@staging.cart-kit.example/',
+    'file:///C:/index.html', 'javascript:alert(1)', 'http://localhost:5173', 'about:blank', 'not a url', '',
+  ])('refuses %s', (value) => {
+    expect(allowableOrigin(value)).toBeUndefined();
+  });
+});
+
+describe('the tool names', () => {
+  it('are the eight the providers are told about, and nothing else', () => {
+    expect(BROWSER_TOOLS).toHaveLength(8);
+    expect(isBrowserTool('browser_click')).toBe(true);
+    expect(isBrowserTool('browser_evaluate')).toBe(false);
+    expect(isBrowserTool('mcp__playwright__browser_click')).toBe(false);
+  });
+
+  it('round-trips the approval prefix', () => {
+    expect(isBrowserActionRequest(browserActionRequestId('call-9'))).toBe(true);
   });
 });
 

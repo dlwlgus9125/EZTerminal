@@ -279,6 +279,8 @@ export interface DaemonSnapshot {
   readonly steers?: Readonly<Record<string, readonly import('./long-run').SteeredMessage[]>>;
   /** `long-run-v1`: which AIs run long-run continuity on this host, by provider id; below the measured version it is false. */
   readonly longRunSupport?: Readonly<Record<string, boolean>>;
+  /** `in-app-browser-v1`: which AIs get the browser tools on this host, by provider id; below the measured version it is false. */
+  readonly browserSupport?: Readonly<Record<string, boolean>>;
 }
 
 /** Whether one AI can review now (`review-loop-v1`). */
@@ -383,6 +385,7 @@ export const DAEMON_COMMAND_TYPES = [
   'browser.open',
   'browser.action',
   'browser.close',
+  'browser.site',
   'script.run',
   'script.stop',
   'service.start',
@@ -588,14 +591,16 @@ export interface DaemonCommandPayloads {
   };
   readonly 'heartbeat.trigger': { readonly sessionId: string };
   readonly 'browser.open': { readonly sessionId: string; readonly workspaceId: string; readonly url: string };
+  /** What the person does in the pane. `sessionId` is the conversation: the pane has no session row of its own. */
   readonly 'browser.action': {
     readonly sessionId: string;
-    readonly action: 'navigate' | 'click' | 'type' | 'snapshot' | 'upload';
+    readonly action: 'navigate' | 'reload' | 'back' | 'forward' | 'stop' | 'pick' | 'cancel-pick';
+    /** The address, for `navigate`. */
     readonly target?: string;
-    readonly value?: string;
-    readonly filePath?: string;
   };
   readonly 'browser.close': { readonly sessionId: string };
+  /** A person allows or revokes one exact origin for one project. No tool, model or page reaches this. */
+  readonly 'browser.site': { readonly projectId: string; readonly origin: string; readonly action: 'allow' | 'revoke' };
   readonly 'script.run': {
     readonly sessionId: string;
     readonly workspaceId: string;
@@ -922,12 +927,11 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'browser.open': z.object({ sessionId: IdentifierSchema, workspaceId: IdentifierSchema, url: z.url() }).strict(),
   'browser.action': z.object({
     sessionId: IdentifierSchema,
-    action: z.enum(['navigate', 'click', 'type', 'snapshot', 'upload']),
+    action: z.enum(['navigate', 'reload', 'back', 'forward', 'stop', 'pick', 'cancel-pick']),
     target: NonEmptyStringSchema.optional(),
-    value: z.string().optional(),
-    filePath: NonEmptyStringSchema.optional(),
   }).strict(),
   'browser.close': SessionIdSchema,
+  'browser.site': z.object({ projectId: IdentifierSchema, origin: z.url(), action: z.enum(['allow', 'revoke']) }).strict(),
   'script.run': z.object({
     sessionId: IdentifierSchema,
     workspaceId: IdentifierSchema,

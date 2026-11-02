@@ -321,6 +321,7 @@ const EN = {
       limit: 'This turn is past its screenshot limit.',
       'download-blocked': 'Downloads are blocked.',
       stopped: 'A person stopped the browser for this turn.',
+      'browser-off': 'The in-app browser is off in settings.',
     },
     check: {
       card: 'Screen check',
@@ -953,6 +954,7 @@ const KO: typeof EN = {
       limit: '이 턴의 스크린샷 한도를 넘었습니다.',
       'download-blocked': '다운로드는 막습니다.',
       stopped: '사람이 이 턴의 브라우저 사용을 멈췄습니다.',
+      'browser-off': '설정에서 내장 브라우저가 꺼져 있습니다.',
     },
     check: {
       card: '화면 확인',

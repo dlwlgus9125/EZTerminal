@@ -58,6 +58,12 @@ const MCP_COMMANDS = new Set<DaemonCommandType>([
   'agent.detach',
 ]);
 
+/**
+ * What a person does in the in-app browser. `cli` is also an AI's own shell and the host's own turns: a navigation from
+ * there would pass as the person's and a site would pass as allowed by a person, so these are the desktop's alone.
+ */
+const DESKTOP_ONLY_COMMANDS = new Set<DaemonCommandType>(['browser.open', 'browser.action', 'browser.close', 'browser.site']);
+
 function denied(command: DaemonCommand, reason: string): DaemonAuthorizationDecision {
   return {
     allowed: false,
@@ -122,8 +128,12 @@ export function authorizeDaemonCommand(
 ): DaemonAuthorizationDecision {
   switch (command.principal.kind) {
     case 'desktop':
-    case 'cli':
       return { allowed: true };
+
+    case 'cli':
+      return DESKTOP_ONLY_COMMANDS.has(command.type)
+        ? denied(command, 'Only a person at the desktop drives the in-app browser.')
+        : { allowed: true };
 
     case 'android':
       return ANDROID_COMMANDS.has(command.type)

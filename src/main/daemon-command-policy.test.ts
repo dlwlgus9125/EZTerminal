@@ -26,6 +26,31 @@ function command(
   } as DaemonCommand;
 }
 
+describe('in-app browser commands', () => {
+  const commands: readonly [DaemonCommandType, Record<string, unknown>][] = [
+    ['browser.open', { sessionId: 'chat', workspaceId: 'ws', url: 'http://localhost:5173/' }],
+    ['browser.action', { sessionId: 'chat', action: 'navigate', target: 'https://evil.example/' }],
+    ['browser.close', { sessionId: 'chat' }],
+    ['browser.site', { projectId: 'project', origin: 'https://evil.example', action: 'allow' }],
+  ];
+  const context = { isManagedDescendant: () => true };
+
+  it('are a person\'s at the desktop', () => {
+    for (const [type, payload] of commands) expect(authorizeDaemonCommand(command(type, payload, { kind: 'desktop', id: 'renderer-agent-ui' }), context).allowed, type).toBe(true);
+  });
+
+  it.each<[string, DaemonPrincipal]>([
+    ['a phone', { kind: 'android', id: 'paired-phone' }],
+    // The AI's own shell, and the host's own turns: neither is the person, so neither may stand in for them.
+    ['an agent\'s CLI', { kind: 'cli', id: 'session-chat', sessionId: 'chat' }],
+    ['the automatic check', { kind: 'cli', id: 'browser-check-runtime' }],
+    ['an AI\'s MCP capability', { kind: 'mcp', id: 'session-parent', sessionId: 'parent' }],
+    ['a provider', { kind: 'provider', id: 'codex' }],
+  ])('are refused to %s, even on its own descendant', (_who, principal) => {
+    for (const [type, payload] of commands) expect(authorizeDaemonCommand(command(type, payload, principal), context).allowed, type).toBe(false);
+  });
+});
+
 describe('long-run commands', () => {
   const noDescendants = { isManagedDescendant: () => false };
   const decide = (type: DaemonCommandType, payload: Record<string, unknown>, principal: DaemonPrincipal, descendant = false) =>
