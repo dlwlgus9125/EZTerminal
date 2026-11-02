@@ -4770,6 +4770,8 @@ app.on('ready', async () => {
     },
     onStopped: (conversationId) => browserApprovalsRef.current?.stopped(conversationId),
   });
+  // A window opened before this line has no later `attach`: every tool would answer no-page.
+  if (mainWindowRef) browserView.attach(mainWindowRef);
   const browserApprovals = new BrowserApprovals({
     raise: (input) => daemonAgentRuntime.raiseHostApproval(input),
     expire: (approvalId) => daemonAgentRuntime.expireHostApproval(approvalId),
