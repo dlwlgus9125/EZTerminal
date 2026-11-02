@@ -196,6 +196,7 @@ describe('browserElementAttachments: what a picked element puts in the message',
   });
 
   it('goes without the picture when there is none', () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { imageBase64: _none, ...plain } = PICKED;
     expect(browserElementAttachments(plain, ids()).map((entry) => entry.kind)).toEqual(['text']);
   });
