@@ -218,6 +218,10 @@ describe('DNS rebinding', () => {
       expect([...of('clean-every-road').reached].sort()).toEqual(['/beacon', '/c.css', '/fetch', '/img', '/s.js', '/ws']);
     });
 
+    it('and a local page keeps every road home: a dev server\'s socket, its assets, a sandboxed preview', () => {
+      expect([...of('local-every-road').all].sort()).toEqual(['/own/beacon', '/own/c.css', '/own/fetch', '/own/img', '/own/s.js', '/own/sandboxed-img', '/own/srcdoc-img', '/own/ws']);
+    });
+
     it('except the person going to it, for that visit', () => {
       expect(of('suspect-person').reached).toEqual(['/landed?via=suspect-person']);
       expect(report['suspect-person-cleared']).toBe(true);

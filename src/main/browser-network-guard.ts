@@ -152,7 +152,7 @@ export async function requestVerdict(
   if (isLocalHostName(parsed.hostname)) {
     if (top) return PASS;
     const { frame } = request;
-    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { controlPorts: environment.controlPorts }) === 'external');
+    const frameExternal = frame === null || (frame !== undefined && siteClass(frame, policy.allowedOrigins, { creator: policy.topUrl, controlPorts: environment.controlPorts }) === 'external');
     return policy.topExternal || frameExternal ? refuse('site-not-allowed') : PASS;
   }
   // Before the resolver: a clean answer now says nothing about the address it answered from before.

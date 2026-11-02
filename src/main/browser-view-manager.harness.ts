@@ -489,6 +489,12 @@ const s=document.createElement('script');s.src=e+'/s.js';document.body.append(s)
 try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   await record('suspect-every-road', scripted(everyRoad(allowedOrigin)), suspectPad);
   await record('clean-every-road', scripted(everyRoad(siteOn('clean'))));
+  // What a local dev server's page does all day: every road home, HMR's socket and a sandboxed preview's image included.
+  await record('local-every-road', async (_id, contents) => {
+    await js(contents, everyRoad(`${base}/own`));
+    await js(contents, `const f=document.createElement('iframe');f.sandbox='allow-scripts';f.srcdoc=${JSON.stringify(`<img src="${base}/own/sandboxed-img">`)};document.body.append(f)`);
+    await js(contents, `const f=document.createElement('iframe');f.srcdoc=${JSON.stringify(`<img src="${base}/own/srcdoc-img">`)};document.body.append(f)`);
+  });
 
   // Suspicion belongs to the partition: what one pane learnt holds on every other, and after a restart.
   allowed = [siteOn('wide')];

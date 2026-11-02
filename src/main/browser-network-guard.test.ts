@@ -97,6 +97,11 @@ describe('requestVerdict: every request, whoever made it', () => {
       expect(await requestVerdict(asked('https://evil.example'), policy({ guarded: false }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
 
+    it('takes a frame with no address of its own for the page it sits in', async () => {
+      expect(await requestVerdict(asked('about:srcdoc'), policy({ topUrl: 'http://localhost:5173/' }), environment())).toEqual({ cancel: false });
+      expect(await requestVerdict(asked('about:srcdoc'), policy({ topUrl: 'https://elsewhere.example/' }), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
     it('fails closed on a frame that is gone', async () => {
       expect(await requestVerdict(asked(null), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
