@@ -325,6 +325,12 @@ describe('what the tools do to a real page, unseen', () => {
     expect(snapshot().text).not.toContain('landed');
   });
 
+  it('leaves out what a page hides from the person, and keeps what is only hard to see', () => {
+    const text = report['hidden-text'] as string;
+    for (const words of ['VISIBLE-WORDS', 'WHITE-WORDS', 'RESTORED-WORDS']) expect(text, words).toContain(words);
+    for (const words of ['OPACITY-WORDS', 'NESTED-OPACITY-WORDS', 'NESTED-BUTTON', 'FONT-ZERO-WORDS', 'OFF-LEFT-WORDS', 'OFF-TOP-WORDS']) expect(text, words).not.toContain(words);
+  });
+
   it('clicks, types over what a field holds, and presses', () => {
     expect(report['tools-clicked']).toBe(1);
     expect(report['tools-typed']).toBe('Ada');

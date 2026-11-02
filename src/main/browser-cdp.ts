@@ -4,7 +4,7 @@ import type { BrowserRefusal, BrowserSiteClass } from '../shared/browser';
 
 /**
  * What the AI's tools do to a page, over the view's own debugger. Screenshots are `capturePage`: `Page.captureScreenshot`
- * stalled on a hidden view when measured. Page words pass through here as data: the caller quotes them (step 11).
+ * stalled on a hidden view when measured. Page words pass through here as data: the caller quotes them.
  */
 
 /** A debugger that does not answer means the page is gone, not that the tool should hang. */
@@ -42,6 +42,15 @@ interface AxNode {
   readonly parentId?: string;
 }
 interface FrameTree { readonly frame: { readonly id: string; readonly url: string }; readonly childFrames?: readonly FrameTree[] }
+
+/** The parts of `DOMSnapshot.captureSnapshot` read here. `styles` holds indexes into `strings`, in the order asked for. */
+interface DomSnapshot {
+  readonly strings: readonly string[];
+  readonly documents: readonly {
+    readonly nodes: { readonly parentIndex?: readonly number[]; readonly backendNodeId?: readonly number[] };
+    readonly layout: { readonly nodeIndex: readonly number[]; readonly styles: readonly (readonly number[])[]; readonly bounds: readonly (readonly number[])[] };
+  }[];
+}
 
 interface Ref {
   readonly backendNodeId: number;
@@ -201,6 +210,7 @@ export class BrowserCdp {
   /** The accessibility tree of each frame the AI may read; refs from any earlier snapshot end here. */
   async snapshot(): Promise<BrowserSnapshot> {
     const { frameTree } = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree');
+    const hidden = await this.hiddenNodes();
     const refs = new Map<string, Ref>();
     const unreadFrames: string[] = [];
     const lines: string[] = [];
@@ -216,7 +226,7 @@ export class BrowserCdp {
           if (error instanceof BrowserRefused) throw error;
           return undefined; // Another process: a cross-origin frame answers with nothing.
         });
-        if (read) this.appendTree(read.nodes, tree.frame.id, depth, lines, refs);
+        if (read) this.appendTree(read.nodes, tree.frame.id, depth, lines, refs, hidden);
         else unreadFrames.push(url);
       }
       for (const child of tree.childFrames ?? []) await walk(child, blank ? creator : url, depth + 1);
@@ -231,19 +241,50 @@ export class BrowserCdp {
     return { text: joined.length > SNAPSHOT_LIMIT ? `${joined.slice(0, SNAPSHOT_LIMIT)}\n…` : joined, truncated: joined.length > SNAPSHOT_LIMIT, unreadFrames };
   }
 
+  /**
+   * Nodes a person cannot see that the accessibility tree still reads (measured): transparent, of no size, or off the page.
+   * This is what a page hides, not all it could: white on white stays, and nothing here claims to detect anything. `opacity`
+   * reaches a node's whole subtree. `font-size` and position do not: a child restores the one and has its own bounds for the other.
+   */
+  private async hiddenNodes(): Promise<ReadonlySet<number>> {
+    const snapshot = await this.send<DomSnapshot>('DOMSnapshot.captureSnapshot', { computedStyles: ['opacity', 'font-size'] }).catch((error: unknown) => {
+      if (error instanceof BrowserRefused) throw error;
+      return undefined;
+    });
+    const hidden = new Set<number>();
+    for (const { nodes, layout } of snapshot?.documents ?? []) {
+      const transparent = new Set<number>();
+      const small = new Set<number>();
+      layout.nodeIndex.forEach((index, at) => {
+        const [opacity, fontSize] = (layout.styles[at] ?? []).map((style) => Number.parseFloat(snapshot?.strings[style] ?? ''));
+        const [x = 0, y = 0, width = 0, height = 0] = layout.bounds[at] ?? [];
+        if (opacity === 0) transparent.add(index);
+        if (fontSize === 0 || x + width <= 0 || y + height <= 0) small.add(index);
+      });
+      const parents = nodes.parentIndex ?? [];
+      const under = (index: number): boolean => {
+        for (let at = index; at >= 0; at = parents[at] ?? -1) if (transparent.has(at)) return true;
+        return false;
+      };
+      nodes.backendNodeId?.forEach((id, index) => { if (small.has(index) || under(index)) hidden.add(id); });
+    }
+    return hidden;
+  }
+
   /** The words of the main frame, for a wait. It ends no refs. */
   async pageText(): Promise<string> {
     const { nodes } = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getFullAXTree');
     return nodes.filter((node) => !node.ignored).map((node) => text(node.name)).join('\n');
   }
 
-  private appendTree(nodes: readonly AxNode[], frameId: string, frameDepth: number, lines: string[], refs: Map<string, Ref>): void {
+  private appendTree(nodes: readonly AxNode[], frameId: string, frameDepth: number, lines: string[], refs: Map<string, Ref>, hidden: ReadonlySet<number>): void {
     const byId = new Map(nodes.map((node) => [node.nodeId, node]));
     const visit = (node: AxNode, depth: number): void => {
       const role = text(node.role);
       const name = text(node.name);
       const value = text(node.value);
-      const shown = !node.ignored && !SILENT_ROLES.has(role) && (name !== '' || value !== '' || INTERACTIVE_ROLES.has(role));
+      const unseen = node.backendDOMNodeId !== undefined && hidden.has(node.backendDOMNodeId);
+      const shown = !node.ignored && !unseen && !SILENT_ROLES.has(role) && (name !== '' || value !== '' || INTERACTIVE_ROLES.has(role));
       if (shown) {
         const indent = '  '.repeat(depth + frameDepth);
         if (role === 'StaticText') {

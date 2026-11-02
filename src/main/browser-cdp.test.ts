@@ -104,7 +104,7 @@ describe('BrowserCdp', () => {
       const read: unknown[] = [];
       sendCommand.mockImplementation(async (method, params) => {
         if (method === 'Page.getFrameTree') return tree([{ frame: { id: 'evil', url: 'http://evil.example/ads' } }, { frame: { id: 'own', url: 'about:srcdoc' } }]);
-        read.push((params as { frameId: string }).frameId);
+        if (method === 'Accessibility.getFullAXTree') read.push((params as { frameId: string }).frameId);
         return AX([node('1', 'RootWebArea', '', { childIds: [] })]);
       });
       const snapshot = await cdp.snapshot();

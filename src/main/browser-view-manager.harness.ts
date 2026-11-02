@@ -117,6 +117,16 @@ async function main(): Promise<void> {
 <script>fetch('${base}/pwn-fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon('${base}/pwn-beacon','x')</script>`);
       case '/with-frames':
         return html(response, `<!doctype html><title>t</title><iframe src="/landed?via=own-frame"></iframe>`);
+      case '/hidden-text':
+        return html(response, `<!doctype html><title>h</title><body style="margin:0">
+<p>VISIBLE-WORDS</p>
+<p style="opacity:0">OPACITY-WORDS</p>
+<div style="opacity:0"><p>NESTED-OPACITY-WORDS</p><button>NESTED-BUTTON</button></div>
+<p style="font-size:0">FONT-ZERO-WORDS</p>
+<p style="position:absolute;left:-9999px">OFF-LEFT-WORDS</p>
+<p style="position:absolute;top:-9999px">OFF-TOP-WORDS</p>
+<p style="color:#fff;background:#fff">WHITE-WORDS</p>
+<div style="font-size:0"><span style="font-size:16px">RESTORED-WORDS</span></div>`);
       case '/workers/page': return html(response, WORKERS_PAGE);
       case '/workers/sw.js':
         response.writeHead(200, { 'content-type': 'text/javascript' });
@@ -615,6 +625,18 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     await js(contents, `location.href='/landed?via=refs'`);
     await delay(SETTLE_MS);
     report['tools-after-navigation'] = await cdp.click(refOf(first.text, 'button "Save"')).then(() => 'clicked', (error: unknown) => (error instanceof BrowserRefused ? error.reason : String(error)));
+    manager.endTool(id);
+    manager.forget(id);
+  }
+
+  // What a page hides from the person stays out of what the AI reads.
+  {
+    const id = 'pane-hidden';
+    await open(id, `${base}/hidden-text`);
+    manager.beginTool(id, 'turn-1');
+    const page = manager.page(id);
+    if (!page.ok) throw new Error(page.reason);
+    report['hidden-text'] = (await page.cdp.snapshot()).text;
     manager.endTool(id);
     manager.forget(id);
   }

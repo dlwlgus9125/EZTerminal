@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
+
 import { z } from 'zod';
 
 import type { BrowserActionKind, BrowserActionRun, BrowserRefusal, BrowserSiteClass, BrowserToolName, BrowserViewState } from '../shared/browser';
 import type { DaemonSnapshot, PermissionPreset } from '../shared/daemon-protocol';
+import { quotedData } from '../shared/quoted-data';
 import { BrowserRefused, parseKeys, type BrowserCdp } from './browser-cdp';
 import type { BrowserPageResult } from './browser-view-manager';
 
@@ -16,8 +19,7 @@ import type { BrowserPageResult } from './browser-view-manager';
  * | standard | free          | reads free, actions ask   | refused        |
  * | full access | free       | free                      | refused        |
  *
- * Seams left for later steps, each one place: `pageContent` (step 11, the untrusted frame), `onShot` (step 12, rows and
- * saved shots), `devUrls` (step 13, discovery).
+ * Seams left for later steps, each one place: `onShot` (step 12, rows and saved shots), `devUrls` (step 13, discovery).
  */
 
 const NAVIGATION_WAIT_MS = 15_000;
@@ -118,8 +120,6 @@ export interface BrowserToolsDeps {
   readonly requestApproval?: (request: BrowserApprovalRequest) => Promise<BrowserApprovalAnswer>;
   /** The person said not to ask again for this site in this conversation. */
   readonly siteTrusted?: (sessionId: string, origin: string) => boolean;
-  /** Step 11: the untrusted frame around page words. */
-  readonly pageContent?: (origin: string, text: string) => string;
   /** Step 12: a shot for the row. */
   readonly onShot?: (context: { readonly sessionId: string; readonly turnId: string; readonly url: string }, jpegBase64: string) => void;
   /** Step 13: candidates to offer with `no-page`. */
@@ -139,6 +139,11 @@ function originOf(url: string): string {
 
 function text(value: unknown): BrowserToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] };
+}
+
+/** Page words as data. The nonce is new on every call, and a line in the page that reads like the frame's own is broken up. */
+function pageFrame(origin: string, words: string): string {
+  return quotedData(`Page content from ${origin} [${randomBytes(4).toString('hex')}]`, words.replace(/^(\s*)---/gmu, '$1\\---'));
 }
 
 const REFUSAL_WORDS: Readonly<Record<BrowserRefusal, string>> = {
@@ -215,14 +220,14 @@ export class BrowserTools {
       case 'browser_snapshot': {
         const { page, cdp } = this.readable(context);
         const snapshot = await cdp.snapshot();
-        return text({ url: page.url, page: this.quoted(page.url, snapshot.text), truncated: snapshot.truncated, unreadFrames: snapshot.unreadFrames });
+        return text({ url: page.url, page: pageFrame(originOf(page.url), snapshot.text), truncated: snapshot.truncated, unreadFrames: snapshot.unreadFrames });
       }
       case 'browser_screenshot': return this.screenshot(context, turnId, args.ref as string | undefined);
       case 'browser_console': {
         const { page, cdp } = this.readable(context);
         const level = (args.level as 'error' | 'warning' | 'all' | undefined) ?? 'all';
         const lines = cdp.consoleLines().filter((line) => level === 'all' || line.startsWith('error') || line.startsWith('exception') || (level === 'warning' && line.startsWith('warning')));
-        return text({ url: page.url, lines: this.quoted(page.url, lines.join('\n')) });
+        return text({ url: page.url, lines: pageFrame(originOf(page.url), lines.join('\n')) });
       }
       case 'browser_wait': return this.wait(context, args.text as string | undefined, args.ms as number | undefined);
       case 'browser_navigate': return this.navigate(context, turnId, args.url as string, signal);
@@ -255,10 +260,6 @@ export class BrowserTools {
         });
       }
     }
-  }
-
-  private quoted(url: string, words: string): string {
-    return this.deps.pageContent?.(originOf(url), words) ?? words;
   }
 
   /** The page now, read fresh on every call: a person may have gone somewhere the AI may not follow. */
