@@ -18,9 +18,16 @@ export function watchBrowserPaneClose(api: DockviewApi, options: {
   });
 }
 
-function conversationPanel(api: DockviewApi, conversationId: string): IDockviewPanel | undefined {
-  return api.panels.find((panel) => panel.api.component === 'agent-session'
-    && (panel.params as { conversationId?: unknown } | undefined)?.conversationId === conversationId);
+/**
+ * A conversation's panel, by the daemon session the pane is keyed on. A live panel holds it in `historyId` (as
+ * `structuredAgentSessionHistoryId` writes it, not imported: that module imports this one); its `conversationId` is the
+ * catalog's own id, which is another thing.
+ */
+function conversationPanel(api: DockviewApi, sessionId: string): IDockviewPanel | undefined {
+  return api.panels.find((panel) => {
+    const params = panel.params as { historyId?: unknown; conversationId?: unknown } | undefined;
+    return panel.api.component === 'agent-session' && (params?.historyId === `structured-session-${sessionId}` || params?.conversationId === sessionId);
+  });
 }
 
 /** Brings a pane's conversation forward: a decision waits there. */
