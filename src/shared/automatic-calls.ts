@@ -8,8 +8,8 @@ import type { AgentUsageLevel } from './agent-usage';
 export interface AutomaticCallPolicy {
   /** The host starts it on its own. */
   readonly automatic: boolean;
-  /** The switch that stops it: Settings › 에이전트 › 턴 마무리 for `suggestions` and `recaps`, › 이어서 하기 for `autoResume`. */
-  readonly setting?: 'suggestions' | 'recaps' | 'autoResume';
+  /** The switch that stops it: Settings › 에이전트 › 턴 마무리 for `suggestions` and `recaps`, › 이어서 하기 for `autoResume`, › 내장 브라우저 for `browserCheck`. */
+  readonly setting?: 'suggestions' | 'recaps' | 'autoResume' | 'browserCheck';
   /** It stops while a usage window is at AUTOMATIC_CALL_PAUSE_LEVEL. */
   readonly pausesNearLimit: boolean;
 }
@@ -20,6 +20,8 @@ export const AUTOMATIC_CALLS = {
   'turn-recap': { automatic: true, setting: 'recaps', pausesNearLimit: true },
   // Sent because a limit stopped the turn, at the expected reset: LongRunCoordinator reads no usage window.
   'auto-resume': { automatic: true, setting: 'autoResume', pausesNearLimit: false },
+  // One turn in the same conversation after a person's turn changed files: BrowserCheckCoordinator.
+  'browser-check': { automatic: true, setting: 'browserCheck', pausesNearLimit: true },
 } as const satisfies Readonly<Record<string, AutomaticCallPolicy>>;
 
 export const AUTOMATIC_CALL_PAUSE_LEVEL: AgentUsageLevel = 'danger';

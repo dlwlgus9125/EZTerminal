@@ -41,9 +41,10 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
-import { BROWSER_CHECK_PRINCIPAL, type BrowserDevCandidate } from '../shared/browser';
+import { isBrowserCheckPrincipal, type BrowserDevCandidate } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
+import { BrowserCheckCoordinator } from './browser-check-coordinator';
 import { BrowserDevUrls, devUrlOutput } from './browser-dev-urls';
 import { insideRoot } from './browser-network-guard';
 import { BrowserRows } from './browser-rows';
@@ -4827,11 +4828,21 @@ app.on('ready', async () => {
       const snapshot = daemonRouterRef.current!.getSnapshot();
       const turn = snapshot.turns.find((entry) => entry.id === turnId);
       const command = turn ? daemonStore.findCommand(turn.commandId)?.command ?? null : null;
-      if (command?.principal.kind === 'cli' && command.principal.id === BROWSER_CHECK_PRINCIPAL) return true;
+      if (command?.type === 'agent.submit' && command.payload.browserCheck && isBrowserCheckPrincipal(command.principal)) return true;
       return wrapUpAllowed(snapshot, sessionId, { prepared: preparedHostSession(sessionId), turnCommand: command });
     },
   });
   browserToolsRef.current = browserTools;
+  const browserChecks = new BrowserCheckCoordinator({
+    autoCheck: () => settingsRef.authority?.browserAutoCheck() === true && daemonRouterRef.current?.getSnapshot().runtime.browserEnabled === true,
+    listed: (sessionId) => agentOrchestrationMcpServer.browserListed(sessionId),
+    pane: (sessionId) => browserView?.state(sessionId),
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    prepared: preparedHostSession,
+    turnCommand: (turn) => daemonStore.findCommand(turn.commandId)?.command ?? null,
+    readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.getTranscript(sessionId, afterSequence, limit),
+    execute: (command) => daemonRouterRef.current!.execute(command),
+  });
   daemonRouterRef.current?.onEvent((event) => {
     if (event.kind === 'transcript.appended') {
       const router = daemonRouterRef.current;
@@ -4855,6 +4866,7 @@ app.on('ready', async () => {
     browserView?.turnEnded(turn.sessionId, turn.id);
     browserTools.turnEnded(turn.id);
     browserRows.turnEnded(turn.id);
+    void browserChecks.turnFinished(turn);
   });
 
   // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──

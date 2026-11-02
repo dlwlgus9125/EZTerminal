@@ -317,6 +317,14 @@ const SteerQueuedPayloadSchema = z.object({
   reason: z.enum(STEER_FALLBACKS),
 }).strict();
 
+/** The user row of the automatic screen check: the app sent it, nobody typed it. */
+const BrowserCheckPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('browser-check'),
+  origin: ShortText,
+  providerId: ShortText,
+}).strict();
+
 /** One browser tool that ran, from the host's log. `pageText` is the page's, quoted by every screen that shows it. */
 const BrowserStepPayloadSchema = z.object({
   v: z.literal(1),
@@ -367,6 +375,7 @@ export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   BrowserStepPayloadSchema,
   BrowserShotPayloadSchema,
   BrowserBlockedPayloadSchema,
+  BrowserCheckPayloadSchema,
 ]);
 
 export type TranscriptPayload = z.infer<typeof TranscriptPayloadSchema>;
@@ -391,6 +400,7 @@ export type SteerQueuedPayload = z.infer<typeof SteerQueuedPayloadSchema>;
 export type BrowserStepPayload = z.infer<typeof BrowserStepPayloadSchema>;
 export type BrowserShotPayload = z.infer<typeof BrowserShotPayloadSchema>;
 export type BrowserBlockedPayload = z.infer<typeof BrowserBlockedPayloadSchema>;
+export type BrowserCheckPayload = z.infer<typeof BrowserCheckPayloadSchema>;
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
 /** Tolerant parse: unknown versions and malformed values become `undefined`. */

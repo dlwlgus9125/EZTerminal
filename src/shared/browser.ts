@@ -16,6 +16,13 @@ export const BROWSER_PARTITION = 'persist:ezterminal-browser';
 /** The principal of the one turn the host sends to check a change on screen. */
 export const BROWSER_CHECK_PRINCIPAL = 'browser-check-runtime';
 
+export function isBrowserCheckPrincipal(principal: { readonly kind: string; readonly id: string; readonly sessionId?: string }): boolean {
+  return principal.kind === 'cli' && principal.id === BROWSER_CHECK_PRINCIPAL && principal.sessionId === undefined;
+}
+
+/** What the app sends for the automatic check: shown as sent, in the words the AI gets. */
+export const BROWSER_CHECK_PROMPT = 'Open the page you just changed in the in-app browser, take a screenshot, and report only what you saw.';
+
 export const BROWSER_READ_TOOLS = ['browser_snapshot', 'browser_screenshot', 'browser_console', 'browser_wait'] as const;
 export const BROWSER_ACTION_TOOLS = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press'] as const;
 export const BROWSER_TOOLS = [...BROWSER_READ_TOOLS, ...BROWSER_ACTION_TOOLS] as const;

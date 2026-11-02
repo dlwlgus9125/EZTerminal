@@ -162,6 +162,9 @@ export function authorizeDaemonCommand(
       if (command.type === 'agent.submit' && command.payload.longRunResume) {
         return denied(command, 'Only the host resumes a conversation a limit stopped.');
       }
+      if (command.type === 'agent.submit' && command.payload.browserCheck) {
+        return denied(command, 'Only the host sends the automatic screen check.');
+      }
 
       if (command.type === 'agent.create') {
         return command.payload.parentSessionId === rootSessionId

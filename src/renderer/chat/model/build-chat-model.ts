@@ -5,7 +5,7 @@ import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../
 import { USAGE_LIMIT_ERROR, type OpenUsageLimit, type SteerLanding } from '../../../shared/long-run';
 import { isSettingsProposalRequest } from '../../../shared/settings-changes';
 import { parseFixReply, type FixReply } from '../../../shared/review-findings';
-import { parseTranscriptPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
+import { parseTranscriptPayload, type BrowserCheckPayload, type ReviewPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import type { TurnRecap } from '../../../shared/turn-wrap-up';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
 import { longRunRows } from './long-run-rows';
@@ -371,6 +371,8 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
   const { limits: limitCards, limited: limitedTurns } = longRunRows(coalesced, turns);
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const rows: ChatRow[] = [];
+  /** Turns the app sent as a screen check, read into their card when the turn's rows are all in. */
+  const browserChecks = new Map<string, BrowserCheckPayload>();
   const toolsByCallId = new Map<string, MutableTool>();
   const toolTurn = new Map<MutableTool, string | undefined>();
   const openCallsByTurn = new Map<string, MutableTool[]>();
@@ -456,6 +458,7 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
           addReviewEvent(payload.reviewId, { sequence: item.sequence, findingIds: payload.findingIds, kind: 'fix', ...(turnId ? { turnId } : {}) });
         }
         // Refused needs no row of its own: the turn it landed in says so.
+        if (payload?.type === 'browser-check' && turnId) browserChecks.set(turnId, payload);
         const landing: SteerLanding | undefined = payload?.type === 'steer' ? {
           ...(payload.rewritten ? { rewritten: true } : {}), ...(payload.newTurn ? { newTurn: true } : {}),
           ...(turnId && turnById.get(turnId)?.errorCode === USAGE_LIMIT_ERROR ? { refused: true } : {}),
@@ -465,6 +468,7 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
           text: item.text, ...(item.context ? { context: item.context } : {}),
           ...(landing ? { steer: landing } : {}),
           ...(payload?.type === 'app-sent' ? { origin: 'app-resume' as const, appSent: payload.reason } : {}),
+          ...(payload?.type === 'browser-check' ? { origin: 'app-resume' as const, appSent: 'browser-check' as const } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'instruction' ? { origin: 'parent-agent' as const } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'result' && payload.childSessionId ? {
             origin: 'subagent-report' as const,
@@ -723,6 +727,29 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
     if (turn && !ACTIVE_TURN_STATES.has(turn.state)) {
       tool.status = turn.state === 'interrupted' ? 'interrupted' : turn.state === 'failed' ? 'failed' : 'completed';
     }
+  }
+
+  // A check's card speaks from the host's log; what the AI said goes inside it, quoted as the AI's.
+  for (const [checkTurn, { origin, providerId }] of browserChecks) {
+    const calls = { screenshots: 0, reads: 0 };
+    let summary: string | undefined;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]!;
+      if (row.turnId !== checkTurn) continue;
+      if (row.kind === 'assistant') {
+        summary ??= row.text;
+        rows.splice(index, 1);
+      } else if (row.kind === 'browser-run') {
+        for (const step of row.run.steps) {
+          if (step.kind === 'screenshot') calls.screenshots += 1;
+          else if (step.kind === 'snapshot' || step.kind === 'console') calls.reads += 1;
+        }
+      }
+    }
+    const turn = turnById.get(checkTurn);
+    const state = turnActive(checkTurn) ? 'running' : turn && turn.state !== 'completed' ? 'failed' : 'done';
+    const last = rows.findLastIndex((row) => row.turnId === checkTurn);
+    rows.splice(last + 1, 0, { kind: 'browser-check', id: `browser-check:${checkTurn}`, turnId: checkTurn, createdAt: rows[last]?.createdAt ?? '', check: { state, origin, providerId, calls, ...(summary ? { summary } : {}) } });
   }
 
   // Liveness and per-turn change rollups. A live turn's status trails its rows

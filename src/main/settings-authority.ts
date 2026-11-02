@@ -38,6 +38,7 @@ const HISTORY_FILE = 'settings-changes.json';
 const ADVISOR_FILE = 'agent-advisor.json';
 const TURN_WRAP_UP_FILE = 'turn-wrap-up.json';
 const LONG_RUN_FILE = 'long-run.json';
+const BROWSER_FILE = 'browser-settings.json';
 const EMPTY_HISTORY: SettingsChangeFile = { version: 1, changes: [] };
 /** Proposals one conversation may leave waiting at once. */
 const MAX_PENDING_PROPOSALS = 3;
@@ -228,6 +229,7 @@ export class SettingsAuthority {
   private readonly advisorFile: JsonFile;
   private readonly turnWrapUpFile: JsonFile;
   private readonly longRunFile: JsonFile;
+  private readonly browserFile: JsonFile;
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly proposals = new Map<string, ProposalRecord>();
@@ -235,6 +237,7 @@ export class SettingsAuthority {
   private advisor = false;
   private turnWrapUpSettings = DEFAULT_TURN_WRAP_UP_SETTINGS;
   private longRunSettings = DEFAULT_LONG_RUN_SETTINGS;
+  private browserAutoCheckOn = false;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly options: SettingsAuthorityOptions) {
@@ -242,6 +245,7 @@ export class SettingsAuthority {
     this.advisorFile = new JsonFile(options.dir, ADVISOR_FILE);
     this.turnWrapUpFile = new JsonFile(options.dir, TURN_WRAP_UP_FILE);
     this.longRunFile = new JsonFile(options.dir, LONG_RUN_FILE);
+    this.browserFile = new JsonFile(options.dir, BROWSER_FILE);
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
   }
@@ -255,6 +259,8 @@ export class SettingsAuthority {
     this.turnWrapUpSettings = turnWrapUpFromFile(await this.turnWrapUpFile.readValidated(validateTurnWrapUp, EMPTY_TURN_WRAP_UP));
     await this.longRunFile.init();
     this.longRunSettings = longRunFromFile(await this.longRunFile.readValidated(validateLongRun, EMPTY_LONG_RUN));
+    await this.browserFile.init();
+    this.browserAutoCheckOn = (await this.browserFile.readValidated(validateBrowser, EMPTY_BROWSER)).autoCheck;
   }
 
   /** 자문 (`ask_advisor`): off until a person turns it on. */
@@ -303,12 +309,28 @@ export class SettingsAuthority {
     });
   }
 
+  /** Settings › 에이전트 › 내장 브라우저: the automatic screen check. Read at each turn's end, so the switch acts at once. */
+  browserAutoCheck(): boolean {
+    return this.browserAutoCheckOn;
+  }
+
+  /** Only the person's Settings screen writes this: no AI tool reaches it. */
+  setBrowserAutoCheck(autoCheck: boolean): Promise<boolean> {
+    return this.run(async () => {
+      const next = await this.browserFile.update(validateBrowser, EMPTY_BROWSER, () => ({ version: 1 as const, autoCheck }), 'save browser settings');
+      if (!next) throw new Error('The browser settings could not be saved.');
+      this.browserAutoCheckOn = next.autoCheck;
+      return this.browserAutoCheckOn;
+    });
+  }
+
   async flush(): Promise<void> {
     await this.queue.catch(() => undefined);
     await this.history.flush();
     await this.advisorFile.flush();
     await this.turnWrapUpFile.flush();
     await this.longRunFile.flush();
+    await this.browserFile.flush();
   }
 
   // ── The AI's tools ──────────────────────────────────────────────────────────────────────────────────
@@ -862,6 +884,15 @@ function validateLongRun(raw: unknown): LongRunFile | null {
   const { version, ...settings } = raw as Record<string, unknown>;
   const parsed = version === 1 ? parseLongRunSettings(settings) : undefined;
   return parsed ? { version: 1, ...parsed } : null;
+}
+
+interface BrowserFile { readonly version: 1; readonly autoCheck: boolean }
+const EMPTY_BROWSER: BrowserFile = { version: 1, autoCheck: false };
+
+function validateBrowser(raw: unknown): BrowserFile | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { version, autoCheck } = raw as { version?: unknown; autoCheck?: unknown };
+  return version === 1 && typeof autoCheck === 'boolean' ? { version: 1, autoCheck } : null;
 }
 
 function longRunFromFile({ autoResume }: LongRunFile): LongRunSettings {

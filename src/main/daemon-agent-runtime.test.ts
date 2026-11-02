@@ -1,3 +1,4 @@
+import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -4399,6 +4400,20 @@ describe('what a person does in the in-app browser', () => {
     await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard' });
     return h;
   };
+
+  it('takes the automatic check from the host alone, and marks its row', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      const check = { sessionId: 'chat', prompt: 'look', browserCheck: { origin: 'http://localhost:5173', providerId: 'codex' } };
+      for (const principal of [{ kind: 'desktop', id: 'window' }, { kind: 'android', id: 'phone' }, { kind: 'cli', id: 'chat', sessionId: 'chat' }, { kind: 'cli', id: BROWSER_CHECK_PRINCIPAL, sessionId: 'chat' }] as const) {
+        expect(await h.execute('agent.submit', check, principal), principal.id).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      }
+      expect(await h.execute('agent.submit', check, { kind: 'cli', id: BROWSER_CHECK_PRINCIPAL })).toMatchObject({ ok: true });
+      const row = h.store.getTranscript('chat', 0, 50).find((item) => item.kind === 'user-message');
+      expect(row).toMatchObject({ text: 'look', payload: { v: 1, type: 'browser-check', origin: 'http://localhost:5173', providerId: 'codex' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
 
   it('picks from a page the AI may read, and refuses any other', async () => {
     const browser = browserHost();

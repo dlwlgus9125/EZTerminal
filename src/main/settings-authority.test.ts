@@ -321,6 +321,36 @@ describe('settings-changes IPC — an EZTerminal window only', () => {
   });
 });
 
+describe('SettingsAuthority — the automatic screen check', () => {
+  const reopened = async (dir: string): Promise<SettingsAuthority> => {
+    const again = new SettingsAuthority({ dir, ui: {} as never, profiles: {} as never, templates: {} as never, host: {} as never, raiseApproval: vi.fn() as never } as never);
+    await again.init();
+    return again;
+  };
+
+  it('starts off', async () => {
+    const { authority } = await setup();
+    expect(authority.browserAutoCheck()).toBe(false);
+  });
+
+  it('saves to its own file and keeps it across a restart', async () => {
+    const { authority, dir } = await setup();
+    await expect(authority.setBrowserAutoCheck(true)).resolves.toBe(true);
+    expect(authority.browserAutoCheck()).toBe(true);
+    await authority.flush();
+    expect(JSON.parse(await readFile(path.join(dir, 'browser-settings.json'), 'utf8'))).toEqual({ version: 1, autoCheck: true });
+    expect((await reopened(dir)).browserAutoCheck()).toBe(true);
+  });
+
+  it('reads a damaged or newer file as off', async () => {
+    for (const content of ['{not json', JSON.stringify({ version: 2, autoCheck: true }), JSON.stringify({ version: 1, autoCheck: 'yes' })]) {
+      const { dir } = await setup();
+      await writeFile(path.join(dir, 'browser-settings.json'), content);
+      expect((await reopened(dir)).browserAutoCheck(), content).toBe(false);
+    }
+  });
+});
+
 describe('SettingsAuthority — long-run continuity', () => {
   it('starts with automatic resume on', async () => {
     const { authority } = await setup();

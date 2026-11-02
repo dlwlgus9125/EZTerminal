@@ -20,6 +20,10 @@ describe('automatic call policy', () => {
     expect(DEFAULT_LONG_RUN_SETTINGS).toHaveProperty(autoResume.setting);
   });
 
+  it('ties the screen check to its own switch, and stops it near the limit', () => {
+    expect(AUTOMATIC_CALLS['browser-check']).toEqual({ automatic: true, setting: 'browserCheck', pausesNearLimit: true });
+  });
+
   it('pauses at the usage display’s danger level, 90% or more', () => {
     expect(agentUsageLevel(90)).toBe(AUTOMATIC_CALL_PAUSE_LEVEL);
     expect(agentUsageLevel(89)).not.toBe(AUTOMATIC_CALL_PAUSE_LEVEL);

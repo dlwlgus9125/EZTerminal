@@ -1,5 +1,5 @@
 import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
-import { addressBarUrl, allowableOrigin, isBrowserActionRequest } from '../shared/browser';
+import { addressBarUrl, allowableOrigin, isBrowserActionRequest, isBrowserCheckPrincipal } from '../shared/browser';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
@@ -1165,6 +1165,11 @@ export class DaemonAgentRuntime {
     if (longRunResume && (command.principal.kind !== 'cli' || command.principal.id !== LONG_RUN_PRINCIPAL)) {
       return commandError('invalid-command', 'Only the host resumes a conversation a limit stopped.');
     }
+    const browserCheck = command.type === 'agent.submit' ? command.payload.browserCheck : undefined;
+    // An AI's own shell is a `cli` principal too, and carries its session: the host's own carries none.
+    if (browserCheck && !isBrowserCheckPrincipal(command.principal)) {
+      return commandError('invalid-command', 'Only the host sends the automatic screen check.');
+    }
     // Attachments, replies and commands were not measured in a running turn: the person's client says why this one queues.
     const notSteered = command.type === 'agent.submit' && command.payload.notSteered === true && (command.principal.kind === 'desktop' || command.principal.kind === 'android');
     return this.queueTurn(command, context, {
@@ -1174,6 +1179,7 @@ export class DaemonAgentRuntime {
       ...(command.type === 'agent.submit' && command.payload.reportOf ? { reportOf: command.payload.reportOf } : {}),
       ...(wrapUpTask ? { payload: { v: 1, type: 'task-suggestion-send', ...wrapUpTask } } : {}),
       ...(longRunResume ? { payload: { v: 1, type: 'app-sent', ...longRunResume } } : {}),
+      ...(browserCheck ? { payload: { v: 1, type: 'browser-check', ...browserCheck } } : {}),
       ...(notSteered ? { payload: { v: 1, type: 'steer-queued', reason: 'not-plain' } } : {}),
       interruptFirst,
     });

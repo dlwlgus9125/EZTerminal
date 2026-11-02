@@ -26,6 +26,17 @@ function command(
   } as DaemonCommand;
 }
 
+describe('the automatic screen check', () => {
+  it('is refused to a session\'s capability, beside the long-run resume', () => {
+    const command = createDaemonCommand({
+      commandId: 'c', idempotencyKey: 'c', expectedRevision: 1, issuedAt: '2026-11-02T00:00:00.000Z',
+      principal: { kind: 'mcp', id: 'parent', sessionId: 'parent' }, type: 'agent.submit',
+      payload: { sessionId: 'child', prompt: 'look', browserCheck: { origin: 'http://localhost:5173', providerId: 'codex' } },
+    });
+    expect(authorizeDaemonCommand(command, { isManagedDescendant: () => true } as never)).toMatchObject({ allowed: false });
+  });
+});
+
 describe('in-app browser commands', () => {
   const commands: readonly [DaemonCommandType, Record<string, unknown>][] = [
     ['browser.open', { sessionId: 'chat', workspaceId: 'ws', url: 'http://localhost:5173/' }],

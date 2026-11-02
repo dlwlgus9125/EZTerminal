@@ -471,6 +471,8 @@ export interface DaemonCommandPayloads {
     readonly wrapUpTask?: DaemonWrapUpTaskRef;
     /** The "Continue." the host sends for a limit card (`long-run-runtime` only). */
     readonly longRunResume?: { readonly stopId: string; readonly reason: AppSentReason };
+    /** The automatic screen check. The host's to send, like `longRunResume`. */
+    readonly browserCheck?: { readonly origin: string; readonly providerId: string };
     /** Long-run: meant for the running turn, but what it carries cannot go in, so it queued. */
     readonly notSteered?: true;
   };
@@ -840,6 +842,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'agent.submit': AgentMessageFields.extend({
     wrapUpTask: z.object(WrapUpTaskRefFields).strict().optional(),
     longRunResume: z.object({ stopId: IdentifierSchema, reason: z.enum(APP_SENT_REASONS) }).strict().optional(),
+    browserCheck: z.object({ origin: z.string().min(1).max(2_000), providerId: IdentifierSchema }).strict().optional(),
     notSteered: z.literal(true).optional(),
   }).strict().refine(messageFits, MESSAGE_TOO_LARGE),
   'agent.interrupt-and-submit': AgentMessagePayloadSchema,

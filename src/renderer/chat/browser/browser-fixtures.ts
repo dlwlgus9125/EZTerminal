@@ -1,4 +1,4 @@
-import { BROWSER_APPROVAL_HOLD_MS } from '../../../shared/browser';
+import { BROWSER_APPROVAL_HOLD_MS, BROWSER_CHECK_PROMPT } from '../../../shared/browser';
 import type { DaemonApproval, DaemonSnapshot, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { shellSnapshot } from '../../shell/shell-fixtures';
 import type { ChatBrowserRun, ChatBrowserStep, ChatRow } from '../model/types';
@@ -18,7 +18,7 @@ export const STAGING_ORIGIN = 'https://staging.cart-kit.example';
 /** A site nobody allowed, which the page's own link leads to. */
 export const OUTSIDE_ORIGIN = 'https://docs.payments-partner.example';
 /** What the app sends for the automatic check: shown as sent, in the words the AI gets. */
-export const CHECK_TEXT = 'Open the page you just changed in the in-app browser, take a screenshot, and report only what you saw.';
+export const CHECK_TEXT = BROWSER_CHECK_PROMPT;
 
 export type BrowserLanguage = 'ko' | 'en';
 export type BrowserProvider = 'claude' | 'codex';

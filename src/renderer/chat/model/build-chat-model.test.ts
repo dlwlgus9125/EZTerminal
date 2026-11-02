@@ -310,6 +310,49 @@ describe('buildChatModel over the in-app browser', () => {
   });
 });
 
+describe('buildChatModel over the automatic screen check', () => {
+  const LOCAL = 'http://localhost:5173';
+  const at = (sequence: number): string => `2026-11-02T05:00:${String(sequence).padStart(2, '0')}.000Z`;
+  const row = (id: string, sequence: number, kind: DaemonTranscriptItem['kind'], text: string, payload?: unknown) => ({
+    id, sessionId: 'chat', sequence, turnId: 'check', kind, text, isDelta: false, isSensitive: false, createdAt: at(sequence), ...(payload ? { payload } : {}),
+  }) as DaemonTranscriptItem;
+  const sent = row('a1', 1, 'user-message', 'Open the page you just changed.', { v: 1, type: 'browser-check', origin: LOCAL, providerId: 'codex' });
+  const looked = [row('a2', 2, 'notice', 's', { v: 1, type: 'browser-shot', shotId: 'x', turnId: 'check', origin: LOCAL, thumb: '/9j/x' }), row('a3', 3, 'notice', 's', { v: 1, type: 'browser-step', step: 'snapshot', origin: LOCAL })];
+  const said = row('a4', 4, 'assistant-message', 'The coupon field is under the total.');
+  const turn = (state: DaemonTurn['state']) => ({ id: 'check', sessionId: 'chat', commandId: 'c', state, revision: 1, startedAt: at(1), createdAt: at(1), updatedAt: at(4) }) as DaemonTurn;
+  const card = (rows: readonly ChatRow[]) => rows.find((entry): entry is Extract<ChatRow, { kind: 'browser-check' }> => entry.kind === 'browser-check');
+
+  it('shows what the app sent as the app\'s, and not as the person\'s', () => {
+    const { rows } = buildChatModel({ items: [sent], turns: [turn('working')] });
+    expect(rows[0]).toMatchObject({ kind: 'user', origin: 'app-resume', appSent: 'browser-check' });
+  });
+
+  it('says what the host logged, and quotes the AI apart: its words leave the rows', () => {
+    const { rows } = buildChatModel({ items: [sent, ...looked, said], turns: [turn('completed')] });
+    expect(card(rows)!.check).toEqual({ state: 'done', origin: LOCAL, providerId: 'codex', calls: { screenshots: 1, reads: 1 }, summary: 'The coupon field is under the total.' });
+    expect(rows.some((entry) => entry.kind === 'assistant')).toBe(false);
+  });
+
+  it('says no call was logged, whatever the AI wrote', () => {
+    const { rows } = buildChatModel({ items: [sent, said], turns: [turn('completed')] });
+    expect(card(rows)!.check).toMatchObject({ state: 'done', calls: { screenshots: 0, reads: 0 }, summary: 'The coupon field is under the total.' });
+  });
+
+  it.each<[DaemonTurn['state'], string]>([['working', 'running'], ['failed', 'failed'], ['interrupted', 'failed']])('reads a %s turn as %s', (state, shown) => {
+    expect(card(buildChatModel({ items: [sent], turns: [turn(state)] }).rows)!.check.state).toBe(shown);
+  });
+
+  it('comes after what the turn did', () => {
+    const { rows } = buildChatModel({ items: [sent, ...looked, said], turns: [turn('completed')] });
+    expect(rows.filter((entry) => entry.turnId === 'check' && entry.kind !== 'turn-status').map((entry) => entry.kind)).toEqual(['user', 'browser-run', 'browser-check']);
+  });
+
+  it('leaves any other turn\'s words alone', () => {
+    const other = { ...said, turnId: 'other' };
+    expect(buildChatModel({ items: [sent, other], turns: [turn('completed')] }).rows.some((entry) => entry.kind === 'assistant')).toBe(true);
+  });
+});
+
 describe('buildChatModel over a delegated child', () => {
   const base = { isDelta: false, isSensitive: false, createdAt: '2026-10-17T00:00:00.000Z' };
   it('leaves the child’s origin row to its header and labels the reported result in the parent', () => {
