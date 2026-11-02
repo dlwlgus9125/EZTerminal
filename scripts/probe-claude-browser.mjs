@@ -124,7 +124,12 @@ async function main() {
       cwd: repo, pathToClaudeCodeExecutable: executable, permissionMode, canUseTool, model,
       allowDangerouslySkipPermissions: bypass, includePartialMessages: false, persistSession: false,
       env: providerEnvironment(CLAUDE_ENVIRONMENT_VARIABLES, { CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2' }),
-      settingSources: [], strictMcpConfig: true, plugins: [], disallowedTools: ['WebFetch', 'WebSearch'],
+      // A bypass session may only touch the stub's tools: no shell, edit or subagent reaches this machine.
+      ...(bypass ? { tools: [] } : {}),
+      settingSources: [], strictMcpConfig: true, plugins: [],
+      disallowedTools: bypass
+        ? ['WebFetch', 'WebSearch', 'Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task']
+        : ['WebFetch', 'WebSearch'],
       mcpServers: endpoint ? { [SERVER]: { type: 'http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.token}` }, timeout: 300_000 } } : {},
       ...(allowedTools ? { allowedTools } : {}),
     }, sessionId);
