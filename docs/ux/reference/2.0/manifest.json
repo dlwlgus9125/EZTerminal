@@ -1149,6 +1149,26 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
         "decidedAt": "2026-11-02"
       }
+    },
+    {
+      "id": "browser-phone-row",
+      "title": "Phone browser rows: an action waits on the desktop, with its site and deadline, and nothing on the phone answers it",
+      "story": {
+        "file": "src/renderer/chat/InAppBrowser.stories.tsx",
+        "export": "PhoneRowsReference"
+      },
+      "visual": {
+        "storyId": "production-inappbrowser-mockup--phone-rows-reference",
+        "snapshot": "reference-2-0-browser-phone-row-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/browser-phone-row.png",
+        "sha256": "dd1bc9ab2865fdf44e5985fc1258b3e618f5f42f21b178a19145ac67428cee14"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-내장-브라우저-검증",
+        "decidedAt": "2026-11-02"
+      }
     }
   ]
 }
