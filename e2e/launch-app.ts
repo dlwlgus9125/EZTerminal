@@ -68,7 +68,7 @@ export async function launchApp(
   userDataDir?: string,
   extraEnv: Record<string, string> = {},
   /** Launch the profile exactly as given (no settings.json written first): the first-start paths, e.g. a new install's theme. */
-  options: { readonly profileAsIs?: boolean } = {},
+  options: { readonly profileAsIs?: boolean; readonly args?: readonly string[] } = {},
 ): Promise<ElectronApplication> {
   const registry = currentOwnedDesktopProfileRegistry();
   const dir = userDataDir ?? registry.createTempDir('ezterm-e2e-');
@@ -95,7 +95,7 @@ export async function launchApp(
     // The broad legacy E2E suite asserts English copy. Keep its browser locale
     // deterministic across developer and CI machines; locale-specific product
     // behavior is covered separately by i18n, Storybook, and visual contracts.
-    launchedApp = await electron.launch({ args: [MAIN_ENTRY, '--lang=en-US'], env });
+    launchedApp = await electron.launch({ args: [MAIN_ENTRY, '--lang=en-US', ...(options.args ?? [])], env });
     appCloser = trackElectronApplicationClose(launchedApp);
     lease.settle(appCloser);
     return launchedApp;

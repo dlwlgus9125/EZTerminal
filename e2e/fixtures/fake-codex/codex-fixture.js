@@ -410,6 +410,65 @@ if (args.includes('--version')) {
     return tasks.length;
   };
 
+  /**
+   * What a spec's "model" does this turn (`EZTERMINAL_E2E_BROWSER:<name>`, `…-browser-<name>.json`). Each step is a real
+   * `mcpToolCall` on the real endpoint, reported as `suggestTasks` reports one, so what a provider sends the app is what lands
+   * in rows. `find` takes a ref from the latest snapshot, as a model reads one. `{ hold }` waits for the token's release file,
+   * `{ change }` is a file edit. Every answer lands in `…-browser-calls.jsonl`: what a model would have read, not what it claims.
+   */
+  const browserCalls = async (threadId, turnId, turnSequence, name) => {
+    const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;
+    if (!descriptor) throw new Error('Missing app-tool descriptor');
+    const post = async (id, method, params) => {
+      const response = await fetch(descriptor.url, { method: 'POST', headers: { ...descriptor.http_headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+      return response.json();
+    };
+    const listed = await post(`browser-list-${turnSequence}`, 'tools/list', {});
+    logLine('ezterminal-e2e-codex-browser-calls.jsonl', { script: name, listed: (listed.result?.tools ?? []).map((tool) => tool.name).filter((tool) => tool.startsWith('browser_')) });
+    let snapshot = '';
+    for (const [index, step] of JSON.parse(controlText(`ezterminal-e2e-codex-browser-${name}.json`, '[]')).entries()) {
+      if (step.hold) {
+        logLine('ezterminal-e2e-codex-browser-calls.jsonl', { script: name, holding: step.hold });
+        const release = controlFile(`ezterminal-e2e-codex-release-${step.hold}`);
+        if (await holdTurn(turnId, () => fs.existsSync(release)) === 'interrupted') return 'interrupted';
+        continue;
+      }
+      if (step.change) {
+        const target = path.join(threadCwds.get(threadId) ?? process.cwd(), step.change);
+        fs.writeFileSync(target, `${turnSequence}\n`);
+        const item = { type: 'fileChange', id: `fixture-browser-change-${turnSequence}-${index}`, changes: [{ path: target, kind: { type: 'update', move_path: null }, diff: `@@ -1,1 +1,1 @@\n-before\n+${turnSequence}\n` }] };
+        notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...item, status: 'inProgress' } });
+        notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { ...item, status: 'completed' } });
+        continue;
+      }
+      // The element's own line, not the words of its label.
+      const line = step.find ? snapshot.split('\n').find((candidate) => candidate.includes(step.find) && candidate.includes('[ref=')) : undefined;
+      const ref = line === undefined ? undefined : /\[ref=(\w+)\]/u.exec(line)?.[1];
+      if (step.find && !ref) throw new Error(`No ref for ${step.find} in: ${snapshot}`);
+      const args = { ...step.arguments, ...(ref ? { ref } : {}) };
+      const item = {
+        type: 'mcpToolCall', id: `fixture-browser-${turnSequence}-${index}`, server: 'ezterminal_orchestration', tool: step.name, status: 'inProgress',
+        arguments: args, result: null, error: null, durationMs: null,
+      };
+      notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item });
+      const data = await post(`browser-${turnSequence}-${index}`, 'tools/call', { name: step.name, arguments: args });
+      const failed = data.error !== undefined || data.result?.isError === true;
+      notify('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: {
+        ...item, status: failed ? 'failed' : 'completed', result: data.result ?? null, error: data.error ? { message: data.error.message } : null, durationMs: 1,
+      } });
+      const content = data.result?.content ?? [];
+      const text = content.find((block) => block.type === 'text')?.text;
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = undefined; }
+      if (step.name === 'browser_snapshot' && !failed) snapshot = parsed?.page ?? '';
+      logLine('ezterminal-e2e-codex-browser-calls.jsonl', {
+        script: name, tool: step.name, failed, ...(parsed?.code ? { code: parsed.code } : {}), ...(parsed?.blocked ? { blocked: parsed.blocked } : {}), ...(parsed?.url ? { url: parsed.url } : {}),
+        ...(data.error ? { error: data.error.message } : {}), text, images: content.filter((block) => block.type === 'image').map((block) => ({ mimeType: block.mimeType, bytes: Buffer.from(block.data, 'base64').length })),
+      });
+    }
+    return 'done';
+  };
+
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
     input += chunk;
@@ -635,9 +694,21 @@ if (args.includes('--version')) {
               write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
               return;
             }
+            const browserScript = /EZTERMINAL_E2E_BROWSER:([\w-]+)/u.exec(inputText)?.[1];
+            let browsed = '';
+            if (browserScript) {
+              try {
+                if (await browserCalls(threadId, turnId, turnSequence, browserScript) === 'interrupted') {
+                  write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'interrupted', error: null, items: [] } } });
+                  return;
+                }
+                browsed = `Browser script ${browserScript} ran.`;
+              } catch (reason) { browsed = `Browser fixture failed: ${String(reason)}`; }
+            }
             // Deterministic provider behavior, crossing the real authenticated app-tool
             // endpoint. The product still owns preview validation and persistence.
             let responseText = controlText('ezterminal-e2e-codex-answer.txt', 'Structured Codex fixture ready.');
+            if (browsed) responseText = browsed;
             if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_PREVIEW')) {
               try {
                 const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;
