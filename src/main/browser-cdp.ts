@@ -61,7 +61,16 @@ interface AxNode {
   readonly childIds?: readonly string[];
   readonly parentId?: string;
 }
-interface FrameTree { readonly frame: { readonly id: string; readonly url: string; readonly loaderId?: string }; readonly childFrames?: readonly FrameTree[] }
+interface FrameTree { readonly frame: { readonly id: string; readonly url: string; readonly urlFragment?: string; readonly loaderId?: string }; readonly childFrames?: readonly FrameTree[] }
+
+/** What an element would do, past what it says. The prototype's own methods: a form's named fields shadow its properties. */
+const ELEMENT_EFFECTS = `function(){
+  const read=(element,name)=>Element.prototype.getAttribute.call(element,name);
+  const form=this.form instanceof HTMLFormElement?this.form:Element.prototype.closest.call(this,'form');
+  return {href:read(this,'href'),action:read(this,'action'),formaction:read(this,'formaction'),disabled:Element.prototype.matches.call(this,':disabled'),formAction:form?read(form,'action'):null}
+}`;
+/** What holds a document or a shadow root this world cannot enter: focus on one says nothing of where a key lands. */
+const FOCUS_HOLDERS = new Set(['IFRAME', 'FRAME', 'EMBED', 'OBJECT']);
 
 /** Where the keyboard is: a same-origin frame or an open shadow root hands focus on, and a frame it cannot enter answers for what is inside. */
 const DEEPEST_FOCUS = `(()=>{
@@ -171,6 +180,22 @@ export interface BrowserTarget {
   /** The name the page gives it: page text. */
   readonly name: string;
   readonly password: boolean;
+}
+
+/** The parts of a described node the keyboard's reading needs. */
+interface FocusedNode {
+  readonly backendNodeId: number;
+  readonly nodeName?: string;
+  readonly shadowRoots?: readonly { readonly shadowRootType?: string }[];
+}
+
+/** One live reading of what an approval is for. See `BrowserCdp.binding`. */
+export interface BrowserBinding {
+  readonly key: string;
+  /** The element, as this reading saw it. */
+  readonly element?: BrowserTarget;
+  /** The keyboard is on something this cannot read past: a foreign frame, an embed, a closed shadow root. */
+  readonly focusUnread: boolean;
 }
 
 export interface BrowserSnapshot {
@@ -467,32 +492,43 @@ export class BrowserCdp {
     return { ...await this.liveElement(ref.backendNodeId), password: described.node.nodeName?.toLowerCase() === 'input' && attributes.includes('type') && type === 'password' };
   }
 
-  /** The element the keyboard is on, read in a world the page cannot reach. */
-  private async focus(frameId: string): Promise<string> {
+  /** The element the keyboard is on, read in a world the page cannot reach, and whether a key would go past what this can read. */
+  private async focus(frameId: string): Promise<{ readonly key: string; readonly unread: boolean }> {
     const { executionContextId } = await this.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: 'ezterminal-browser', grantUniveralAccess: false });
     const { result } = await this.send<{ result: { objectId?: string } }>('Runtime.evaluate', { expression: DEEPEST_FOCUS, contextId: executionContextId });
-    if (!result.objectId) return '';
-    const { node } = await this.send<{ node: { backendNodeId: number } }>('DOM.describeNode', { objectId: result.objectId });
-    const { role, name } = await this.liveElement(node.backendNodeId);
-    return `${String(node.backendNodeId)}:${role}:${name}`;
+    const { objectId } = result;
+    if (!objectId) return { key: '', unread: false };
+    const { node } = await this.send<{ node: FocusedNode }>('DOM.describeNode', { objectId });
+    const { result: effects } = await this.send<{ result: { value?: unknown } }>('Runtime.callFunctionOn', { objectId, functionDeclaration: ELEMENT_EFFECTS, returnByValue: true });
+    return {
+      key: JSON.stringify({ node: node.backendNodeId, ...await this.liveElement(node.backendNodeId), effects: effects.value }),
+      unread: FOCUS_HOLDERS.has(node.nodeName ?? '') || (node.shadowRoots ?? []).some((root) => root.shadowRootType === 'closed'),
+    };
   }
 
   /**
-   * What an approval was given for, read live: which document this is, in the main frame and the element's, where the keyboard
-   * is, and what the element is. Two equal readings mean the page did not move under the person; any difference voids the answer.
+   * What an approval was given for, read once and live: which document this is and at what address, in the main frame and the
+   * element's, where the keyboard is, and what the element is and would do. Two equal keys mean the page did not move under the
+   * person; any difference voids the answer. `element` is that same reading, so what a person is shown is what gets compared.
    */
-  async binding(id?: string): Promise<string> {
+  async binding(id?: string): Promise<BrowserBinding> {
     const { frameTree } = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree');
     const frames = (tree: FrameTree): readonly FrameTree[] => [tree, ...(tree.childFrames ?? []).flatMap(frames)];
     const ref = id === undefined ? undefined : this.ref(id);
     const frame = ref ? frames(frameTree).find((entry) => entry.frame.id === ref.frameId)?.frame : undefined;
     if (ref && !frame) throw new BrowserRefused('stale-ref');
-    return JSON.stringify({
-      page: [frameTree.frame.id, frameTree.frame.loaderId],
-      frame: frame ? [frame.id, frame.loaderId] : null,
-      element: ref ? { node: ref.backendNodeId, ...await this.target(id!) } : null,
-      focus: await this.focus(frameTree.frame.id),
-    });
+    const element = id === undefined ? undefined : await this.target(id);
+    const effects = ref ? await this.inIsolatedWorld<unknown>(ref, ELEMENT_EFFECTS).catch((error: unknown) => {
+      if (error instanceof BrowserRefused) throw error;
+      throw new BrowserRefused('stale-ref');
+    }) : undefined;
+    const focus = await this.focus(frameTree.frame.id);
+    const address = ({ id: frameId, loaderId, url, urlFragment }: FrameTree['frame']): readonly unknown[] => [frameId, loaderId, url, urlFragment];
+    return {
+      key: JSON.stringify({ page: address(frameTree.frame), frame: frame ? address(frame) : null, element: ref ? { node: ref.backendNodeId, ...element, effects } : null, focus: focus.key }),
+      ...(element ? { element } : {}),
+      focusUnread: focus.unread,
+    };
   }
 
   /** Runs in a world the page cannot reach: a page's own `contains` or `focus` is not asked. */

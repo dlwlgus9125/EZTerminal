@@ -395,10 +395,12 @@ export class BrowserTools {
     if (context.permissionPreset === 'plan') throw new BrowserRefused('plan-mode');
     const page = this.currentPage(context);
     const origin = originOf(page.url);
-    const target = ref === undefined ? undefined : await page.cdp.target(ref);
+    const bound = this.asks(context, page.site, origin) ? await page.cdp.binding(ref) : undefined;
+    const target = bound ? bound.element : ref === undefined ? undefined : await page.cdp.target(ref);
     if (action === 'type' && target?.password && page.site === 'allowed') throw new BrowserRefused('password-field');
-    if (this.asks(context, page.site, origin)) {
-      const bound = await page.cdp.binding(ref);
+    if (bound) {
+      // A key goes wherever the keyboard is. With that out of reach no answer could say what it does, so nobody is asked.
+      if (ref === undefined && bound.focusUnread) throw new BrowserRefused('approval-void');
       await this.approve(context, turnId, { origin, tool, action, run, ...(target ? { pageElement: `${target.role} "${target.name}"` } : {}) }, signal);
       // What was approved must still be what will run: same allow state, same document, same focus, same element.
       const now = this.currentPage(context);
@@ -407,7 +409,7 @@ export class BrowserTools {
         if (error instanceof BrowserRefused && error.reason === 'stale-ref') return undefined;
         throw error;
       });
-      if (still !== bound) throw new BrowserRefused('approval-void');
+      if (still?.key !== bound.key || (ref === undefined && still.focusUnread)) throw new BrowserRefused('approval-void');
     }
     const before = this.deps.pages.state(sessionId).blocked;
     await perform(page.cdp);

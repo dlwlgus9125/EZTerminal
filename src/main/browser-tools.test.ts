@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserRefusal, BrowserSiteClass, BrowserToolName } from '../shared/browser';
 import type { DaemonSnapshot, PermissionPreset } from '../shared/daemon-protocol';
-import { BrowserRefused, type BrowserCdp, type BrowserTarget } from './browser-cdp';
+import { BrowserRefused, type BrowserBinding, type BrowserCdp, type BrowserTarget } from './browser-cdp';
 import { BROWSER_TOOL_DEFINITIONS, BrowserTools, type BrowserApprovalRequest, type BrowserToolPages, type BrowserToolResult } from './browser-tools';
 import type { BrowserPageResult } from './browser-view-manager';
 
@@ -23,8 +23,10 @@ function cdp(patch: Partial<Record<keyof BrowserCdp, unknown>> = {}) {
     target: vi.fn(async () => BUTTON),
     // As the real one reads it: what `target` says now, and whatever else a test moves.
     document: 'document-1',
-    binding: vi.fn(async function binding(this: { target: () => Promise<BrowserTarget>; document: string }, ref?: string): Promise<string> {
-      return JSON.stringify({ document: this.document, element: ref === undefined ? null : await this.target() });
+    focusUnread: false,
+    binding: vi.fn(async function binding(this: { target: () => Promise<BrowserTarget>; document: string; focusUnread: boolean }, ref?: string): Promise<BrowserBinding> {
+      const element = ref === undefined ? undefined : await this.target();
+      return { key: JSON.stringify({ document: this.document, element: element ?? null }), ...(element ? { element } : {}), focusUnread: this.focusUnread };
     }),
     click: vi.fn(async () => undefined),
     type: vi.fn(async () => undefined),
@@ -356,6 +358,40 @@ describe('approval', () => {
       const h = during(({ driver }) => { driver.target.mockRejectedValue(new BrowserRefused('stale-ref')); });
       expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('approval-void');
       expect(h.driver.click).not.toHaveBeenCalled();
+    });
+
+    it('what the person saw and what is compared are one reading, not two', async () => {
+      const h = harness({ url: ALLOWED });
+      await h.call('browser_click', { ref: 'e1' });
+      expect(h.requests[0]?.pageElement).toBe('button "Pay"');
+      expect(h.driver.target, 'once for the question, once for the answer, and nothing beside the binding').toHaveBeenCalledTimes(2);
+      expect(h.driver.binding).toHaveBeenCalledTimes(2);
+    });
+
+    it('takes the question\'s words from that reading, whatever a later read would say', async () => {
+      const driver = cdp({ target: vi.fn(async () => { throw new Error('read beside the binding'); }), binding: vi.fn(async () => ({ key: 'same', element: { role: 'button', name: 'From the binding', password: false }, focusUnread: false })) });
+      const h = harness({ url: ALLOWED, cdp: driver });
+      await h.call('browser_click', { ref: 'e1' });
+      expect(h.requests[0]?.pageElement).toBe('button "From the binding"');
+      expect(h.driver.click).toHaveBeenCalled();
+    });
+
+    it('asks nobody about a key whose target cannot be read, and the action never runs', async () => {
+      const h = harness({ url: ALLOWED, cdp: cdp({ focusUnread: true } as never) });
+      expect(code(await h.call('browser_press', { key: 'Enter' }))).toBe('approval-void');
+      expect(h.requestApproval).not.toHaveBeenCalled();
+      expect(h.driver.press).not.toHaveBeenCalled();
+    });
+
+    it('voids a key whose target became unreadable while the person decided', async () => {
+      const h = during(({ driver }) => { driver.focusUnread = true; });
+      expect(code(await h.call('browser_press', { key: 'Enter' }))).toBe('approval-void');
+      expect(h.driver.press).not.toHaveBeenCalled();
+    });
+
+    it('does not hold unreadable focus against what names its own element', async () => {
+      const h = harness({ url: ALLOWED, cdp: cdp({ focusUnread: true } as never) });
+      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('ran');
     });
 
     it('the document changed under a press, which names no element', async () => {
