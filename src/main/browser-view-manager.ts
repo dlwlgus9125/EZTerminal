@@ -13,6 +13,7 @@ import {
   type BrowserRequestReason,
   type BrowserViewPolicy,
 } from './browser-network-guard';
+import type { BrowserSiteStore } from './browser-site-store';
 
 /**
  * One `WebContentsView` per conversation, shaped like `openclaw-chat-view.ts`, and every guard that rests on the view.
@@ -28,6 +29,10 @@ import {
  *    A script's `a.click()` also reads `anchorClick`, so a real input just before it is required too.
  *
  * Never reaches `shell.openExternal`: a popup is denied, and a local or allowed target opens here instead.
+ *
+ * Suspicion is the partition's, not a pane's: a site that answered from where it must not is out of reach on every pane, and
+ * after a restart, by every kind of request, and its live pages end. A person going there themselves is the one way in: that
+ * visit is theirs, on that pane, and the page stays external, so the AI reads nothing. Only allowing the site again lifts it.
  *
  * A view no one looks at is parked in a small window off every screen, not hidden. Measured: a click never lands on a view
  * that is hidden or was never shown, and stalls 3 s or more; `capturePage` throws on one never shown. Parked, with
@@ -64,8 +69,8 @@ interface Pane {
   aiTurnId?: string;
   /** The person pressed 브라우저만 중지 during this turn: its tools are refused until it ends. */
   stoppedTurnId?: string;
-  /** Sites that answered from where they must not. A set: a second must not overwrite the first. Only the person going to one clears it. */
-  readonly suspects: Set<string>;
+  /** The suspect site the person went to on this pane: open to this pane until the page leaves it. */
+  visit?: string;
   blocked?: BrowserViewState['blocked'];
   /** The site the person allowed from this pane, until something else happens to it. */
   allowedNow?: string;
@@ -91,6 +96,8 @@ export interface BrowserViewManagerDeps {
   readonly scope: (conversationId: string) => Promise<BrowserConversationScope | undefined>;
   /** The project's list, in memory and read on every decision: a revoke applies at once. */
   readonly allowedOrigins: (projectId: string) => readonly string[];
+  /** Where the suspect sites outlive the app: beside the allow list. */
+  readonly suspects?: Pick<BrowserSiteStore, 'suspects' | 'addSuspect' | 'clearSuspect'>;
   /** The app's own listening ports. */
   readonly controlPorts: () => ReadonlySet<number>;
   readonly onState: (state: BrowserViewState) => void;
@@ -119,9 +126,12 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   private uses = 0;
   private blocks = 0;
   private readonly now: () => number;
+  /** One set for the one partition: a site does not stop being in doubt because another pane asks. */
+  private readonly suspects: Set<string>;
 
   constructor(private readonly deps: BrowserViewManagerDeps) {
     this.now = deps.now ?? Date.now;
+    this.suspects = new Set(deps.suspects?.suspects());
   }
 
   /** The window views live in; a pane is never detachable, so there is one. */
@@ -173,7 +183,6 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const pane = this.pane(conversationId);
     const contents = await this.readyView(pane);
     if (!contents) return false;
-    pane.suspects.delete(guardOrigin(url));
     delete pane.blocked;
     delete pane.fault;
     pane.personNavigating = true;
@@ -252,10 +261,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const pane = this.pane(conversationId);
     if (pane.fault === 'gone') return { ok: false, reason: 'page-gone' };
     const contents = this.liveContents(pane);
+    // With the view gone the address still says why: a suspect's page was ended, not lost.
+    const url = contents?.mainFrame.url || pane.lastUrl;
+    if (url && this.suspect(pane, url)) return { ok: false, reason: 'rebind-suspected' };
     if (!contents || !pane.cdp) return { ok: false, reason: 'no-page' };
-    const url = contents.mainFrame.url;
     if (!url || url === 'about:blank') return { ok: false, reason: 'no-page' };
-    if (pane.suspects.has(guardOrigin(url))) return { ok: false, reason: 'rebind-suspected' };
     return { ok: true, contents, cdp: pane.cdp, url, site: this.site(pane, url) };
   }
 
@@ -275,22 +285,25 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     return this.site(this.pane(conversationId), url);
   }
 
-  /** This site answered from where it must not, on this pane. It stays suspect until the person goes to it themselves. */
+  /** This site answered from where it must not, on some pane, and is not the one the person is visiting on this one. */
   suspected(conversationId: string, url: string): boolean {
-    return this.pane(conversationId).suspects.has(guardOrigin(url));
+    return this.suspect(this.pane(conversationId), url);
   }
 
-  /** A person changed a project's list: every open page of it shows its class now. The guards read the list themselves. */
+  /** A person changed a project's list: every open page shows its class now. Allowing a suspect site is what ends the doubt about it. */
   sitesChanged(projectId: string, origin: string, action: 'allow' | 'revoke'): void {
+    if (action === 'allow' && this.suspects.delete(origin)) void this.deps.suspects?.clearSuspect(origin);
     for (const pane of this.panes.values()) {
-      if (pane.projectId !== projectId) continue;
-      if (action === 'allow') {
-        if (pane.blocked?.origin === origin) {
-          delete pane.blocked;
-          pane.allowedNow = origin;
+      if (action === 'allow' && pane.visit === origin) delete pane.visit;
+      if (pane.projectId === projectId) {
+        if (action === 'allow') {
+          if (pane.blocked?.origin === origin) {
+            delete pane.blocked;
+            pane.allowedNow = origin;
+          }
+        } else if (pane.allowedNow === origin) {
+          delete pane.allowedNow;
         }
-      } else if (pane.allowedNow === origin) {
-        delete pane.allowedNow;
       }
       this.publish(pane);
     }
@@ -314,7 +327,15 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
 
   onBlocked(webContentsId: number | undefined, blocked: { readonly url: string; readonly resourceType: string; readonly reason: BrowserRequestReason }): void {
     const pane = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
-    if (!pane || (blocked.resourceType !== 'mainFrame' && blocked.resourceType !== 'subFrame')) return;
+    if (!pane) return;
+    // A page up on a name that now leads here has rebound, whatever kind of request gave it away. A name some page merely
+    // points here is not: that would let a page write this list.
+    const origin = guardOrigin(blocked.url);
+    if (blocked.reason === 'rebind-suspected' && origin === guardOrigin(this.liveContents(pane)?.mainFrame.url ?? '')) {
+      this.onRebind(webContentsId, origin);
+      return;
+    }
+    if (blocked.resourceType !== 'mainFrame' && blocked.resourceType !== 'subFrame') return;
     if (blocked.reason !== 'unresolved') {
       this.block(pane, blocked.url, blocked.reason === 'rebind-suspected' ? 'rebind-suspected' : 'site-not-allowed');
     } else if (blocked.resourceType === 'mainFrame') {
@@ -324,12 +345,28 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     }
   }
 
+  /** The site is in doubt on every pane from here on, and no page of it stays up, a visit of the person's included. */
   onRebind(webContentsId: number | undefined, origin: string): void {
+    const owner = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
+    if (!this.suspects.has(origin)) {
+      this.suspects.add(origin);
+      void this.deps.suspects?.addSuspect(origin);
+    }
+    for (const pane of this.panes.values()) {
+      if (pane.visit === origin) delete pane.visit;
+      const contents = this.liveContents(pane);
+      const there = contents !== undefined && guardOrigin(contents.mainFrame.url) === origin;
+      if (pane === owner) contents?.stop();
+      if (pane === owner || there) this.block(pane, origin, 'rebind-suspected');
+      // Closed, not sent elsewhere: nothing of it runs on, there is no Back into it, and the pane shows the app's own state.
+      if (there) this.teardown(pane, true);
+    }
+  }
+
+  onPersonNavigation(webContentsId: number | undefined, url: string): void {
     const pane = webContentsId === undefined ? undefined : this.byContents.get(webContentsId);
-    if (!pane) return;
-    pane.suspects.add(origin);
-    this.liveContents(pane)?.stop();
-    this.block(pane, origin, 'rebind-suspected');
+    const origin = guardOrigin(url);
+    if (pane && this.suspects.has(origin)) pane.visit = origin;
   }
 
   onDownloadBlocked(webContentsId: number, url: string): void {
@@ -343,15 +380,21 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       const lastUrl = this.deps.lastUrl?.(conversationId) ?? '';
       pane = {
         conversationId, view: null, host: null, lastUrl, guarded: false, personNavigating: false, toolsRunning: 0, toolEndedAt: 0,
-        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [], suspects: new Set(),
+        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [],
       };
       this.panes.set(conversationId, pane);
     }
     return pane;
   }
 
+  /** The list as it counts: a suspect stays on it for the person, and counts for nothing. So every class is suspect-aware, a frame's too. */
   private allowed(pane: Pane): readonly string[] {
-    return pane.projectId === undefined ? [] : this.deps.allowedOrigins(pane.projectId);
+    return pane.projectId === undefined ? [] : this.deps.allowedOrigins(pane.projectId).filter((origin) => !this.suspects.has(origin));
+  }
+
+  private suspect(pane: Pane, url: string): boolean {
+    const origin = guardOrigin(url);
+    return this.suspects.has(origin) && pane.visit !== origin;
   }
 
   /** A conversation's project and folders are read with each new view, before it loads anything: they do not move under a live page. */
@@ -375,7 +418,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       topExternal: siteClass(topUrl, allowedOrigins, { controlPorts: this.deps.controlPorts() }) === 'external',
       allowedOrigins,
       roots: pane.roots,
-      suspectOrigins: pane.suspects,
+      suspectOrigins: pane.visit === undefined ? this.suspects : new Set([...this.suspects].filter((origin) => origin !== pane.visit)),
     };
   }
 
@@ -475,6 +518,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     });
     contents.on('did-navigate', (_event, url) => {
       pane.personNavigating = false;
+      if (pane.visit !== guardOrigin(url)) delete pane.visit;
       pane.cdp?.clearRefs();
       this.remember(pane, url);
     });
@@ -513,9 +557,8 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   }
 
   private openInPlace(pane: Pane, contents: WebContents, url: string): void {
-    const site = this.site(pane, url);
-    if (site === 'external') this.block(pane, url, 'site-not-allowed');
-    else if (pane.suspects.has(guardOrigin(url))) this.block(pane, url, 'rebind-suspected');
+    if (this.suspect(pane, url)) this.block(pane, url, 'rebind-suspected');
+    else if (this.site(pane, url) === 'external') this.block(pane, url, 'site-not-allowed');
     else this.load(pane, contents, url);
   }
 
@@ -567,6 +610,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     pane.view = null;
     pane.host = null;
     pane.personNavigating = false;
+    delete pane.visit;
     pane.loading = false;
     if (!view) return;
     const contents = view.webContents;

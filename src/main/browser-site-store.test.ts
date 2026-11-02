@@ -67,6 +67,53 @@ describe('BrowserSiteStore', () => {
   it('answers nothing before it has read the file', () => {
     expect(new BrowserSiteStore(directory).origins('project')).toEqual([]);
   });
+
+  describe('sites that answered from where they must not', () => {
+    it('remembers one for every project, across a restart', async () => {
+      const store = await fresh();
+      await store.addSuspect(SITE);
+      expect((await fresh()).suspects()).toEqual([SITE]);
+    });
+
+    it('forgets one only when told', async () => {
+      const store = await fresh();
+      await store.addSuspect(SITE);
+      await store.addSuspect('https://other.example');
+      await store.clearSuspect(SITE);
+      expect((await fresh()).suspects()).toEqual(['https://other.example']);
+    });
+
+    it('keeps the list and the suspects from overwriting each other', async () => {
+      const store = await fresh();
+      await Promise.all([store.allow('project', SITE), store.addSuspect(SITE)]);
+      await store.revoke('project', 'https://other.example');
+      const again = await fresh();
+      expect(again.origins('project')).toEqual([SITE]);
+      expect(again.suspects()).toEqual([SITE]);
+    });
+
+    it('reads a file written before there were any', async () => {
+      writeFileSync(path.join(directory, 'browser-sites.json'), JSON.stringify({ version: 1, projects: { project: [SITE] } }));
+      const store = await fresh();
+      expect(store.origins('project')).toEqual([SITE]);
+      expect(store.suspects()).toEqual([]);
+    });
+
+    it('fails closed when the entry is no list: nothing is allowed', async () => {
+      writeFileSync(path.join(directory, 'browser-sites.json'), JSON.stringify({ version: 1, projects: { project: [SITE] }, suspects: SITE }));
+      expect((await fresh()).origins('project')).toEqual([]);
+    });
+
+    it('keeps the latest ones: a page must not grow this file for ever', async () => {
+      const store = await fresh();
+      for (let index = 0; index < 505; index += 1) void store.addSuspect(`https://site-${String(index)}.example`);
+      await store.addSuspect(SITE);
+      const kept = (await fresh()).suspects();
+      expect(kept).toHaveLength(500);
+      expect(kept).toContain(SITE);
+      expect(kept).not.toContain('https://site-0.example');
+    });
+  });
 });
 
 describe('BrowserLastPages', () => {

@@ -4753,6 +4753,7 @@ app.on('ready', async () => {
       return { projectId: session.projectId, roots: folders ? [folders.primary, ...folders.additional] : [] };
     },
     allowedOrigins: (projectId) => browserSites.origins(projectId),
+    suspects: browserSites,
     lastUrl: (conversationId) => browserPages.get(conversationId),
     rememberUrl: (conversationId, url) => browserPages.remember(conversationId, url),
     // Every port this app listens on. A page never reaches them, whoever it is and whatever the resource.

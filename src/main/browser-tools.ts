@@ -322,19 +322,20 @@ export class BrowserTools {
     const { sessionId } = context;
     const url = URL.canParse(value) ? new URL(value).href : undefined;
     if (!url || !/^(?:https?|file):/iu.test(url)) throw new BrowserRefused('site-not-allowed');
+    // First: a suspect site also classes as external, and this reason is the true one.
+    if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
     const site = this.deps.pages.classify(sessionId, url);
     if (site === 'external') {
       // The tool answers at once; allowing the site is a person's, in the pane.
       this.deps.pages.refuseNavigation(sessionId, url, 'site-not-allowed');
       throw new BrowserRefused('site-not-allowed');
     }
-    if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
     const origin = originOf(url);
     if (this.asks(context, site, origin)) {
       await this.approve(context, turnId, { origin, tool: 'browser_navigate', action: 'navigate', run: { kind: 'navigate', url } }, signal);
       // The wait can outlast a revoke: the same question again, at the moment it counts.
-      if (this.deps.pages.classify(sessionId, url) === 'external') throw new BrowserRefused('site-not-allowed');
       if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
+      if (this.deps.pages.classify(sessionId, url) === 'external') throw new BrowserRefused('site-not-allowed');
     }
     const contents = await this.deps.pages.navigateForTool(sessionId, url);
     if (!contents) throw new BrowserRefused('no-page');

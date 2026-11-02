@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { BROWSER_PARTITION, type BrowserViewState } from '../shared/browser';
 import { BrowserRefused, parseKeys } from './browser-cdp';
 import type { BrowserPartitionSession } from './browser-network-guard';
+import { BrowserSiteStore } from './browser-site-store';
 import { BrowserViewManager } from './browser-view-manager';
 
 const scratch = process.argv[process.argv.indexOf('--scratch') + 1]!;
@@ -89,6 +90,10 @@ async function main(): Promise<void> {
 <script>fetch('${base}/pwn-fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon('${base}/pwn-beacon','x')</script>`);
       case '/with-frames':
         return html(response, `<!doctype html><title>t</title><iframe src="/landed?via=own-frame"></iframe>`);
+      case '/with-cousin':
+        return html(response, `<!doctype html><title>t</title><p>TOP-TEXT</p><iframe src="${url.searchParams.get('frame') ?? ''}"></iframe>`);
+      case '/frame-text':
+        return html(response, '<!doctype html><title>f</title><p>COUSIN-FRAME-TEXT</p>');
       case '/form':
         return html(response, `<!doctype html><title>form</title><body style="margin:0">
 <script>
@@ -116,10 +121,11 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   const evil = `http://evil.example:${String(port)}`;
   const allowedOrigin = `http://allowed.example:${String(port)}`;
   const otherOrigin = `http://other.example:${String(port)}`;
+  const siteOn = (name: string): string => `http://${name}.example:${String(port)}`;
   const controlBase = `http://127.0.0.1:${String(controlPort)}`;
 
   // Stands in for a site whose public DNS answer differs from where the connection goes. Everything else is the real resolver.
-  const publicNames = new Set(['evil.example', 'allowed.example', 'other.example']);
+  const publicNames = new Set(['evil', 'allowed', 'other', 'second', 'later', 'wide', 'clean', 'live', 'visit', 'flip', 'split', 'sub.split'].map((name) => `${name}.example`));
   let secondLayer = false;
   const partition = session.fromPartition(BROWSER_PARTITION);
   const wrapped: BrowserPartitionSession = {
@@ -146,11 +152,15 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
 
   let allowed: string[] = [];
   const states = new Map<string, BrowserViewState>();
+  const storeDir = path.join(scratch, 'store');
+  const sites = new BrowserSiteStore(storeDir);
+  await sites.load();
   const manager = new BrowserViewManager({
     scope: (conversationId) => Promise.resolve({ projectId: `project-of-${conversationId}`, roots: [workspace] }),
     allowedOrigins: () => allowed,
     controlPorts: () => new Set([controlPort]),
     onState: (state) => { states.set(state.conversationId, state); },
+    suspects: sites,
     partition: () => wrapped,
   });
   manager.attach(win);
@@ -203,7 +213,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
       all: hits.slice(start).map((hit) => hit.path),
       url: url.replace(String(port), 'PORT'),
       blocked: manager.state(id).blocked?.reason ?? null,
-      frames: await js(contents, 'return [...document.querySelectorAll("iframe")].map((f)=>{try{return f.contentWindow.location.href}catch{return "cross-origin"}})').catch(() => []),
+      frames: contents.isDestroyed() ? [] : await js(contents, 'return [...document.querySelectorAll("iframe")].map((f)=>{try{return f.contentWindow.location.href}catch{return "cross-origin"}})').catch(() => []),
     };
     manager.forget(id);
   };
@@ -313,16 +323,21 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
 
   // DNS rebinding, both layers.
   await record('rebind-before-request', async (id) => { await manager.navigateAsPerson(id, `http://rebind.example:${String(port)}/landed`); });
-  await record('rebind-subresources', scripted(`const e='http://rebind.example:${String(port)}';new Image().src=e+'/img';fetch(e+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(e+'/beacon','x');try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`));
-  allowed = [allowedOrigin];
+  await record('rebind-subresources', async (id, contents) => {
+    await js(contents, `const e='http://rebind.example:${String(port)}';new Image().src=e+'/img';fetch(e+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(e+'/beacon','x');try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`);
+    await delay(SETTLE_MS);
+    report['rebind-subresources-suspect'] = manager.suspected(id, `http://rebind.example:${String(port)}/`);
+  });
+  allowed = [siteOn('second')];
   secondLayer = true;
   await record('rebind-second-layer', async (id) => {
-    await manager.navigateAsPerson(id, `${allowedOrigin}/landed`);
+    await manager.navigateAsPerson(id, `${siteOn('second')}/landed`);
     await delay(SETTLE_MS);
     const page = manager.page(id);
     report['rebind-second-layer-page'] = page.ok ? page.site : page.reason;
   });
   secondLayer = false;
+  allowed = [allowedOrigin];
   await record('allowed-loads', async (id) => {
     await manager.navigateForTool(id, `${allowedOrigin}/with-frames`);
     await delay(SETTLE_MS);
@@ -338,16 +353,29 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     report['revoked-at-once-site'] = page.ok ? page.site : page.reason;
   });
 
-  // A site answers from here after its page is already up: the tools refuse it from then on.
-  allowed = [allowedOrigin];
+  // A site answers from here after its page is already up: the page ends, and the tools refuse it from then on.
+  allowed = [siteOn('later')];
   await record('rebind-later-response', async (id, contents) => {
     secondLayer = true;
     await js(contents, `fetch('/landed?via=later',{mode:'no-cors'}).catch(()=>0)`);
     await delay(SETTLE_MS);
     const page = manager.page(id);
+    const state = manager.state(id);
     report['rebind-later-page'] = page.ok ? page.site : page.reason;
+    report['rebind-later-ended'] = contents.isDestroyed();
+    report['rebind-later-state'] = { url: state.url, needsReopen: state.needsReopen ?? false, site: state.site };
     secondLayer = false;
-  }, (id) => open(id, `${allowedOrigin}/landed?via=up`));
+  }, (id) => open(id, `${siteOn('later')}/landed?via=up`));
+
+  // A name that flips under a page already up is caught by the resolver before any response: the same detection.
+  allowed = [siteOn('flip')];
+  await record('rebind-name-flips', async (id, contents) => {
+    publicNames.delete('flip.example');
+    await js(contents, `fetch('/landed?via=flip',{mode:'no-cors'}).catch(()=>0)`);
+    await delay(SETTLE_MS);
+    report['rebind-name-flips-ended'] = contents.isDestroyed();
+    report['rebind-name-flips-suspect'] = manager.suspected(id, `${siteOn('flip')}/`);
+  }, (id) => open(id, `${siteOn('flip')}/landed?via=up-flip`));
 
   // A suspect site is out of reach by every road, not only the tool's own, and stays so until the person goes to it.
   allowed = [allowedOrigin, otherOrigin];
@@ -393,6 +421,99 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     manager.close(id);
     report['suspect-outlives'] = manager.suspected(id, toSuspect('x'));
   }, suspectPad);
+
+  // Every kind of request. The control shows these roads are real: the same script reaches a site in good standing.
+  const everyRoad = (origin: string): string => `const e=${JSON.stringify(origin)};new Image().src=e+'/img';fetch(e+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(e+'/beacon','x');
+const s=document.createElement('script');s.src=e+'/s.js';document.body.append(s);const l=document.createElement('link');l.rel='stylesheet';l.href=e+'/c.css';document.head.append(l);
+try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
+  await record('suspect-every-road', scripted(everyRoad(allowedOrigin)), suspectPad);
+  await record('clean-every-road', scripted(everyRoad(siteOn('clean'))));
+
+  // Suspicion belongs to the partition: what one pane learnt holds on every other, and after a restart.
+  allowed = [siteOn('wide')];
+  await record('suspect-other-pane', async (id, contents) => {
+    const witness = await drivenPad('pane-witness');
+    manager.onRebind(witness.id, siteOn('wide'));
+    await delay(50);
+    report['suspect-other-pane-answers'] = { suspected: manager.suspected(id, `${siteOn('wide')}/a`), site: manager.classify(id, `${siteOn('wide')}/a`) };
+    await js(contents, `location.href=${JSON.stringify(`${siteOn('wide')}/landed?via=other-pane`)}`);
+    await delay(SETTLE_MS);
+    await js(contents, `window.open(${JSON.stringify(`${siteOn('wide')}/landed?via=other-pane-open`)})`);
+    manager.forget('pane-witness');
+  });
+  manager.onRebind(undefined, siteOn('no-pane'));
+  report['suspect-no-pane'] = manager.suspected('pane-any', `${siteOn('no-pane')}/`);
+  await delay(SETTLE_MS);
+  {
+    const reopened = new BrowserSiteStore(storeDir);
+    await reopened.load();
+    const restarted = new BrowserViewManager({ scope: () => Promise.resolve(undefined), allowedOrigins: () => [], controlPorts: () => new Set(), onState: () => undefined, suspects: reopened, partition: () => wrapped });
+    report['suspect-restart'] = restarted.suspected('after-restart', `${siteOn('wide')}/a`);
+  }
+
+  // A suspect's live page ends on every pane, the one that heard nothing too.
+  allowed = [siteOn('live')];
+  {
+    const elsewhere = await open('pane-live-elsewhere', `${siteOn('live')}/landed?via=elsewhere`);
+    await record('suspect-document-elsewhere', async (_id, contents) => {
+      manager.onRebind(contents.id, siteOn('live'));
+      await delay(50);
+      report['suspect-document-elsewhere-ended'] = elsewhere.isDestroyed();
+      report['suspect-document-elsewhere-reopen'] = manager.state('pane-live-elsewhere').needsReopen ?? false;
+    });
+    manager.forget('pane-live-elsewhere');
+  }
+
+  // A frame of a suspect site: same site as its page, so one process and one accessibility tree, and it stops being read.
+  allowed = [siteOn('sub.split'), siteOn('split')];
+  {
+    const id = 'pane-split';
+    const contents = await open(id, `${siteOn('sub.split')}/with-cousin?frame=${encodeURIComponent(`${siteOn('split')}/frame-text`)}`);
+    await delay(SETTLE_MS);
+    manager.beginTool(id, 'turn-1');
+    const page = manager.page(id);
+    if (!page.ok) throw new Error(page.reason);
+    report['suspect-frame-before'] = await page.cdp.snapshot();
+    manager.onRebind(contents.id, siteOn('split'));
+    await delay(50);
+    report['suspect-frame-after'] = await page.cdp.snapshot();
+    report['suspect-frame-top-up'] = !contents.isDestroyed();
+    manager.endTool(id);
+    manager.forget(id);
+  }
+
+  // The person's own visit: the site works for them on that pane, the AI still reads nothing, and it ends with the visit.
+  allowed = [siteOn('visit')];
+  const visitUrl = `${siteOn('visit')}/with-frames`;
+  await record('suspect-visit', async (id) => {
+    await manager.navigateAsPerson(id, visitUrl);
+    await delay(SETTLE_MS);
+    const page = manager.page(id);
+    report['suspect-visit-page'] = page.ok ? page.site : page.reason;
+    report['suspect-visit-state'] = manager.state(id).site;
+    report['suspect-visit-own-fetch'] = page.ok ? await js(page.contents, `return fetch('/landed?via=visit-fetch').then((r)=>r.status,()=>'refused')`) : 'no page';
+    report['suspect-visit-here'] = manager.suspected(id, visitUrl);
+    report['suspect-visit-other-pane'] = manager.suspected('pane-any', visitUrl);
+    await manager.navigateAsPerson(id, `${base}/landed?via=left`);
+    await delay(SETTLE_MS);
+    report['suspect-visit-after'] = manager.suspected(id, visitUrl);
+    // Back is a navigation of the person's too.
+    manager.goBackAsPerson(id);
+    await delay(SETTLE_MS);
+    const back = manager.page(id);
+    report['suspect-visit-back'] = back.ok ? back.site : back.reason;
+    await manager.navigateAsPerson(id, `${base}/landed?via=left-again`);
+    await delay(SETTLE_MS);
+    report['suspect-visit-still'] = manager.suspected(id, visitUrl);
+    // Only allowing it again ends the suspicion.
+    manager.sitesChanged(`project-of-${id}`, siteOn('visit'), 'allow');
+    report['suspect-visit-allowed'] = { suspected: manager.suspected('pane-any', visitUrl), site: manager.classify(id, visitUrl) };
+  }, async (id) => {
+    const contents = await drivenPad(id);
+    manager.onRebind(contents.id, siteOn('visit'));
+    await delay(50);
+    return contents;
+  });
   allowed = [];
 
   // A tool's input reaches a pane no one has ever seen, with the app minimized too.

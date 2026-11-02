@@ -122,7 +122,7 @@ export function isLocalHostName(hostname: string): boolean {
 }
 
 /** The URL a request's site is judged on: a socket has the site of its page. */
-function webForm(url: string): string {
+export function webForm(url: string): string {
   return url.replace(/^ws(s?):/iu, 'http$1:');
 }
 

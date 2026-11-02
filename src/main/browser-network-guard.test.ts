@@ -169,6 +169,24 @@ describe('requestVerdict: every request, whoever made it', () => {
       expect(await requestVerdict(request(`${ALLOWED}/`, 'subFrame'), policy(suspect), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
     });
 
+    it('is refused for every resource type, in a person\'s navigation too', async () => {
+      for (const resourceType of ['xhr', 'script', 'stylesheet', 'image', 'font', 'media', 'object', 'ping', 'webSocket', 'other']) {
+        for (const patch of [{}, { guarded: false }, { personNavigating: true }]) {
+          expect(await requestVerdict(request(`${ALLOWED}/data`, resourceType), policy({ ...suspect, ...patch }), env()), resourceType).toEqual({ cancel: true, reason: 'rebind-suspected' });
+        }
+      }
+    });
+
+    it('is refused over a socket: the origin is the site\'s, whatever the scheme', async () => {
+      expect(await requestVerdict(request('wss://staging.cart-kit.example/live', 'webSocket'), policy(suspect), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
+    });
+
+    it('is not asked of the resolver: a clean answer now clears nothing', async () => {
+      const resolver = env();
+      await requestVerdict(request(`${ALLOWED}/data`, 'xhr'), policy(suspect), resolver);
+      expect(resolver.resolve).not.toHaveBeenCalled();
+    });
+
     it('is refused on a pane no AI has driven too', async () => {
       expect(await requestVerdict(request(`${ALLOWED}/`), policy({ ...suspect, guarded: false }), env())).toEqual({ cancel: true, reason: 'rebind-suspected' });
     });
@@ -355,6 +373,7 @@ describe('installBrowserPartitionGuards', () => {
       controlPorts: () => new Set([CONTROL_PORT]),
       onBlocked: vi.fn(),
       onRebind: vi.fn(),
+      onPersonNavigation: vi.fn(),
       onDownloadBlocked: vi.fn(),
       ...patch,
     };
@@ -419,6 +438,24 @@ describe('installBrowserPartitionGuards', () => {
     expect(response).toEqual({ cancel: true });
     expect(fake.resolveHost).toHaveBeenCalledWith('rebind.example');
     expect(onBlocked).toHaveBeenCalledWith(3, { url: 'http://rebind.example/', resourceType: 'mainFrame', reason: 'rebind-suspected' });
+  });
+
+  it('tells the host a person\'s page is on its way, and only that', async () => {
+    const { session, fake } = fakeSession({ 'evil.example': [PUBLIC], 'staging.cart-kit.example': [PUBLIC] });
+    const onPersonNavigation = vi.fn();
+    installBrowserPartitionGuards(session, host({ policyFor: () => policy({ guarded: false, personNavigating: true }), onPersonNavigation }));
+    await before(fake, { url: `${ALLOWED}/cart`, resourceType: 'mainFrame', webContentsId: 3 });
+    await before(fake, { url: `${ALLOWED}/frame`, resourceType: 'subFrame', webContentsId: 3 });
+    await before(fake, { url: `${ALLOWED}/data`, resourceType: 'xhr', webContentsId: 3 });
+    expect(onPersonNavigation.mock.calls).toEqual([[3, `${ALLOWED}/cart`]]);
+  });
+
+  it('does not take a page the host refused for a person\'s', async () => {
+    const { session, fake } = fakeSession({ 'rebind.example': ['127.0.0.1'] });
+    const onPersonNavigation = vi.fn();
+    installBrowserPartitionGuards(session, host({ policyFor: () => policy({ personNavigating: true }), onPersonNavigation }));
+    await before(fake, { url: 'http://rebind.example/', resourceType: 'mainFrame', webContentsId: 3 });
+    expect(onPersonNavigation).not.toHaveBeenCalled();
   });
 
   it('answers a request once and cancels it if the host throws', async () => {

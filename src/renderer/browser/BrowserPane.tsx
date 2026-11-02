@@ -36,7 +36,8 @@ export type BrowserPaneBody =
   | { readonly kind: 'empty'; readonly candidates: readonly BrowserPaneCandidate[] }
   | { readonly kind: 'page' }
   | { readonly kind: 'server-down'; readonly origin: string }
-  | { readonly kind: 'gone' };
+  /** `ended`: the app closed the page itself, so nothing crashed. */
+  | { readonly kind: 'gone'; readonly ended?: 'rebind-suspected' };
 
 export type BrowserPaneAction =
   | { readonly kind: 'navigate'; readonly url: string }
@@ -229,7 +230,8 @@ function FaultBody({ glyph, title, detail, ai, label, action, onAction }: {
 }
 
 export function BrowserPane({ address, site, body, strip, canBack, canForward, picking = false, pageHidden = false, page, pageRef, onAction }: BrowserPaneProps): JSX.Element {
-  const copy = useChatCopy().browser.pane;
+  const browserCopy = useChatCopy().browser;
+  const copy = browserCopy.pane;
   const addressRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLButtonElement>(null);
   const pressStrip = (action: BrowserPaneAction): void => {
@@ -256,7 +258,7 @@ export function BrowserPane({ address, site, body, strip, canBack, canForward, p
       <div ref={pageRef} className="browser-pane__page" data-testid="browser-page" data-hidden={pageHidden || undefined}>
         {body.kind === 'empty' && <EmptyBody candidates={body.candidates} onAction={onAction} copy={copy.empty} />}
         {body.kind === 'server-down' && <FaultBody glyph="offline" title={copy.fault.downTitle} detail={copy.fault.down(body.origin)} ai={copy.fault.ai} label={copy.fault.retry} action={{ kind: 'retry' }} onAction={onAction} />}
-        {body.kind === 'gone' && <FaultBody glyph="warn" title={copy.fault.goneTitle} detail={copy.fault.gone} ai={copy.fault.ai} label={copy.fault.reopen} action={{ kind: 'reopen' }} onAction={onAction} />}
+        {body.kind === 'gone' && <FaultBody glyph="warn" title={copy.fault.goneTitle} detail={body.ended ? browserCopy.refusal[body.ended] : copy.fault.gone} ai={copy.fault.ai} label={copy.fault.reopen} action={{ kind: 'reopen' }} onAction={onAction} />}
         {body.kind === 'page' && !pageHidden && page}
         {body.kind === 'page' && pageHidden && <p className="browser-pane__hidden">{copy.pageHidden}</p>}
       </div>

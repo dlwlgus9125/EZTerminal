@@ -403,6 +403,14 @@ describe('the other refusals', () => {
     expect(pages.navigateForTool).not.toHaveBeenCalled();
   });
 
+  it('says why a suspect site is refused, and offers no Allow for what the app stopped by itself', async () => {
+    const { call, pages } = harness();
+    vi.mocked(pages.suspected).mockReturnValue(true);
+    vi.mocked(pages.classify).mockReturnValue('external');
+    expect(code(await call('browser_navigate', { url: ALLOWED }))).toBe('rebind-suspected');
+    expect(pages.refuseNavigation).not.toHaveBeenCalled();
+  });
+
   it.each(['javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'not a url'])('browser_navigate refuses %s', async (url) => {
     const { call, pages } = harness();
     expect(code(await call('browser_navigate', { url }))).toBe('site-not-allowed');

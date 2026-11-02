@@ -3,7 +3,7 @@ import { BlockList, isIP } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isControlPortUrl, isLocalHostName, siteClass } from '../shared/browser';
+import { isControlPortUrl, isLocalHostName, siteClass, webForm } from '../shared/browser';
 
 /**
  * What the in-app browser's partition does for every request, of every page, for the whole life of the app: the host
@@ -77,7 +77,7 @@ export interface BrowserViewPolicy {
   readonly allowedOrigins: readonly string[];
   /** Real paths (`realRoots`). */
   readonly roots: readonly string[];
-  /** Sites that answered from where they must not. Out of reach as a page or a frame, whatever the list says, until a person goes there. */
+  /** Sites that answered from where they must not, on any pane: out of reach by every road, whatever the list says, except the site a person is visiting on this pane. */
   readonly suspectOrigins: ReadonlySet<string>;
 }
 
@@ -102,10 +102,10 @@ function sameOrigin(left: string, right: string): boolean {
   }
 }
 
-/** A `blob:` has the origin of the page that made it. */
+/** A `blob:` has the origin of the page that made it, and a socket that of its site. */
 export function originOf(url: string): string {
   try {
-    return new URL(url).origin;
+    return new URL(webForm(url)).origin;
   } catch {
     return url;
   }
@@ -137,7 +137,7 @@ export async function requestVerdict(
   if (isLocalHostName(parsed.hostname)) return policy?.topExternal === true && !top ? refuse('site-not-allowed') : PASS;
   if (!policy) return refuse('site-not-allowed');
   // Before the resolver: a clean answer now says nothing about the address it answered from before.
-  if ((top ? !policy.personNavigating : resourceType === 'subFrame') && policy.suspectOrigins.has(parsed.origin)) return refuse('rebind-suspected');
+  if (!(top && policy.personNavigating) && policy.suspectOrigins.has(originOf(url))) return refuse('rebind-suspected');
 
   let addresses: readonly string[];
   try {
@@ -199,8 +199,10 @@ export interface BrowserNetworkGuardHost {
   /** The app's own listening ports, read per request: some open later. */
   controlPorts(): ReadonlySet<number>;
   onBlocked(webContentsId: number | undefined, blocked: { readonly url: string; readonly resourceType: string; readonly reason: BrowserRequestReason }): void;
-  /** A response arrived from where this site must not be: the second layer. */
+  /** A response arrived from where this site must not be: the second layer. No pane need own it. */
   onRebind(webContentsId: number | undefined, origin: string): void;
+  /** A page of the person's is on its way: the one road to a suspect site, and it opens before anything of that page can ask. */
+  onPersonNavigation(webContentsId: number | undefined, url: string): void;
   onDownloadBlocked(webContentsId: number, url: string): void;
 }
 
@@ -229,8 +231,10 @@ export function installBrowserPartitionGuards(session: BrowserPartitionSession, 
   session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
     const { url, resourceType, webContentsId } = details;
     void (async () => {
-      const verdict = await requestVerdict({ url, resourceType }, host.policyFor(webContentsId), { controlPorts: host.controlPorts(), resolve });
+      const policy = host.policyFor(webContentsId);
+      const verdict = await requestVerdict({ url, resourceType }, policy, { controlPorts: host.controlPorts(), resolve });
       if (verdict.cancel) host.onBlocked(webContentsId, { url, resourceType, reason: verdict.reason });
+      else if (resourceType === 'mainFrame' && policy?.personNavigating) host.onPersonNavigation(webContentsId, url);
       return verdict.cancel;
     })().then((cancel) => callback(cancel ? { cancel: true } : {}), () => callback({ cancel: true }));
   });

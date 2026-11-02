@@ -38,7 +38,7 @@ function originOf(url: string): string {
 export function browserPaneBody(state: BrowserViewState | null): BrowserPaneBody {
   if (!state?.url) return { kind: 'empty', candidates: [] };
   if (state.fault === 'server-down') return { kind: 'server-down', origin: originOf(state.url) };
-  if (state.fault === 'gone' || state.needsReopen) return { kind: 'gone' };
+  if (state.fault === 'gone' || state.needsReopen) return { kind: 'gone', ...(state.blocked?.reason === 'rebind-suspected' ? { ended: 'rebind-suspected' as const } : {}) };
   return { kind: 'page' };
 }
 

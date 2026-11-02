@@ -77,6 +77,12 @@ describe('browserPaneBody', () => {
   it('keeps an address after a restart, and asks before loading it', () => {
     expect(browserPaneBody(state({ needsReopen: true })).kind).toBe('gone');
   });
+
+  it('says the app ended a page that answered from where it must not: no crash happened', () => {
+    const suspect = { origin: 'https://staging.example', reason: 'rebind-suspected' as const, serial: 1 };
+    expect(browserPaneBody(state({ needsReopen: true, blocked: suspect }))).toEqual({ kind: 'gone', ended: 'rebind-suspected' });
+    expect(browserPaneBody(state({ needsReopen: true, blocked: { ...suspect, reason: 'site-not-allowed' } }))).toEqual({ kind: 'gone' });
+  });
 });
 
 describe('browserPaneStrip', () => {

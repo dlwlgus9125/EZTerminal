@@ -177,6 +177,10 @@ describe('DNS rebinding', () => {
     expect(of('rebind-subresources').reached).toEqual([]);
   });
 
+  it('a name some page merely points at this PC is held against nobody: a page could fill the list that way', () => {
+    expect(report['rebind-subresources-suspect']).toBe(false);
+  });
+
   it('the second layer stops a site that answers from here before its page commits', () => {
     // The honest residual: this request did reach the server, because the address is known only from the response.
     expect(of('rebind-second-layer').reached).toEqual(['/landed']);
@@ -190,6 +194,18 @@ describe('DNS rebinding', () => {
     expect(report['rebind-later-page']).toBe('rebind-suspected');
   });
 
+  it('its page does not stay up: the view goes, its address stays for the person to open again', () => {
+    expect(report['rebind-later-ended']).toBe(true);
+    expect(report['rebind-later-state']).toMatchObject({ needsReopen: true, site: 'external' });
+    expect((report['rebind-later-state'] as { url: string }).url).toContain('later.example');
+  });
+
+  it('a page whose own name turns to this PC is caught the same, by the resolver', () => {
+    expect(of('rebind-name-flips').reached).toEqual([]);
+    expect(report['rebind-name-flips-ended']).toBe(true);
+    expect(report['rebind-name-flips-suspect']).toBe(true);
+  });
+
   describe('a suspect site is out of reach by every road', () => {
     it.each(['suspect-script', 'suspect-redirect', 'suspect-click', 'suspect-iframe', 'suspect-window-open'])('%s', (name) => {
       expect(of(name).reached).toEqual([]);
@@ -197,7 +213,12 @@ describe('DNS rebinding', () => {
       expect(of(name).url).toContain('/pad');
     });
 
-    it('except the person going to it, which ends the suspicion of that site', () => {
+    it('every kind of request, while the same ones reach a site in good standing', () => {
+      expect(of('suspect-every-road').reached).toEqual([]);
+      expect([...of('clean-every-road').reached].sort()).toEqual(['/beacon', '/c.css', '/fetch', '/img', '/s.js', '/ws']);
+    });
+
+    it('except the person going to it, for that visit', () => {
       expect(of('suspect-person').reached).toEqual(['/landed?via=suspect-person']);
       expect(report['suspect-person-cleared']).toBe(true);
     });
@@ -209,6 +230,68 @@ describe('DNS rebinding', () => {
 
     it('going elsewhere, or closing the pane, ends nothing', () => {
       expect(report['suspect-outlives']).toBe(true);
+    });
+
+    it('on a pane that never heard of it: suspicion belongs to the partition', () => {
+      expect(of('suspect-other-pane').reached).toEqual([]);
+      expect(of('suspect-other-pane').blocked).toBe('rebind-suspected');
+      expect(of('suspect-other-pane').url).toContain('/pad');
+      expect(report['suspect-other-pane-answers']).toEqual({ suspected: true, site: 'external' });
+    });
+
+    it('when no pane owns the response that gave it away', () => {
+      expect(report['suspect-no-pane']).toBe(true);
+    });
+
+    it('after a restart', () => {
+      expect(report['suspect-restart']).toBe(true);
+    });
+
+    it('and its page ends on a pane that heard nothing, and only there', () => {
+      expect(report['suspect-document-elsewhere-ended']).toBe(true);
+      expect(report['suspect-document-elsewhere-reopen']).toBe(true);
+      expect(of('suspect-document-elsewhere').url).toContain('/pad');
+    });
+
+    it('a frame of it stops being read, and its page goes on', () => {
+      const before = report['suspect-frame-before'] as { text: string; unreadFrames: readonly string[] };
+      const after = report['suspect-frame-after'] as { text: string; unreadFrames: readonly string[] };
+      expect(before.text, 'the frame really was readable').toContain('COUSIN-FRAME-TEXT');
+      expect(before.unreadFrames).toEqual([]);
+      expect(after.text).toContain('TOP-TEXT');
+      expect(after.text).not.toContain('COUSIN-FRAME-TEXT');
+      expect(after.unreadFrames.some((url) => url.includes('split.example'))).toBe(true);
+      expect(report['suspect-frame-top-up']).toBe(true);
+    });
+
+    describe('a person\'s own visit', () => {
+      it('the site works for them, its own frames and requests too', () => {
+        expect(of('suspect-visit').reached).toEqual(expect.arrayContaining(['/with-frames', '/landed?via=own-frame', '/landed?via=visit-fetch']));
+        expect(report['suspect-visit-own-fetch']).toBe(200);
+      });
+
+      it('the AI still reads nothing there, though the list names the site', () => {
+        expect(report['suspect-visit-page']).toBe('external');
+        expect(report['suspect-visit-state']).toBe('external');
+      });
+
+      it('holds for that pane alone', () => {
+        expect(report['suspect-visit-here']).toBe(false);
+        expect(report['suspect-visit-other-pane']).toBe(true);
+      });
+
+      it('ends with the visit', () => {
+        expect(report['suspect-visit-after']).toBe(true);
+      });
+
+      it('Back is a visit of theirs too', () => {
+        expect(report['suspect-visit-back']).toBe('external');
+        expect(report['suspect-visit-still']).toBe(true);
+      });
+
+      it('only allowing the site again lifts it', () => {
+        expect(report['suspect-visit-allowed']).toEqual({ suspected: false, site: 'allowed' });
+      });
     });
   });
 
