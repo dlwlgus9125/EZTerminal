@@ -28,7 +28,7 @@ function harness(patch: Partial<BrowserApprovalsDeps> = {}) {
   });
   const expireFromHost = (): void => {
     approvals[0]!.state = 'expired';
-    for (const listener of listeners) listener({ kind: 'entity.upserted', payload: { entityType: 'approval', entityId: 'approval-1' } } as unknown as DaemonEvent);
+    for (const listener of listeners) listener({ kind: 'approval.changed', payload: { approvalId: 'approval-1', sessionId: 'chat' } } as unknown as DaemonEvent);
   };
   return { coordinator, raise, expire, expireFromHost };
 }

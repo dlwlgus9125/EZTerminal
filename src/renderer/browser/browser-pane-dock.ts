@@ -6,6 +6,18 @@ export function browserPanelId(conversationId: string): string {
   return `browser-preview-${conversationId}`;
 }
 
+/** The person closed a conversation's pane: its view goes. A layout being replaced is not the person closing anything. */
+export function watchBrowserPaneClose(api: DockviewApi, options: {
+  readonly isLayoutTransactionActive: () => boolean;
+  readonly close: (conversationId: string) => void;
+}): { dispose(): void } {
+  return api.onDidRemovePanel((panel) => {
+    if (panel.api.component !== BROWSER_PANE_COMPONENT || options.isLayoutTransactionActive()) return;
+    const conversationId = (panel.params as { conversationId?: unknown } | undefined)?.conversationId;
+    if (typeof conversationId === 'string') options.close(conversationId);
+  });
+}
+
 function conversationPanel(api: DockviewApi, conversationId: string): IDockviewPanel | undefined {
   return api.panels.find((panel) => panel.api.component === 'agent-session'
     && (panel.params as { conversationId?: unknown } | undefined)?.conversationId === conversationId);

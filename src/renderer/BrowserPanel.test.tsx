@@ -81,7 +81,7 @@ describe('browserPaneBody', () => {
 
 describe('browserPaneStrip', () => {
   it('says what stopped something first', () => {
-    expect(browserPaneStrip(state({ ai: 'driving', blocked: { origin: 'https://evil.example', reason: 'site-not-allowed' } }))).toEqual({ kind: 'blocked', origin: 'https://evil.example' });
+    expect(browserPaneStrip(state({ ai: 'driving', blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 1 } }))).toEqual({ kind: 'blocked', origin: 'https://evil.example' });
   });
 
   it('says who is at the page', () => {
@@ -93,6 +93,26 @@ describe('browserPaneStrip', () => {
   it('reads the class of the current URL: an external page is one the AI does not read', () => {
     expect(browserPaneStrip(state({ url: 'https://elsewhere.example/a', site: 'external' }))).toEqual({ kind: 'not-read', origin: 'https://elsewhere.example' });
     expect(browserPaneStrip(state({ url: 'https://staging.example/a', site: 'allowed' }))).toBeUndefined();
+  });
+
+  it.each([
+    ['a suspected rebind', { origin: 'https://staging.example', reason: 'rebind-suspected' as const, serial: 1 }],
+    ['a download', { origin: 'http://localhost:5173', reason: 'download-blocked' as const, serial: 1 }],
+    ['the app\'s own port', { origin: 'http://127.0.0.1:7420', reason: 'site-not-allowed' as const, serial: 1 }],
+    ['a file outside the folders', { origin: 'file:///C:/secret.txt', reason: 'site-not-allowed' as const, serial: 1 }],
+  ])('offers nothing a person could wave through for %s', (_name, blocked) => {
+    expect(browserPaneStrip(state({ blocked }))).toBeUndefined();
+  });
+
+  it('keeps a closed bar closed, and opens for the next stop', () => {
+    const first = state({ blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 1 } });
+    expect(browserPaneStrip(first, { blocked: 1 })).toBeUndefined();
+    expect(browserPaneStrip(state({ blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 2 } }), { blocked: 1 })?.kind).toBe('blocked');
+  });
+
+  it('says a site was just allowed, until it is closed', () => {
+    expect(browserPaneStrip(state({ allowed: 'https://evil.example' }))).toEqual({ kind: 'allowed', origin: 'https://evil.example' });
+    expect(browserPaneStrip(state({ allowed: 'https://evil.example' }), { allowed: 'https://evil.example' })).toBeUndefined();
   });
 });
 
@@ -171,14 +191,75 @@ describe('BrowserPanel', () => {
     expect(sendCommand).toHaveBeenCalledWith(expect.objectContaining({ payload: { sessionId: 'chat', action: 'navigate', target: 'http://localhost:5173/cart' } }));
   });
 
+  describe('allowing a site', () => {
+    const blocked = { origin: 'https://staging.cart-kit.example', reason: 'site-not-allowed' as const, serial: 1 };
+    const open = async () => {
+      const h = harness();
+      vi.mocked(h.capabilities.daemon.getSnapshot).mockResolvedValue({
+        revision: 1,
+        sessions: [{ id: 'chat', projectId: 'project-1' }],
+        projects: [{ id: 'project-1', name: 'cart-kit' }],
+        agents: [{ sessionId: 'chat', permissionPreset: 'full-access' }],
+      } as unknown as DaemonSnapshot);
+      await render(<BrowserPanel {...h.props} capabilities={h.capabilities} />);
+      h.push(state({ blocked }));
+      await settle();
+      await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-allow-open"]')!.click(); });
+      await settle();
+      return h;
+    };
+    const sheet = () => document.querySelector('[data-testid="browser-allow-sheet"]');
+
+    it('names the exact origin and the project, and warns at full access', async () => {
+      await open();
+      expect(sheet()?.textContent).toContain('https://staging.cart-kit.example');
+      expect(sheet()?.textContent).toContain('cart-kit');
+      expect(document.querySelector('[data-testid="browser-allow-warning"]')?.getAttribute('data-level')).toBe('full');
+    });
+
+    it('takes the page away while it is open: a native view paints over the DOM', async () => {
+      const { setSurface } = await open();
+      expect(setSurface).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+    });
+
+    it('sends one exact origin for that project, on the person\'s press', async () => {
+      const { sendCommand } = await open();
+      expect(sendCommand).not.toHaveBeenCalled();
+      await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="browser-allow-confirm"]')!.click(); });
+      await settle();
+      expect(sendCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'browser.site', payload: { projectId: 'project-1', origin: 'https://staging.cart-kit.example', action: 'allow' } }));
+      expect(sheet()).toBeNull();
+    });
+
+    it('sends nothing on cancel, with focus back at the bar', async () => {
+      const { sendCommand } = await open();
+      await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="browser-allow-cancel"]')!.click(); });
+      await settle();
+      expect(sendCommand).not.toHaveBeenCalled();
+      expect(sheet()).toBeNull();
+    });
+  });
+
+  it('closes the bar for this stop', async () => {
+    const { capabilities, props, push } = harness();
+    await render(<BrowserPanel {...props} capabilities={capabilities} />);
+    push(state({ blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 3 } }));
+    await settle();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-dismiss"]')!.click(); });
+    expect(container.querySelector('[data-testid="browser-strip"]')).toBeNull();
+    push(state({ loading: true, blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 3 } }));
+    await settle();
+    expect(container.querySelector('[data-testid="browser-strip"]'), 'the same stop, pushed again').toBeNull();
+  });
+
   it('hands what later steps own to their seam', async () => {
     const { capabilities, props, sendCommand, push } = harness();
     const onSeam = vi.fn();
     await render(<BrowserPanel {...props} capabilities={capabilities} onSeam={onSeam} />);
-    push(state({ blocked: { origin: 'https://evil.example', reason: 'site-not-allowed' } }));
+    push(state());
     await settle();
-    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-allow-open"]')!.click(); });
-    expect(onSeam).toHaveBeenCalledWith({ kind: 'allow-site', origin: 'https://evil.example' });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-pick"]')!.click(); });
+    expect(onSeam).toHaveBeenCalledWith({ kind: 'pick' });
     expect(sendCommand).not.toHaveBeenCalled();
   });
 });

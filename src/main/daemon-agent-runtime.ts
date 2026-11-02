@@ -1,5 +1,5 @@
 import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
-import { addressBarUrl, isBrowserActionRequest } from '../shared/browser';
+import { addressBarUrl, allowableOrigin, isBrowserActionRequest } from '../shared/browser';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
@@ -94,6 +94,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'browser.open'
   | 'browser.action'
   | 'browser.close'
+  | 'browser.site'
 >;
 
 /** What a person does in the in-app browser. These run after the command commits; the policy has already said it is a person. */
@@ -106,6 +107,8 @@ export interface DaemonBrowserHost {
   close(conversationId: string): void;
   /** A person answered a `browser-action:` approval, and the answer committed. */
   approvalResolved(providerRequestId: string, decision: 'allow' | 'deny', response?: ApprovalResponse): void;
+  /** A person allowed or revoked one exact origin for one project. Done before the command answers. */
+  site(projectId: string, origin: string, action: 'allow' | 'revoke'): Promise<void>;
 }
 
 export interface DaemonAgentRuntimeOptions {
@@ -523,6 +526,7 @@ export class DaemonAgentRuntime {
       'browser.open': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
       'browser.action': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
       'browser.close': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
+      'browser.site': (command, context) => this.runCommand(() => this.browserSite(command, context)),
     };
   }
 
@@ -2252,6 +2256,19 @@ export class DaemonAgentRuntime {
       })]) },
       afterCommit: () => reviews.cancel(payload.reviewId),
     };
+  }
+
+  /** A person changes a project's list. The one way in: no tool, model or page reaches `browser-sites.json`. */
+  private async browserSite(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'browser.site') return commandError('invalid-command', 'Unexpected browser command.');
+    const host = this.options.browser;
+    if (!host) return commandError('invalid-state', 'The in-app browser is unavailable on this host.');
+    const { projectId, origin, action } = command.payload;
+    if (!context.snapshot.projects.some((entry) => entry.id === projectId && entry.archivedAt === undefined)) return commandError('not-found', 'Project was not found.');
+    const exact = allowableOrigin(origin);
+    if (!exact) return commandError('invalid-command', 'Only one exact http(s) site can be allowed.');
+    await host.site(projectId, exact, action);
+    return { ok: true };
   }
 
   /** A person in the pane. The conversation is `sessionId`: the pane has no session row of its own. */

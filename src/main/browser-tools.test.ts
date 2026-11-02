@@ -430,15 +430,15 @@ describe('what the tools return', () => {
 
   it('says when a click led somewhere the host stopped', async () => {
     const { call, pages, driver } = harness();
-    let blocked: { origin: string; reason: BrowserRefusal } | undefined;
+    let blocked: { origin: string; reason: BrowserRefusal; serial: number } | undefined;
     vi.mocked(pages.state).mockImplementation(() => ({ conversationId: 'chat', url: LOCAL, loading: false, canBack: false, canForward: false, ai: 'driving', ...(blocked ? { blocked } : {}) }));
-    driver.click.mockImplementation(async () => { blocked = { origin: 'https://elsewhere.example', reason: 'site-not-allowed' }; });
+    driver.click.mockImplementation(async () => { blocked = { origin: 'https://elsewhere.example', reason: 'site-not-allowed', serial: 1 }; });
     expect(parsed(await call('browser_click', { ref: 'e1' }))).toMatchObject({ ok: true, blocked: { origin: 'https://elsewhere.example', reason: 'site-not-allowed' } });
   });
 
   it('does not repeat what was stopped before the click', async () => {
     const { call, pages } = harness();
-    const blocked = { origin: 'https://elsewhere.example', reason: 'site-not-allowed' as const };
+    const blocked = { origin: 'https://elsewhere.example', reason: 'site-not-allowed' as const, serial: 1 };
     vi.mocked(pages.state).mockReturnValue({ conversationId: 'chat', url: LOCAL, loading: false, canBack: false, canForward: false, ai: 'driving', blocked });
     expect(parsed(await call('browser_click', { ref: 'e1' }))).not.toHaveProperty('blocked');
   });

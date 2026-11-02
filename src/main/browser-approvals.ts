@@ -55,8 +55,8 @@ export class BrowserApprovals {
 
   constructor(private readonly deps: BrowserApprovalsDeps) {
     this.unsubscribe = deps.onEvent((event) => {
-      if (event.kind !== 'entity.upserted' || event.payload.entityType !== 'approval' || this.held.size === 0) return;
-      const approvalId = event.payload.entityId;
+      if (event.kind !== 'approval.changed' || this.held.size === 0) return;
+      const { approvalId } = event.payload;
       const entry = [...this.held.entries()].find(([, held]) => held.approvalId === approvalId);
       if (!entry) return;
       // A person's answer settles through `resolved`, which also remembers what they chose.

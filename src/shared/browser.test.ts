@@ -145,6 +145,7 @@ describe('allowableOrigin: what a person may add to a project\'s list', () => {
   it.each([
     'https://staging.cart-kit.example/cart', 'https://staging.cart-kit.example/?a=1', 'https://a@staging.cart-kit.example/',
     'file:///C:/index.html', 'javascript:alert(1)', 'http://localhost:5173', 'about:blank', 'not a url', '',
+    'https://*.example', 'https://*', 'https://a b.example', 'http://localhost.',
   ])('refuses %s', (value) => {
     expect(allowableOrigin(value)).toBeUndefined();
   });

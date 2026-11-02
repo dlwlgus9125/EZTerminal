@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 
-import type { BrowserViewState } from '../shared/browser';
+import { allowableOrigin, type BrowserViewState } from '../shared/browser';
+import { BrowserAllowSheet, type BrowserAllowPreset } from './browser/BrowserAllowSheet';
 import { BrowserPane, type BrowserPaneAction, type BrowserPaneBody, type BrowserPaneProps, type BrowserPaneStrip } from './browser/BrowserPane';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useNativeOverlayOpen } from './native-overlay';
@@ -14,8 +15,8 @@ import { useDockPanelHost } from './use-dock-panel-host';
  * below: this component reports that plate's rect and visibility, and turns what the person does into daemon commands.
  * While the plate shows the app's own state (empty, down, gone) or an overlay is open, the view is parked.
  *
- * The seams for later steps: `candidates` (step 13, dev-server discovery), `pick`/`cancel-pick` (step 14) and `allow-site`
- * (step 10) reach `onSeam`; nothing else is wired here.
+ * The seams for later steps: `candidates` (step 13, dev-server discovery) and `pick`/`cancel-pick` (step 14), which reach
+ * `onSeam`; nothing else is wired here.
  */
 
 export interface BrowserPanelParams {
@@ -41,14 +42,21 @@ export function browserPaneBody(state: BrowserViewState | null): BrowserPaneBody
   return { kind: 'page' };
 }
 
-/** The one line between the toolbar and the page: what stopped something outranks who is at the page. */
-export function browserPaneStrip(state: BrowserViewState | null): BrowserPaneStrip | undefined {
+/**
+ * The one line between the toolbar and the page: what stopped something outranks who is at the page. The bar offers Allow,
+ * so it stands only for a site a person may allow: a suspected rebind, the app's own ports and files outside the folders are
+ * not the person's to wave through, and a closed bar stays closed.
+ */
+export function browserPaneStrip(state: BrowserViewState | null, dismissed?: { readonly blocked?: number; readonly allowed?: string }): BrowserPaneStrip | undefined {
   if (!state) return undefined;
-  if (state.blocked) return { kind: 'blocked', origin: state.blocked.origin };
+  const { blocked, allowed } = state;
+  if (blocked && blocked.serial !== dismissed?.blocked && blocked.reason === 'site-not-allowed' && allowableOrigin(blocked.origin)) return { kind: 'blocked', origin: blocked.origin };
+  if (allowed && allowed !== dismissed?.allowed) return { kind: 'allowed', origin: allowed };
   if (state.ai === 'driving') return { kind: 'driving' };
   if (state.ai === 'stopped') return { kind: 'stopped' };
   // Always the current URL's class: an external page is one the AI does not read.
-  if (state.site === 'external' && state.url) return { kind: 'not-read', origin: originOf(state.url) };
+  const origin = originOf(state.url);
+  if (state.site === 'external' && state.url && allowableOrigin(origin)) return { kind: 'not-read', origin };
   return undefined;
 }
 
@@ -122,8 +130,26 @@ export function BrowserPanel(
     };
   }, [host.ownerWindow, reportSurface]);
 
+  const [dismissed, setDismissed] = useState<{ readonly blocked?: number; readonly allowed?: string }>({});
+  const [sheet, setSheet] = useState<{ readonly origin: string; readonly projectId: string; readonly projectName: string; readonly preset: BrowserAllowPreset } | null>(null);
+  const access = useMemo(() => ({ latestSnapshot: capabilities.daemon.getSnapshot, sendCommand: capabilities.daemon.sendCommand }), [capabilities]);
+
+  /** The sheet says whose list this goes on and what the conversation's access means for it, from the host's own record. */
+  const openAllowSheet = useCallback(async (origin: string): Promise<void> => {
+    const snapshot = await capabilities.daemon.getSnapshot();
+    const session = snapshot?.sessions.find((entry) => entry.id === conversationId);
+    const project = snapshot?.projects.find((entry) => entry.id === session?.projectId);
+    const agent = snapshot?.agents.find((entry) => entry.sessionId === conversationId);
+    if (project && agent) setSheet({ origin, projectId: project.id, projectName: project.name, preset: agent.permissionPreset });
+  }, [capabilities, conversationId]);
+
+  const allow = useCallback((origin: string): void => {
+    const target = sheet;
+    setSheet(null);
+    if (target) void sendCardCommand(access, 'browser.site', { projectId: target.projectId, origin, action: 'allow' });
+  }, [access, sheet]);
+
   const onAction = useCallback((action: BrowserPaneAction): void => {
-    const access = { latestSnapshot: capabilities.daemon.getSnapshot, sendCommand: capabilities.daemon.sendCommand };
     const send = (payload: { readonly action: 'navigate' | 'reload' | 'back' | 'forward' | 'stop'; readonly target?: string }): void => {
       void sendCardCommand(access, 'browser.action', { sessionId: conversationId, ...payload });
     };
@@ -135,11 +161,13 @@ export function BrowserPanel(
       case 'retry': case 'reopen':
         if (state?.url) send({ action: 'navigate', target: state.url });
         return;
+      case 'allow-site': void openAllowSheet(action.origin); return;
+      case 'dismiss': setDismissed({ ...(state?.blocked ? { blocked: state.blocked.serial } : {}), ...(state?.allowed ? { allowed: state.allowed } : {}) }); return;
       default: onSeam?.(action);
     }
-  }, [capabilities, conversationId, onSeam, state?.url]);
+  }, [access, conversationId, onSeam, openAllowSheet, state?.allowed, state?.blocked, state?.url]);
 
-  const strip = browserPaneStrip(state);
+  const strip = browserPaneStrip(state, dismissed);
   const view: BrowserPaneProps = {
     address: state?.url ?? '',
     ...(state?.site ? { site: state.site } : {}),
@@ -151,5 +179,10 @@ export function BrowserPanel(
     pageRef: plateRef,
     onAction,
   };
-  return <BrowserPane {...view} />;
+  return (
+    <>
+      <BrowserPane {...view} />
+      {sheet && <BrowserAllowSheet origin={sheet.origin} projectName={sheet.projectName} preset={sheet.preset} onCancel={() => setSheet(null)} onAllow={allow} />}
+    </>
+  );
 }

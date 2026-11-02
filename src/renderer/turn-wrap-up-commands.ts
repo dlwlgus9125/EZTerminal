@@ -33,7 +33,7 @@ import type { StructuredAgentUiResult } from './StructuredAgentSession';
  */
 
 type CardCommandType = 'agent.create' | 'agent.submit' | 'wrap-up.task-outcome' | 'wrap-up.recap-retry' | 'agent.steer-settle' | 'long-run.limit-action'
-  | 'browser.action' | 'browser.close';
+  | 'browser.action' | 'browser.close' | 'browser.site';
 
 type CommandAnswer =
   | { readonly kind: 'ok' }

@@ -195,6 +195,8 @@ export function allowableOrigin(value: string): string | undefined {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
   if (parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') return undefined;
+  // One exact site: the URL parser lets `*.example` through as a name, and nothing here is a pattern.
+  if (!/^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/u.test(parsed.hostname)) return undefined;
   return siteClass(parsed.origin, []) === 'external' ? parsed.origin : undefined;
 }
 
@@ -221,8 +223,10 @@ export interface BrowserViewState {
   readonly canForward: boolean;
   /** Who is at the page: `driving`, a tool ran this turn; `stopped`, the person pressed 브라우저만 중지 this turn. */
   readonly ai: 'none' | 'driving' | 'stopped';
-  /** The last thing the guards stopped, for the pane bar. */
-  readonly blocked?: { readonly origin: string; readonly reason: BrowserRefusal };
+  /** The last thing the guards stopped, for the pane bar. `serial` tells one stop from the next, so a closed bar stays closed. */
+  readonly blocked?: { readonly origin: string; readonly reason: BrowserRefusal; readonly serial: number };
+  /** The site the person just allowed from this pane. */
+  readonly allowed?: string;
   readonly fault?: 'server-down' | 'gone';
   /** `url` is the last page. The app never reloads it unasked after a restart or an eviction. */
   readonly needsReopen?: boolean;

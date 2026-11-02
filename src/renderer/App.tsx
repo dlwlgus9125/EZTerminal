@@ -126,7 +126,8 @@ import { AgentResultsDock, resultsPanelId } from './agent-results/agent-results-
 import { ResultsWidthContext, RESULTS_NARROW_SHARE, RESULTS_WIDE_SHARE, type ResultsWidth } from './shell/results-width';
 import { AgentResultsContext, type AgentResultsHost } from './agent-results/AgentResultsContext';
 import { AgentResultsDockPanel } from './agent-results/AgentResultsDockPanel';
-import { openBrowserPane } from './browser/browser-pane-dock';
+import { sendCardCommand } from './turn-wrap-up-commands';
+import { openBrowserPane, watchBrowserPaneClose } from './browser/browser-pane-dock';
 import { BrowserPanel } from './BrowserPanel';
 import { chatCopy } from './chat/copy';
 import { resultsCopy } from './agent-results/copy';
@@ -755,6 +756,7 @@ export function App(): JSX.Element {
   const languageRef = useRef(i18n.language);
   languageRef.current = i18n.language;
   const browserPaneUnsubscribeRef = useRef<(() => void) | null>(null);
+  const browserPaneCloseRef = useRef<{ dispose(): void } | null>(null);
   const agentResultsHost = useMemo<AgentResultsHost>(() => ({
     open: (ownerPanelId, request) => agentResultsRef.current?.open(ownerPanelId, request) ?? false,
     requestAutoOpen: (ownerPanelId, sessionId) => agentResultsRef.current?.requestAutoOpen(ownerPanelId, sessionId),
@@ -2784,6 +2786,14 @@ export function App(): JSX.Element {
       browserPaneUnsubscribeRef.current = rendererCapabilities.browserPane?.onOpenPane((conversationId) => {
         openBrowserPane(api, conversationId, chatCopy(languageRef.current.toLowerCase().startsWith('ko') ? 'ko' : 'en').browser.pane.label);
       }) ?? null;
+      browserPaneCloseRef.current?.dispose();
+      browserPaneCloseRef.current = watchBrowserPaneClose(api, {
+        isLayoutTransactionActive: () => workbenchCoordinator.isLayoutTransactionActive(),
+        close: (conversationId) => {
+          const { daemon } = rendererCapabilities;
+          void sendCardCommand({ latestSnapshot: daemon.getSnapshot, sendCommand: daemon.sendCommand }, 'browser.close', { sessionId: conversationId });
+        },
+      });
       agentResultsRef.current?.dispose();
       agentResultsRef.current = new AgentResultsDock(api, dockWindows, {
         isLayoutTransactionActive: () => workbenchCoordinator.isLayoutTransactionActive(),

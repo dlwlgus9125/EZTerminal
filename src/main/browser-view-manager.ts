@@ -66,6 +66,8 @@ interface Pane {
   /** This site answered from where it must not; tools refuse it until the person goes elsewhere. */
   rebindOrigin?: string;
   blocked?: BrowserViewState['blocked'];
+  /** The site the person allowed from this pane, until something else happens to it. */
+  allowedNow?: string;
   fault?: BrowserViewState['fault'];
   needsReopen: boolean;
   loading: boolean;
@@ -114,6 +116,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   private readonly panes = new Map<string, Pane>();
   private readonly byContents = new Map<number, Pane>();
   private uses = 0;
+  private blocks = 0;
   private readonly now: () => number;
 
   constructor(private readonly deps: BrowserViewManagerDeps) {
@@ -267,6 +270,22 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   /** The class of a URL for this conversation. */
   classify(conversationId: string, url: string): BrowserSiteClass {
     return this.site(this.pane(conversationId), url);
+  }
+
+  /** A person changed a project's list: every open page of it shows its class now. The guards read the list themselves. */
+  sitesChanged(projectId: string, origin: string, action: 'allow' | 'revoke'): void {
+    for (const pane of this.panes.values()) {
+      if (pane.projectId !== projectId) continue;
+      if (action === 'allow') {
+        if (pane.blocked?.origin === origin) {
+          delete pane.blocked;
+          pane.allowedNow = origin;
+        }
+      } else if (pane.allowedNow === origin) {
+        delete pane.allowedNow;
+      }
+      this.publish(pane);
+    }
   }
 
   /** A tool asked for a site the host refused: the pane bar says so, and allowing it is the person's. */
@@ -494,8 +513,9 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   }
 
   private block(pane: Pane, url: string, reason: BrowserRefusal): void {
-    const blocked = { origin: originOf(url) ?? url, reason };
+    const blocked = { origin: originOf(url) ?? url, reason, serial: (this.blocks += 1) };
     pane.blocked = blocked;
+    delete pane.allowedNow;
     this.publish(pane);
     this.deps.onBlocked?.(pane.conversationId, blocked);
   }
@@ -562,6 +582,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       canForward: contents?.navigationHistory.canGoForward() ?? false,
       ai,
       ...(pane.blocked ? { blocked: pane.blocked } : {}),
+      ...(pane.allowedNow ? { allowed: pane.allowedNow } : {}),
       ...(pane.fault ? { fault: pane.fault } : {}),
       ...(pane.needsReopen ? { needsReopen: true } : {}),
     };

@@ -4388,7 +4388,7 @@ it('persists empty Agents across restart and dispatches only the first submitted
 
 
 describe('what a person does in the in-app browser', () => {
-  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved: vi.fn() });
+  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved: vi.fn(), site: vi.fn(async () => undefined) });
   const started = async (browser: ReturnType<typeof browserHost>) => {
     const h = await harness({ browser });
     await h.prepareWorkspace();
@@ -4474,6 +4474,52 @@ describe('what a person does in the in-app browser', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
+  describe('browser.site', () => {
+    const SITE = 'https://staging.cart-kit.example';
+
+    it('reaches the host with one exact origin, before the command answers', async () => {
+      const browser = browserHost();
+      const h = await started(browser);
+      try {
+        expect(await h.execute('browser.site', { projectId: 'project-1', origin: SITE, action: 'allow' })).toMatchObject({ ok: true });
+        expect(browser.site).toHaveBeenCalledWith('project-1', SITE, 'allow');
+        expect(await h.execute('browser.site', { projectId: 'project-1', origin: `${SITE}/`, action: 'revoke' })).toMatchObject({ ok: true });
+        expect(browser.site).toHaveBeenLastCalledWith('project-1', SITE, 'revoke');
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
+    it.each(['http://localhost:5173', 'file:///C:/index.html', `${SITE}/cart`, 'https://user:pass@staging.cart-kit.example'])('refuses %s: it is no site to allow', async (origin) => {
+      const browser = browserHost();
+      const h = await started(browser);
+      try {
+        expect(await h.execute('browser.site', { projectId: 'project-1', origin, action: 'allow' })).toMatchObject({ ok: false });
+        expect(browser.site).not.toHaveBeenCalled();
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
+    it('refuses a project that is not there', async () => {
+      const browser = browserHost();
+      const h = await started(browser);
+      try {
+        expect(await h.execute('browser.site', { projectId: 'nobody', origin: SITE, action: 'allow' })).toMatchObject({ ok: false, error: { code: 'not-found' } });
+        expect(browser.site).not.toHaveBeenCalled();
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+
+    it.each<[string, DaemonPrincipal]>([
+      ['a phone', { kind: 'android', id: 'phone' }],
+      ['an AI\'s own shell', { kind: 'cli', id: 'chat', sessionId: 'chat' }],
+      ['an AI\'s MCP capability', { kind: 'mcp', id: 'session-chat', sessionId: 'chat' }],
+    ])('takes nothing from %s, through the real router', async (_who, principal) => {
+      const browser = browserHost();
+      const h = await started(browser);
+      try {
+        expect(await h.execute('browser.site', { projectId: 'project-1', origin: SITE, action: 'allow' }, principal)).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+        expect(browser.site).not.toHaveBeenCalled();
+      } finally { await h.runtime.dispose(); await h.store.close(); }
+    });
+  });
+
   it('leaves the picker to its step', async () => {
     const browser = browserHost();
     const h = await started(browser);
@@ -4488,7 +4534,7 @@ describe('a browser action waiting on a person', () => {
   const approvalRequest = { v: 1 as const, kind: 'tool' as const, toolName: 'browser_click', target: 'https://staging.cart-kit.example', input: '{"element":"button \\"Pay\\""}' };
   const held = async () => {
     const approvalResolved = vi.fn();
-    const browser = { navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved };
+    const browser = { navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved, site: vi.fn(async () => undefined) };
     const h = await harness({ browser });
     await h.prepareWorkspace();
     await h.enable(h.codex, 'codex');
@@ -4597,6 +4643,25 @@ describe('a browser action waiting on a person', () => {
     try {
       expect(await h.runtime.raiseHostApproval({ sessionId: 'chat', turnId, providerRequestId: 'call-9', risk: 'write', title: 't' })).toBeUndefined();
     } finally { await done(h); }
+  });
+
+  it('settles the held tool call through the real router, when the person stops the turn', async () => {
+    const { BrowserApprovals } = await import('./browser-approvals');
+    const h = await harness();
+    try {
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Go' });
+      const turnId = h.router.getSnapshot().agents.find((entry) => entry.sessionId === 'chat')!.currentTurnId!;
+      const approvals = new BrowserApprovals({
+        raise: (input) => h.runtime.raiseHostApproval(input), expire: (id) => h.runtime.expireHostApproval(id),
+        getSnapshot: () => h.router.getSnapshot(), onEvent: (listener) => h.router.onEvent(listener),
+      });
+      const answer = approvals.request({ sessionId: 'chat', turnId, origin: 'https://staging.cart-kit.example', tool: 'browser_click', action: 'click', run: { kind: 'click' } });
+      await vi.waitFor(() => { expect(h.router.getSnapshot().approvals.some((entry) => entry.state === 'pending')).toBe(true); });
+      await h.execute('agent.interrupt', { sessionId: 'chat' });
+      await expect(answer).resolves.toBe('approval-timeout');
+      approvals.dispose();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 
   it('does not stop a conversation for a recap', async () => {

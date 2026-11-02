@@ -44,6 +44,7 @@ import { installFileToolsIpc } from './file-tools-ipc';
 import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
+import { BrowserLastPages, BrowserSiteStore } from './browser-site-store';
 import { BrowserTools } from './browser-tools';
 import { BrowserViewManager } from './browser-view-manager';
 import { installOpenClawChatIpc, installOpenClawManagementIpc, installOpenClawVisibilityIpc } from './openclaw-ipc';
@@ -990,6 +991,9 @@ app.on('ready', async () => {
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
   const browserToolsRef: { current?: BrowserTools } = {};
   const browserApprovalsRef: { current?: BrowserApprovals } = {};
+  const browserSites = new BrowserSiteStore(app.getPath('userData'));
+  const browserPages = new BrowserLastPages(app.getPath('userData'));
+  await Promise.all([browserSites.load(), browserPages.load()]);
   /** Who gets the browser tools at launch: the setting, for a conversation a person sees. Step 17 adds the provider's floor here. */
   const browserSessionListed = (sessionId: string): boolean => {
     const router = daemonRouterRef.current;
@@ -1171,6 +1175,11 @@ app.on('ready', async () => {
       stop: (conversationId) => browserView?.stopAi(conversationId),
       close: (conversationId) => browserView?.close(conversationId),
       approvalResolved: (providerRequestId, decision, response) => browserApprovalsRef.current?.resolved(providerRequestId, decision, response),
+      site: async (projectId, origin, action) => {
+        await (action === 'allow' ? browserSites.allow(projectId, origin) : browserSites.revoke(projectId, origin));
+        if (action === 'revoke') browserApprovalsRef.current?.forgetSite(origin);
+        browserView?.sitesChanged(projectId, origin, action);
+      },
     },
     providers: providerRegistry,
     agentUsageStore: {
@@ -4743,8 +4752,9 @@ app.on('ready', async () => {
       const folders = await conversationFolders(snapshot, { projectId: session.projectId, workspaceId: session.workspaceId });
       return { projectId: session.projectId, roots: folders ? [folders.primary, ...folders.additional] : [] };
     },
-    // Step 10: the project's list.
-    allowedOrigins: () => [],
+    allowedOrigins: (projectId) => browserSites.origins(projectId),
+    lastUrl: (conversationId) => browserPages.get(conversationId),
+    rememberUrl: (conversationId, url) => browserPages.remember(conversationId, url),
     // Every port this app listens on. A page never reaches them, whoever it is and whatever the resource.
     controlPorts: () => new Set([
       agentOrchestrationMcpServer.listeningPort(), agentControlServer?.listeningPort() ?? null, agentHookRelay.listeningPort(),
@@ -4782,6 +4792,11 @@ app.on('ready', async () => {
   });
   browserToolsRef.current = browserTools;
   daemonRouterRef.current?.onEvent((event) => {
+    if (event.kind === 'entity.archived' && event.payload.entityType === 'session') {
+      browserView?.forget(event.payload.entityId);
+      browserPages.forget(event.payload.entityId);
+      return;
+    }
     if (event.kind !== 'entity.upserted' || event.payload.entityType !== 'turn') return;
     const turn = daemonRouterRef.current?.getSnapshot().turns.find((entry) => entry.id === event.payload.entityId);
     if (!turn || !['completed', 'interrupted', 'failed'].includes(turn.state)) return;

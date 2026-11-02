@@ -24,6 +24,8 @@ beforeAll(async () => {
   const outDir = path.join(scratch, 'bundle');
   await build({
     root, configFile: false, logLevel: 'silent',
+    // It runs from a scratch folder, with no node_modules beside it.
+    ssr: { noExternal: true },
     build: {
       ssr: path.join(root, 'src', 'main', 'browser-view-manager.harness.ts'), outDir, emptyOutDir: true, minify: false,
       rollupOptions: { external: ['electron'], output: { format: 'es', entryFileNames: 'harness.mjs' } },
@@ -32,11 +34,11 @@ beforeAll(async () => {
   const electron = createRequire(__filename)('electron') as unknown as string;
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  await new Promise<void>((resolve) => {
-    execFile(electron, [path.join(outDir, 'harness.mjs'), '--scratch', scratch], { env, timeout: 150_000 }, () => resolve());
+  const failure = await new Promise<string>((resolve) => {
+    execFile(electron, [path.join(outDir, 'harness.mjs'), '--scratch', scratch], { env, timeout: 150_000 }, (error, _stdout, stderr) => resolve(`${error?.message ?? ''}\n${stderr}`.slice(-2_000)));
   });
   const file = path.join(scratch, 'report.json');
-  report = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as Report : { fatal: 'the harness wrote no report' };
+  report = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as Report : { fatal: `the harness wrote no report: ${failure}` };
 }, 180_000);
 
 afterAll(() => {
