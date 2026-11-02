@@ -188,6 +188,66 @@ describe('DNS rebinding', () => {
   });
 });
 
+describe('what the tools do to a real page, unseen', () => {
+  const snapshot = (): { text: string; truncated: boolean; unreadFrames: readonly string[] } => report['tools-snapshot'] as never;
+
+  it('reads the page, a frame it may read, and refs what can be acted on', () => {
+    expect(snapshot().text).toMatch(/heading "Order summary"/u);
+    expect(snapshot().text).toMatch(/textbox "Name" value="old" \[ref=e\d+\]/u);
+    expect(snapshot().text).toMatch(/button "Save" \[ref=e\d+\]/u);
+    expect(snapshot().text).toContain('SAME-ORIGIN-FRAME-TEXT');
+  });
+
+  it('never returns a password', () => {
+    expect(snapshot().text).toMatch(/textbox "Password"/u);
+    expect(snapshot().text).not.toContain('hunter2-secret');
+  });
+
+  it('names a frame it did not read, and reads nothing of it', () => {
+    expect(snapshot().unreadFrames.some((url) => url.includes('evil.example'))).toBe(true);
+    expect(snapshot().text).not.toContain('landed');
+  });
+
+  it('clicks, types over what a field holds, and presses', () => {
+    expect(report['tools-clicked']).toBe(1);
+    expect(report['tools-typed']).toBe('Ada');
+    expect(report['tools-retyped']).toBe('Grace');
+    expect(report['tools-pressed']).toBe(1);
+  });
+
+  it('tells a password field by its own reading', () => {
+    expect(report['tools-password']).toMatchObject({ password: true });
+    expect(report['tools-name-target']).toMatchObject({ password: false, name: 'Name', role: 'textbox' });
+  });
+
+  it('will not click what something else covers, whatever the page\'s own contains says', () => {
+    expect(report['tools-covered']).toBe('stale-ref');
+  });
+
+  it('asks the page\'s own code nothing: its poisoned contains and focus never ran', () => {
+    expect(report['tools-poisoned']).toBe(0);
+  });
+
+  it('opens no file dialog and says so', () => {
+    expect(report['tools-chooser']).toMatchObject({ opened: true });
+  });
+
+  it('hears the console', () => {
+    const lines = report['tools-console'] as readonly string[];
+    expect(lines.some((line) => line.includes('page says hello'))).toBe(true);
+    expect(lines.some((line) => line.includes('thrown here'))).toBe(true);
+  });
+
+  it('shoots CSS pixels as JPEG, the whole page or one element', () => {
+    expect(report['tools-shot']).toMatchObject({ width: 1280, height: 800, jpeg: '/9j/' });
+    expect(report['tools-crop']).toMatchObject({ smaller: true });
+  });
+
+  it('ends a ref at a navigation', () => {
+    expect(report['tools-after-navigation']).toBe('stale-ref');
+  });
+});
+
 describe('the app\'s own ports', () => {
   it('no resource type reaches them, from a local page or from the person', () => {
     expect(report.controlHits).toBe(0);

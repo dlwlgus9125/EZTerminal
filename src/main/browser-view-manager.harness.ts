@@ -10,6 +10,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { BROWSER_PARTITION, type BrowserViewState } from '../shared/browser';
+import { BrowserRefused, parseKeys } from './browser-cdp';
 import type { BrowserPartitionSession } from './browser-network-guard';
 import { BrowserViewManager } from './browser-view-manager';
 
@@ -88,6 +89,21 @@ async function main(): Promise<void> {
 <script>fetch('${base}/pwn-fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon('${base}/pwn-beacon','x')</script>`);
       case '/with-frames':
         return html(response, `<!doctype html><title>t</title><iframe src="/landed?via=own-frame"></iframe>`);
+      case '/form':
+        return html(response, `<!doctype html><title>form</title><body style="margin:0">
+<script>
+Node.prototype.contains=()=>{window.poisoned=1;return true};HTMLElement.prototype.focus=()=>{window.poisoned=1};
+console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0);
+</script>
+<h1 style="margin:10px">Order summary</h1>
+<form onsubmit="event.preventDefault();window.submitted=(window.submitted||0)+1" style="margin:10px">
+<input id=name aria-label=Name value="old" onkeydown="if(event.key==='Enter')window.submitted=(window.submitted||0)+1"><input id=pw type=password aria-label=Password value="hunter2-secret">
+<button type=button onclick="window.saved=(window.saved||0)+1">Save</button>
+<button type=button onclick="document.getElementById('file').click()">Attach</button><input id=file type=file style="display:none">
+</form>
+<iframe srcdoc="<p>SAME-ORIGIN-FRAME-TEXT</p>" width=200 height=60></iframe>
+<iframe src="http://evil.example:${String(port)}/landed?via=cross-frame" width=200 height=60></iframe>
+<div id=cover style="display:none;position:fixed;left:0;top:0;width:100%;height:100%;background:#fff"></div>`);
       case '/counter':
         return html(response, `<!doctype html><title>c</title><body style="margin:0"><button id=go style="position:fixed;left:20px;top:20px;font-size:22px" onclick="window.clicked=(window.clicked||0)+1">go</button>`);
       default: return false;
@@ -336,6 +352,51 @@ async function main(): Promise<void> {
   win.restore();
   win.showInactive();
   await delay(200);
+
+  // What the tools do to a real page, unseen. The page's own `contains` and `focus` are poisoned: the host must not ask them.
+  {
+    const id = 'pane-tools';
+    const contents = await open(id, `${base}/form`);
+    await delay(SETTLE_MS);
+    manager.beginTool(id, 'turn-1');
+    const page = manager.page(id);
+    if (!page.ok) throw new Error(page.reason);
+    const { cdp } = page;
+    const first = await cdp.snapshot();
+    report['tools-snapshot'] = first;
+    const refOf = (text: string, label: string): string => new RegExp(`${label}[^\\n]*\\[ref=(e\\d+)\\]`, 'u').exec(text)?.[1] ?? '';
+    await cdp.click(refOf(first.text, 'button "Save"'));
+    await delay(150);
+    report['tools-clicked'] = await js(contents, 'return window.saved ?? 0');
+    await cdp.type(refOf(first.text, 'textbox "Name"'), 'Ada');
+    report['tools-typed'] = await js(contents, 'return document.getElementById("name").value');
+    await cdp.type(refOf(first.text, 'textbox "Name"'), 'Grace');
+    report['tools-retyped'] = await js(contents, 'return document.getElementById("name").value');
+    const pressed = parseKeys('Enter');
+    await cdp.press(pressed!);
+    await delay(150);
+    report['tools-pressed'] = await js(contents, 'return window.submitted ?? 0');
+    report['tools-password'] = await cdp.target(refOf(first.text, 'textbox "Password"'));
+    report['tools-name-target'] = await cdp.target(refOf(first.text, 'textbox "Name"'));
+    await js(contents, 'document.getElementById("cover").style.display="block"');
+    await delay(100);
+    report['tools-covered'] = await cdp.click(refOf(first.text, 'button "Save"')).then(() => 'clicked', (error: unknown) => (error instanceof BrowserRefused ? error.reason : String(error)));
+    await js(contents, 'document.getElementById("cover").style.display="none"');
+    await cdp.click(refOf(first.text, 'button "Attach"'));
+    await delay(150);
+    report['tools-chooser'] = { opened: cdp.fileChooserOpened(), url: contents.mainFrame.url.replace(String(port), 'PORT') };
+    report['tools-poisoned'] = await js(contents, 'return window.poisoned ?? 0');
+    report['tools-console'] = cdp.consoleLines().filter((line) => line.includes('page says') || line.includes('thrown here'));
+    const shot = await cdp.screenshot();
+    report['tools-shot'] = { width: shot.width, height: shot.height, jpeg: shot.jpegBase64.slice(0, 4) };
+    const crop = await cdp.screenshot(refOf(first.text, 'button "Save"'));
+    report['tools-crop'] = { width: crop.width, height: crop.height, smaller: crop.width < 300 };
+    await js(contents, `location.href='/landed?via=refs'`);
+    await delay(SETTLE_MS);
+    report['tools-after-navigation'] = await cdp.click(refOf(first.text, 'button "Save"')).then(() => 'clicked', (error: unknown) => (error instanceof BrowserRefused ? error.reason : String(error)));
+    manager.endTool(id);
+    manager.forget(id);
+  }
 
   // The app's own ports, from a local page and for the person.
   await record('control-subresources', scripted(`const c=${JSON.stringify(controlBase)};new Image().src=c+'/img';fetch(c+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(c+'/beacon','x');const s=document.createElement('script');s.src=c+'/s.js';document.body.append(s);try{new WebSocket(c.replace('http','ws')+'/ws')}catch{}const f=document.createElement('iframe');f.src=c+'/frame';document.body.append(f)`));

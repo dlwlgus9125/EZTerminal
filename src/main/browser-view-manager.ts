@@ -1,6 +1,7 @@
 import { BaseWindow, session as electronSession, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 
 import { addressBarUrl, BROWSER_PARTITION, siteClass, type BrowserRefusal, type BrowserSiteClass, type BrowserViewState } from '../shared/browser';
+import { BrowserCdp } from './browser-cdp';
 import {
   fileInsideRoots,
   installBrowserPartitionGuards,
@@ -49,6 +50,7 @@ interface Pane {
   view: WebContentsView | null;
   /** The window the view sits in now: the app's, or the parking one. */
   host: BaseWindow | null;
+  cdp?: BrowserCdp;
   lastUrl: string;
   /** Set by the first tool call. Nothing ever clears it. */
   guarded: boolean;
@@ -101,7 +103,7 @@ export interface BrowserViewManagerDeps {
 }
 
 export type BrowserPageResult =
-  | { readonly ok: true; readonly contents: WebContents; readonly url: string; readonly site: BrowserSiteClass }
+  | { readonly ok: true; readonly contents: WebContents; readonly cdp: BrowserCdp; readonly url: string; readonly site: BrowserSiteClass }
   | { readonly ok: false; readonly reason: BrowserRefusal };
 
 export class BrowserViewManager implements BrowserNetworkGuardHost {
@@ -241,11 +243,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const pane = this.pane(conversationId);
     if (pane.fault === 'gone') return { ok: false, reason: 'page-gone' };
     const contents = this.liveContents(pane);
-    if (!contents) return { ok: false, reason: 'no-page' };
+    if (!contents || !pane.cdp) return { ok: false, reason: 'no-page' };
     const url = contents.mainFrame.url;
     if (!url || url === 'about:blank') return { ok: false, reason: 'no-page' };
     if (pane.rebindOrigin !== undefined && originOf(url) === pane.rebindOrigin) return { ok: false, reason: 'rebind-suspected' };
-    return { ok: true, contents, url, site: this.site(pane, url) };
+    return { ok: true, contents, cdp: pane.cdp, url, site: this.site(pane, url) };
   }
 
   /** The AI's own navigation: the caller has checked the target. Its redirects meet the guards like any other. */
@@ -431,6 +433,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     });
     contents.on('did-navigate', (_event, url) => {
       pane.personNavigating = false;
+      pane.cdp?.clearRefs();
       this.remember(pane, url);
     });
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
@@ -446,22 +449,10 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       pane.fault = 'gone';
       this.teardown(pane, true);
     });
-    const dbg = contents.debugger;
-    const attach = (): void => {
-      try {
-        if (!dbg.isAttached()) dbg.attach('1.3');
-        void dbg.sendCommand('Page.enable').catch(() => undefined);
-      } catch {
-        // Nothing attached means no reason to read: a link is then refused like a script, and the tools report a gone page.
-      }
-    };
-    dbg.on('message', (_event, method, params: { readonly url?: string; readonly reason?: string }) => {
-      if (method === 'Page.frameRequestedNavigation' && params.url && params.reason) pane.requested = { url: params.url, reason: params.reason, at: this.now() };
+    pane.cdp = new BrowserCdp(contents, {
+      onNavigationRequested: (url, reason) => { pane.requested = { url, reason, at: this.now() }; },
+      classify: (url) => this.site(pane, url),
     });
-    dbg.on('detach', () => {
-      if (this.liveContents(pane) === contents) attach();
-    });
-    attach();
   }
 
   /** A real click or key, with no tool running since, that led to a link or a form at this very URL. */
@@ -533,6 +524,8 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     if (!view) return;
     const contents = view.webContents;
     this.byContents.delete(contents.id);
+    pane.cdp?.close();
+    delete pane.cdp;
     pane.needsReopen = pane.lastUrl !== '' && pane.fault !== 'gone';
     try {
       if (host && !host.isDestroyed()) host.contentView.removeChildView(view);
