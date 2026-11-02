@@ -21,6 +21,11 @@ function cdp(patch: Partial<Record<keyof BrowserCdp, unknown>> = {}) {
     consoleLines: vi.fn(() => ['log: hello', 'warning: careful', 'error: broken', 'exception: TypeError']),
     pageText: vi.fn(async () => 'Order summary'),
     target: vi.fn(async () => BUTTON),
+    // As the real one reads it: what `target` says now, and whatever else a test moves.
+    document: 'document-1',
+    binding: vi.fn(async function binding(this: { target: () => Promise<BrowserTarget>; document: string }, ref?: string): Promise<string> {
+      return JSON.stringify({ document: this.document, element: ref === undefined ? null : await this.target() });
+    }),
     click: vi.fn(async () => undefined),
     type: vi.fn(async () => undefined),
     press: vi.fn(async () => undefined),
@@ -326,19 +331,38 @@ describe('approval', () => {
 
     it('the element changed', async () => {
       const h = during(({ driver }) => { driver.target.mockResolvedValue({ role: 'button', name: 'Delete account', password: false }); });
-      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('stale-ref');
+      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('approval-void');
       expect(h.driver.click).not.toHaveBeenCalled();
     });
 
     it('the element became a password field', async () => {
       const h = during(({ driver }) => { driver.target.mockResolvedValue({ ...BUTTON, password: true }); });
-      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('stale-ref');
+      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('approval-void');
     });
 
     it('the element went', async () => {
       const h = during(({ driver }) => { driver.target.mockRejectedValue(new BrowserRefused('stale-ref')); });
-      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('stale-ref');
+      expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('approval-void');
       expect(h.driver.click).not.toHaveBeenCalled();
+    });
+
+    it('the document changed under a press, which names no element', async () => {
+      const h = during(({ driver }) => { driver.document = 'document-2'; });
+      expect(code(await h.call('browser_press', { key: 'Enter' }))).toBe('approval-void');
+      expect(h.driver.press).not.toHaveBeenCalled();
+    });
+
+    it('is the host\'s to say: a voided approval leaves a row, unlike a plain stale ref', async () => {
+      const onRefused = vi.fn();
+      const driver = cdp();
+      const pages = harness({ url: ALLOWED, cdp: driver }).pages;
+      const tools = new BrowserTools({
+        pages, getSnapshot: () => ({ runtime: { browserEnabled: true }, agents: [{ sessionId: 'chat', state: 'working', currentTurnId: 'turn-1' }] }) as unknown as DaemonSnapshot,
+        turnAttended: () => true, onRefused, delay: async () => undefined,
+        requestApproval: async () => { driver.document = 'document-2'; return 'allow'; },
+      });
+      await tools.call({ sessionId: 'chat', projectId: 'project', permissionPreset: 'standard', turnId: 'turn-1' }, 'browser_press', { key: 'Enter' });
+      expect(onRefused).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: 'approval-void' }));
     });
 
     it('the page crashed', async () => {

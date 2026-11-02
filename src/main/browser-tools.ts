@@ -166,6 +166,7 @@ const REFUSAL_WORDS: Readonly<Record<BrowserRefusal, string>> = {
   'upload-unsupported': 'File uploads are not supported; no file was chosen.',
   'approval-declined': 'The person declined this action.',
   'approval-timeout': 'Nobody answered in time, so this did not run.',
+  'approval-void': 'The page changed after the person was asked, so what they saw is not what would run. Nothing ran.',
   'rebind-suspected': 'This site answered from an address it must not use, so the app stopped it.',
   limit: 'Too many of these in one turn.',
   'download-blocked': 'Downloads are blocked.',
@@ -397,14 +398,16 @@ export class BrowserTools {
     const target = ref === undefined ? undefined : await page.cdp.target(ref);
     if (action === 'type' && target?.password && page.site === 'allowed') throw new BrowserRefused('password-field');
     if (this.asks(context, page.site, origin)) {
+      const bound = await page.cdp.binding(ref);
       await this.approve(context, turnId, { origin, tool, action, run, ...(target ? { pageElement: `${target.role} "${target.name}"` } : {}) }, signal);
-      // What was approved must still be what will run: same page, same element, same allow state.
+      // What was approved must still be what will run: same allow state, same document, same focus, same element.
       const now = this.currentPage(context);
       if (originOf(now.url) !== origin || now.site !== page.site) throw new BrowserRefused('site-not-allowed');
-      if (ref !== undefined) {
-        const again = await now.cdp.target(ref);
-        if (again.role !== target?.role || again.name !== target.name || again.password !== target.password) throw new BrowserRefused('stale-ref');
-      }
+      const still = await now.cdp.binding(ref).catch((error: unknown) => {
+        if (error instanceof BrowserRefused && error.reason === 'stale-ref') return undefined;
+        throw error;
+      });
+      if (still !== bound) throw new BrowserRefused('approval-void');
     }
     const before = this.deps.pages.state(sessionId).blocked;
     await perform(page.cdp);

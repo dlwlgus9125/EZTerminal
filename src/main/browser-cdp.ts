@@ -44,7 +44,7 @@ const NAME_FROM_CONTENT_ROLES = new Set([
 
 /** A refusal in the tools' own words. */
 export class BrowserRefused extends Error {
-  constructor(readonly reason: BrowserRefusal, message?: string) {
+  constructor(readonly reason: BrowserRefusal, message?: string, readonly detail?: Readonly<Record<string, unknown>>) {
     super(message ?? reason);
     this.name = 'BrowserRefused';
   }
@@ -61,7 +61,18 @@ interface AxNode {
   readonly childIds?: readonly string[];
   readonly parentId?: string;
 }
-interface FrameTree { readonly frame: { readonly id: string; readonly url: string }; readonly childFrames?: readonly FrameTree[] }
+interface FrameTree { readonly frame: { readonly id: string; readonly url: string; readonly loaderId?: string }; readonly childFrames?: readonly FrameTree[] }
+
+/** Where the keyboard is: a same-origin frame or an open shadow root hands focus on, and a frame it cannot enter answers for what is inside. */
+const DEEPEST_FOCUS = `(()=>{
+  let at=document.activeElement;
+  for(;;){
+    let inner=null;
+    try{inner=at&&(at.shadowRoot?at.shadowRoot.activeElement:at.contentDocument&&at.contentDocument.activeElement)}catch{}
+    if(!inner)return at;
+    at=inner;
+  }
+})()`;
 
 const CAPTURED_STYLES = ['opacity', 'font-size', 'visibility'];
 const TEXT_NODE = 3;
@@ -433,6 +444,16 @@ export class BrowserCdp {
     return ref;
   }
 
+  /** An element's role and name now: a page can rename a button under a ref, so a snapshot's words answer for nothing here. */
+  private async liveElement(backendNodeId: number): Promise<{ readonly role: string; readonly name: string }> {
+    const { nodes } = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false }).catch((error: unknown) => {
+      if (error instanceof BrowserRefused) throw error;
+      throw new BrowserRefused('stale-ref');
+    });
+    const node = nodes.find((entry) => entry.backendDOMNodeId === backendNodeId) ?? nodes[0];
+    return { role: text(node?.role), name: text(node?.name) };
+  }
+
   /** What a ref points at now, from the host's own reading; a node the page removed is a stale ref. */
   async target(id: string): Promise<BrowserTarget> {
     const ref = this.ref(id);
@@ -443,7 +464,35 @@ export class BrowserCdp {
       });
     const attributes = described.node.attributes ?? [];
     const type = attributes[attributes.indexOf('type') + 1]?.toLowerCase();
-    return { role: ref.role, name: ref.name, password: described.node.nodeName?.toLowerCase() === 'input' && attributes.includes('type') && type === 'password' };
+    return { ...await this.liveElement(ref.backendNodeId), password: described.node.nodeName?.toLowerCase() === 'input' && attributes.includes('type') && type === 'password' };
+  }
+
+  /** The element the keyboard is on, read in a world the page cannot reach. */
+  private async focus(frameId: string): Promise<string> {
+    const { executionContextId } = await this.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: 'ezterminal-browser', grantUniveralAccess: false });
+    const { result } = await this.send<{ result: { objectId?: string } }>('Runtime.evaluate', { expression: DEEPEST_FOCUS, contextId: executionContextId });
+    if (!result.objectId) return '';
+    const { node } = await this.send<{ node: { backendNodeId: number } }>('DOM.describeNode', { objectId: result.objectId });
+    const { role, name } = await this.liveElement(node.backendNodeId);
+    return `${String(node.backendNodeId)}:${role}:${name}`;
+  }
+
+  /**
+   * What an approval was given for, read live: which document this is, in the main frame and the element's, where the keyboard
+   * is, and what the element is. Two equal readings mean the page did not move under the person; any difference voids the answer.
+   */
+  async binding(id?: string): Promise<string> {
+    const { frameTree } = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree');
+    const frames = (tree: FrameTree): readonly FrameTree[] => [tree, ...(tree.childFrames ?? []).flatMap(frames)];
+    const ref = id === undefined ? undefined : this.ref(id);
+    const frame = ref ? frames(frameTree).find((entry) => entry.frame.id === ref.frameId)?.frame : undefined;
+    if (ref && !frame) throw new BrowserRefused('stale-ref');
+    return JSON.stringify({
+      page: [frameTree.frame.id, frameTree.frame.loaderId],
+      frame: frame ? [frame.id, frame.loaderId] : null,
+      element: ref ? { node: ref.backendNodeId, ...await this.target(id!) } : null,
+      focus: await this.focus(frameTree.frame.id),
+    });
   }
 
   /** Runs in a world the page cannot reach: a page's own `contains` or `focus` is not asked. */
