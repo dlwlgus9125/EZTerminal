@@ -243,6 +243,11 @@ async function stopBridgeResources(
   }
 }
 
+export function configuredRemoteBridgePort(): number {
+  const configuredPort = Number(process.env.EZTERMINAL_REMOTE_PORT);
+  return Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65_535 ? configuredPort : DEFAULT_REMOTE_BRIDGE_PORT;
+}
+
 /**
  * Electron/OS Adapter for the DesktopRuntime Interface. All native paths,
  * window fan-out, secure storage, tray behavior, network selection, and
@@ -251,12 +256,7 @@ async function stopBridgeResources(
 export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOptions): DesktopRuntime {
   // Survives bridge restarts so "last seen" outlives a toggle of the runtime.
   const deviceRoster = options.deviceRoster ?? new RemoteDeviceRoster();
-  const configuredPort = Number(process.env.EZTERMINAL_REMOTE_PORT);
-  const remoteBridgePort = Number.isInteger(configuredPort)
-    && configuredPort > 0
-    && configuredPort <= 65_535
-    ? configuredPort
-    : DEFAULT_REMOTE_BRIDGE_PORT;
+  const remoteBridgePort = configuredRemoteBridgePort();
   const remoteHostPath = resolveNativeHostPath();
   const vpnInterface = process.env.EZTERMINAL_REMOTE_VPN_INTERFACE;
   const desktopControlEnabled = options.desktopControlEnabled

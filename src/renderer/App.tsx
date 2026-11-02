@@ -126,6 +126,9 @@ import { AgentResultsDock, resultsPanelId } from './agent-results/agent-results-
 import { ResultsWidthContext, RESULTS_NARROW_SHARE, RESULTS_WIDE_SHARE, type ResultsWidth } from './shell/results-width';
 import { AgentResultsContext, type AgentResultsHost } from './agent-results/AgentResultsContext';
 import { AgentResultsDockPanel } from './agent-results/AgentResultsDockPanel';
+import { openBrowserPane } from './browser/browser-pane-dock';
+import { BrowserPanel } from './BrowserPanel';
+import { chatCopy } from './chat/copy';
 import { resultsCopy } from './agent-results/copy';
 import { readResultsSource } from './agent-results/results-source-store';
 import { getActiveUiScale } from './ui-scale';
@@ -595,6 +598,7 @@ const components = {
   'project-map': ProjectMapDockPanel,
   'planning-workspace': PlanningWorkspaceDockPanel,
   'agent-results': AgentResultsDockPanel,
+  'browser-preview': BrowserPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -750,6 +754,7 @@ export function App(): JSX.Element {
   const agentResultsRef = useRef<AgentResultsDock | null>(null);
   const languageRef = useRef(i18n.language);
   languageRef.current = i18n.language;
+  const browserPaneUnsubscribeRef = useRef<(() => void) | null>(null);
   const agentResultsHost = useMemo<AgentResultsHost>(() => ({
     open: (ownerPanelId, request) => agentResultsRef.current?.open(ownerPanelId, request) ?? false,
     requestAutoOpen: (ownerPanelId, sessionId) => agentResultsRef.current?.requestAutoOpen(ownerPanelId, sessionId),
@@ -2775,6 +2780,10 @@ export function App(): JSX.Element {
       groupHeadersRef.current = installConversationGroupHeaders(api);
       const dockWindows = new DockWindowCoordinator(api, panelPreview);
       dockWindowCoordinatorRef.current = dockWindows;
+      browserPaneUnsubscribeRef.current?.();
+      browserPaneUnsubscribeRef.current = rendererCapabilities.browserPane?.onOpenPane((conversationId) => {
+        openBrowserPane(api, conversationId, chatCopy(languageRef.current.toLowerCase().startsWith('ko') ? 'ko' : 'en').browser.pane.label);
+      }) ?? null;
       agentResultsRef.current?.dispose();
       agentResultsRef.current = new AgentResultsDock(api, dockWindows, {
         isLayoutTransactionActive: () => workbenchCoordinator.isLayoutTransactionActive(),

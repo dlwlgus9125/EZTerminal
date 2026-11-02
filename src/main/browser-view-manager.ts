@@ -83,7 +83,7 @@ export interface BrowserConversationScope {
 
 export interface BrowserViewManagerDeps {
   /** Undefined: no such conversation; nothing is then allowed and no folder is open. */
-  readonly scope: (conversationId: string) => BrowserConversationScope | undefined;
+  readonly scope: (conversationId: string) => Promise<BrowserConversationScope | undefined>;
   /** The project's list, in memory and read on every decision: a revoke applies at once. */
   readonly allowedOrigins: (projectId: string) => readonly string[];
   /** The app's own listening ports. */
@@ -159,11 +159,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   // ── The person ──────────────────────────────────────────────────────────
 
   /** The address bar and 다시 열기: a navigation the person made. Returns false when the text is nothing it can load. */
-  navigateAsPerson(conversationId: string, address: string): boolean {
+  async navigateAsPerson(conversationId: string, address: string): Promise<boolean> {
     const url = addressBarUrl(address);
     if (!url) return false;
     const pane = this.pane(conversationId);
-    const contents = this.ensureView(pane);
+    const contents = await this.readyView(pane);
     if (!contents) return false;
     delete pane.rebindOrigin;
     delete pane.blocked;
@@ -249,9 +249,9 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   }
 
   /** The AI's own navigation: the caller has checked the target. Its redirects meet the guards like any other. */
-  navigateForTool(conversationId: string, url: string): WebContents | undefined {
+  async navigateForTool(conversationId: string, url: string): Promise<WebContents | undefined> {
     const pane = this.pane(conversationId);
-    const contents = this.ensureView(pane);
+    const contents = await this.readyView(pane);
     if (!contents) return undefined;
     delete pane.blocked;
     delete pane.fault;
@@ -312,12 +312,15 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     return pane.projectId === undefined ? [] : this.deps.allowedOrigins(pane.projectId);
   }
 
-  /** Taken with each new view: a conversation's project and folders do not move under a live page. */
-  private readScope(pane: Pane): void {
-    const scope = this.deps.scope(pane.conversationId);
+  /** A conversation's project and folders are read with each new view, before it loads anything: they do not move under a live page. */
+  private async readyView(pane: Pane): Promise<WebContents | undefined> {
+    const live = this.liveContents(pane);
+    if (live) return live;
+    const scope = await this.deps.scope(pane.conversationId);
     if (scope) pane.projectId = scope.projectId;
     else delete pane.projectId;
     pane.roots = realRoots(scope?.roots ?? []);
+    return this.ensureView(pane);
   }
 
   private policy(pane: Pane): BrowserViewPolicy {
@@ -350,7 +353,6 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const win = this.win;
     if (!win || win.isDestroyed()) return undefined;
     installBrowserPartitionGuards(this.deps.partition?.() ?? electronSession.fromPartition(BROWSER_PARTITION), this);
-    this.readScope(pane);
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, navigateOnDragDrop: false,

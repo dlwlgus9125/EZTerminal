@@ -41,6 +41,8 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
+import { installBrowserIpc } from './browser-ipc';
+import { BrowserViewManager } from './browser-view-manager';
 import { installOpenClawChatIpc, installOpenClawManagementIpc, installOpenClawVisibilityIpc } from './openclaw-ipc';
 import { installProjectMapIpc } from './project-map-ipc';
 import { installProjectWorkspaceIpc } from './project-workspace-ipc';
@@ -209,7 +211,7 @@ import type { DesktopRuntime } from './desktop-runtime';
 import { DesktopWindowManager } from './desktop-window-manager';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { installWindowRenderDiagnostics } from './window-render-diagnostics';
-import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
+import { configuredRemoteBridgePort, createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
 import { buildExplicitQuitDialogOptions } from './explicit-quit-dialog';
 import { FileService } from './file-service';
 import { GitStatusService } from './git-status-service';
@@ -505,6 +507,8 @@ let openClawLifecycleCoordinator: OpenClawLifecycleCoordinator | null = null;
 // module-level ref, mirrors mainWindowRef below), torn down on window
 // reload/close (packetCaptureRegistry teardown hygiene precedent) and quit.
 let openClawChatView: OpenClawChatViewManager | null = null;
+// The in-app browser's views: same lifecycle as the OpenClaw view above.
+let browserView: BrowserViewManager | null = null;
 
 // The main BrowserWindow — module-level (like the refs above) because
 // createWindow() itself is defined outside 'ready', and openClawChatView's
@@ -675,6 +679,7 @@ const createWindow = (): BrowserWindow => {
   installWindowRenderDiagnostics(mainWindow, (message) => renderDiagnosticsLog.line(message));
   desktopWindowManager?.configureMainWindow(mainWindow);
   openClawChatView?.attach(mainWindow);
+  browserView?.attach(mainWindow);
 
   // Chromium reserves Ctrl+Tab before a renderer KeyboardEvent exists (the
   // real Electron E2E observes ControlLeft but no Tab keydown). Capture only
@@ -757,6 +762,8 @@ const createWindow = (): BrowserWindow => {
     // Same reasoning again for the OpenClaw chat view (M3): a reload drops
     // the renderer's bounds/visibility reporting, orphaning the WebContentsView.
     openClawChatView?.destroy();
+    browserView?.destroy();
+    if (browserView) browserView.attach(mainWindow);
   });
 
   // Window destroy (Phase 2B): stop any live capture host — it must not
@@ -765,6 +772,7 @@ const createWindow = (): BrowserWindow => {
     rendererCrashRecovery.dispose();
     packetCaptureRegistry?.kill();
     openClawChatView?.destroy();
+    browserView?.destroy();
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
 
@@ -1139,6 +1147,14 @@ app.on('ready', async () => {
     reviews: reviewCoordinator,
     wrapUp: turnWrapUpCoordinator,
     longRun: longRunCoordinator,
+    browser: {
+      navigate: (conversationId, address) => { void browserView?.navigateAsPerson(conversationId, address); },
+      reload: (conversationId) => browserView?.reloadAsPerson(conversationId),
+      back: (conversationId) => browserView?.goBackAsPerson(conversationId),
+      forward: (conversationId) => browserView?.goForwardAsPerson(conversationId),
+      stop: (conversationId) => browserView?.stopAi(conversationId),
+      close: (conversationId) => browserView?.close(conversationId),
+    },
     providers: providerRegistry,
     agentUsageStore: {
       load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
@@ -3118,6 +3134,15 @@ app.on('ready', async () => {
         },
       },
       {
+        name: 'in-app browser views',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const view = browserView;
+          browserView = null;
+          view?.destroy();
+        },
+      },
+      {
         name: 'agent control server',
         after: ['main-owned runtime startup'],
         run: () => {
@@ -4691,6 +4716,28 @@ app.on('ready', async () => {
     },
   });
 
+  // ── In-app browser views ──────────────────────────────────────────────────
+  browserView = new BrowserViewManager({
+    scope: async (conversationId) => {
+      const snapshot = daemonRouterRef.current?.getSnapshot();
+      const session = snapshot?.sessions.find((entry) => entry.id === conversationId);
+      if (!snapshot || !session) return undefined;
+      const folders = await conversationFolders(snapshot, { projectId: session.projectId, workspaceId: session.workspaceId });
+      return { projectId: session.projectId, roots: folders ? [folders.primary, ...folders.additional] : [] };
+    },
+    // Step 10: the project's list.
+    allowedOrigins: () => [],
+    // Every port this app listens on. A page never reaches them, whoever it is and whatever the resource.
+    controlPorts: () => new Set([
+      agentOrchestrationMcpServer.listeningPort(), agentControlServer?.listeningPort() ?? null, agentHookRelay.listeningPort(),
+      configuredRemoteBridgePort(), openclaw.getEndpoint().port, Number(process.env.EZTERMINAL_OPENCLAW_PROXY_PORT) || DEFAULT_OPENCLAW_PROXY_PORT,
+    ].filter((port): port is number => port !== null)),
+    onState: (state) => {
+      const window = mainWindowRef;
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:view-state', state);
+    },
+  });
+
   // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──
   // Default OFF (opt-in — see LayoutStore.getRemoteEnabled): the bridge grants
   // a paired device full command + filesystem access, so the listener only
@@ -5179,6 +5226,11 @@ app.on('ready', async () => {
   // doc). `chat-open` is sent only once the panel observes status==='running';
   // the revisioned surface message is the sole ownership/geometry/visibility
   // contract and `mounted:false` tears the native view down.
+      featureIpcDisposers.push(installBrowserIpc({
+        ipc: ipcMain,
+        view: () => browserView,
+        mainWebContents: () => mainWindowRef?.webContents,
+      }));
       featureIpcDisposers.push(installOpenClawChatIpc({
         ipc: ipcMain,
         get openClawChatView() { return openClawChatView; },

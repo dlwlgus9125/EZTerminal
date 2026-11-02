@@ -896,6 +896,22 @@ const desktopApi: EzTerminalDesktopApi = {
     return () => ipcRenderer.removeListener('openclaw:chat-view-state', handler);
   },
   openOpenClawChatExternal: (): Promise<boolean> => ipcRenderer.invoke('openclaw:chat-open-external'),
+  setBrowserSurface: (surface: import('../shared/browser').BrowserSurfaceSnapshot): void => {
+    ipcRenderer.send('browser:surface', surface);
+  },
+  getBrowserViewState: (conversationId: string): Promise<import('../shared/browser').BrowserViewState | null> => (
+    ipcRenderer.invoke('browser:state', conversationId)
+  ),
+  onBrowserViewState: (listener: (state: import('../shared/browser').BrowserViewState) => void): (() => void) => {
+    const handler = (_event: unknown, state: import('../shared/browser').BrowserViewState): void => listener(state);
+    ipcRenderer.on('browser:view-state', handler);
+    return () => ipcRenderer.removeListener('browser:view-state', handler);
+  },
+  onBrowserOpenPane: (listener: (conversationId: string) => void): (() => void) => {
+    const handler = (_event: unknown, conversationId: string): void => listener(conversationId);
+    ipcRenderer.on('browser:open-pane', handler);
+    return () => ipcRenderer.removeListener('browser:open-pane', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

@@ -140,6 +140,11 @@ export class AgentControlServer {
     this.origin = `http://127.0.0.1:${String(address.port)}`;
   }
 
+  /** The port it listens on, null before it starts: the in-app browser keeps pages away from it. */
+  listeningPort(): number | null {
+    return this.origin ? Number(new URL(this.origin).port) : null;
+  }
+
   descriptorForSession(sessionId: string): string {
     if (!this.server || !this.origin) return '';
     const projectId = this.projectIdForSession(sessionId);

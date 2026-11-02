@@ -336,6 +336,11 @@ export class AgentOrchestrationMcpServer {
     server.unref();
   }
 
+  /** The port it listens on, null before `start`: the in-app browser keeps pages away from it. */
+  listeningPort(): number | null {
+    return this.port;
+  }
+
   descriptorForSession(sessionId: string): NonNullable<ProviderSessionContext['orchestration']> {
     if (!this.server || this.port === null) throw new Error('Agent orchestration MCP server is not running.');
     if (!sessionId.trim() || sessionId.length > 256) throw new Error('Agent orchestration session id is invalid.');

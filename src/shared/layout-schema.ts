@@ -130,6 +130,12 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     }),
   }),
   PanelBaseSchema.extend({
+    // A conversation's in-app browser. A restored one shows the last address; nothing reloads by itself.
+    contentComponent: z.literal('browser-preview'),
+    renderer: z.literal('always').optional(),
+    params: z.strictObject({ conversationId: z.string().min(1).max(256) }),
+  }),
+  PanelBaseSchema.extend({
     contentComponent: z.literal('planning-workspace'),
     renderer: z.literal('always').optional(),
     params: z.strictObject({

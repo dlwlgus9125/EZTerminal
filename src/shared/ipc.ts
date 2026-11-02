@@ -1,3 +1,4 @@
+import type { BrowserSurfaceSnapshot, BrowserViewState } from './browser';
 import type { ConversationHistoryClient } from './conversation-history';
 /**
  * Shared IPC contract: main ↔ preload ↔ renderer ↔ interpreter (utilityProcess).
@@ -1833,6 +1834,16 @@ export interface EzTerminalDesktopApi {
   /** The placeholder's "재연결" button, shown while `hasError` is true. */
   reloadOpenClawChatView: () => void;
   onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;
+
+  // ── In-app browser pane ─────────────────────────────────────────────────
+  // The page is a main-owned WebContentsView that paints above the DOM. What the
+  // person does in it goes through daemon commands; this is only its place on
+  // screen and what it shows.
+  setBrowserSurface: (surface: BrowserSurfaceSnapshot) => void;
+  getBrowserViewState: (conversationId: string) => Promise<BrowserViewState | null>;
+  onBrowserViewState: (listener: (state: BrowserViewState) => void) => () => void;
+  /** The AI first used a conversation's browser: show its pane, without focus. */
+  onBrowserOpenPane: (listener: (conversationId: string) => void) => () => void;
   /** "브라우저로 열기" escape hatch (openclaw-stabilization M6) — opens the
    * SAME chat URL the embedded WebContentsView uses in the OS default
    * browser (`shell.openExternal`), for when the embed misbehaves. `false`

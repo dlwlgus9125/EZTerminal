@@ -32,7 +32,8 @@ import type { StructuredAgentUiResult } from './StructuredAgentSession';
  * these is a person pressing a button. Only the desktop has `worktrees` and the start form.
  */
 
-type CardCommandType = 'agent.create' | 'agent.submit' | 'wrap-up.task-outcome' | 'wrap-up.recap-retry' | 'agent.steer-settle' | 'long-run.limit-action';
+type CardCommandType = 'agent.create' | 'agent.submit' | 'wrap-up.task-outcome' | 'wrap-up.recap-retry' | 'agent.steer-settle' | 'long-run.limit-action'
+  | 'browser.action' | 'browser.close';
 
 type CommandAnswer =
   | { readonly kind: 'ok' }

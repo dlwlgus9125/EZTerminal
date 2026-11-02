@@ -5,6 +5,7 @@ export const DOCK_PANEL_COMPONENTS = [
   'project-map',
   'openclaw-chat',
   'agent-results',
+  'browser-preview',
 ] as const;
 
 export type DockPanelComponent = (typeof DOCK_PANEL_COMPONENTS)[number];
@@ -22,6 +23,8 @@ const CAPABILITIES: Readonly<Record<DockPanelComponent, DockPanelCapabilities>> 
   'project-map': Object.freeze({ detachable: false, lifecycle: 'passive' }),
   'openclaw-chat': Object.freeze({ detachable: true, lifecycle: 'passive' }),
   'agent-results': Object.freeze({ detachable: true, lifecycle: 'passive' }),
+  // Its page is a native view in the app's own window.
+  'browser-preview': Object.freeze({ detachable: false, lifecycle: 'passive' }),
 });
 
 export function isDockPanelComponent(value: unknown): value is DockPanelComponent {

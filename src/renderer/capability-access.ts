@@ -5,7 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
-import type { BrowserProjectSites, BrowserSettings } from '../shared/browser';
+import type { BrowserProjectSites, BrowserSettings, BrowserSurfaceSnapshot, BrowserViewState } from '../shared/browser';
 import type { LongRunSettings } from '../shared/long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
@@ -304,6 +304,17 @@ export interface CapabilityAccess {
   readonly longRun?: LongRunAccess;
   /** 시안: only the stories pass this; there is no host behind it yet. */
   readonly browser?: BrowserAccess;
+  /** The in-app browser's pane. Optional so test doubles need not supply it. */
+  readonly browserPane?: BrowserPaneAccess;
+}
+
+/** The pane's native page: its place on screen and what it shows. */
+export interface BrowserPaneAccess {
+  readonly setSurface: (surface: BrowserSurfaceSnapshot) => boolean;
+  /** One conversation's page: its state now, then every change. */
+  readonly observe: (conversationId: string, onState: (state: BrowserViewState) => void) => CapabilityCleanup;
+  /** The AI first used a conversation's browser. */
+  readonly onOpenPane: (listener: (conversationId: string) => void) => CapabilityCleanup;
 }
 
 /** The one long-run setting. */
@@ -1040,6 +1051,29 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     save: async (settings) => settingsBridge().setLongRun(settings),
   };
 
+  const browserPane: BrowserPaneAccess = {
+    setSurface(surface) {
+      const api = desktopFor('setBrowserSurface');
+      if (!api) return false;
+      api.setBrowserSurface(surface);
+      return true;
+    },
+    observe(conversationId, onState) {
+      const api = desktopFor('onBrowserViewState');
+      if (!api) return () => undefined;
+      let current = true;
+      const stop = api.onBrowserViewState((state) => { if (current && state.conversationId === conversationId) onState(state); });
+      void api.getBrowserViewState(conversationId).then((state) => { if (current && state) onState(state); }, () => undefined);
+      return () => {
+        current = false;
+        stop();
+      };
+    },
+    onOpenPane(listener) {
+      return desktopFor('onBrowserOpenPane')?.onBrowserOpenPane(listener) ?? (() => undefined);
+    },
+  };
+
   return {
     snapshot: () => ({
       core: resolveCore() ? 'available' : 'unavailable',
@@ -1061,6 +1095,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     agentManagement,
     turnWrapUp,
     longRun,
+    browserPane,
   };
 }
 

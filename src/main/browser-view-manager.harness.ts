@@ -130,7 +130,7 @@ async function main(): Promise<void> {
   let allowed: string[] = [];
   const states = new Map<string, BrowserViewState>();
   const manager = new BrowserViewManager({
-    scope: (conversationId) => ({ projectId: `project-of-${conversationId}`, roots: [workspace] }),
+    scope: (conversationId) => Promise.resolve({ projectId: `project-of-${conversationId}`, roots: [workspace] }),
     allowedOrigins: () => allowed,
     controlPorts: () => new Set([controlPort]),
     onState: (state) => { states.set(state.conversationId, state); },
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
   };
   const open = async (id: string, url: string, visible = false): Promise<WebContents> => {
     if (visible) manager.updateSurface(id, { mounted: true, bounds: { x: 0, y: 0, width: 1280, height: 800 }, visible: true });
-    manager.navigateAsPerson(id, url);
+    await manager.navigateAsPerson(id, url);
     for (let attempt = 0; attempt < 100; attempt += 1) {
       await delay(20);
       const page = manager.page(id);
@@ -204,7 +204,7 @@ async function main(): Promise<void> {
     await toolClick(contents, '#redirect');
     manager.endTool(id);
   });
-  await record('guard-redirect-tool', async (id) => { manager.navigateForTool(id, `${base}/redirect-302?to=${encodeURIComponent(`${evil}/landed?via=tool-redirect`)}`); });
+  await record('guard-redirect-tool', async (id) => { await manager.navigateForTool(id, `${base}/redirect-302?to=${encodeURIComponent(`${evil}/landed?via=tool-redirect`)}`); });
   await record('guard-meta-refresh', scripted(`location.href=${JSON.stringify(`${base}/meta?to=${encodeURIComponent(`${evil}/landed?via=meta`)}`)}`));
   await record('guard-form', async (id, contents) => {
     manager.beginTool(id, 'turn-1');
@@ -245,13 +245,13 @@ async function main(): Promise<void> {
 
   // The person's own navigations are excepted, and only those.
   await record('person-address-bar', async (id) => {
-    manager.navigateAsPerson(id, `${evil}/landed?via=address-bar`);
+    await manager.navigateAsPerson(id, `${evil}/landed?via=address-bar`);
     await delay(SETTLE_MS);
     const page = manager.page(id);
     report['person-address-bar-site'] = page.ok ? page.site : page.reason;
     report['person-address-bar-state'] = manager.state(id).site;
   });
-  await record('person-address-bar-redirect', async (id) => { manager.navigateAsPerson(id, `${base}/redirect-302?to=${encodeURIComponent(`${evil}/landed?via=person-redirect`)}`); });
+  await record('person-address-bar-redirect', async (id) => { await manager.navigateAsPerson(id, `${base}/redirect-302?to=${encodeURIComponent(`${evil}/landed?via=person-redirect`)}`); });
   const shownPad = async (id: string): Promise<WebContents> => {
     const contents = await open(id, `${base}/pad`, true);
     manager.beginTool(id, 'turn-1');
@@ -277,26 +277,26 @@ async function main(): Promise<void> {
   await record('popup-local-opens-here', scripted(`window.open(${JSON.stringify(`${base}/landed?via=popup`)})`));
 
   // DNS rebinding, both layers.
-  await record('rebind-before-request', async (id) => { manager.navigateAsPerson(id, `http://rebind.example:${String(port)}/landed`); });
+  await record('rebind-before-request', async (id) => { await manager.navigateAsPerson(id, `http://rebind.example:${String(port)}/landed`); });
   await record('rebind-subresources', scripted(`const e='http://rebind.example:${String(port)}';new Image().src=e+'/img';fetch(e+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(e+'/beacon','x');try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`));
   allowed = [allowedOrigin];
   secondLayer = true;
   await record('rebind-second-layer', async (id) => {
-    manager.navigateAsPerson(id, `${allowedOrigin}/landed`);
+    await manager.navigateAsPerson(id, `${allowedOrigin}/landed`);
     await delay(SETTLE_MS);
     const page = manager.page(id);
     report['rebind-second-layer-page'] = page.ok ? page.site : page.reason;
   });
   secondLayer = false;
   await record('allowed-loads', async (id) => {
-    manager.navigateForTool(id, `${allowedOrigin}/with-frames`);
+    await manager.navigateForTool(id, `${allowedOrigin}/with-frames`);
     await delay(SETTLE_MS);
     const page = manager.page(id);
     report['allowed-loads-site'] = page.ok ? page.site : page.reason;
   });
   await record('revoked-at-once', async (id) => {
     await delay(50);
-    manager.navigateForTool(id, `${allowedOrigin}/landed`);
+    await manager.navigateForTool(id, `${allowedOrigin}/landed`);
     await delay(SETTLE_MS);
     allowed = [];
     const page = manager.page(id);
@@ -340,12 +340,12 @@ async function main(): Promise<void> {
   // The app's own ports, from a local page and for the person.
   await record('control-subresources', scripted(`const c=${JSON.stringify(controlBase)};new Image().src=c+'/img';fetch(c+'/fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon(c+'/beacon','x');const s=document.createElement('script');s.src=c+'/s.js';document.body.append(s);try{new WebSocket(c.replace('http','ws')+'/ws')}catch{}const f=document.createElement('iframe');f.src=c+'/frame';document.body.append(f)`));
   await record('control-script-top', scripted(`location.href=${JSON.stringify(`${controlBase}/top`)}`));
-  await record('control-person', async (id) => { manager.navigateAsPerson(id, `${controlBase}/person`); }, (id) => open(id, `${base}/pad`));
+  await record('control-person', async (id) => { await manager.navigateAsPerson(id, `${controlBase}/person`); }, (id) => open(id, `${base}/pad`));
   report.controlHits = controlHits.length;
 
   // An external top page reaches for this PC.
-  await record('external-to-local', async (id) => { manager.navigateAsPerson(id, `${evil}/reaches-local`); });
-  await record('person-site-own-frames', async (id) => { manager.navigateAsPerson(id, `${evil}/with-frames`); });
+  await record('external-to-local', async (id) => { await manager.navigateAsPerson(id, `${evil}/reaches-local`); });
+  await record('person-site-own-frames', async (id) => { await manager.navigateAsPerson(id, `${evil}/with-frames`); });
 
   // file: pages.
   await record('file-inside', async (_id, contents) => {
@@ -355,7 +355,7 @@ async function main(): Promise<void> {
     report['file-frame'] = await contents.mainFrame.frames[0]?.executeJavaScript('document.body.innerText').catch(() => 'no-access');
   }, (id) => open(id, pathToFileURL(insidePage).href));
   await record('file-outside-person', async (id) => {
-    manager.navigateAsPerson(id, secretUrl);
+    await manager.navigateAsPerson(id, secretUrl);
     await delay(SETTLE_MS);
     report['file-outside-person-url'] = manager.state(id).url;
   });

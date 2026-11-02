@@ -55,6 +55,8 @@ export interface BrowserPaneProps {
   readonly pageHidden?: boolean;
   /** Stories only: what the native view would show. The app leaves this plate empty and places the view over it. */
   readonly page?: ReactNode;
+  /** The plate the native view is placed over. */
+  readonly pageRef?: RefObject<HTMLDivElement>;
   readonly onAction: (action: BrowserPaneAction) => void;
 }
 
@@ -226,7 +228,7 @@ function FaultBody({ glyph, title, detail, ai, label, action, onAction }: {
   );
 }
 
-export function BrowserPane({ address, site, body, strip, canBack, canForward, picking = false, pageHidden = false, page, onAction }: BrowserPaneProps): JSX.Element {
+export function BrowserPane({ address, site, body, strip, canBack, canForward, picking = false, pageHidden = false, page, pageRef, onAction }: BrowserPaneProps): JSX.Element {
   const copy = useChatCopy().browser.pane;
   const addressRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLButtonElement>(null);
@@ -251,7 +253,7 @@ export function BrowserPane({ address, site, body, strip, canBack, canForward, p
       {picking
         ? <Strip view={{ tone: 'live', lamp: 'on', title: copy.strip.picking, detail: copy.strip.pickingDetail, actions: [{ label: copy.strip.pickCancel, action: { kind: 'cancel-pick' }, testId: 'browser-pick-cancel' }] }} onAction={pressStrip} />
         : view && <Strip view={view} onAction={pressStrip} focus={stopped} />}
-      <div className="browser-pane__page" data-testid="browser-page" data-hidden={pageHidden || undefined}>
+      <div ref={pageRef} className="browser-pane__page" data-testid="browser-page" data-hidden={pageHidden || undefined}>
         {body.kind === 'empty' && <EmptyBody candidates={body.candidates} onAction={onAction} copy={copy.empty} />}
         {body.kind === 'server-down' && <FaultBody glyph="offline" title={copy.fault.downTitle} detail={copy.fault.down(body.origin)} ai={copy.fault.ai} label={copy.fault.retry} action={{ kind: 'retry' }} onAction={onAction} />}
         {body.kind === 'gone' && <FaultBody glyph="warn" title={copy.fault.goneTitle} detail={copy.fault.gone} ai={copy.fault.ai} label={copy.fault.reopen} action={{ kind: 'reopen' }} onAction={onAction} />}

@@ -275,6 +275,11 @@ export class AgentHookRelay {
     this.descriptor = { url: `http://127.0.0.1:${address.port}${RELAY_PATH}`, token: this.token };
   }
 
+  /** The port it listens on, null before `start`: the in-app browser keeps pages away from it. */
+  listeningPort(): number | null {
+    return this.descriptor ? Number(new URL(this.descriptor.url).port) : null;
+  }
+
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;

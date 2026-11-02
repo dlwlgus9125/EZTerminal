@@ -150,6 +150,7 @@ async function harness(options: {
   readonly settingsProposals?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['settingsProposals'];
   readonly longRun?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['longRun'];
   readonly canDispatchTurn?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['canDispatchTurn'];
+  readonly browser?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['browser'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -4382,6 +4383,76 @@ it('persists empty Agents across restart and dispatches only the first submitted
   }
 });
 
+
+describe('what a person does in the in-app browser', () => {
+  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn() });
+  const started = async (browser: ReturnType<typeof browserHost>) => {
+    const h = await harness({ browser });
+    await h.prepareWorkspace();
+    await h.enable(h.codex, 'codex');
+    await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard' });
+    return h;
+  };
+
+  it('reaches the pane after the command commits', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'navigate', target: 'localhost:5173/cart' })).toMatchObject({ ok: true });
+      expect(browser.navigate).toHaveBeenCalledWith('chat', 'localhost:5173/cart');
+      expect(await h.execute('browser.open', { sessionId: 'chat', workspaceId: 'workspace-1', url: 'http://localhost:5173/' })).toMatchObject({ ok: true });
+      expect(browser.navigate).toHaveBeenLastCalledWith('chat', 'http://localhost:5173/');
+      for (const action of ['reload', 'back', 'forward', 'stop'] as const) {
+        expect(await h.execute('browser.action', { sessionId: 'chat', action }), action).toMatchObject({ ok: true });
+        expect(browser[action], action).toHaveBeenCalledWith('chat');
+      }
+      expect(await h.execute('browser.close', { sessionId: 'chat' })).toMatchObject({ ok: true });
+      expect(browser.close).toHaveBeenCalledWith('chat');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('refuses what is not a conversation or an address', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      expect(await h.execute('browser.action', { sessionId: 'nobody', action: 'reload' })).toMatchObject({ ok: false });
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'navigate' })).toMatchObject({ ok: false });
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'navigate', target: 'javascript:alert(1)' })).toMatchObject({ ok: false });
+      expect(await h.execute('browser.open', { sessionId: 'chat', workspaceId: 'elsewhere', url: 'http://localhost:5173/' })).toMatchObject({ ok: false });
+      expect(browser.navigate).not.toHaveBeenCalled();
+      expect(browser.reload).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('takes no command from anything but the person at the desktop, through the real router', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      const payload = { sessionId: 'chat', action: 'navigate', target: 'https://evil.example/' } as const;
+      expect(await h.execute('browser.action', payload, { kind: 'android', id: 'phone' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(await h.execute('browser.action', payload, { kind: 'cli', id: 'chat', sessionId: 'chat' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(await h.execute('browser.action', payload, { kind: 'mcp', id: 'session-chat', sessionId: 'chat' })).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(browser.navigate).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('says so on a host without the browser', async () => {
+    const h = await harness();
+    try {
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard' });
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'reload' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('leaves the picker to its step', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'pick' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
 
 describe('conversation queue management', () => {
   it('takes a queued request without losing its transcript, rejects stale and cross-session edits, and replays once', async () => {

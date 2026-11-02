@@ -1,4 +1,5 @@
 import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
+import { addressBarUrl } from '../shared/browser';
 import { isSettingsProposalRequest } from '../shared/settings-changes';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
@@ -90,7 +91,20 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'provider.enable'
   | 'provider.disable'
   | 'provider.update'
+  | 'browser.open'
+  | 'browser.action'
+  | 'browser.close'
 >;
+
+/** What a person does in the in-app browser. These run after the command commits; the policy has already said it is a person. */
+export interface DaemonBrowserHost {
+  navigate(conversationId: string, address: string): void;
+  reload(conversationId: string): void;
+  back(conversationId: string): void;
+  forward(conversationId: string): void;
+  stop(conversationId: string): void;
+  close(conversationId: string): void;
+}
 
 export interface DaemonAgentRuntimeOptions {
   /** Host task binding must commit before a prepared turn reaches a provider. */
@@ -104,6 +118,8 @@ export interface DaemonAgentRuntimeOptions {
   readonly wrapUp?: DaemonWrapUpHost;
   /** Long-run continuity (`long-run-v1`): who sessions launch with it, and what follows a limit. */
   readonly longRun?: DaemonLongRunHost;
+  /** The in-app browser (`in-app-browser-v1`): what a person does in the pane. */
+  readonly browser?: DaemonBrowserHost;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -500,6 +516,9 @@ export class DaemonAgentRuntime {
       'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.disable': (command, context) => this.runCommand(() => this.disableProvider(command, context)),
+      'browser.open': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
+      'browser.action': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
+      'browser.close': (command, context) => this.runCommand(() => this.browserCommand(command, context)),
     };
   }
 
@@ -2228,6 +2247,37 @@ export class DaemonAgentRuntime {
       })]) },
       afterCommit: () => reviews.cancel(payload.reviewId),
     };
+  }
+
+  /** A person in the pane. The conversation is `sessionId`: the pane has no session row of its own. */
+  private browserCommand(command: DaemonCommand, context: DaemonCommandExecutionContext): DaemonCommandExecutionResult {
+    if (command.type !== 'browser.open' && command.type !== 'browser.action' && command.type !== 'browser.close') {
+      return commandError('invalid-command', 'Unexpected browser command.');
+    }
+    const host = this.options.browser;
+    if (!host) return commandError('invalid-state', 'The in-app browser is unavailable on this host.');
+    const conversationId = command.payload.sessionId;
+    const session = context.snapshot.sessions.find((entry) => entry.id === conversationId);
+    if (session?.kind !== 'agent') return commandError('not-found', 'Conversation was not found.');
+    if (command.type === 'browser.close') return { ok: true, afterCommit: () => host.close(conversationId) };
+    if (command.type === 'browser.open' && command.payload.workspaceId !== session.workspaceId) {
+      return commandError('invalid-state', 'The conversation is not in that workspace.');
+    }
+    const address = command.type === 'browser.open' ? command.payload.url : command.payload.target;
+    const action = command.type === 'browser.open' ? 'navigate' : command.payload.action;
+    switch (action) {
+      case 'navigate':
+        if (address === undefined || addressBarUrl(address) === undefined) return commandError('invalid-command', 'That is not an address the pane can open.');
+        return { ok: true, afterCommit: () => host.navigate(conversationId, address) };
+      case 'reload': return { ok: true, afterCommit: () => host.reload(conversationId) };
+      case 'back': return { ok: true, afterCommit: () => host.back(conversationId) };
+      case 'forward': return { ok: true, afterCommit: () => host.forward(conversationId) };
+      case 'stop': return { ok: true, afterCommit: () => host.stop(conversationId) };
+      // Step 14: the picker.
+      case 'pick':
+      case 'cancel-pick':
+        return commandError('invalid-state', 'Picking an element is not available yet.');
+    }
   }
 
   private async resolveApproval(
