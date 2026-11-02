@@ -58,7 +58,8 @@ export interface BrowserPaneProps {
   readonly onAction: (action: BrowserPaneAction) => void;
 }
 
-const SITE_GLYPH: Readonly<Record<BrowserSiteClass, GlyphName>> = { local: 'pc', file: 'file', allowed: 'ok', external: 'eyeOff' };
+/** `allowed` is a key, not the shield: the person gave access, and nothing here vouches for the site. */
+const SITE_GLYPH: Readonly<Record<BrowserSiteClass, GlyphName>> = { local: 'pc', file: 'file', allowed: 'key', external: 'eyeOff' };
 
 function SiteBadge({ site, copy }: { readonly site: BrowserSiteClass; readonly copy: ChatCopy['browser'] }): JSX.Element {
   return (
@@ -89,7 +90,7 @@ function Toolbar({ address, site, canBack = false, canForward = false, picking =
   };
   const fullCopy = useChatCopy().browser;
   return (
-    <div className="browser-pane__bar" role="toolbar" aria-label={copy.label}>
+    <div className="browser-pane__bar" role="group" aria-label={copy.label}>
       <IconButton size="sm" variant="ghost" aria-label={copy.back} title={copy.back} icon={glyphIcon('back')} disabled={!canBack} onClick={() => onAction({ kind: 'back' })} />
       <IconButton size="sm" variant="ghost" aria-label={copy.forward} title={copy.forward} icon={glyphIcon('next')} disabled={!canForward} onClick={() => onAction({ kind: 'forward' })} />
       <IconButton size="sm" variant="ghost" aria-label={copy.reload} title={copy.reload} icon={glyphIcon('refresh')} disabled={!loaded} onClick={() => onAction({ kind: 'reload' })} />
@@ -142,7 +143,7 @@ function stripView(strip: BrowserPaneStrip, copy: ChatCopy['browser']['pane']['s
         actions: [{ label: copy.allow, action: { kind: 'allow-site', origin: strip.origin }, testId: 'browser-allow-open' }],
       };
     case 'allowed':
-      return { tone: 'plain', glyph: 'ok', title: copy.allowed, detail: copy.allowedDetail, origin: strip.origin, actions: [{ label: copy.dismiss, action: { kind: 'dismiss' }, testId: 'browser-dismiss' }] };
+      return { tone: 'plain', glyph: 'key', title: copy.allowed, detail: copy.allowedDetail, origin: strip.origin, actions: [{ label: copy.dismiss, action: { kind: 'dismiss' }, testId: 'browser-dismiss' }] };
     case 'unsupported':
       return { tone: 'plain', glyph: 'eyeOff', title: copy.unsupported, detail: `${strip.reason} ${copy.unsupportedDetail}`, actions: [] };
   }
@@ -155,7 +156,7 @@ function Strip({ view, onAction, focus = false }: { readonly view: StripView; re
   return (
     <section className="browser-pane__strip" data-tone={view.tone} data-testid="browser-strip">
       {view.lamp ? <Led tone={view.lamp} /> : view.glyph && <Glyph name={view.glyph} size={16} />}
-      <div className="browser-pane__strip-text">
+      <div className="browser-pane__strip-text" role="status">
         <p className="browser-pane__strip-title" ref={title} tabIndex={-1}>
           <strong>{view.title}</strong>
           {view.origin && <code>{view.origin}</code>}

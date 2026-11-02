@@ -34,6 +34,14 @@ describe('browser-rows.css at the WebView 74 floor', () => {
   });
 });
 
+describe('an allowed site', () => {
+  it('carries a key, never the shield: allowing a site says nothing about whether it is safe', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/renderer/browser/BrowserPane.tsx'), 'utf8');
+    expect(source).toContain("allowed: 'key'");
+    expect(source).not.toMatch(/glyph: 'ok'|: 'ok'/u);
+  });
+});
+
 describe('the browser\'s CSS', () => {
   it('draws no one-side border, in the rows or on the pane', () => {
     for (const css of [rows, pane]) expect(css).not.toMatch(/border-(?:left|right|top|bottom)\s*:/u);
