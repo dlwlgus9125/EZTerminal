@@ -924,7 +924,7 @@ describe('ClaudeProviderAdapter sessions', () => {
     await inputIterator.next();
     const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'.repeat(4_000);
     fixture.query.emit({ type: 'assistant', uuid: 'shot-call', session_id: providerSessionId, parent_tool_use_id: null,
-      message: { id: 'msg_shot', content: [{ type: 'tool_use', id: 'toolu_shot', name: 'mcp__ezterminal_orchestration__browser_screenshot', input: {} }] } });
+      message: { id: 'msg_shot', content: [{ type: 'tool_use', id: 'toolu_shot', name: 'mcp__playwright__browser_take_screenshot', input: {} }] } });
     fixture.query.emit({ type: 'user', uuid: 'shot-result', session_id: providerSessionId, parent_tool_use_id: null,
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_shot',
         content: [{ type: 'text', text: 'Screenshot of the preview pane' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: bytes } }] }] } });
@@ -951,6 +951,28 @@ describe('ClaudeProviderAdapter sessions', () => {
     const call = JSON.stringify(fixture.events.find((event) => event.kind === 'transcript' && event.item.kind === 'tool-call'));
     expect(call).not.toContain('hunter2-secret');
     expect(call).toContain('e4');
+    await fixture.adapter.dispose();
+  });
+
+  it('keeps a browser tool\'s page words and address out of its rows, live and from history, and marks them sensitive', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-read', commandId: 'command-read', prompt: 'Look' });
+    await inputIterator.next();
+    const name = 'mcp__ezterminal_orchestration__browser_navigate';
+    const page = JSON.stringify({ ok: true, url: 'http://localhost:5173/reset?token=abc123', page: 'API key sk-ant-api03-pagesecret' });
+    fixture.query.emit({ type: 'assistant', uuid: 'read-call', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { id: 'msg_read', content: [{ type: 'tool_use', id: 'toolu_read', name, input: { url: 'http://localhost:5173/reset?token=abc123' } }] } });
+    fixture.query.emit({ type: 'user', uuid: 'read-result', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_read', content: [{ type: 'text', text: page }] }] } });
+    await vi.waitFor(() => {
+      expect(fixture.events.some((event) => event.kind === 'transcript' && event.item.kind === 'tool-result')).toBe(true);
+    });
+    const rows = fixture.events.flatMap((event) => (event.kind === 'transcript' && (event.item.kind === 'tool-call' || event.item.kind === 'tool-result') ? [event.item] : []));
+    expect(JSON.stringify(rows)).not.toContain('token=abc123');
+    expect(JSON.stringify(rows)).not.toContain('pagesecret');
+    expect(rows.every((row) => row.isSensitive)).toBe(true);
     await fixture.adapter.dispose();
   });
 

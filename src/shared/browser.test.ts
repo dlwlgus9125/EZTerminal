@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ApprovalRequest } from './approval-request';
 import { validateChatMessageContext } from './chat-message';
 import {
-  BROWSER_APPROVAL_HOLD_MS, BROWSER_MASK, browserElementAttachments, browserRowInput, browserWaitingOf, hostBrowserTool,
+  BROWSER_APPROVAL_HOLD_MS, BROWSER_MASK, browserElementAttachments, browserRowInput, browserRowOutput, browserWaitingOf, hostBrowserTool,
   addressBarUrl, allowableOrigin, BROWSER_TOOLS, browserActionOf, browserActionRequestId, isBrowserActionRequest, isBrowserTool, isControlPortUrl,
   isLocalHostName, looksSecret, siteClass,
 } from './browser';
@@ -229,11 +229,30 @@ describe('browserRowInput: what browser_type types stays out of every row', () =
     expect(browserRowInput('browser_type', ['hunter2'], 'ezterminal_orchestration')).toBe(BROWSER_MASK);
   });
 
+  it('keeps a navigation\'s site and drops the rest of its address: a query can carry a token', () => {
+    expect(browserRowInput('mcp__ezterminal_orchestration__browser_navigate', { url: 'http://localhost:5173/reset?token=abc123' })).toEqual({ url: 'http://localhost:5173' });
+    expect(browserRowInput('browser_navigate', '{"url":"https://staging.cart-kit.example/a?k=secret"}', 'ezterminal_orchestration')).toBe(JSON.stringify({ url: 'https://staging.cart-kit.example' }));
+    expect(browserRowInput('browser_navigate', { url: 'not an address?k=secret' }, 'ezterminal_orchestration')).toEqual({ url: BROWSER_MASK });
+  });
+
   it('leaves everything else alone', () => {
-    const input = { url: 'http://localhost:5173/' };
-    expect(browserRowInput('mcp__ezterminal_orchestration__browser_navigate', input)).toBe(input);
+    expect(browserRowInput('mcp__ezterminal_orchestration__browser_click', { ref: 'e1' })).toEqual({ ref: 'e1' });
     expect(browserRowInput('mcp__playwright__browser_type', { text: 'hello' })).toEqual({ text: 'hello' });
     expect(browserRowInput('Bash', { command: 'ls' })).toEqual({ command: 'ls' });
+  });
+});
+
+describe('browserRowOutput: what a browser tool answered, as a provider row may hold it', () => {
+  const content = (text: string) => ({ content: [{ type: 'text', text }, { type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }] });
+
+  it('keeps the host\'s refusal code, and none of the page\'s words or its address', () => {
+    const page = JSON.stringify({ url: 'http://localhost:5173/a?token=abc123', page: '--- Page content ---\nsk-ant-api03-secret' });
+    expect(browserRowOutput(content(page))).toBe(JSON.stringify({ ok: true }));
+    expect(browserRowOutput([{ type: 'text', text: page }])).toBe(JSON.stringify({ ok: true }));
+    expect(browserRowOutput(page)).toBe(JSON.stringify({ ok: true }));
+    expect(browserRowOutput(content(JSON.stringify({ ok: false, code: 'site-not-allowed', error: 'words' })))).toBe(JSON.stringify({ ok: false, code: 'site-not-allowed' }));
+    expect(browserRowOutput({ content: [{ type: 'text', text: '{"ok":false,"error":"Tool arguments are invalid."}' }], isError: true })).toBe(JSON.stringify({ ok: false }));
+    expect(browserRowOutput({ message: 'failed at http://localhost:5173/?token=abc123' })).toBe(JSON.stringify({ ok: false }));
   });
 });
 

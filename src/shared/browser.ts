@@ -54,7 +54,8 @@ export const BROWSER_THUMB_CHARS = Math.ceil(BROWSER_THUMB_BYTES / 3) * 4;
  * password, and rows reach phones and last, so what `browser_type` types is in none of them. A shape it cannot read goes whole.
  */
 export function browserRowInput(name: string, input: unknown, server?: string): unknown {
-  if (hostBrowserTool(name, server) !== 'browser_type') return input;
+  const tool = hostBrowserTool(name, server);
+  if (tool !== 'browser_type' && tool !== 'browser_navigate') return input;
   if (typeof input === 'string') {
     try {
       const parsed = browserRowInput(name, JSON.parse(input), server);
@@ -63,7 +64,31 @@ export function browserRowInput(name: string, input: unknown, server?: string): 
       return BROWSER_MASK;
     }
   }
-  return typeof input === 'object' && input !== null && !Array.isArray(input) ? { ...input, text: BROWSER_MASK } : BROWSER_MASK;
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return BROWSER_MASK;
+  if (tool === 'browser_type') return { ...input, text: BROWSER_MASK };
+  // The site, as the host's own rows hold it: the rest of an address can carry a token.
+  const { url } = input as { readonly url?: unknown };
+  const origin = typeof url === 'string' && URL.canParse(url) ? new URL(url).origin : undefined;
+  return { ...input, url: origin && origin !== 'null' ? origin : BROWSER_MASK };
+}
+
+/**
+ * What a browser tool answered, as a provider's row may hold it: whether it ran, and the host's refusal code. The page's words,
+ * its address and its pictures stay out: they reach SQLite and a phone, and the host's own rows already say what ran.
+ */
+export function browserRowOutput(output: unknown): string {
+  const record = typeof output === 'object' && output !== null && !Array.isArray(output) ? output as { readonly content?: unknown; readonly isError?: unknown } : undefined;
+  const blocks = Array.isArray(output) ? output : Array.isArray(record?.content) ? record.content : typeof output === 'string' ? [{ type: 'text', text: output }] : [];
+  const words = (blocks as readonly { readonly type?: unknown; readonly text?: unknown }[]).find((block) => block?.type === 'text' && typeof block.text === 'string')?.text as string | undefined;
+  let answer: { readonly ok?: unknown; readonly code?: unknown } | undefined;
+  try {
+    answer = words === undefined ? undefined : JSON.parse(words) as typeof answer;
+  } catch {
+    answer = undefined;
+  }
+  const code = typeof answer?.code === 'string' && (BROWSER_REFUSALS as readonly string[]).includes(answer.code) ? answer.code : undefined;
+  if (code) return JSON.stringify({ ok: false, code });
+  return JSON.stringify({ ok: !(record?.isError === true || answer?.ok === false || (words === undefined && blocks.length === 0)) });
 }
 
 /** How the app classes a site, by name alone. Only `local`, `file` and `allowed` reach the AI's tools. */

@@ -1,5 +1,5 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
-import { BROWSER_TOOLS, browserRowInput } from '../shared/browser';
+import { BROWSER_TOOLS, browserRowInput, browserRowOutput, hostBrowserTool } from '../shared/browser';
 import { PROPOSED_PLAN_REQUEST_PREFIX, clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
 import { addedFileChange, deletedFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
@@ -3345,7 +3345,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'dynamicToolCall': {
         const tool = asString(item.tool) ?? 'tool';
         const server = asString(item.server) ?? asString(item.namespace);
-        const body = providerTranscriptText(started ? browserRowInput(tool, item.arguments, server) : item.result ?? item.output ?? item.error);
+        // The app's browser tools: the host's own rows say what ran, so these hold no page words and no address.
+        const browser = hostBrowserTool(tool, server) !== undefined;
+        const answer = item.result ?? item.output ?? item.error;
+        const body = providerTranscriptText(started ? browserRowInput(tool, item.arguments, server) : browser ? browserRowOutput(answer) : answer);
+        if (browser) isSensitive = true;
         kind = started ? 'tool-call' : 'tool-result';
         text = `${asString(item.server) ? `${asString(item.server)}/` : ''}${asString(item.tool) ?? 'tool'}: ${asString(item.status) ?? (started ? 'started' : 'completed')}`;
         if (body) text += `\n${body}`;

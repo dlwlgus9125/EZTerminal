@@ -2074,7 +2074,7 @@ describe('CodexProviderAdapter structured transcript', () => {
   it('keeps an MCP image result out of the row text, and its words in', async () => {
     const { adapter, notify, transcript } = await startedTurn();
     const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'.repeat(4_000);
-    const shot = { id: 'mcp-shot', type: 'mcpToolCall', server: 'ezterminal_orchestration', tool: 'browser_screenshot', arguments: {} };
+    const shot = { id: 'mcp-shot', type: 'mcpToolCall', server: 'playwright', tool: 'browser_take_screenshot', arguments: {} };
     await notify('item/started', { startedAtMs: 1, item: { ...shot, status: 'inProgress' } });
     await notify('item/completed', { completedAtMs: 2, item: { ...shot, status: 'completed', durationMs: 42,
       result: { content: [{ type: 'text', text: 'Screenshot of the preview pane' }, { type: 'image', data: bytes, mimeType: 'image/jpeg' }], structuredContent: null } } });
@@ -2094,6 +2094,20 @@ describe('CodexProviderAdapter structured transcript', () => {
     await notify('item/started', { startedAtMs: 1, item: { ...call, status: 'inProgress' } });
     await notify('item/completed', { completedAtMs: 2, item: { ...call, status: 'completed', result: { content: [] } } });
     expect(JSON.stringify(transcript())).not.toContain('hunter2-secret');
+    await adapter.dispose();
+  });
+
+  it('keeps a browser tool\'s page words and address out of its rows, and marks them sensitive', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const call = { id: 'mcp-read', type: 'mcpToolCall', server: 'ezterminal_orchestration', tool: 'browser_navigate', arguments: { url: 'http://localhost:5173/reset?token=abc123' } };
+    const page = JSON.stringify({ ok: true, url: 'http://localhost:5173/reset?token=abc123', page: 'API key sk-ant-api03-pagesecret' });
+    await notify('item/started', { startedAtMs: 1, item: { ...call, status: 'inProgress' } });
+    await notify('item/completed', { completedAtMs: 2, item: { ...call, status: 'completed', result: { content: [{ type: 'text', text: page }] } } });
+    const rows = transcript().filter((row) => row.kind === 'tool-call' || row.kind === 'tool-result');
+    expect(rows).toHaveLength(2);
+    expect(JSON.stringify(rows)).not.toContain('token=abc123');
+    expect(JSON.stringify(rows)).not.toContain('pagesecret');
+    expect(rows.every((row) => row.isSensitive)).toBe(true);
     await adapter.dispose();
   });
 

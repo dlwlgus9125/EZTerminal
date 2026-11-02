@@ -59,7 +59,7 @@ import { ProviderReviewError, ProviderSideQuestionError } from './agent-provider
 import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import { REVIEW_FINDINGS_JSON_SCHEMA } from '../shared/review-findings';
 import { USAGE_LIMIT_ERROR, type ProviderUsageLimit, type UsageLimitReading } from '../shared/long-run';
-import { BROWSER_CLAUDE_TOOLS, browserRowInput } from '../shared/browser';
+import { BROWSER_CLAUDE_TOOLS, browserRowInput, browserRowOutput, hostBrowserTool } from '../shared/browser';
 import { nextPromptText, SUGGEST_TASK_CLAUDE_TOOL } from '../shared/turn-wrap-up';
 import {
   buildProviderProcessEnvironment,
@@ -436,6 +436,8 @@ interface TranscriptOptions {
   readonly isDelta?: boolean;
   /** The row belongs to this subagent (task id); the daemon re-homes it. */
   readonly providerChildId?: string;
+  /** Kept off a phone and out of anything shared, whatever its kind. */
+  readonly sensitive?: boolean;
 }
 
 /** A provider-native subagent: an Agent-tool task, never a background shell or MCP task. */
@@ -2603,6 +2605,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         this.appendTranscript(session, 'tool-call', toolCallText(name, block.input), {
           turnId: turn?.turnId,
           source,
+          ...(hostBrowserTool(name) ? { sensitive: true } : {}),
           ...(toolId ? { payload: toolCallPayload(name, toolId, block.input) } : {}),
           ...routed,
         });
@@ -2642,7 +2645,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       const numbered = fragment && !failed ? recordedClaudeChange(fragment, structured) : undefined;
       // A numbered record over the size limit falls back to the fragment it came from.
       const change = numbered && encodeFileChanges([numbered]) ? numbered : fragment;
-      const text = approvedPlan ? 'Plan approved.' : toolResultText(block.content);
+      // The app's browser tools: the host's own rows say what ran, so this holds no page words and no address.
+      const browser = hostBrowserTool(name) !== undefined;
+      const text = approvedPlan ? 'Plan approved.' : browser ? browserRowOutput(block.content) : toolResultText(block.content);
       const denied = meta.some((entry) => entry?.id === toolId && entry?.non_execution_kind === 'permission-rule')
         || text === 'Denied by the user.';
       const status: ToolStatus = !failed
@@ -2657,6 +2662,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       this.appendTranscript(session, 'tool-result', (!failed && change ? encodeFileChanges([change]) : undefined) || text || `${name} ${failed ? 'failed' : 'completed'}.`, {
         turnId: turn?.turnId,
         ...(subagent ? { providerChildId: subagent } : {}),
+        ...(browser ? { sensitive: true } : {}),
         source: `${asString(message.uuid) ?? this.createId()}:${String(index)}`,
         ...(toolId ? {
           payload: {
@@ -3049,7 +3055,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       kind,
       text: original,
       isDelta: options.isDelta === true,
-      isSensitive: kind === 'user-message'
+      isSensitive: options.sensitive === true
+        || kind === 'user-message'
         || kind === 'assistant-message'
         || kind === 'reasoning',
       ...(options.payload ? { payload: options.payload } : {}),
@@ -3071,7 +3078,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private normalizeHistory(sessionId: string, history: readonly SessionMessage[]): DaemonTranscriptItem[] {
     const items: DaemonTranscriptItem[] = [];
     let sequence = 0;
-    const append = (kind: DaemonTranscriptItem['kind'], text: string, source: string): void => {
+    /** Tool names by call, for a result: an app browser tool's is told by its call. */
+    const toolNames = new Map<string, string>();
+    const append = (kind: DaemonTranscriptItem['kind'], text: string, source: string, sensitive = false): void => {
       const original = providerTranscriptText(text);
       if (!original.trim() || items.length >= MAX_RECONCILIATION_ITEMS) return;
       sequence += 1;
@@ -3082,7 +3091,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         kind,
         text: original,
         isDelta: false,
-        isSensitive: kind === 'user-message'
+        isSensitive: sensitive
+          || kind === 'user-message'
           || kind === 'assistant-message'
           || kind === 'reasoning',
         createdAt: this.now().toISOString(),
@@ -3107,9 +3117,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         } else if (message.type === 'assistant' && block.type === 'thinking') {
           append('reasoning', asString(block.thinking) ?? '', source);
         } else if (message.type === 'assistant' && (block.type === 'tool_use' || block.type === 'server_tool_use')) {
-          append('tool-call', toolCallText(safeToolName(block.name), block.input), source);
+          const name = safeToolName(block.name);
+          const id = asString(block.id);
+          if (id) toolNames.set(id, name);
+          append('tool-call', toolCallText(name, block.input), source, hostBrowserTool(name) !== undefined);
         } else if (message.type === 'user' && block.type === 'tool_result') {
-          append('tool-result', toolResultText(block.content) || (block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.'), source);
+          const id = asString(block.tool_use_id);
+          const browser = id !== null && hostBrowserTool(toolNames.get(id) ?? '') !== undefined;
+          append('tool-result', (browser ? browserRowOutput(block.content) : toolResultText(block.content)) || (block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.'), source, browser);
         } else if (message.type === 'user' && block.type === 'text') {
           append('user-message', asString(block.text) ?? '', source);
         }
