@@ -3,7 +3,7 @@
  * Every `*.example` name maps to 127.0.0.1, so nothing leaves this PC, and the profile lives in the scratch folder. What
  * "reached" means is read off the server's own log, never off a page, a tool or a model.
  */
-import { app, BrowserWindow, session, type WebContents } from 'electron';
+import { app, BrowserWindow, safeStorage, session, type WebContents } from 'electron';
 import { createHash } from 'node:crypto';
 import { promises as fs, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -262,7 +262,9 @@ ${url.searchParams.get('foreign') ? `const f=document.createElement('iframe');f.
   const blockRows: { readonly conversationId: string; readonly reason: string; readonly turnId: string }[] = [];
   const pickedElements: BrowserPickedElement[] = [];
   const storeDir = path.join(scratch, 'store');
-  const sites = new BrowserSiteStore(storeDir);
+  // The app's own protector: real safeStorage, so a restart below reads the real ciphertext back.
+  const protector = { available: () => safeStorage.isEncryptionAvailable(), encrypt: (text: string) => safeStorage.encryptString(text), decrypt: (bytes: Buffer) => safeStorage.decryptString(bytes) };
+  const sites = new BrowserSiteStore(storeDir, protector);
   await sites.load();
   const manager = new BrowserViewManager({
     scope: (conversationId) => Promise.resolve({ projectId: `project-of-${conversationId}`, roots: [workspace] }),
@@ -574,7 +576,7 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   report['suspect-no-pane'] = manager.suspected('pane-any', `${siteOn('no-pane')}/`);
   await delay(SETTLE_MS);
   {
-    const reopened = new BrowserSiteStore(storeDir);
+    const reopened = new BrowserSiteStore(storeDir, protector);
     await reopened.load();
     const restarted = new BrowserViewManager({ scope: () => Promise.resolve(undefined), allowedOrigins: () => [], controlPorts: () => new Set(), onState: () => undefined, suspects: reopened, partition: () => wrapped });
     report['suspect-restart'] = restarted.suspected('after-restart', `${siteOn('wide')}/a`);

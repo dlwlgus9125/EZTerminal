@@ -1,4 +1,6 @@
-import { allowableOrigin } from '../shared/browser';
+import { promises as fs } from 'node:fs';
+
+import { allowableOrigin, type BrowserSitesNotice } from '../shared/browser';
 import { JsonFile } from './json-file';
 
 const SITES_FILE = 'browser-sites.json';
@@ -13,8 +15,6 @@ interface BrowserSitesFile {
   /** Sites that answered from where they must not: one list for the one partition, whichever project saw it. */
   readonly suspects?: readonly string[];
 }
-
-const EMPTY: BrowserSitesFile = { version: 1, projects: {} };
 
 function validSites(raw: unknown): BrowserSitesFile | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -31,26 +31,88 @@ function validSites(raw: unknown): BrowserSitesFile | null {
   return { version: 1, projects: clean, ...(suspects ? { suspects: suspects.filter((origin): origin is string => typeof origin === 'string') } : {}) };
 }
 
+/** OS-backed encryption: Electron's `safeStorage` in the app. */
+export interface BrowserSitesProtector {
+  readonly available: () => boolean;
+  readonly encrypt: (plaintext: string) => Buffer | Promise<Buffer>;
+  readonly decrypt: (ciphertext: Buffer) => string | Promise<string>;
+}
+
+/** The file at rest: the list as ciphertext, so an edit of it is noticed rather than trusted. */
+interface ProtectedSites {
+  readonly version: 2;
+  readonly protectedSites: string;
+}
+
 /**
  * Which sites a person allowed, by exact origin and by project. Only `browser.site` writes here, and only a person at the
  * desktop sends that: no tool, model or page reaches it. Read on every navigation and request, so it answers from memory,
- * and a revoke applies at once. With full access an AI could still edit the file on disk: that is design risk 3, and the
- * running app does not reread it.
+ * and a revoke applies at once.
+ *
+ * Memory is the record: the file is read once, at load, and every change is computed from memory and written whole. On disk
+ * the list is ciphertext, so a file the app did not write (a model with full access edits it, say) is set aside at the next
+ * start, with a reason the settings screen shows, and allows nothing. What remains (design risk 3): something running as
+ * this user can reach the same OS key, or put back an older file of the app's own.
  */
 export class BrowserSiteStore {
   private readonly file: JsonFile;
   private projectSites: BrowserSitesFile['projects'] = {};
   private suspected: readonly string[] = [];
+  private noticeValue: BrowserSitesNotice | undefined;
 
-  constructor(dir: string) {
+  constructor(dir: string, private readonly protector?: BrowserSitesProtector) {
     this.file = new JsonFile(dir, SITES_FILE);
   }
 
   async load(): Promise<void> {
     await this.file.init();
-    const { projects, suspects } = await this.file.readValidated(validSites, EMPTY);
-    this.projectSites = projects;
-    this.suspected = suspects ?? [];
+    if (!this.protector?.available()) {
+      // Nothing it could read is trusted, and nothing is written in the clear: the list lasts until the app closes.
+      this.noticeValue = 'unprotected';
+      return;
+    }
+    let text: string;
+    try {
+      text = await fs.readFile(this.file.path, 'utf8');
+    } catch {
+      return; // None yet.
+    }
+    const saved = await this.unprotect(text);
+    if (!saved) {
+      this.noticeValue = 'discarded';
+      await this.file.quarantine();
+      return;
+    }
+    this.projectSites = saved.projects;
+    this.suspected = saved.suspects ?? [];
+  }
+
+  /** Why the list is not what was saved, for the settings screen. */
+  notice(): BrowserSitesNotice | undefined {
+    return this.noticeValue;
+  }
+
+  private async unprotect(text: string): Promise<BrowserSitesFile | null> {
+    try {
+      const envelope = JSON.parse(text) as Partial<ProtectedSites>;
+      if (envelope.version !== 2 || typeof envelope.protectedSites !== 'string' || Object.keys(envelope).length !== 2) return null;
+      const ciphertext = Buffer.from(envelope.protectedSites, 'base64');
+      if (ciphertext.length === 0 || ciphertext.toString('base64') !== envelope.protectedSites) return null;
+      return validSites(JSON.parse(await this.protector!.decrypt(ciphertext)));
+    } catch {
+      return null;
+    }
+  }
+
+  /** The whole list as memory holds it now, written in place of what was there. */
+  private save(): Promise<void> {
+    const protector = this.protector;
+    if (!protector?.available()) return Promise.resolve();
+    return this.file.enqueue(async () => {
+      const body: BrowserSitesFile = { version: 1, projects: this.projectSites, ...(this.suspected.length ? { suspects: this.suspected } : {}) };
+      const envelope: ProtectedSites = { version: 2, protectedSites: Buffer.from(await protector.encrypt(JSON.stringify(body))).toString('base64') };
+      await this.file.writeAtomic(JSON.stringify(envelope));
+    });
   }
 
   origins(projectId: string): readonly string[] {
@@ -68,16 +130,13 @@ export class BrowserSiteStore {
 
   /** On disk behind the view manager, which holds the set that decides: a failed write costs the next restart, not this run. */
   async addSuspect(origin: string): Promise<void> {
-    await this.changeSuspects((suspects) => [...suspects.filter((entry) => entry !== origin), origin].slice(-REMEMBERED_SUSPECTS));
+    this.suspected = [...this.suspected.filter((entry) => entry !== origin), origin].slice(-REMEMBERED_SUSPECTS);
+    await this.save().catch(() => undefined);
   }
 
   async clearSuspect(origin: string): Promise<void> {
-    await this.changeSuspects((suspects) => suspects.filter((entry) => entry !== origin));
-  }
-
-  private async changeSuspects(mutate: (suspects: readonly string[]) => readonly string[]): Promise<void> {
-    const next = await this.file.update(validSites, EMPTY, (current) => ({ ...current, suspects: mutate(current.suspects ?? []) }), 'browser suspects').catch(() => undefined);
-    if (next) this.suspected = next.suspects ?? [];
+    this.suspected = this.suspected.filter((entry) => entry !== origin);
+    await this.save().catch(() => undefined);
   }
 
   async allow(projectId: string, origin: string): Promise<void> {
@@ -88,14 +147,12 @@ export class BrowserSiteStore {
     await this.change(projectId, (origins) => origins.filter((entry) => entry !== origin));
   }
 
+  /** A change applies in memory at once; a write that fails is reported, and the next change writes the whole list again. */
   private async change(projectId: string, mutate: (origins: readonly string[]) => readonly string[]): Promise<void> {
-    const next = await this.file.update(validSites, EMPTY, (current) => {
-      const origins = mutate(current.projects[projectId] ?? []);
-      const others = Object.entries(current.projects).filter(([id]) => id !== projectId);
-      return { ...current, projects: Object.fromEntries(origins.length ? [...others, [projectId, origins]] : others) };
-    }, 'browser sites');
-    if (!next) throw new Error('The site list could not be saved.');
-    this.projectSites = next.projects;
+    const origins = mutate(this.projectSites[projectId] ?? []);
+    const others = Object.entries(this.projectSites).filter(([id]) => id !== projectId);
+    this.projectSites = Object.fromEntries(origins.length ? [...others, [projectId, origins]] : others);
+    await this.save().catch((error: unknown) => { throw new Error('The site list could not be saved.', { cause: error }); });
   }
 }
 

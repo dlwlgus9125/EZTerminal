@@ -1,4 +1,4 @@
-import { isBrowserSurfaceSnapshot, parseBrowserSettings, type BrowserProjectSites, type BrowserSettings, type BrowserSurfaceSnapshot, type BrowserViewState } from '../shared/browser';
+import { isBrowserSurfaceSnapshot, parseBrowserSettings, type BrowserProjectSites, type BrowserSettings, type BrowserSettingsState, type BrowserSurfaceSnapshot, type BrowserViewState } from '../shared/browser';
 import { IpcRegistration, type FeatureIpc } from './ipc-registration';
 
 interface BrowserIpcView {
@@ -8,7 +8,7 @@ interface BrowserIpcView {
 
 /** Settings › 에이전트 › 내장 브라우저. */
 export interface BrowserSettingsHost {
-  load(): Promise<{ readonly settings: BrowserSettings; readonly sites: readonly BrowserProjectSites[] }>;
+  load(): Promise<BrowserSettingsState>;
   save(settings: BrowserSettings): Promise<BrowserSettings>;
   revokeSite(projectId: string, origin: string): Promise<readonly BrowserProjectSites[]>;
   clearData(): Promise<void>;

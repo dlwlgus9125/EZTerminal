@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -12,8 +13,32 @@ let directory: string;
 beforeEach(() => { directory = mkdtempSync(path.join(tmpdir(), 'ez-browser-sites-')); });
 afterEach(() => { rmSync(directory, { recursive: true, force: true }); });
 
+/** Stands in for safeStorage: authenticated, so a changed byte fails to open, as AES-GCM does. */
+const KEY = 'test-key';
+const seal = (plaintext: string): Buffer => {
+  const body = Buffer.from(plaintext, 'utf8');
+  return Buffer.concat([createHmac('sha256', KEY).update(body).digest(), body.map((byte) => byte ^ 0x5a)]);
+};
+const PROTECTOR = {
+  available: () => true,
+  encrypt: seal,
+  decrypt: (ciphertext: Buffer): string => {
+    const body = Buffer.from(ciphertext.subarray(32).map((byte) => byte ^ 0x5a));
+    if (!createHmac('sha256', KEY).update(body).digest().equals(ciphertext.subarray(0, 32))) throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.');
+    return body.toString('utf8');
+  },
+};
+const file = (): string => path.join(directory, 'browser-sites.json');
+const sealed = (value: unknown): string => JSON.stringify({ version: 2, protectedSites: seal(JSON.stringify(value)).toString('base64') });
+const tampered = (text: string): string => {
+  const envelope = JSON.parse(text) as { protectedSites: string };
+  const bytes = Buffer.from(envelope.protectedSites, 'base64');
+  bytes[bytes.length - 1] ^= 1;
+  return JSON.stringify({ ...envelope, protectedSites: bytes.toString('base64') });
+};
+
 const fresh = async (): Promise<BrowserSiteStore> => {
-  const store = new BrowserSiteStore(directory);
+  const store = new BrowserSiteStore(directory, PROTECTOR);
   await store.load();
   return store;
 };
@@ -54,14 +79,56 @@ describe('BrowserSiteStore', () => {
     expect((await fresh()).origins('project').slice().sort()).toEqual(['https://other.example', SITE].sort());
   });
 
-  it('drops an entry that is no exact origin: a hand edit allows nothing', async () => {
-    writeFileSync(path.join(directory, 'browser-sites.json'), JSON.stringify({ version: 1, projects: { project: [SITE, 'https://*.example', 'http://localhost:5173', 'https://a.example/path', 'javascript:alert(1)', 7] } }));
+  it('drops an entry that is no exact origin, even one the app could read', async () => {
+    writeFileSync(file(), sealed({ version: 1, projects: { project: [SITE, 'https://*.example', 'http://localhost:5173', 'https://a.example/path', 'javascript:alert(1)', 7] } }));
     expect((await fresh()).origins('project')).toEqual([SITE]);
   });
 
-  it.each(['not json', '{"version":2,"projects":{}}', '{"version":1,"projects":[]}', '{"version":1,"projects":{"project":"https://a.example"}}', 'null'])('fails closed on %s', async (text) => {
-    writeFileSync(path.join(directory, 'browser-sites.json'), text);
-    expect((await fresh()).origins('project')).toEqual([]);
+  it('keeps the list at rest as ciphertext: no origin stands in the file', async () => {
+    const store = await fresh();
+    await store.allow('project', SITE);
+    await store.addSuspect('https://suspect.example');
+    const text = readFileSync(file(), 'utf8');
+    expect(text).not.toContain('cart-kit');
+    expect(text).not.toContain('suspect.example');
+  });
+
+  it('answers from memory: an edit on disk is never read back while it runs, not even one in its own ciphertext', async () => {
+    const store = await fresh();
+    await store.allow('project', SITE);
+    writeFileSync(file(), sealed({ version: 1, projects: { project: [SITE, 'https://injected.example'] }, suspects: [] }));
+    await store.allow('project', 'https://other.example');
+    await store.revoke('another-project', 'https://nothing.example');
+    expect(store.origins('project')).toEqual([SITE, 'https://other.example']);
+    expect((await fresh()).origins('project')).toEqual([SITE, 'https://other.example']);
+  });
+
+  it.each([
+    ['the plain list an edit leaves', JSON.stringify({ version: 1, projects: { project: [SITE] } })],
+    ['ciphertext with a byte changed', 'TAMPER'],
+    ['not json', 'not json'],
+    ['an envelope with more in it', JSON.stringify({ version: 2, protectedSites: 'AAAA', projects: { project: [SITE] } })],
+    ['a sealed list of the wrong shape', JSON.stringify({ version: 2, protectedSites: Buffer.from(seal('{"version":1,"projects":[]}')).toString('base64') })],
+  ])('sets aside %s, allows nothing, and says why', async (_name, text) => {
+    const store = await fresh();
+    await store.allow('project', SITE);
+    await store.addSuspect('https://suspect.example');
+    writeFileSync(file(), text === 'TAMPER' ? tampered(readFileSync(file(), 'utf8')) : text);
+    const again = await fresh();
+    expect(again.origins('project')).toEqual([]);
+    expect(again.suspects()).toEqual([]);
+    expect(again.notice()).toBe('discarded');
+    expect(existsSync(`${file()}.corrupt`)).toBe(true);
+    expect((await fresh()).notice(), 'set aside once, then a fresh start').toBeUndefined();
+  });
+
+  it('without secure storage keeps the list for this run only, writes nothing, and says so', async () => {
+    const store = new BrowserSiteStore(directory, { ...PROTECTOR, available: () => false });
+    await store.load();
+    await store.allow('project', SITE);
+    expect(store.origins('project')).toEqual([SITE]);
+    expect(existsSync(file())).toBe(false);
+    expect(store.notice()).toBe('unprotected');
   });
 
   it('lists every project with a site, for the settings screen', async () => {
@@ -73,7 +140,7 @@ describe('BrowserSiteStore', () => {
   });
 
   it('answers nothing before it has read the file', () => {
-    expect(new BrowserSiteStore(directory).origins('project')).toEqual([]);
+    expect(new BrowserSiteStore(directory, PROTECTOR).origins('project')).toEqual([]);
   });
 
   describe('sites that answered from where they must not', () => {
@@ -100,15 +167,15 @@ describe('BrowserSiteStore', () => {
       expect(again.suspects()).toEqual([SITE]);
     });
 
-    it('reads a file written before there were any', async () => {
-      writeFileSync(path.join(directory, 'browser-sites.json'), JSON.stringify({ version: 1, projects: { project: [SITE] } }));
+    it('reads a list written before there were any', async () => {
+      writeFileSync(file(), sealed({ version: 1, projects: { project: [SITE] } }));
       const store = await fresh();
       expect(store.origins('project')).toEqual([SITE]);
       expect(store.suspects()).toEqual([]);
     });
 
     it('fails closed when the entry is no list: nothing is allowed', async () => {
-      writeFileSync(path.join(directory, 'browser-sites.json'), JSON.stringify({ version: 1, projects: { project: [SITE] }, suspects: SITE }));
+      writeFileSync(file(), sealed({ version: 1, projects: { project: [SITE] }, suspects: SITE }));
       expect((await fresh()).origins('project')).toEqual([]);
     });
 

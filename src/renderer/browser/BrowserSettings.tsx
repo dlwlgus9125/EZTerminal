@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 
-import type { BrowserProjectSites, BrowserSettings as Settings } from '../../shared/browser';
+import type { BrowserProjectSites, BrowserSettings as Settings, BrowserSitesNotice } from '../../shared/browser';
 import type { BrowserAccess } from '../capability-access';
 import { useChatCopy } from '../chat/copy';
 import { Button, Status, Switch } from '../ui';
@@ -15,10 +15,16 @@ export function BrowserSettingsSection({ access }: { readonly access: BrowserAcc
   const titleId = useId();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [sites, setSites] = useState<readonly BrowserProjectSites[]>([]);
+  const [sitesNotice, setSitesNotice] = useState<BrowserSitesNotice>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
-    void access.load().then((state) => { if (alive) { setSettings(state.settings); setSites(state.sites); } }, () => { if (alive) setFailed(true); });
+    void access.load().then((state) => {
+      if (!alive) return;
+      setSettings(state.settings);
+      setSites(state.sites);
+      setSitesNotice(state.sitesNotice);
+    }, () => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [access]);
   const save = (next: Settings): void => {
@@ -49,6 +55,7 @@ export function BrowserSettingsSection({ access }: { readonly access: BrowserAcc
           </div>
           <div className="browser-settings__group">
             <h3>{copy.sites}</h3>
+            {sitesNotice && <Status variant={sitesNotice === 'discarded' ? 'danger' : 'warning'} data-testid="browser-sites-notice">{copy.sitesNotice[sitesNotice]}</Status>}
             <p className="settings-hint">{listed.length > 0 ? copy.sitesHint : copy.sitesEmpty}</p>
             {listed.map((project) => (
               <div key={project.projectId}>

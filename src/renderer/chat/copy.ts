@@ -434,6 +434,10 @@ const EN = {
       sites: 'Allowed sites',
       sitesHint: 'Each project keeps its own list.',
       sitesEmpty: 'No site is allowed yet. Sites you allow in the pane show here.',
+      sitesNotice: {
+        discarded: 'The saved list was changed outside the app, so it was set aside and allows nothing. Allow the sites you need again in the pane.',
+        unprotected: 'This PC cannot protect the list, so sites you allow last until the app closes.',
+      },
       revoke: 'Remove',
       revokeLabel: (origin: string) => `Remove ${origin}`,
       clear: 'Clear browser data',
@@ -1066,6 +1070,10 @@ const KO: typeof EN = {
       sites: '허용한 사이트',
       sitesHint: '프로젝트마다 따로입니다.',
       sitesEmpty: '허용한 사이트가 없습니다. 패널에서 허용한 사이트가 여기에 나옵니다.',
+      sitesNotice: {
+        discarded: '저장된 목록이 앱 밖에서 바뀌어 따로 치워 두었고, 이제 아무 사이트도 허용하지 않습니다. 필요한 사이트는 패널에서 다시 허용하세요.',
+        unprotected: '이 PC가 목록을 보호할 수 없어, 허용한 사이트는 앱을 닫을 때까지만 유지됩니다.',
+      },
       revoke: '허용 해제',
       revokeLabel: (origin: string) => `${origin} 허용 해제`,
       clear: '브라우저 데이터 지우기',

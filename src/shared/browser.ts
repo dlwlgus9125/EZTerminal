@@ -305,6 +305,19 @@ export interface BrowserProjectSites {
   readonly origins: readonly string[];
 }
 
+/**
+ * Why the allowed sites are not what was saved. `discarded`: the file was not the app's own ciphertext, so it was set aside and
+ * allows nothing. `unprotected`: the OS cannot protect the file, so the list lasts until the app closes.
+ */
+export type BrowserSitesNotice = 'discarded' | 'unprotected';
+
+/** What Settings › 내장 브라우저 reads. */
+export interface BrowserSettingsState {
+  readonly settings: BrowserSettings;
+  readonly sites: readonly BrowserProjectSites[];
+  readonly sitesNotice?: BrowserSitesNotice;
+}
+
 /** A local address a terminal or an AI named. Nothing opens it until a person presses it. */
 export interface BrowserDevCandidate {
   readonly url: string;

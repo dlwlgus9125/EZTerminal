@@ -1001,7 +1001,12 @@ app.on('ready', async () => {
     return { commandId, idempotencyKey: commandId, expectedRevision: daemonRouterRef.current!.getSnapshot().revision, issuedAt: new Date().toISOString(), principal: { kind: 'desktop' as const, id: 'browser-settings' } };
   };
   const browserApprovalsRef: { current?: BrowserApprovals } = {};
-  const browserSites = new BrowserSiteStore(app.getPath('userData'));
+  // The allow list at rest is ciphertext under the OS key, so an edit of the file is set aside at the next start, not trusted.
+  const browserSites = new BrowserSiteStore(app.getPath('userData'), {
+    available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+    encrypt: (plaintext) => safeStorage.encryptString(plaintext),
+    decrypt: (ciphertext) => safeStorage.decryptString(ciphertext),
+  });
   const browserPages = new BrowserLastPages(app.getPath('userData'));
   await Promise.all([browserSites.load(), browserPages.load()]);
   const browserShots = new BrowserShots(app.getPath('userData'));
@@ -1019,7 +1024,10 @@ app.on('ready', async () => {
     autoCheck: settingsRef.authority?.browserAutoCheck() ?? false,
   });
   const browserSettingsHost: BrowserSettingsHost = {
-    load: async () => ({ settings: browserSettingsNow(), sites: browserSiteList() }),
+    load: async () => {
+      const sitesNotice = browserSites.notice();
+      return { settings: browserSettingsNow(), sites: browserSiteList(), ...(sitesNotice ? { sitesNotice } : {}) };
+    },
     save: async ({ enabled, autoCheck }) => {
       await settingsRef.authority?.setBrowserAutoCheck(autoCheck);
       if (enabled !== browserSettingsNow().enabled) {

@@ -5,7 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
-import type { BrowserPickedElement, BrowserProjectSites, BrowserSettings, BrowserSurfaceSnapshot, BrowserViewState } from '../shared/browser';
+import type { BrowserPickedElement, BrowserProjectSites, BrowserSettings, BrowserSettingsState, BrowserSurfaceSnapshot, BrowserViewState } from '../shared/browser';
 import type { LongRunSettings } from '../shared/long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
@@ -321,7 +321,7 @@ export interface BrowserPaneAccess {
 
 /** Settings › 에이전트 › 내장 브라우저. */
 export interface BrowserAccess {
-  readonly load: () => Promise<{ readonly settings: BrowserSettings; readonly sites: readonly BrowserProjectSites[] }>;
+  readonly load: () => Promise<BrowserSettingsState>;
   readonly save: (settings: BrowserSettings) => Promise<BrowserSettings>;
   readonly revokeSite: (projectId: string, origin: string) => Promise<readonly BrowserProjectSites[]>;
   readonly clearData: () => Promise<void>;
