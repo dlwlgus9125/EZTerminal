@@ -96,6 +96,7 @@ describe('2.0 design reference manifest', () => {
       'turn-suggestion', 'turn-recap', 'turn-recap-cli', 'task-card', 'task-card-cli', 'task-start-all', 'wrap-up-settings',
       'task-phone-card', 'suggestion-phone-chip',
       'steer-tray', 'steer-behind-approval', 'limit-waiting', 'limit-ask', 'limit-resumed', 'long-run-list', 'long-run-settings', 'limit-phone-card', 'steer-phone-tray',
+      'browser-pane', 'browser-allow-sheet', 'browser-approval', 'browser-blocked', 'browser-rows', 'browser-settings', 'browser-phone-row',
     ]);
     expect([...result.retired].sort()).toEqual(legacyManifest.surfaces.map((surface: { id: string }) => surface.id).sort());
   });
