@@ -103,7 +103,7 @@ export const BROWSER_APPROVAL_HOLD_MS = 240_000;
 export type BrowserActionRun =
   | { readonly kind: 'navigate'; readonly url: string }
   | { readonly kind: 'click' }
-  | { readonly kind: 'type'; readonly value: string }
+  | { readonly kind: 'type'; readonly value: string; readonly submit?: true }
   | { readonly kind: 'press'; readonly keys: string };
 
 /** What the decision dock shows for a browser action: the app's facts, then the one thing the page wrote. */
@@ -145,7 +145,7 @@ function runOf(action: BrowserActionKind, input: Readonly<Record<string, unknown
   switch (action) {
     case 'click': return { kind: 'click' };
     case 'navigate': return typeof input.url === 'string' ? { kind: 'navigate', url: input.url } : undefined;
-    case 'type': return typeof input.value === 'string' ? { kind: 'type', value: input.value } : undefined;
+    case 'type': return typeof input.value === 'string' ? { kind: 'type', value: input.value, ...(input.submit === true ? { submit: true as const } : {}) } : undefined;
     case 'press': return typeof input.keys === 'string' ? { kind: 'press', keys: input.keys } : undefined;
   }
 }

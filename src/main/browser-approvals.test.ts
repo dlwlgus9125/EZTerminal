@@ -66,6 +66,7 @@ describe('BrowserApprovals', () => {
     [{ kind: 'navigate', url: 'https://staging.cart-kit.example/a?b=1' }, { url: 'https://staging.cart-kit.example/a?b=1' }],
     [{ kind: 'press', keys: 'Control+Enter' }, { keys: 'Control+Enter' }],
     [{ kind: 'click' }, {}],
+    [{ kind: 'type', value: 'SPRING', submit: true }, { value: 'SPRING', submit: true }],
   ] as const)('shows what will run: %j', async (run, input) => {
     const { coordinator, raise } = harness();
     void coordinator.request(ask({ run, pageElement: undefined }));

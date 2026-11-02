@@ -329,6 +329,18 @@ describe('approval', () => {
       expect(h.pages.navigateForTool).not.toHaveBeenCalled();
     });
 
+    it('tells the person when Enter follows the typing, and sends it only then', async () => {
+      const plain = harness({ url: ALLOWED });
+      await plain.call('browser_type', { ref: 'e1', text: 'SPRING' });
+      expect(plain.requests[0]?.run).toEqual({ kind: 'type', value: 'SPRING' });
+      expect(plain.driver.press).not.toHaveBeenCalled();
+
+      const submitting = harness({ url: ALLOWED });
+      await submitting.call('browser_type', { ref: 'e1', text: 'SPRING', submit: true });
+      expect(submitting.requests[0]?.run).toEqual({ kind: 'type', value: 'SPRING', submit: true });
+      expect(submitting.driver.press).toHaveBeenCalledTimes(1);
+    });
+
     it('the element changed', async () => {
       const h = during(({ driver }) => { driver.target.mockResolvedValue({ role: 'button', name: 'Delete account', password: false }); });
       expect(code(await h.call('browser_click', { ref: 'e1' }))).toBe('approval-void');

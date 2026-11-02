@@ -24,7 +24,7 @@ function inputOf(run: BrowserActionRun, pageElement: string | undefined): string
   switch (run.kind) {
     case 'click': return JSON.stringify(element);
     case 'navigate': return JSON.stringify({ url: run.url, ...element });
-    case 'type': return JSON.stringify({ value: run.value, ...element });
+    case 'type': return JSON.stringify({ value: run.value, ...(run.submit ? { submit: true } : {}), ...element });
     case 'press': return JSON.stringify({ keys: run.keys, ...element });
   }
 }

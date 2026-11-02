@@ -265,6 +265,10 @@ describe('browserActionOf: what will run comes from the host, the element name f
     expect(view?.pageElement).toBe('textbox "Coupon"');
   });
 
+  it('shows that Enter follows, as part of what will run', () => {
+    expect(browserActionOf(request('browser_type', { value: 'SPRING', submit: true }))?.run).toEqual({ kind: 'type', value: 'SPRING', submit: true });
+  });
+
   it('shows the keys', () => {
     expect(browserActionOf(request('browser_press', { keys: 'Control+Enter' }))?.run).toEqual({ kind: 'press', keys: 'Control+Enter' });
   });

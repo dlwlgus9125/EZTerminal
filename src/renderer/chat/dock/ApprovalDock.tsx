@@ -103,7 +103,13 @@ function BrowserActionBody({ action }: { readonly action: BrowserActionView }): 
     <div className="chat-dock__detail chat-dock__browser" data-testid="chat-dock-browser">
       <dl className="chat-dock__browser-facts">
         <div><dt>{copy.site}</dt><dd><code>{action.origin}</code></dd></div>
-        <div data-testid="chat-dock-browser-run"><dt>{copy.run[action.action]}</dt><dd><BrowserRunValue run={action.run} /></dd></div>
+        <div data-testid="chat-dock-browser-run">
+          <dt>{copy.run[action.action]}</dt>
+          <dd>
+            <BrowserRunValue run={action.run} />
+            {action.run.kind === 'type' && action.run.submit && <span className="chat-dock__browser-masked" data-testid="chat-dock-browser-submit">{copy.thenEnter}</span>}
+          </dd>
+        </div>
       </dl>
       <p className="chat-dock__meta">{copy.held}</p>
       {action.pageElement && (

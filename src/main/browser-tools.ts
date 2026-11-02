@@ -274,7 +274,7 @@ export class BrowserTools {
       case 'browser_type': {
         const ref = args.ref as string;
         const value = args.text as string;
-        return this.act(context, turnId, 'browser_type', 'type', { kind: 'type', value }, ref, signal, async (cdp) => {
+        return this.act(context, turnId, 'browser_type', 'type', { kind: 'type', value, ...(args.submit === true ? { submit: true as const } : {}) }, ref, signal, async (cdp) => {
           await cdp.type(ref, value);
           if (args.submit === true) {
             await cdp.press(parseKeys('Enter')!);
