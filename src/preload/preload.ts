@@ -907,6 +907,10 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('browser:view-state', handler);
     return () => ipcRenderer.removeListener('browser:view-state', handler);
   },
+  getBrowserSettings: () => ipcRenderer.invoke('browser:settings'),
+  setBrowserSettings: (settings: import('../shared/browser').BrowserSettings) => ipcRenderer.invoke('browser:set-settings', settings),
+  revokeBrowserSite: (projectId: string, origin: string) => ipcRenderer.invoke('browser:revoke-site', projectId, origin),
+  clearBrowserData: () => ipcRenderer.invoke('browser:clear-data'),
   onBrowserPicked: (listener: (picked: import('../shared/browser').BrowserPickedElement) => void): (() => void) => {
     const handler = (_event: unknown, picked: import('../shared/browser').BrowserPickedElement): void => listener(picked);
     ipcRenderer.on('browser:picked', handler);

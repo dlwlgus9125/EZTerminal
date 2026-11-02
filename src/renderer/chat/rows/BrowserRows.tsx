@@ -197,7 +197,7 @@ export function BrowserCheckCard({ row }: { readonly row: RowOf<'browser-check'>
       stateText={stateText}
       meta={<><span className="chat-wrap-up-meta__who">{copy.check.by}</span><span className="chat-wrap-up-meta__time"><time dateTime={row.createdAt}>{clock}</time></span></>}
       cliMeta={`${copy.check.by} · ${clock}`}
-      {...(noCalls ? { message: { text: copy.check.noCalls } } : check.reason ? { message: { text: check.reason, tone: 'danger' as const } } : {})}
+      {...(noCalls ? { message: { text: copy.check.noCalls } } : {})}
       notes={notes}
       actions={actions}
     >

@@ -19,8 +19,7 @@ import type { BrowserPageResult } from './browser-view-manager';
  * | standard | free          | reads free, actions ask   | refused        |
  * | full access | free       | free                      | refused        |
  *
- * The rows come from here, from what ran: `onStep`, `onShot` and `onRefused`. Seam left for a later step: `devUrls` (step 13,
- * discovery).
+ * The rows come from here, from what ran: `onStep`, `onShot` and `onRefused`.
  */
 
 const NAVIGATION_WAIT_MS = 15_000;

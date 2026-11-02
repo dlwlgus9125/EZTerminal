@@ -96,6 +96,10 @@ describe('browserPaneStrip', () => {
     expect(browserPaneStrip(state({ ai: 'driving', blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 1 } }))).toEqual({ kind: 'blocked', origin: 'https://evil.example' });
   });
 
+  it('says a person is asked, ahead of who is at the page', () => {
+    expect(browserPaneStrip(state({ ai: 'driving', waiting: true }))).toEqual({ kind: 'waiting' });
+  });
+
   it('says who is at the page', () => {
     expect(browserPaneStrip(state({ ai: 'driving' }))).toEqual({ kind: 'driving' });
     expect(browserPaneStrip(state({ ai: 'stopped' }))).toEqual({ kind: 'stopped' });
@@ -262,6 +266,18 @@ describe('BrowserPanel', () => {
     push(state({ loading: true, blocked: { origin: 'https://evil.example', reason: 'site-not-allowed', serial: 3 } }));
     await settle();
     expect(container.querySelector('[data-testid="browser-strip"]'), 'the same stop, pushed again').toBeNull();
+  });
+
+  it('brings the conversation forward to answer, and leaves the page as it is', async () => {
+    const { capabilities, props, sendCommand, push } = harness();
+    const setActive = vi.fn();
+    const containerApi = { panels: [{ api: { component: 'agent-session', setActive }, params: { conversationId: 'chat' } }] };
+    await render(<BrowserPanel {...props} containerApi={containerApi as never} capabilities={capabilities} />);
+    push(state({ waiting: true }));
+    await settle();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-answer"]')!.click(); });
+    expect(setActive).toHaveBeenCalledTimes(1);
+    expect(sendCommand).not.toHaveBeenCalled();
   });
 
   it('asks the host to pick, and to stop, as a person', async () => {

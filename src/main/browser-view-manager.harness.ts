@@ -794,6 +794,12 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     await js(contents, `const a=document.createElement('a');a.href='/download';a.download='thing.bin';document.body.append(a);a.click()`);
     await delay(SETTLE_MS);
     report.download = { blocked: manager.state(id).blocked?.reason ?? null, onDisk: await fs.readdir(path.join(scratch, 'downloads')) };
+    manager.setWaiting(id, true);
+    report['waiting-on'] = manager.state(id).waiting ?? false;
+    manager.setWaiting(id, false);
+    report['waiting-off'] = manager.state(id).waiting ?? false;
+    await manager.clearData();
+    report['cookies-cleared'] = (await partition.cookies.get({ name: 'probe' })).length;
     manager.forget(id);
   }
 

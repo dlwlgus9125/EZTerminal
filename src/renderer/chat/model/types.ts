@@ -168,7 +168,6 @@ export interface ChatBrowserCheck {
   /** Browser tool calls in that turn; none means the AI did not look, whatever it says. */
   readonly calls: { readonly screenshots: number; readonly reads: number };
   readonly summary?: string;
-  readonly reason?: string;
 }
 
 interface RowBase {

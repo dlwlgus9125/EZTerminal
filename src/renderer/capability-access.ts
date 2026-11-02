@@ -302,7 +302,7 @@ export interface CapabilityAccess {
   readonly turnWrapUp?: TurnWrapUpAccess;
   /** Settings › 에이전트 › 이어서 하기, on a host with `long-run-v1`. Optional so test doubles need not supply it. */
   readonly longRun?: LongRunAccess;
-  /** 시안: only the stories pass this; there is no host behind it yet. */
+  /** Settings › 에이전트 › 내장 브라우저, on a host with `in-app-browser-v1`. Optional so test doubles need not supply it. */
   readonly browser?: BrowserAccess;
   /** The in-app browser's pane. Optional so test doubles need not supply it. */
   readonly browserPane?: BrowserPaneAccess;
@@ -319,7 +319,7 @@ export interface BrowserPaneAccess {
   readonly onOpenPane: (listener: (conversationId: string) => void) => CapabilityCleanup;
 }
 
-/** The one long-run setting. */
+/** Settings › 에이전트 › 내장 브라우저. */
 export interface BrowserAccess {
   readonly load: () => Promise<{ readonly settings: BrowserSettings; readonly sites: readonly BrowserProjectSites[] }>;
   readonly save: (settings: BrowserSettings) => Promise<BrowserSettings>;
@@ -327,6 +327,7 @@ export interface BrowserAccess {
   readonly clearData: () => Promise<void>;
 }
 
+/** The one long-run setting. */
 export interface LongRunAccess {
   readonly load: () => Promise<LongRunSettings>;
   readonly save: (settings: LongRunSettings) => Promise<LongRunSettings>;
@@ -1053,6 +1054,18 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     save: async (settings) => settingsBridge().setLongRun(settings),
   };
 
+  const browserDesktop = <T extends keyof EzTerminalDesktopApi>(operation: T): EzTerminalDesktopApi => {
+    const api = desktopFor(operation);
+    if (!api) throw new Error('The in-app browser is unavailable on this host.');
+    return api;
+  };
+  const browser: BrowserAccess = {
+    load: async () => browserDesktop('getBrowserSettings').getBrowserSettings(),
+    save: async (settings) => browserDesktop('setBrowserSettings').setBrowserSettings(settings),
+    revokeSite: async (projectId, origin) => browserDesktop('revokeBrowserSite').revokeBrowserSite(projectId, origin),
+    clearData: async () => browserDesktop('clearBrowserData').clearBrowserData(),
+  };
+
   const browserPane: BrowserPaneAccess = {
     setSurface(surface) {
       const api = desktopFor('setBrowserSurface');
@@ -1100,6 +1113,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     agentManagement,
     turnWrapUp,
     longRun,
+    browser,
     browserPane,
   };
 }

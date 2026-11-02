@@ -6,7 +6,6 @@ import type { ResolveFileLink } from './markdown/file-links';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 import type { ChatLocale } from './model/summary';
 import type { ChatAttachment } from '../../shared/chat-message';
-import type { ChatRow } from './model/types';
 
 export type ChatSkin = 'bubble' | 'cli';
 
@@ -42,9 +41,8 @@ export type ChatWrapUpAction =
   | { readonly kind: 'task-start-all'; readonly turnId: string; readonly starts: readonly { readonly taskId: string; readonly where: SuggestedTaskWhere }[] }
   | { readonly kind: 'recap-retry'; readonly turnId: string };
 
-/** 시안, the in-app browser: rows the stories place, by transcript item, and the way from a row to the pane. */
+/** The in-app browser, as a conversation uses it: the way to the pane, and what comes back from it. */
 export interface ChatBrowserProp {
-  readonly rows?: ReadonlyMap<string, ChatRow>;
   readonly onOpenPane?: () => void;
   /** Hears elements picked in this conversation's pane, as attachments. */
   readonly onPicked?: (deliver: (attachments: readonly ChatAttachment[]) => void) => () => void;
@@ -87,7 +85,7 @@ export interface ChatContextValue {
   readonly onWrapUpAction?: (action: ChatWrapUpAction) => void;
   /** 시안: usage limit card actions. Absent: the card is read-only. */
   readonly onLongRunAction?: (action: ChatLongRunAction) => void;
-  /** 시안, the in-app browser: from a row to the pane beside the conversation. */
+  /** The in-app browser: from a row to the pane beside the conversation. */
   readonly onOpenBrowserPane?: () => void;
   readonly wrapUpPending?: ChatWrapUpPending;
   /** A failed recap can be written again now; absent, its line says why it failed and offers nothing that could only fail. */

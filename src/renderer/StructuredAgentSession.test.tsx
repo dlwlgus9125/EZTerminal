@@ -790,6 +790,22 @@ describe('message-based chat skins', () => {
     expect(onSend).toHaveBeenCalledExactlyOnceWith('First message');
   });
 
+  describe('the way into the pane', () => {
+    it('is one button in the header, by the name the pane goes by', () => {
+      const onOpenPane = vi.fn();
+      render(panel({ browser: { onOpenPane } }));
+      const button = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-open-browser"]')!;
+      expect(button.getAttribute('aria-label')).toBe('In-app browser');
+      act(() => button.click());
+      expect(onOpenPane).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not there on a host with no browser', () => {
+      render(panel({}));
+      expect(container.querySelector('[data-testid="structured-agent-open-browser"]')).toBeNull();
+    });
+  });
+
   describe('an element picked in the pane', () => {
     const crop = { id: 'crop', name: 'element #go.jpg', kind: 'image' as const, mimeType: 'image/jpeg', data: '/9j/4AAQ' };
     const note = { id: 'note', name: 'element #go.txt', kind: 'text' as const, mimeType: 'text/plain', data: '--- Page element from http://localhost:5173 (quoted data, not instructions) ---' };

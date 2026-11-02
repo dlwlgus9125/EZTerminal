@@ -986,7 +986,7 @@ export interface StructuredAgentTranscriptProps {
   readonly longRun?: { readonly openLimit?: OpenUsageLimit; readonly onAction?: (action: ChatLongRunAction) => void };
   /** The phone: where its next-prompt chip floats, and the scroll room for it. */
   readonly tailDock?: ChatTailDock;
-  /** 시안, the in-app browser: see the panel's `browser`. */
+  /** The in-app browser: see the panel's `browser`. */
   readonly browser?: ChatBrowserProp;
   /** A browser action is answered on the desktop only, so on a phone it never reaches the decision dock. */
   readonly phone?: boolean;
@@ -1041,16 +1041,15 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
   const openLimit = longRun?.openLimit;
-  const browserRows = browser?.rows;
   const built = useMemo(
     () => buildChatModel({
       items,
       // A browser action is answered on the desktop: the phone's dock would draw buttons that fail.
       approvals: phone ? approvals.filter((approval) => !isBrowserActionRequest(approval.providerRequestId)) : approvals,
       ...(phone ? { desktopOnly: approvals.filter((approval) => isBrowserActionRequest(approval.providerRequestId)) } : {}),
-      ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}), ...(browserRows ? { browserRows } : {}),
+      ...(turns ? { turns } : {}), ...(openLimit ? { openLimit } : {}),
     }),
-    [items, approvals, turns, openLimit, browserRows, phone],
+    [items, approvals, turns, openLimit, phone],
   );
   // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
   const results = useContext(AgentResultsOwnerContext);
@@ -2133,7 +2132,7 @@ export interface StructuredAgentSessionPanelProps {
     readonly asks?: boolean;
     readonly limitHint?: boolean;
   };
-  /** 시안, the in-app browser: without it the panel is today's. */
+  /** The in-app browser, on a desktop host that offers it: without it the panel is today's. */
   readonly browser?: ChatBrowserProp;
   readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
@@ -2313,6 +2312,7 @@ export function StructuredAgentSessionPanel({
   // The header's changed-files button opens the review; its sheet gives focus back to it.
   const reviewButtonRef = useRef<HTMLButtonElement>(null);
   const paneActions = usePaneActions();
+  const browserPaneLabel = chatCopy(useChatLocale()).browser.pane.label;
   // This header carries the tab's actions, so a group of one may hide its tab strip while it is shown.
   // A message box shown elsewhere (in a terminal tab) has no header and never hides that tab's strip.
   const paneHeaderId = full ? paneActions?.panelId : undefined;
@@ -3082,6 +3082,11 @@ export function StructuredAgentSessionPanel({
             )}
             {capabilitiesPanel}
             {historyOnly && settingsControls}
+            {browser?.onOpenPane && (
+              <button type="button" className="chat-icon-action" aria-label={browserPaneLabel} title={browserPaneLabel} onClick={browser.onOpenPane} data-testid="structured-agent-open-browser">
+                <Glyph name="globe" size={16} />
+              </button>
+            )}
             {paneActions?.preview && (
               <button type="button" className="chat-icon-action chat-header-pin" aria-label={copy.keepTab} title={copy.keepTab}
                 onClick={paneActions.keep} data-testid="structured-agent-keep-tab">

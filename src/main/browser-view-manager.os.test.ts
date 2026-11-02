@@ -505,6 +505,15 @@ describe('the page\'s world', () => {
     expect(report.cookies).toEqual({ partition: 1, defaultSession: 0 });
   });
 
+  it('clears its data when a person asks', () => {
+    expect(report['cookies-cleared']).toBe(0);
+  });
+
+  it('says a person is being asked, and stops saying so', () => {
+    expect(report['waiting-on']).toBe(true);
+    expect(report['waiting-off']).toBe(false);
+  });
+
   it('downloads nothing', () => {
     expect(report.download).toEqual({ blocked: 'download-blocked', onDisk: [] });
   });

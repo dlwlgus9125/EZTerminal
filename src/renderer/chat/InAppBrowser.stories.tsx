@@ -173,9 +173,23 @@ function StatusPage(): JSX.Element {
 
 /** A small drawing of the fixture page, for the thumbnails. */
 function pagePicture(paid: boolean): string {
-  const row = (y: number, name: number, price: number): string => `<rect x="24" y="${String(y)}" width="${String(name)}" height="10" fill="#3c4043"/><rect x="${String(336 - price)}" y="${String(y)}" width="${String(price)}" height="10" fill="#3c4043"/>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="225" viewBox="0 0 360 225"><rect width="360" height="225" fill="#ffffff"/><rect width="360" height="34" fill="#1f3a5f"/><rect x="24" y="12" width="74" height="10" fill="#ffffff"/>${row(58, 140, 44)}${row(84, 110, 44)}${row(110, 164, 44)}<rect x="24" y="134" width="312" height="1" fill="#c6c6c6"/>${row(148, 60, 56)}<rect x="196" y="172" width="140" height="32" rx="4" fill="${paid ? '#1b6e3c' : '#1f3a5f'}"/><rect x="226" y="184" width="80" height="9" fill="#ffffff"/></svg>`;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  const canvas = document.createElement('canvas');
+  canvas.width = 360;
+  canvas.height = 225;
+  const context = canvas.getContext('2d')!;
+  const rect = (x: number, y: number, width: number, height: number, fill: string): void => { context.fillStyle = fill; context.fillRect(x, y, width, height); };
+  const line = (y: number, name: number, price: number): void => { rect(24, y, name, 10, '#3c4043'); rect(336 - price, y, price, 10, '#3c4043'); };
+  rect(0, 0, 360, 225, '#ffffff');
+  rect(0, 0, 360, 34, '#1f3a5f');
+  rect(24, 12, 74, 10, '#ffffff');
+  line(58, 140, 44);
+  line(84, 110, 44);
+  line(110, 164, 44);
+  rect(24, 134, 312, 1, '#c6c6c6');
+  line(148, 60, 56);
+  rect(196, 172, 140, 32, paid ? '#1b6e3c' : '#1f3a5f');
+  rect(226, 184, 80, 9, '#ffffff');
+  return canvas.toDataURL('image/jpeg', 0.8).split(',')[1] ?? '';
 }
 const THUMBS: BrowserThumbs = { before: pagePicture(false), after: pagePicture(true) };
 
@@ -199,7 +213,6 @@ function panelProps(sessionId: string, fixture: BrowserFixture, provider: Browse
     onChangeSettings: fn(async () => ({ ok: true as const })),
     onResolveApproval: async (id, decision, response) => { args.onResolveApproval(id, decision, response); return { ok: true as const }; },
     onCancel: fn(async () => ({ ok: true as const })),
-    browser: { rows: fixture.rows, onOpenPane: () => undefined },
   };
 }
 
@@ -215,7 +228,7 @@ function Chat({ id, variant, args, provider = 'claude', skin = 'bubble', draft, 
   const sessionId = `in-app-browser-story-${id}`;
   const fixture = useMemo(() => browserChat(locale, variant, THUMBS, provider), [locale, provider, variant]);
   return (
-    <StructuredAgentSessionPanel {...panelProps(sessionId, fixture, provider, locale, args, preset)} skin={skin}
+    <StructuredAgentSessionPanel {...panelProps(sessionId, fixture, provider, locale, args, preset)} skin={skin} browser={{ onOpenPane: () => undefined }}
       supportsMessageContext {...(draft ? { draftState: draft } : {})} />
   );
 }
@@ -225,7 +238,7 @@ function ChatOnly({ id, variant, args, ...options }: ChatOptions & { readonly id
   return <Desk width={1000} height={820}><Chat id={id} variant={variant} args={args} {...options} /></Desk>;
 }
 
-function PhoneScreen({ id, variant, args, bare = false }: { readonly id: string; readonly variant: BrowserChatVariant; readonly args: Args; readonly bare?: boolean }): JSX.Element {
+function PhoneScreen({ id, variant, args }: { readonly id: string; readonly variant: BrowserChatVariant; readonly args: Args }): JSX.Element {
   const locale = useContext(StoryLocale);
   const sessionId = `in-app-browser-story-${id}`;
   const fixture = useMemo(() => browserChat(locale, variant, THUMBS), [locale, variant]);
@@ -235,7 +248,7 @@ function PhoneScreen({ id, variant, args, bare = false }: { readonly id: string;
         <MobileConversationReviewProvider>
           <MobileToastProvider>
             <div className="phone-i4-frame mobile-workbench-coordinator" data-testid="phone-browser-frame" style={{ width: 360, height: 800 }}>
-              <MobileStructuredAgentSession {...panelProps(sessionId, fixture, 'claude', locale, args, 'standard')} folders={undefined} browser={bare ? undefined : { rows: fixture.rows }} skin="bubble" onBack={fn()} />
+              <MobileStructuredAgentSession {...panelProps(sessionId, fixture, 'claude', locale, args, 'standard')} folders={undefined} skin="bubble" onBack={fn()} />
             </div>
           </MobileToastProvider>
         </MobileConversationReviewProvider>
@@ -309,7 +322,6 @@ function Workbench({ args, options, draft: openingDraft }: { readonly args: Args
       case 'pick': setPicking(true); break;
       case 'cancel-pick': setPicking(false); break;
       case 'stop-ai': setStrip({ kind: 'stopped' }); break;
-      case 'stop-turn': setStrip({ kind: 'stopped', scope: 'turn' }); break;
       case 'allow-site': setSheet(action.origin); break;
       case 'dismiss': setStrip(undefined); break;
       default: break;
@@ -420,8 +432,6 @@ export const EmptyPane: Story = pane({ address: '', body: FOUND });
 export const LocalIdle: Story = pane({});
 /** D4: it opened beside the conversation and left the keyboard where it was. The strip is the way to stop the AI, and it is the app's own line above the page. */
 export const AiDriving: Story = pane({ variant: 'driving', strip: { kind: 'driving' } });
-/** The one drawn alternative: 중지 stops the turn itself. Compare with `AiDriving`; the sheet says why the recommendation is the narrower stop. */
-export const AltStopEndsTurn: Story = pane({ variant: 'driving', strip: { kind: 'driving', scope: 'turn' } });
 /** 중지 (real interaction): the AI is off the page for the rest of the turn, and the strip says so and what is left running. */
 export const StopFlow: Story = pane({ variant: 'driving', strip: { kind: 'driving' } }, async ({ canvasElement, args }) => {
   const stop = await findIn(canvasElement, testId('browser-stop'));
@@ -601,9 +611,9 @@ export const PageCrashed: Story = pane({ body: { kind: 'gone' } });
 export const PhoneRows360: Story = { render: (args) => <PhoneScreen id="phone-rows" variant="phone" args={args} /> };
 /** 240 s on: the host voided it, the waiting row is gone, and a refused row stands where the answer would have gone. A late answer is refused by the host. */
 export const PhoneRowsExpired360: Story = { render: (args) => <PhoneScreen id="phone-rows-expired" variant="phone-expired" args={args} /> };
-/** A phone never gets the decision dock for a browser action, with or without the browser rows beside it. */
+/** A phone never gets the decision dock for a browser action. */
 export const PhoneNoDock: Story = {
-  render: (args) => <PhoneScreen id="phone-no-dock" variant="phone" args={args} bare />,
+  render: (args) => <PhoneScreen id="phone-no-dock" variant="phone" args={args} />,
   play: async ({ canvasElement }) => {
     await findIn(canvasElement, testId('phone-browser-frame'));
     await findIn(canvasElement, '[data-testid="structured-agent-composer-input"]');

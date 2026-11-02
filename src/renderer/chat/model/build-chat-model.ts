@@ -19,8 +19,6 @@ export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly turns?: readonly DaemonTurn[];
-  /** 시안: rows the browser stories place where a `notice` item sits; there is no payload for these yet. */
-  readonly browserRows?: ReadonlyMap<string, ChatRow>;
   /** On a phone: browser actions only the desktop answers, each a line here and no dock. */
   readonly desktopOnly?: readonly DaemonApproval[];
   /** This conversation's open limit in the snapshot: where it stands in the line of sends, which no row says. */
@@ -362,7 +360,7 @@ function settleFindings(
 }
 
 /** Build the presentation model for one conversation. */
-export function buildChatModel({ items, approvals = [], turns = [], openLimit, browserRows, desktopOnly = [] }: BuildChatModelInput): ChatModel {
+export function buildChatModel({ items, approvals = [], turns = [], openLimit, desktopOnly = [] }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
   // Read ahead: a turn's suggest_task calls come before the rows that make its card. A card whose turn is not among
   // the loaded rows is not shown, like a review whose rows are not loaded.
@@ -612,11 +610,6 @@ export function buildChatModel({ items, approvals = [], turns = [], openLimit, b
         break;
       }
       case 'notice': {
-        const placed = browserRows?.get(item.id);
-        if (placed) {
-          push(placed);
-          break;
-        }
         const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
         if (payload?.type === 'browser-step' || payload?.type === 'browser-shot') {
           const step: ChatBrowserStep = { id: item.id, kind: payload.type === 'browser-shot' ? 'screenshot' : payload.step, at: item.createdAt, ...(payload.type === 'browser-step' && payload.pageText ? { pageText: payload.pageText } : {}) };

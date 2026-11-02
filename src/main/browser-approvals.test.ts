@@ -36,6 +36,21 @@ function harness(patch: Partial<BrowserApprovalsDeps> = {}) {
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 
+describe('what the pane says while a person is asked', () => {
+  it('says so while one waits, and stops when none does', async () => {
+    const onHeld = vi.fn();
+    const approvals = new BrowserApprovals({
+      raise: vi.fn(async () => 'approval-1'), expire: vi.fn(async () => undefined), getSnapshot: () => ({ approvals: [] }), onEvent: () => () => undefined, onHeld, createId: () => 'call-1',
+      setTimer: () => 0 as never, clearTimer: () => undefined,
+    });
+    const first = approvals.request({ sessionId: 'chat', turnId: 't', origin: 'https://staging.example', tool: 'browser_click', action: 'click', run: { kind: 'click' } });
+    expect(onHeld).toHaveBeenLastCalledWith('chat', true);
+    approvals.resolved('browser-action:call-1', 'allow');
+    await first;
+    expect(onHeld).toHaveBeenLastCalledWith('chat', false);
+  });
+});
+
 describe('BrowserApprovals', () => {
   it('raises the host\'s own arguments, the page\'s words in a field of their own', async () => {
     const { coordinator, raise } = harness();

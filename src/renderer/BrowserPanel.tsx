@@ -3,6 +3,7 @@ import type { IDockviewPanelProps } from 'dockview-react';
 
 import { allowableOrigin, type BrowserViewState } from '../shared/browser';
 import { BrowserAllowSheet, type BrowserAllowPreset } from './browser/BrowserAllowSheet';
+import { showConversation } from './browser/browser-pane-dock';
 import { BrowserPane, type BrowserPaneAction, type BrowserPaneBody, type BrowserPaneProps, type BrowserPaneStrip } from './browser/BrowserPane';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useNativeOverlayOpen } from './native-overlay';
@@ -50,6 +51,7 @@ export function browserPaneStrip(state: BrowserViewState | null, dismissed?: { r
   const { blocked, allowed } = state;
   if (blocked && blocked.serial !== dismissed?.blocked && blocked.reason === 'site-not-allowed' && allowableOrigin(blocked.origin)) return { kind: 'blocked', origin: blocked.origin };
   if (allowed && allowed !== dismissed?.allowed) return { kind: 'allowed', origin: allowed };
+  if (state.waiting) return { kind: 'waiting' };
   if (state.ai === 'driving') return { kind: 'driving' };
   if (state.ai === 'stopped') return { kind: 'stopped' };
   // Always the current URL's class: an external page is one the AI does not read.
@@ -63,6 +65,7 @@ export function BrowserPanel(
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
   const { conversationId } = props.params;
+  const { containerApi } = props;
   const [state, setState] = useState<BrowserViewState | null>(null);
   useEffect(() => capabilities.browserPane?.observe(conversationId, setState), [capabilities, conversationId]);
 
@@ -159,10 +162,10 @@ export function BrowserPanel(
         if (state?.url) send({ action: 'navigate', target: state.url });
         return;
       case 'allow-site': void openAllowSheet(action.origin); return;
+      case 'answer': showConversation(containerApi, conversationId); return;
       case 'dismiss': setDismissed({ ...(state?.blocked ? { blocked: state.blocked.serial } : {}), ...(state?.allowed ? { allowed: state.allowed } : {}) }); return;
-      default:
     }
-  }, [access, conversationId, openAllowSheet, state?.allowed, state?.blocked, state?.url]);
+  }, [access, containerApi, conversationId, openAllowSheet, state?.allowed, state?.blocked, state?.url]);
 
   const strip = browserPaneStrip(state, dismissed);
   const view: BrowserPaneProps = {

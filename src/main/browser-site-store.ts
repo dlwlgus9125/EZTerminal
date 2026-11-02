@@ -39,7 +39,7 @@ function validSites(raw: unknown): BrowserSitesFile | null {
  */
 export class BrowserSiteStore {
   private readonly file: JsonFile;
-  private projects: BrowserSitesFile['projects'] = {};
+  private projectSites: BrowserSitesFile['projects'] = {};
   private suspected: readonly string[] = [];
 
   constructor(dir: string) {
@@ -49,16 +49,21 @@ export class BrowserSiteStore {
   async load(): Promise<void> {
     await this.file.init();
     const { projects, suspects } = await this.file.readValidated(validSites, EMPTY);
-    this.projects = projects;
+    this.projectSites = projects;
     this.suspected = suspects ?? [];
   }
 
   origins(projectId: string): readonly string[] {
-    return this.projects[projectId] ?? [];
+    return this.projectSites[projectId] ?? [];
   }
 
   suspects(): readonly string[] {
     return this.suspected;
+  }
+
+  /** Every project with a site. */
+  projects(): readonly { readonly projectId: string; readonly origins: readonly string[] }[] {
+    return Object.entries(this.projectSites).map(([projectId, origins]) => ({ projectId, origins }));
   }
 
   /** On disk behind the view manager, which holds the set that decides: a failed write costs the next restart, not this run. */
@@ -90,7 +95,7 @@ export class BrowserSiteStore {
       return { ...current, projects: Object.fromEntries(origins.length ? [...others, [projectId, origins]] : others) };
     }, 'browser sites');
     if (!next) throw new Error('The site list could not be saved.');
-    this.projects = next.projects;
+    this.projectSites = next.projects;
   }
 }
 

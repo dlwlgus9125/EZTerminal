@@ -1,4 +1,4 @@
-import type { BrowserPickedElement, BrowserSurfaceSnapshot, BrowserViewState } from './browser';
+import type { BrowserPickedElement, BrowserProjectSites, BrowserSettings, BrowserSurfaceSnapshot, BrowserViewState } from './browser';
 import type { ConversationHistoryClient } from './conversation-history';
 /**
  * Shared IPC contract: main ↔ preload ↔ renderer ↔ interpreter (utilityProcess).
@@ -1852,6 +1852,11 @@ export interface EzTerminalDesktopApi {
   onBrowserViewState: (listener: (state: BrowserViewState) => void) => () => void;
   /** The AI first used a conversation's browser: show its pane, without focus. */
   onBrowserOpenPane: (listener: (conversationId: string) => void) => () => void;
+  /** Settings › 에이전트 › 내장 브라우저. */
+  getBrowserSettings: () => Promise<{ readonly settings: BrowserSettings; readonly sites: readonly BrowserProjectSites[] }>;
+  setBrowserSettings: (settings: BrowserSettings) => Promise<BrowserSettings>;
+  revokeBrowserSite: (projectId: string, origin: string) => Promise<readonly BrowserProjectSites[]>;
+  clearBrowserData: () => Promise<void>;
   /** A person picked an element in a pane. */
   onBrowserPicked: (listener: (picked: BrowserPickedElement) => void) => () => void;
   /** "브라우저로 열기" escape hatch (openclaw-stabilization M6) — opens the

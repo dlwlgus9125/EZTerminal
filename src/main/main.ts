@@ -41,9 +41,9 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
-import { isBrowserCheckPrincipal, type BrowserDevCandidate } from '../shared/browser';
+import { isBrowserCheckPrincipal, type BrowserDevCandidate, type BrowserProjectSites, type BrowserSettings } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
-import { installBrowserIpc } from './browser-ipc';
+import { installBrowserIpc, type BrowserSettingsHost } from './browser-ipc';
 import { BrowserCheckCoordinator } from './browser-check-coordinator';
 import { BrowserDevUrls, devUrlOutput } from './browser-dev-urls';
 import { insideRoot } from './browser-network-guard';
@@ -995,6 +995,11 @@ app.on('ready', async () => {
     || reviewCoordinator.preparedSessionSettings(sessionId));
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority && !preparedHostSession(sessionId));
   const browserToolsRef: { current?: BrowserTools } = {};
+  /** What the settings screen sends is a person's, from the app's own window: the IPC checked the sender. */
+  const browserSettingsCommand = () => {
+    const commandId = randomUUID();
+    return { commandId, idempotencyKey: commandId, expectedRevision: daemonRouterRef.current!.getSnapshot().revision, issuedAt: new Date().toISOString(), principal: { kind: 'desktop' as const, id: 'browser-settings' } };
+  };
   const browserApprovalsRef: { current?: BrowserApprovals } = {};
   const browserSites = new BrowserSiteStore(app.getPath('userData'));
   const browserPages = new BrowserLastPages(app.getPath('userData'));
@@ -1004,6 +1009,31 @@ app.on('ready', async () => {
   const browserCandidates = (sessionId: string): ReadonlyArray<BrowserDevCandidate> => {
     const workspaceId = daemonRouterRef.current?.getSnapshot().sessions.find((entry) => entry.id === sessionId)?.workspaceId;
     return workspaceId ? browserDevUrls.candidates(workspaceId) : [];
+  };
+  const browserSiteList = (): readonly BrowserProjectSites[] => {
+    const projects = daemonRouterRef.current?.getSnapshot().projects ?? [];
+    return browserSites.projects().map(({ projectId, origins }) => ({ projectId, projectName: projects.find((project) => project.id === projectId)?.name ?? projectId, origins }));
+  };
+  const browserSettingsNow = (): BrowserSettings => ({
+    enabled: daemonRouterRef.current?.getSnapshot().runtime.browserEnabled ?? false,
+    autoCheck: settingsRef.authority?.browserAutoCheck() ?? false,
+  });
+  const browserSettingsHost: BrowserSettingsHost = {
+    load: async () => ({ settings: browserSettingsNow(), sites: browserSiteList() }),
+    save: async ({ enabled, autoCheck }) => {
+      await settingsRef.authority?.setBrowserAutoCheck(autoCheck);
+      if (enabled !== browserSettingsNow().enabled) {
+        const receipt = await daemonRouterRef.current!.execute(createDaemonCommand({ ...browserSettingsCommand(), type: 'runtime.set-settings', payload: { browserEnabled: enabled } }));
+        if (!receipt.ok) throw new Error(receipt.error.message);
+      }
+      return browserSettingsNow();
+    },
+    revokeSite: async (projectId, origin) => {
+      const receipt = await daemonRouterRef.current!.execute(createDaemonCommand({ ...browserSettingsCommand(), type: 'browser.site', payload: { projectId, origin, action: 'revoke' } }));
+      if (!receipt.ok) throw new Error(receipt.error.message);
+      return browserSiteList();
+    },
+    clearData: async () => { await browserView?.clearData(); },
   };
   const browserRows = new BrowserRows({
     append: (item) => {
@@ -4809,6 +4839,7 @@ app.on('ready', async () => {
     expire: (approvalId) => daemonAgentRuntime.expireHostApproval(approvalId),
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
+    onHeld: (conversationId, held) => browserView?.setWaiting(conversationId, held),
   });
   browserApprovalsRef.current = browserApprovals;
   const browserTools = new BrowserTools({
@@ -5360,6 +5391,7 @@ app.on('ready', async () => {
       featureIpcDisposers.push(installBrowserIpc({
         ipc: ipcMain,
         view: () => browserView,
+        settings: browserSettingsHost,
         mainWebContents: () => mainWindowRef?.webContents,
       }));
       featureIpcDisposers.push(installOpenClawChatIpc({

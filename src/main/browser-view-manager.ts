@@ -73,6 +73,8 @@ interface Pane {
   stoppedTurnId?: string;
   /** The person is picking an element. */
   picking: boolean;
+  /** An action on this page waits on a person. */
+  waiting: boolean;
   /** The suspect site the person went to on this pane: open to this pane until the page leaves it. */
   visit?: string;
   blocked?: BrowserViewState['blocked'];
@@ -268,6 +270,19 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     this.deps.onStopped?.(conversationId);
   }
 
+  setWaiting(conversationId: string, waiting: boolean): void {
+    const pane = this.pane(conversationId);
+    pane.waiting = waiting;
+    this.publish(pane);
+  }
+
+  /** Settings › 내장 브라우저: everything a page left, in the one profile. What the app holds against a site is not a page's. */
+  async clearData(): Promise<void> {
+    const partition = electronSession.fromPartition(BROWSER_PARTITION);
+    await partition.clearStorageData();
+    await partition.clearCache();
+  }
+
   /** A terminal or an AI named a new address: every empty pane offers it. */
   candidatesChanged(): void {
     for (const pane of this.panes.values()) this.publish(pane);
@@ -432,7 +447,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       const lastUrl = this.deps.lastUrl?.(conversationId) ?? '';
       pane = {
         conversationId, view: null, host: null, lastUrl, guarded: false, personNavigating: false, toolsRunning: 0, toolEndedAt: 0,
-        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [], picking: false,
+        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [], picking: false, waiting: false,
       };
       this.panes.set(conversationId, pane);
     }
@@ -703,6 +718,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       url,
       ...(candidates.length > 0 ? { candidates } : {}),
       ...(pane.picking ? { picking: true } : {}),
+      ...(pane.waiting ? { waiting: true } : {}),
       // Always the current URL's class, never the last action's.
       ...(url ? { site: this.site(pane, url) } : {}),
       loading: pane.loading,

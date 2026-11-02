@@ -45,6 +45,8 @@ export interface BrowserApprovalsDeps {
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly createId?: () => string;
+  /** Whether anything of this conversation's waits on a person. */
+  readonly onHeld?: (conversationId: string, held: boolean) => void;
 }
 
 export class BrowserApprovals {
@@ -106,6 +108,7 @@ export class BrowserApprovals {
         origin: input.origin,
         settle: (answer) => {
           if (!this.held.delete(providerRequestId)) return;
+          this.deps.onHeld?.(input.sessionId, [...this.held.values()].some((other) => other.conversationId === input.sessionId));
           clearTimer(timer);
           input.signal?.removeEventListener('abort', onAbort);
           // What ended without a person's answer must not stay on their screen, or block the turn.
@@ -114,6 +117,7 @@ export class BrowserApprovals {
         },
       };
       this.held.set(providerRequestId, held);
+      this.deps.onHeld?.(input.sessionId, true);
       const timer = setTimer(() => held.settle('approval-timeout'), BROWSER_APPROVAL_HOLD_MS);
       input.signal?.addEventListener('abort', onAbort, { once: true });
       if (input.signal?.aborted) {

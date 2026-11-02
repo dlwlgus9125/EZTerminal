@@ -23,6 +23,11 @@ function conversationPanel(api: DockviewApi, conversationId: string): IDockviewP
     && (panel.params as { conversationId?: unknown } | undefined)?.conversationId === conversationId);
 }
 
+/** Brings a pane's conversation forward: a decision waits there. */
+export function showConversation(api: DockviewApi, conversationId: string): void {
+  conversationPanel(api, conversationId)?.api.setActive();
+}
+
 /**
  * Shows a conversation's pane beside it and leaves keyboard focus where it was: the AI opening a page never takes the
  * person's typing. With no such conversation on screen, nothing opens; the view stays parked and the tools work.

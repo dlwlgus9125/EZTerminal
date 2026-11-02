@@ -64,6 +64,14 @@ describe('BrowserSiteStore', () => {
     expect((await fresh()).origins('project')).toEqual([]);
   });
 
+  it('lists every project with a site, for the settings screen', async () => {
+    const store = await fresh();
+    await store.allow('project', SITE);
+    await store.allow('another-project', 'https://other.example');
+    await store.revoke('another-project', 'https://other.example');
+    expect(store.projects()).toEqual([{ projectId: 'project', origins: [SITE] }]);
+  });
+
   it('answers nothing before it has read the file', () => {
     expect(new BrowserSiteStore(directory).origins('project')).toEqual([]);
   });

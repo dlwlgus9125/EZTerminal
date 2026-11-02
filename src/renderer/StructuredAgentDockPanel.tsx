@@ -36,6 +36,7 @@ import {
 } from './conversation-commands';
 import { BROWSER_CAPABILITY } from '../shared/browser';
 import { browserHost } from './browser-commands';
+import { openBrowserPane } from './browser/browser-pane-dock';
 import { longRunHost } from './long-run-commands';
 import {
   AGENT_SETTINGS_CAPABILITY,
@@ -1281,7 +1282,10 @@ export function StructuredAgentDockPanel(
   }) : undefined;
 
   const browserOffered = snapshot?.capabilities?.includes(BROWSER_CAPABILITY) === true;
-  const browser = !historyOnly && owner === 'managed' && browserOffered && capabilities.browserPane ? browserHost({ sessionId, pane: capabilities.browserPane }) : undefined;
+  const browser = !historyOnly && owner === 'managed' && browserOffered && capabilities.browserPane ? browserHost({
+    sessionId, pane: capabilities.browserPane,
+    openPane: () => { openBrowserPane(props.containerApi, sessionId, chatCopy(korean ? 'ko' : 'en').browser.pane.label); },
+  }) : undefined;
 
   const delegateDialogProps = (forSession: NonNullable<typeof session>) => ({
     profiles: delegateProfiles,

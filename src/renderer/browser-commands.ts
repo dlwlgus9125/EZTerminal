@@ -10,10 +10,13 @@ import type { ChatBrowserProp } from './chat/ChatContext';
 export interface BrowserHostInput {
   readonly sessionId: string;
   readonly pane: Pick<BrowserPaneAccess, 'onPicked'>;
+  /** A person's way to the pane, beside the conversation. */
+  readonly openPane: () => void;
 }
 
-export function browserHost({ sessionId, pane }: BrowserHostInput): ChatBrowserProp {
+export function browserHost({ sessionId, pane, openPane }: BrowserHostInput): ChatBrowserProp {
   return {
+    onOpenPane: openPane,
     onPicked: (deliver) => pane.onPicked(sessionId, (picked) => deliver(browserElementAttachments(picked, () => crypto.randomUUID()))),
   };
 }

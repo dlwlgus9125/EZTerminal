@@ -293,6 +293,12 @@ export interface BrowserSettings {
   readonly autoCheck: boolean;
 }
 
+export function parseBrowserSettings(value: unknown): BrowserSettings | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { enabled, autoCheck, ...rest } = value as Record<string, unknown>;
+  return typeof enabled === 'boolean' && typeof autoCheck === 'boolean' && Object.keys(rest).length === 0 ? { enabled, autoCheck } : undefined;
+}
+
 export interface BrowserProjectSites {
   readonly projectId: string;
   readonly projectName: string;
@@ -317,6 +323,8 @@ export interface BrowserViewState {
   readonly canForward: boolean;
   /** The person is picking an element. */
   readonly picking?: boolean;
+  /** An action on this page waits on a person. */
+  readonly waiting?: boolean;
   /** Who is at the page: `driving`, a tool ran this turn; `stopped`, the person pressed 브라우저만 중지 this turn. */
   readonly ai: 'none' | 'driving' | 'stopped';
   /** The last thing the guards stopped, for the pane bar. `serial` tells one stop from the next, so a closed bar stays closed. */

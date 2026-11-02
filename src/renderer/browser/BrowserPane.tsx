@@ -16,9 +16,8 @@ import './browser-pane.css';
 
 /** The one line between the toolbar and the page. Only `waiting` is amber: it alone waits on the person. */
 export type BrowserPaneStrip =
-  /** `scope`: what 중지 stops. The drawn alternative stops the turn; see the story. */
-  | { readonly kind: 'driving'; readonly scope?: 'browser' | 'turn' }
-  | { readonly kind: 'stopped'; readonly scope?: 'browser' | 'turn' }
+  | { readonly kind: 'driving' }
+  | { readonly kind: 'stopped' }
   | { readonly kind: 'waiting' }
   | { readonly kind: 'blocked'; readonly origin: string }
   | { readonly kind: 'not-read'; readonly origin: string }
@@ -34,7 +33,7 @@ export type BrowserPaneBody =
 
 export type BrowserPaneAction =
   | { readonly kind: 'navigate'; readonly url: string }
-  | { readonly kind: 'back' | 'forward' | 'reload' | 'pick' | 'cancel-pick' | 'stop-ai' | 'stop-turn' | 'answer' | 'dismiss' | 'retry' | 'reopen' }
+  | { readonly kind: 'back' | 'forward' | 'reload' | 'pick' | 'cancel-pick' | 'stop-ai' | 'answer' | 'dismiss' | 'retry' | 'reopen' }
   | { readonly kind: 'allow-site'; readonly origin: string };
 
 export interface BrowserPaneProps {
@@ -114,17 +113,10 @@ interface StripView {
 
 function stripView(strip: BrowserPaneStrip, copy: ChatCopy['browser']['pane']['strip']): StripView {
   switch (strip.kind) {
-    case 'driving': {
-      const turn = strip.scope === 'turn';
-      return {
-        tone: 'live', lamp: 'on', title: copy.driving,
-        actions: [{ label: turn ? copy.stopTurn : copy.stop, ...(turn ? { ariaLabel: copy.stopTurnLabel } : {}), action: { kind: turn ? 'stop-turn' : 'stop-ai' }, testId: 'browser-stop' }],
-      };
-    }
+    case 'driving':
+      return { tone: 'live', lamp: 'on', title: copy.driving, actions: [{ label: copy.stop, action: { kind: 'stop-ai' }, testId: 'browser-stop' }] };
     case 'stopped':
-      return strip.scope === 'turn'
-        ? { tone: 'plain', glyph: 'stop', title: copy.stoppedTurn, detail: copy.stoppedTurnDetail, actions: [] }
-        : { tone: 'plain', glyph: 'stop', title: copy.stopped, detail: copy.stoppedDetail, actions: [] };
+      return { tone: 'plain', glyph: 'stop', title: copy.stopped, detail: copy.stoppedDetail, actions: [] };
     case 'waiting':
       return { tone: 'amber', lamp: 'amber', title: copy.waiting, actions: [{ label: copy.answer, action: { kind: 'answer' }, testId: 'browser-answer' }] };
     case 'blocked':
