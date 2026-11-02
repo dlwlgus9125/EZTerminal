@@ -317,6 +317,18 @@ describe('InterpreterBroker — listRuns + onRunStarted', () => {
     await expect(p).resolves.toEqual(runs);
   });
 
+  it('says which local address a terminal printed, and where that terminal stands', async () => {
+    const { broker, interpreter } = makeBroker();
+    const seen: unknown[] = [];
+    broker.onDevUrl((found) => seen.push(found));
+    const created = broker.createSession('/tmp');
+    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    await created;
+    interpreter.emit({ type: 'dev-url', sessionId: 'sess-1', url: 'http://localhost:5173/' });
+    interpreter.emit({ type: 'dev-url', sessionId: 'gone', url: 'http://localhost:4173/' });
+    expect(seen).toEqual([{ url: 'http://localhost:5173/', cwd: '/tmp' }, { url: 'http://localhost:4173/' }]);
+  });
+
   it('onRunStarted fires on run-started; the returned unsubscribe stops further calls', () => {
     const { broker, interpreter } = makeBroker();
     const seen: RunStartedInfo[] = [];

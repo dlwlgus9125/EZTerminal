@@ -218,6 +218,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     controlPorts: () => new Set([controlPort]),
     onState: (state) => { states.set(state.conversationId, state); },
     onBlocked: (conversationId, blocked, turnId) => { blockRows.push({ conversationId, reason: blocked.reason, turnId }); },
+    candidates: (conversationId) => (conversationId === 'pane-candidates' ? [{ url: `${base}/`, source: 'terminal' }] : []),
     suspects: sites,
     partition: () => wrapped,
   });
@@ -783,6 +784,8 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   }
 
   report['block-rows'] = blockRows;
+  report['candidates'] = manager.state('pane-candidates').candidates?.map((entry) => ({ ...entry, url: entry.url.replace(String(port), 'PORT') }));
+  report['no-candidates'] = manager.state('pane-no-candidates').candidates ?? null;
   report.done = true;
   await fs.writeFile(path.join(scratch, 'report.json'), JSON.stringify(report, null, 1));
   server.closeAllConnections();

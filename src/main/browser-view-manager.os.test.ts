@@ -522,6 +522,13 @@ describe('what a guard reports for the conversation\'s rows', () => {
   });
 });
 
+describe('addresses to offer', () => {
+  it('come with the pane\'s state, and only when there are some', () => {
+    expect(report.candidates).toEqual([{ url: 'http://127.0.0.1:PORT/', source: 'terminal' }]);
+    expect(report['no-candidates']).toBeNull();
+  });
+});
+
 describe('lifecycle', () => {
   it('keeps three views live: the oldest hidden one goes, keeping its address', () => {
     const cap = report.cap as Record<string, { live: boolean; needsReopen: boolean; url: string }>;

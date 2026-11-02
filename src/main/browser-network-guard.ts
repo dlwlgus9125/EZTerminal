@@ -48,7 +48,7 @@ export function realRoots(roots: readonly string[]): readonly string[] {
   return roots.flatMap((root) => realPath(root) ?? []);
 }
 
-function insideRoot(target: string, root: string): boolean {
+export function insideRoot(target: string, root: string): boolean {
   const relative = path.relative(root, target);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }

@@ -76,6 +76,28 @@ function collect() {
 
 const chunk = (n: number, fill = 1): Uint8Array => new Uint8Array(n).fill(fill);
 
+describe('runPtySession — local addresses a terminal prints', () => {
+  it('names each once, and goes on scanning after the screen upgrades', () => {
+    const fake = makeFakePty();
+    const { emit } = collect();
+    const found: string[] = [];
+    runPtySession(fake.data, emit as never, new AbortController().signal, 80, 24, (url) => found.push(url));
+    const say = (text: string): void => fake.emitData(new TextEncoder().encode(text));
+    say('VITE ready\n  Local: http://localhost:5173/\n');
+    say('  Local: http://localhost:5173/\n');
+    say('\u001b[?1049h');
+    say('https://example.com/ and http://127.0.0.1:8000/\n');
+    expect(found).toEqual(['http://localhost:5173/', 'http://127.0.0.1:8000/']);
+  });
+
+  it('costs nothing when nobody asks', () => {
+    const fake = makeFakePty();
+    const { emit } = collect();
+    runPtySession(fake.data, emit as never, new AbortController().signal, 80, 24);
+    expect(() => fake.emitData(new TextEncoder().encode('http://localhost:5173/\n'))).not.toThrow();
+  });
+});
+
 describe('runPtySession — mirroring attach (M2 T2.2d/e, Critic C4)', () => {
   it('attach() replays the ring buffer contents so far, then tees live data', () => {
     const fake = makeFakePty();

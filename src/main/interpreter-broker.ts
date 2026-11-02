@@ -165,6 +165,7 @@ export class InterpreterBroker {
     readonly timer: ReturnType<typeof setTimeout>;
     readonly resolve: (result: TerminalCompletionResult) => void;
   }>();
+  private readonly devUrlListeners = new Set<(found: { readonly url: string; readonly cwd?: string }) => void>();
   private readonly runStartedListeners = new Set<
     (info: RunStartedInfo) => void
   >();
@@ -241,6 +242,9 @@ export class InterpreterBroker {
               this.directory.updateCwd(msg.sessionId, msg.cwd);
             for (const listener of this.runSettledListeners) listener(identity);
           }
+        } else if (msg.type === 'dev-url') {
+          const cwd = this.directory.list().find((session) => session.sessionId === msg.sessionId)?.cwd;
+          for (const listener of this.devUrlListeners) listener({ url: msg.url, ...(cwd ? { cwd } : {}) });
         } else if (msg.type === 'run-started') {
           const info: RunStartedInfo = {
             sessionId: msg.sessionId,
@@ -889,6 +893,12 @@ export class InterpreterBroker {
 
   onSessionRemoved(fn: (id: string) => void): () => void {
     return this.directory.onSessionRemoved(fn);
+  }
+
+  /** A terminal printed a local address, with where that terminal stands. */
+  onDevUrl(fn: (found: { readonly url: string; readonly cwd?: string }) => void): () => void {
+    this.devUrlListeners.add(fn);
+    return () => this.devUrlListeners.delete(fn);
   }
 
   onRunStarted(fn: (info: RunStartedInfo) => void): () => void {

@@ -15,8 +15,7 @@ import { useDockPanelHost } from './use-dock-panel-host';
  * below: this component reports that plate's rect and visibility, and turns what the person does into daemon commands.
  * While the plate shows the app's own state (empty, down, gone) or an overlay is open, the view is parked.
  *
- * The seams for later steps: `candidates` (step 13, dev-server discovery) and `pick`/`cancel-pick` (step 14), which reach
- * `onSeam`; nothing else is wired here.
+ * The seam for a later step: `pick`/`cancel-pick` (step 14), which reach `onSeam`; nothing else is wired here.
  */
 
 export interface BrowserPanelParams {
@@ -36,7 +35,7 @@ function originOf(url: string): string {
 
 /** What the plate shows. Only `page` means the native view is on screen. */
 export function browserPaneBody(state: BrowserViewState | null): BrowserPaneBody {
-  if (!state?.url) return { kind: 'empty', candidates: [] };
+  if (!state?.url) return { kind: 'empty', candidates: state?.candidates ?? [] };
   if (state.fault === 'server-down') return { kind: 'server-down', origin: originOf(state.url) };
   if (state.fault === 'gone' || state.needsReopen) return { kind: 'gone', ...(state.blocked?.reason === 'rebind-suspected' ? { ended: 'rebind-suspected' as const } : {}) };
   return { kind: 'page' };

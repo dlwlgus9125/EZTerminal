@@ -1,6 +1,6 @@
 import { BaseWindow, session as electronSession, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 
-import { addressBarUrl, BROWSER_PARTITION, siteClass, type BrowserRefusal, type BrowserSiteClass, type BrowserViewState } from '../shared/browser';
+import { addressBarUrl, BROWSER_PARTITION, siteClass, type BrowserDevCandidate, type BrowserRefusal, type BrowserSiteClass, type BrowserViewState } from '../shared/browser';
 import { BrowserCdp } from './browser-cdp';
 import {
   fileInsideRoots,
@@ -107,6 +107,8 @@ export interface BrowserViewManagerDeps {
   readonly onStopped?: (conversationId: string) => void;
   /** The AI used this conversation's browser for the first time: its pane opens, without focus. */
   readonly onFirstUse?: (conversationId: string) => void;
+  /** Addresses to offer in this conversation's empty pane. */
+  readonly candidates?: (conversationId: string) => readonly BrowserDevCandidate[];
   /** The last page of a conversation, for the pane after a restart. */
   readonly lastUrl?: (conversationId: string) => string | undefined;
   readonly rememberUrl?: (conversationId: string, url: string) => void;
@@ -219,6 +221,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     this.liveContents(pane)?.stop();
     this.publish(pane);
     this.deps.onStopped?.(conversationId);
+  }
+
+  /** A terminal or an AI named a new address: every empty pane offers it. */
+  candidatesChanged(): void {
+    for (const pane of this.panes.values()) this.publish(pane);
   }
 
   // ── The AI: the seam `browser-tools.ts` runs on ──────────────────────────
@@ -636,9 +643,11 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     const contents = this.liveContents(pane);
     const url = pane.lastUrl;
     const ai = pane.aiTurnId !== undefined ? 'driving' : pane.stoppedTurnId !== undefined ? 'stopped' : 'none';
+    const candidates = this.deps.candidates?.(pane.conversationId) ?? [];
     return {
       conversationId: pane.conversationId,
       url,
+      ...(candidates.length > 0 ? { candidates } : {}),
       // Always the current URL's class, never the last action's.
       ...(url ? { site: this.site(pane, url) } : {}),
       loading: pane.loading,

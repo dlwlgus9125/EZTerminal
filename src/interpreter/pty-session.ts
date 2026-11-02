@@ -20,6 +20,7 @@ import type { Emit } from './block-runner';
 import type { PtyRestoreWarningFrame } from '../shared/ipc';
 import { isSafeAgentPromptText } from '../shared/agent-coordination';
 import { PtySemanticRestoreBuffer } from './pty-restore-buffer';
+import { DevUrlScanner } from '../shared/dev-server-url';
 
 /** Clamp terminal dimensions to a sane range before applying to the PTY. Also
  * used by ssh-session.ts (same PTY-grid contract, post-channel). */
@@ -242,7 +243,10 @@ export function runPtySession(
   signal: AbortSignal,
   cols: number,
   rows: number,
+  /** A local address this terminal printed, once each. */
+  onDevUrl?: (url: string) => void,
 ): PtySession {
+  const devUrls = onDevUrl ? new DevUrlScanner() : undefined;
   // One-shot terminal-state guard (B2): the FIRST of {exit, cancel, dispose} wins;
   // everything after it is a no-op so exactly one terminal frame is ever emitted.
   let settled = false;
@@ -428,6 +432,7 @@ export function runPtySession(
   pty.onData((bytes) => {
     if (settled) return;
     sent += bytes.byteLength;
+    for (const url of devUrls?.feed(bytes) ?? []) onDevUrl?.(url);
     if (!upgraded && detector.feed(bytes)) {
       upgraded = true;
       emit({ type: 'pty-render-upgrade' });

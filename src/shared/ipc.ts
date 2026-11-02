@@ -928,6 +928,13 @@ export interface InterpreterRunStartedMessage extends RunStartedInfo {
   readonly type: 'run-started';
 }
 
+/** interpreter -> main: a terminal printed a local address (in-app browser discovery). */
+export interface InterpreterDevUrlMessage {
+  readonly type: 'dev-url';
+  readonly sessionId: string;
+  readonly url: string;
+}
+
 /** interpreter -> main: reply to `list-runs` — every currently-active run
  * (M1 mirror-active-runs), correlated by `requestId`. */
 export interface RunListMessage {
@@ -1029,6 +1036,7 @@ export interface ScriptHostExitMessage {
 
 export type InterpreterToMain =
   | SessionCreatedMessage
+  | InterpreterDevUrlMessage
   | SessionRunSettledMessage
   | InterpreterRunStartedMessage
   | RunListMessage

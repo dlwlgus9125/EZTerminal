@@ -41,9 +41,11 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
-import { BROWSER_CHECK_PRINCIPAL } from '../shared/browser';
+import { BROWSER_CHECK_PRINCIPAL, hostBrowserTool, type BrowserDevCandidate } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
+import { BrowserDevUrls } from './browser-dev-urls';
+import { insideRoot } from './browser-network-guard';
 import { BrowserRows } from './browser-rows';
 import { BrowserShots } from './browser-shots';
 import { BrowserLastPages, BrowserSiteStore } from './browser-site-store';
@@ -997,6 +999,11 @@ app.on('ready', async () => {
   const browserPages = new BrowserLastPages(app.getPath('userData'));
   await Promise.all([browserSites.load(), browserPages.load()]);
   const browserShots = new BrowserShots(app.getPath('userData'));
+  const browserDevUrls = new BrowserDevUrls(() => browserView?.candidatesChanged(), () => browserView?.controlPorts() ?? new Set());
+  const browserCandidates = (sessionId: string): ReadonlyArray<BrowserDevCandidate> => {
+    const workspaceId = daemonRouterRef.current?.getSnapshot().sessions.find((entry) => entry.id === sessionId)?.workspaceId;
+    return workspaceId ? browserDevUrls.candidates(workspaceId) : [];
+  };
   const browserRows = new BrowserRows({
     append: (item) => {
       void daemonRouterRef.current?.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [{ ...item, createdAt: new Date().toISOString() }] }] }).catch(() => undefined);
@@ -4427,6 +4434,12 @@ app.on('ready', async () => {
       win.webContents.send('session-removed', sessionId);
     }
   }));
+  trackLocalAgentStackSubscription(broker.onDevUrl(({ url, cwd }) => {
+    if (cwd === undefined) return;
+    for (const workspace of daemonRouterRef.current?.getSnapshot().workspaces ?? []) {
+      if (workspace.archivedAt === undefined && insideRoot(cwd, workspace.rootPath)) browserDevUrls.addFromText(workspace.id, url, 'terminal');
+    }
+  }));
   trackLocalAgentStackSubscription(broker.onRunStarted((info) => {
     // runId is caller-minted, so unlike session-added there's no "learn my own
     // id first" race to guard — a plain broadcast is enough.
@@ -4779,6 +4792,7 @@ app.on('ready', async () => {
     },
     onStopped: (conversationId) => browserApprovalsRef.current?.stopped(conversationId),
     onBlocked: (conversationId, { origin, reason }, turnId) => browserRows.blocked({ sessionId: conversationId, turnId }, { origin, reason }),
+    candidates: browserCandidates,
   });
   // A window opened before this line has no later `attach`: every tool would answer no-page.
   if (mainWindowRef) browserView.attach(mainWindowRef);
@@ -4801,6 +4815,7 @@ app.on('ready', async () => {
       browserRows.shot(run, { shotId, url, ...(thumbBase64 ? { thumbBase64 } : {}) });
     },
     onRefused: (run, refusal) => browserRows.blocked(run, refusal),
+    devUrls: (sessionId) => browserCandidates(sessionId).map((candidate) => candidate.url),
     turnAttended: (sessionId, turnId) => {
       const snapshot = daemonRouterRef.current!.getSnapshot();
       const turn = snapshot.turns.find((entry) => entry.id === turnId);
@@ -4811,6 +4826,17 @@ app.on('ready', async () => {
   });
   browserToolsRef.current = browserTools;
   daemonRouterRef.current?.onEvent((event) => {
+    if (event.kind === 'transcript.appended') {
+      const router = daemonRouterRef.current;
+      const { sessionId, fromSequence, toSequence } = event.payload;
+      const workspaceId = router?.getSnapshot().sessions.find((entry) => entry.id === sessionId)?.workspaceId;
+      for (const item of workspaceId ? router?.getTranscript(sessionId, fromSequence - 1, toSequence - fromSequence + 1) ?? [] : []) {
+        // A page's words are not the AI's output: a browser tool's own result names nothing to offer.
+        if (item.kind !== 'tool-result' || (item.payload?.type === 'tool' && hostBrowserTool(item.payload.name, item.payload.server))) continue;
+        browserDevUrls.addFromText(workspaceId!, item.text, 'ai');
+      }
+      return;
+    }
     if (event.kind === 'entity.archived' && event.payload.entityType === 'session') {
       browserView?.forget(event.payload.entityId);
       browserPages.forget(event.payload.entityId);

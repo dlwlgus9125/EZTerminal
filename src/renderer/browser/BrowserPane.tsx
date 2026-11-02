@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 
-import type { BrowserSiteClass } from '../../shared/browser';
+import type { BrowserDevCandidate, BrowserSiteClass } from '../../shared/browser';
 import { useChatCopy, type ChatCopy } from '../chat/copy';
 import { Button, IconButton } from '../ui';
 import { Glyph, glyphIcon, Led, type GlyphName, type LedTone } from '../ui/Glyph';
@@ -25,15 +25,8 @@ export type BrowserPaneStrip =
   | { readonly kind: 'allowed'; readonly origin: string }
   | { readonly kind: 'unsupported'; readonly reason: string };
 
-export interface BrowserPaneCandidate {
-  readonly url: string;
-  readonly source: 'terminal' | 'ai';
-  /** What printed it: a command, a tool. */
-  readonly detail?: string;
-}
-
 export type BrowserPaneBody =
-  | { readonly kind: 'empty'; readonly candidates: readonly BrowserPaneCandidate[] }
+  | { readonly kind: 'empty'; readonly candidates: readonly BrowserDevCandidate[] }
   | { readonly kind: 'page' }
   | { readonly kind: 'server-down'; readonly origin: string }
   /** `ended`: the app closed the page itself, so nothing crashed. */
@@ -180,7 +173,7 @@ function Strip({ view, onAction, focus = false }: { readonly view: StripView; re
 }
 
 function EmptyBody({ candidates, onAction, copy }: {
-  readonly candidates: readonly BrowserPaneCandidate[];
+  readonly candidates: readonly BrowserDevCandidate[];
   readonly onAction: BrowserPaneProps['onAction'];
   readonly copy: ChatCopy['browser']['pane']['empty'];
 }): JSX.Element {
@@ -196,7 +189,7 @@ function EmptyBody({ candidates, onAction, copy }: {
               <li key={candidate.url}>
                 <div>
                   <code>{candidate.url}</code>
-                  <span>{copy.source[candidate.source]}{candidate.detail ? ` · ${candidate.detail}` : ''}</span>
+                  <span>{copy.source[candidate.source]}</span>
                 </div>
                 <Button size="sm" variant="secondary" aria-label={`${copy.open} ${candidate.url}`} onClick={() => onAction({ kind: 'navigate', url: candidate.url })}>{copy.open}</Button>
               </li>

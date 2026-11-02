@@ -252,6 +252,7 @@ class ExecutionSession implements Execution {
             signal,
             PTY_INITIAL_COLS,
             PTY_INITIAL_ROWS,
+            (url) => process.parentPort.postMessage({ type: 'dev-url', sessionId: this.sessionId, url } satisfies InterpreterToMain),
           );
         },
         // run-script is a host round-trip which later exposes ordinary paging.

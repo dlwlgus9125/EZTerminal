@@ -409,9 +409,9 @@ export const SettingsBrowser: Story = {
 const FOUND: BrowserPaneBody = {
   kind: 'empty',
   candidates: [
-    { url: 'http://localhost:5173', source: 'terminal', detail: 'pnpm dev' },
-    { url: 'http://localhost:6006', source: 'terminal', detail: 'pnpm storybook' },
-    { url: 'http://127.0.0.1:8080', source: 'ai', detail: 'Claude' },
+    { url: 'http://localhost:5173', source: 'terminal' },
+    { url: 'http://localhost:6006', source: 'terminal' },
+    { url: 'http://127.0.0.1:8080', source: 'ai' },
   ],
 };
 /** D2: what was found in terminal and AI output, nothing loaded until a press. */

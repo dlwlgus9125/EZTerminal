@@ -261,10 +261,18 @@ export interface BrowserProjectSites {
   readonly origins: readonly string[];
 }
 
+/** A local address a terminal or an AI named. Nothing opens it until a person presses it. */
+export interface BrowserDevCandidate {
+  readonly url: string;
+  readonly source: 'terminal' | 'ai';
+}
+
 /** What the pane shows of one conversation's page: pushed over IPC, never in the daemon snapshot. */
 export interface BrowserViewState {
   readonly conversationId: string;
   readonly url: string;
+  /** Addresses to offer in an empty pane. */
+  readonly candidates?: readonly BrowserDevCandidate[];
   readonly site?: BrowserSiteClass;
   readonly loading: boolean;
   readonly canBack: boolean;

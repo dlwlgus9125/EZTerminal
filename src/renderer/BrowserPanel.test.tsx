@@ -74,6 +74,12 @@ describe('browserPaneBody', () => {
     expect(browserPaneBody(state({ fault: 'gone' })).kind).toBe('gone');
   });
 
+  it('offers what terminals and AIs named, while there is no page', () => {
+    const candidates = [{ url: 'http://localhost:5173/', source: 'terminal' as const }];
+    expect(browserPaneBody(state({ url: '', candidates }))).toEqual({ kind: 'empty', candidates });
+    expect(browserPaneBody(state({ candidates })).kind).toBe('page');
+  });
+
   it('keeps an address after a restart, and asks before loading it', () => {
     expect(browserPaneBody(state({ needsReopen: true })).kind).toBe('gone');
   });
