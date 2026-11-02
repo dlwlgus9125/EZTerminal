@@ -151,9 +151,22 @@ calls stop when a usage window reaches the danger level, and Settings › AI ›
 **Long-run continuity.** A plain message sent while the AI works goes into the running turn and waits above the box
 until it lands; attachments, replies and `/` commands wait in the queue and say why. A usage limit stops the turn with
 a card: if the reset is known and under 6 hours away, the app tries by itself 2 minutes after it by sending "Continue."
-as a row marked as its own. Otherwise it asks first, and it never says the limit has lifted. This is the one message
-that goes out without a press, and Settings › AI › Continuing turns it off. No real limit has been hit yet: the limit
-paths have run against local stubs of both APIs.
+as a row marked as its own. Otherwise it asks first, and it never says the limit has lifted. This message and the
+in-app browser's optional screen check are the only ones that go out without a press, and Settings › AI › Continuing
+turns this one off. No real limit has been hit yet: the limit paths have run against local stubs of both APIs.
+
+**In-app browser.** On the desktop, a conversation can open a browser pane beside it, and with Settings › AI › In-app
+browser › Give the AI browser tools on (off by default) the AI gets eight tools: it reads the page as quoted text, takes
+screenshots of the pane as you see it, reads the console, waits, goes to pages, clicks, types and presses keys. localhost
+and files in the conversation's folders are free. An outside site works only after you allow its exact address for the
+Project from the pane's bar, and an allowed site still reaches nothing on this PC. In Ask before running, each action on
+an allowed outside site waits up to 240 seconds for an answer on the desktop that shows what will run: the full address,
+the value to type (masked when it looks like a secret) and whether Enter follows. Plan reads and moves but never acts,
+and Full access acts without asking. Typed values are masked in every row, the phone shows the browser rows but never
+answers a browser approval, and **Stop browser only** stops the tools for the turn without lifting a guard. You can pick
+an element on the page into the message box, and an optional screen check sends one check turn after a turn you sent
+changed files. The browser keeps one separate profile and never imports cookies. The tools need Claude Code 2.1.312 or
+Codex 0.165.0. No real outside site has been tested: every page so far was a local stub.
 
 If the structured Agent database cannot be opened or migrated safely, EZTerminal latches into
 terminal-only safe mode for that app process. Existing local and remote terminals keep working while

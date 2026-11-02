@@ -32,6 +32,25 @@
   phone has the same card; Settings › AI › Continuing turns the automatic send
   off. Needs Claude Code 2.1.312 or Codex 0.165.0 or later. The limit paths have
   run against local stubs of both APIs; no real usage limit has been seen yet.
+- In-app browser (desktop). A conversation opens a browser pane beside it, with
+  an address bar, a badge for the current page's site, and the dev-server
+  addresses found in terminal and AI output, which open only when pressed.
+  Settings › AI › In-app browser (off by default) gives the AI eight tools: page
+  text as quoted data, screenshots of the pane as you see it (scaled down above
+  1280 px, never cropped), console, wait, go to a page, click, type and press.
+  localhost and files in the conversation's folders are free; an outside site
+  works only after you allow its exact address for the project from the pane,
+  and allowing it never lets it reach this PC. In Ask before running each action
+  on an allowed outside site asks on the desktop, showing the full address, the
+  value to type (masked when it looks like a secret) and whether Enter follows,
+  and times out after 240 seconds; Plan never acts and Full access acts without
+  asking. Guards stay on once the AI has driven a pane, through Stop browser
+  only and the end of the turn. Typed values are masked in every row, the phone
+  shows the rows read-only, and nothing is ever downloaded. Pick an element to
+  put a crop and its quoted selector in the message, or turn on the screen check
+  to have the app send one check turn after a turn you sent changed files. One
+  separate profile, no cookie import. Needs Claude Code 2.1.312 or Codex 0.165.0
+  or later. Only local stub pages have been tested, no real outside site.
 - A worktree with no commits of its own and a clean tree, untracked files
   included, can now be cleaned up by a person without a merge.
 - App agent conversations (Codex and Claude) now work in every folder
