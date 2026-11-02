@@ -447,6 +447,14 @@ describe('what the host logs, for the rows', () => {
     expect(JSON.stringify(onStep.mock.calls)).not.toContain('SPRING');
   });
 
+  it('says which frames stopped a screenshot, and leaves a row', async () => {
+    const screenshot = vi.fn(async () => { throw new BrowserRefused('unread-frame', undefined, { unreadFrames: ['https://elsewhere.example'] }); });
+    const { call, onRefused } = logged({ cdp: cdp({ screenshot }) });
+    const result = await call('browser_screenshot');
+    expect(parsed(result)).toMatchObject({ code: 'unread-frame', unreadFrames: ['https://elsewhere.example'] });
+    expect(onRefused).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: 'unread-frame' }));
+  });
+
   it('logs a screenshot as a shot, with its thumbnail', async () => {
     const { call, onShot, onStep } = logged({ cdp: cdp({ screenshot: vi.fn(async () => ({ jpegBase64: '/9j/big', thumbBase64: '/9j/small', width: 1280, height: 800 })) }) });
     await call('browser_screenshot');

@@ -132,13 +132,61 @@ describe('BrowserCdp', () => {
 
   it('keeps the last 200 console lines, bounded', () => {
     const { cdp, emit } = fake();
-    for (let index = 0; index < 205; index += 1) emit('Runtime.consoleAPICalled', { type: 'log', args: [{ value: `line ${String(index)}` }] });
-    emit('Runtime.exceptionThrown', { exceptionDetails: { exception: { description: 'TypeError: x' } } });
+    emit('Runtime.executionContextCreated', { context: { id: 1, origin: 'http://localhost:5173', auxData: { frameId: 'main' } } });
+    for (let index = 0; index < 205; index += 1) emit('Runtime.consoleAPICalled', { executionContextId: 1, type: 'log', args: [{ value: `line ${String(index)}` }] });
+    emit('Runtime.exceptionThrown', { exceptionDetails: { executionContextId: 1, exception: { description: 'TypeError: x' } } });
     emit('Log.entryAdded', { entry: { level: 'error', text: 'x'.repeat(900), url: 'http://a/' } });
     const lines = cdp.consoleLines();
     expect(lines).toHaveLength(200);
     expect(lines.at(-2)).toBe('exception: TypeError: x');
     expect(lines.at(-1)!.length).toBeLessThan(510);
+  });
+
+  describe('console lines belong to their document', () => {
+    const logged = (emit: (method: string, params: unknown) => void, id: number, value: string): void => emit('Runtime.consoleAPICalled', { executionContextId: id, type: 'log', args: [{ value }] });
+
+    it('ends them when the page commits', () => {
+      const { cdp, emit } = fake();
+      emit('Runtime.executionContextCreated', { context: { id: 1, origin: 'http://localhost:5173', auxData: { frameId: 'main' } } });
+      logged(emit, 1, 'old page');
+      emit('Log.entryAdded', { entry: { level: 'error', text: 'old failure', url: 'http://localhost:5173/x' } });
+      emit('Page.frameNavigated', { frame: { id: 'main' } });
+      expect(cdp.consoleLines()).toEqual([]);
+    });
+
+    it('drops a line that arrives after its document went', () => {
+      const { cdp, emit } = fake();
+      emit('Runtime.executionContextCreated', { context: { id: 1, origin: 'http://localhost:5173' } });
+      emit('Runtime.executionContextsCleared', {});
+      logged(emit, 1, 'late line');
+      emit('Runtime.executionContextCreated', { context: { id: 2, origin: 'http://localhost:5173' } });
+      emit('Runtime.executionContextDestroyed', { executionContextId: 2 });
+      logged(emit, 2, 'later line');
+      expect(cdp.consoleLines()).toEqual([]);
+    });
+
+    it('keeps the page\'s lines when only a frame moved, and ends that frame\'s', () => {
+      const { cdp, emit } = fake();
+      emit('Runtime.executionContextCreated', { context: { id: 1, origin: 'http://localhost:5173', auxData: { frameId: 'main' } } });
+      emit('Runtime.executionContextCreated', { context: { id: 2, origin: 'http://localhost:5173', auxData: { frameId: 'child' } } });
+      logged(emit, 1, 'page line');
+      logged(emit, 2, 'frame line');
+      emit('Page.frameNavigated', { frame: { id: 'child', parentId: 'main' } });
+      expect(cdp.consoleLines()).toEqual(['log: page line']);
+    });
+
+    it('reads no line of a site the AI may not read, and keeps a file page\'s', () => {
+      const { contents, emit } = fake();
+      const cdp = new BrowserCdp(contents as unknown as WebContents, { onNavigationRequested: vi.fn(), classify: (url) => (url.includes('elsewhere') ? 'external' : 'local') });
+      emit('Runtime.executionContextCreated', { context: { id: 1, origin: 'https://elsewhere.example' } });
+      emit('Runtime.executionContextCreated', { context: { id: 2, origin: 'http://localhost:5173' } });
+      emit('Runtime.executionContextCreated', { context: { id: 3, origin: 'file://' } });
+      logged(emit, 1, 'theirs');
+      logged(emit, 2, 'ours');
+      logged(emit, 3, 'a file\'s');
+      emit('Log.entryAdded', { entry: { level: 'error', text: 'their failure', url: 'https://elsewhere.example/x' } });
+      expect(cdp.consoleLines()).toEqual(['log: ours', 'log: a file\'s']);
+    });
   });
 
   describe('snapshot', () => {
@@ -460,10 +508,27 @@ describe('BrowserCdp', () => {
 
     it('tells a password field from the host\'s own reading', async () => {
       const { cdp, sendCommand } = await withButton();
-      sendCommand.mockImplementation(async () => ({ node: { nodeName: 'INPUT', attributes: ['id', 'pw', 'type', 'password'] } }));
+      const answering = (attributes: readonly string[]) => async (method: string): Promise<unknown> => (method === 'Accessibility.getFullAXTree'
+        ? AX([node('1', 'button', 'Pay', { backendDOMNodeId: 30 })])
+        : { node: { nodeName: 'INPUT', attributes } });
+      sendCommand.mockImplementation(answering(['id', 'pw', 'type', 'password']));
       expect(await cdp.target('e1')).toMatchObject({ password: true, role: 'button', name: 'Pay' });
-      sendCommand.mockImplementation(async () => ({ node: { nodeName: 'INPUT', attributes: ['type', 'text', 'data-note', 'password'] } }));
+      sendCommand.mockImplementation(answering(['type', 'text', 'data-note', 'password']));
       expect(await cdp.target('e1')).toMatchObject({ password: false });
+    });
+
+    it('reads what a ref is now, not what the snapshot said', async () => {
+      const { cdp, sendCommand } = await withButton();
+      sendCommand.mockImplementation(async (method) => (method === 'Accessibility.getFullAXTree'
+        ? AX([node('1', 'link', 'Delete everything', { backendDOMNodeId: 30 })])
+        : { node: { nodeName: 'A' } }));
+      expect(await cdp.target('e1')).toMatchObject({ role: 'link', name: 'Delete everything' });
+    });
+
+    it('calls an element no longer in its frame a stale ref', async () => {
+      const { cdp, sendCommand } = await withButton();
+      sendCommand.mockImplementation(async (method) => (method === 'Accessibility.getFullAXTree' ? AX([]) : { node: { nodeName: 'BUTTON' } }));
+      await expect(cdp.target('e1')).rejects.toMatchObject({ reason: 'stale-ref' });
     });
 
     it('calls a node the page removed a stale ref', async () => {

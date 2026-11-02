@@ -101,6 +101,25 @@ interface DomDocument {
 }
 interface DomCapture { readonly strings: readonly string[]; readonly documents: readonly DomDocument[] }
 
+/** Only what a person sees of a name made from content. No part hidden, the page's own name stands: it may be an `aria-label`. */
+function visibleName(node: AxNode, role: string, byId: ReadonlyMap<string, AxNode>, visibility: PageVisibility): string {
+  const name = text(node.name);
+  if (!NAME_FROM_CONTENT_ROLES.has(role)) return name;
+  const words: string[] = [];
+  let hidden = false;
+  const collect = (entry: AxNode): void => {
+    for (const child of (entry.childIds ?? []).flatMap((id) => byId.get(id) ?? [])) {
+      const said = text(child.name);
+      const shown = child.backendDOMNodeId !== undefined && visibility.shown.has(child.backendDOMNodeId);
+      if (said && !child.ignored && !shown) hidden = true;
+      else if (said && text(child.role) === 'StaticText') words.push(said);
+      if (text(child.role) !== 'StaticText') collect(child);
+    }
+  };
+  collect(node);
+  return hidden ? words.join(' ') : name;
+}
+
 /** What a capture says a person can see. Whatever it does not name is not shown: that is the rule, and it cannot fail open. */
 interface PageVisibility {
   /** Backend node ids positively on show. */
@@ -189,6 +208,22 @@ interface FocusedNode {
   readonly shadowRoots?: readonly { readonly shadowRootType?: string }[];
 }
 
+/** A console line, with the document it came from. */
+interface ConsoleLine {
+  readonly text: string;
+  /** Where it came from, as the page's origin or the URL a message names. Undefined: the page's own, with no address of its own. */
+  readonly origin?: string;
+  readonly frameId?: string;
+}
+
+function webOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 /** One live reading of what an approval is for. See `BrowserCdp.binding`. */
 export interface BrowserBinding {
   readonly key: string;
@@ -269,7 +304,9 @@ export interface BrowserCdpOptions {
 export class BrowserCdp {
   private refs = new Map<string, Ref>();
   private nextRef = 1;
-  private readonly consoleBuffer: string[] = [];
+  private readonly consoleBuffer: ConsoleLine[] = [];
+  /** The documents alive now, by execution context. */
+  private readonly contexts = new Map<number, { readonly origin: string; readonly frameId?: string }>();
   private chooserOpened = false;
   private closed = false;
 
@@ -312,32 +349,64 @@ export class BrowserCdp {
       case 'Page.fileChooserOpened':
         this.chooserOpened = true;
         return;
+      case 'Page.frameNavigated': {
+        const frame = params.frame as { readonly id: string; readonly parentId?: string };
+        const kept = frame.parentId === undefined ? [] : this.consoleBuffer.filter((line) => line.frameId !== frame.id);
+        this.consoleBuffer.splice(0, this.consoleBuffer.length, ...kept);
+        return;
+      }
+      case 'Runtime.executionContextCreated': {
+        const { id, origin, auxData } = params.context as { readonly id: number; readonly origin?: string; readonly auxData?: { readonly frameId?: string } };
+        this.contexts.set(id, { origin: origin ?? '', ...(auxData?.frameId ? { frameId: auxData.frameId } : {}) });
+        return;
+      }
+      case 'Runtime.executionContextDestroyed':
+        this.contexts.delete(params.executionContextId as number);
+        return;
+      case 'Runtime.executionContextsCleared':
+        this.contexts.clear();
+        return;
       case 'Runtime.consoleAPICalled': {
         const args = (params.args as readonly { readonly value?: unknown; readonly description?: string }[] | undefined) ?? [];
-        this.log(`${String(params.type)}: ${args.map((arg) => (arg.value === undefined ? arg.description ?? '' : String(arg.value))).join(' ')}`);
+        this.logFrom(params.executionContextId, `${String(params.type)}: ${args.map((arg) => (arg.value === undefined ? arg.description ?? '' : String(arg.value))).join(' ')}`);
         return;
       }
       case 'Runtime.exceptionThrown': {
-        const details = params.exceptionDetails as { readonly text?: string; readonly exception?: { readonly description?: string } } | undefined;
-        this.log(`exception: ${details?.exception?.description ?? details?.text ?? 'unknown'}`);
+        const details = params.exceptionDetails as { readonly text?: string; readonly executionContextId?: number; readonly exception?: { readonly description?: string } } | undefined;
+        this.logFrom(details?.executionContextId, `exception: ${details?.exception?.description ?? details?.text ?? 'unknown'}`);
         return;
       }
       case 'Log.entryAdded': {
         const entry = params.entry as { readonly level?: string; readonly text?: string; readonly url?: string } | undefined;
-        if (entry?.text) this.log(`${entry.level ?? 'log'}: ${entry.text}${entry.url ? ` (${entry.url})` : ''}`);
+        if (entry?.text) this.log(`${entry.level ?? 'log'}: ${entry.text}${entry.url ? ` (${entry.url})` : ''}`, entry.url ? { origin: entry.url } : {});
         return;
       }
       default:
     }
   }
 
-  private log(line: string): void {
-    this.consoleBuffer.push(line.length > CONSOLE_LINE_CHARS ? `${line.slice(0, CONSOLE_LINE_CHARS)}…` : line);
+  /** A line from a context this knows nothing of comes from a document already gone, so it answers for nothing here. */
+  private logFrom(contextId: unknown, line: string): void {
+    const context = typeof contextId === 'number' ? this.contexts.get(contextId) : undefined;
+    if (context) this.log(line, context);
+  }
+
+  private log(line: string, source: { readonly origin?: string; readonly frameId?: string }): void {
+    this.consoleBuffer.push({ ...source, text: line.length > CONSOLE_LINE_CHARS ? `${line.slice(0, CONSOLE_LINE_CHARS)}…` : line });
     if (this.consoleBuffer.length > CONSOLE_LINES) this.consoleBuffer.shift();
   }
 
+  /** This document's lines, from what the AI may read. A commit ends the rest, and a frame of another site never counts. */
   consoleLines(): readonly string[] {
-    return [...this.consoleBuffer];
+    const readable = ({ origin }: ConsoleLine): boolean => origin === undefined || /^file:/iu.test(origin) || this.options.classify(origin) !== 'external';
+    return this.consoleBuffer.filter(readable).map((line) => line.text);
+  }
+
+  /** The sites of frames in this page the AI may not read: what a picture of the page would hold. A frame that never loaded holds nothing. */
+  private unreadFrames(): readonly string[] {
+    const frames = this.contents.mainFrame?.framesInSubtree ?? [];
+    const unread = frames.map((frame) => frame.url).filter((url) => url !== '' && !/^(?:about|chrome-error):/iu.test(url) && this.options.classify(url) === 'external');
+    return [...new Set(unread.map(webOrigin))];
   }
 
   private async send<T>(method: string, params: object = {}): Promise<T> {
@@ -415,26 +484,9 @@ export class BrowserCdp {
     const { lines, refs } = read;
     const byId = new Map(nodes.map((node) => [node.nodeId, node]));
     const onShow = (node: AxNode): boolean => node.backendDOMNodeId !== undefined && visibility.shown.has(node.backendDOMNodeId);
-    /** Only what a person sees of a name made from content. No part hidden, the page's own name stands: it may be an `aria-label`. */
-    const nameOf = (node: AxNode, role: string): string => {
-      const name = text(node.name);
-      if (!NAME_FROM_CONTENT_ROLES.has(role)) return name;
-      const words: string[] = [];
-      let hidden = false;
-      const collect = (entry: AxNode): void => {
-        for (const child of (entry.childIds ?? []).flatMap((id) => byId.get(id) ?? [])) {
-          const said = text(child.name);
-          if (said && !child.ignored && !onShow(child)) hidden = true;
-          else if (said && text(child.role) === 'StaticText') words.push(said);
-          if (text(child.role) !== 'StaticText') collect(child);
-        }
-      };
-      collect(node);
-      return hidden ? words.join(' ') : name;
-    };
     const visit = (node: AxNode, depth: number): void => {
       const role = text(node.role);
-      const name = nameOf(node, role);
+      const name = visibleName(node, role, byId, visibility);
       const value = text(node.value);
       const worthShowing = !node.ignored && !SILENT_ROLES.has(role) && (name !== '' || value !== '' || INTERACTIVE_ROLES.has(role));
       if (worthShowing && node.backendDOMNodeId !== undefined && !visibility.known.has(node.backendDOMNodeId)) read.disagreed = true;
@@ -489,7 +541,15 @@ export class BrowserCdp {
       });
     const attributes = described.node.attributes ?? [];
     const type = attributes[attributes.indexOf('type') + 1]?.toLowerCase();
-    return { ...await this.liveElement(ref.backendNodeId), password: described.node.nodeName?.toLowerCase() === 'input' && attributes.includes('type') && type === 'password' };
+    // The whole frame's tree and what is on show: the live name, held to what a person can see, as a snapshot holds it.
+    const { nodes } = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getFullAXTree', { frameId: ref.frameId }).catch((error: unknown) => {
+      if (error instanceof BrowserRefused) throw error;
+      throw new BrowserRefused('stale-ref');
+    });
+    const node = nodes.find((entry) => entry.backendDOMNodeId === ref.backendNodeId);
+    if (!node) throw new BrowserRefused('stale-ref');
+    const role = text(node.role);
+    return { role, name: visibleName(node, role, new Map(nodes.map((entry) => [entry.nodeId, entry])), await this.visibility()), password: described.node.nodeName?.toLowerCase() === 'input' && attributes.includes('type') && type === 'password' };
   }
 
   /** The element the keyboard is on, read in a world the page cannot reach, and whether a key would go past what this can read. */
@@ -652,6 +712,9 @@ export class BrowserCdp {
   }
 
   async screenshot(id?: string): Promise<{ readonly jpegBase64: string; readonly thumbBase64?: string; readonly width: number; readonly height: number }> {
+    // Text of such a frame is left out of a read; pixels cannot be, so the picture is not taken.
+    const unreadFrames = this.unreadFrames();
+    if (unreadFrames.length > 0) throw new BrowserRefused('unread-frame', undefined, { unreadFrames });
     const image = await this.capture(id === undefined ? undefined : await this.boxOf(this.ref(id).backendNodeId));
     const size = image.getSize();
     const thumb = image.resize({ width: Math.min(THUMB_WIDTH, size.width), quality: 'good' });

@@ -167,6 +167,7 @@ const REFUSAL_WORDS: Readonly<Record<BrowserRefusal, string>> = {
   'approval-declined': 'The person declined this action.',
   'approval-timeout': 'Nobody answered in time, so this did not run.',
   'approval-void': 'The page changed after the person was asked, so what they saw is not what would run. Nothing ran.',
+  'unread-frame': 'A frame of a site you may not read is on this page, so no screenshot was taken. Opening the page again with browser_navigate leaves that frame out, or the person can allow its site.',
   'rebind-suspected': 'This site answered from an address it must not use, so the app stopped it.',
   limit: 'Too many of these in one turn.',
   'download-blocked': 'Downloads are blocked.',
@@ -221,7 +222,7 @@ export class BrowserTools {
     } catch (error) {
       if (!(error instanceof BrowserRefused)) throw error;
       this.reportRefusal({ sessionId, turnId }, name, parsed.data, error.reason);
-      return refusal(error.reason, error.reason === 'no-page' ? printedAddresses(this.deps.devUrls?.(sessionId) ?? []) : {});
+      return refusal(error.reason, error.reason === 'no-page' ? printedAddresses(this.deps.devUrls?.(sessionId) ?? []) : error.detail ?? {});
     } finally {
       this.deps.pages.endTool(sessionId);
     }

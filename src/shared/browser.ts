@@ -81,7 +81,7 @@ export type BrowserStepKind = (typeof BROWSER_STEP_KINDS)[number];
 export const BROWSER_REFUSALS = [
   'site-not-allowed', 'plan-mode', 'unattended', 'no-page', 'stale-ref', 'page-gone', 'password-field',
   'upload-unsupported', 'approval-declined', 'approval-timeout', 'rebind-suspected', 'limit', 'download-blocked', 'stopped',
-  'browser-off', 'approval-void',
+  'browser-off', 'approval-void', 'unread-frame',
 ] as const;
 export type BrowserRefusal = (typeof BROWSER_REFUSALS)[number];
 
