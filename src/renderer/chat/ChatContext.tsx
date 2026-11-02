@@ -5,6 +5,7 @@ import type { SuggestedTaskStart, SuggestedTaskWhere } from '../../shared/turn-w
 import type { ResolveFileLink } from './markdown/file-links';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 import type { ChatLocale } from './model/summary';
+import type { ChatAttachment } from '../../shared/chat-message';
 import type { ChatRow } from './model/types';
 
 export type ChatSkin = 'bubble' | 'cli';
@@ -45,6 +46,8 @@ export type ChatWrapUpAction =
 export interface ChatBrowserProp {
   readonly rows?: ReadonlyMap<string, ChatRow>;
   readonly onOpenPane?: () => void;
+  /** Hears elements picked in this conversation's pane, as attachments. */
+  readonly onPicked?: (deliver: (attachments: readonly ChatAttachment[]) => void) => () => void;
 }
 
 /**

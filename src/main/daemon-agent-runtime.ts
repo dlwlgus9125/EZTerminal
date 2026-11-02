@@ -105,6 +105,9 @@ export interface DaemonBrowserHost {
   forward(conversationId: string): void;
   stop(conversationId: string): void;
   close(conversationId: string): void;
+  canPick(conversationId: string): boolean;
+  pick(conversationId: string): void;
+  cancelPick(conversationId: string): void;
   /** A person answered a `browser-action:` approval, and the answer committed. */
   approvalResolved(providerRequestId: string, decision: 'allow' | 'deny', response?: ApprovalResponse): void;
   /** A person allowed or revoked one exact origin for one project. Done before the command answers. */
@@ -2295,10 +2298,10 @@ export class DaemonAgentRuntime {
       case 'back': return { ok: true, afterCommit: () => host.back(conversationId) };
       case 'forward': return { ok: true, afterCommit: () => host.forward(conversationId) };
       case 'stop': return { ok: true, afterCommit: () => host.stop(conversationId) };
-      // Step 14: the picker.
       case 'pick':
-      case 'cancel-pick':
-        return commandError('invalid-state', 'Picking an element is not available yet.');
+        if (!host.canPick(conversationId)) return commandError('invalid-state', 'Elements can be picked only from a page the AI may read.');
+        return { ok: true, afterCommit: () => host.pick(conversationId) };
+      case 'cancel-pick': return { ok: true, afterCommit: () => host.cancelPick(conversationId) };
     }
   }
 

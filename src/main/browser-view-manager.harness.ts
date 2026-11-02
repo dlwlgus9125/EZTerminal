@@ -9,7 +9,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BROWSER_PARTITION, type BrowserViewState } from '../shared/browser';
+import { BROWSER_PARTITION, type BrowserPickedElement, type BrowserViewState } from '../shared/browser';
 import { BrowserRefused, parseKeys } from './browser-cdp';
 import type { BrowserPartitionSession } from './browser-network-guard';
 import { BrowserSiteStore } from './browser-site-store';
@@ -209,6 +209,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   let allowed: string[] = [];
   const states = new Map<string, BrowserViewState>();
   const blockRows: { readonly conversationId: string; readonly reason: string; readonly turnId: string }[] = [];
+  const pickedElements: BrowserPickedElement[] = [];
   const storeDir = path.join(scratch, 'store');
   const sites = new BrowserSiteStore(storeDir);
   await sites.load();
@@ -218,6 +219,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
     controlPorts: () => new Set([controlPort]),
     onState: (state) => { states.set(state.conversationId, state); },
     onBlocked: (conversationId, blocked, turnId) => { blockRows.push({ conversationId, reason: blocked.reason, turnId }); },
+    onPicked: (picked) => { pickedElements.push(picked); },
     candidates: (conversationId) => (conversationId === 'pane-candidates' ? [{ url: `${base}/`, source: 'terminal' }] : []),
     suspects: sites,
     partition: () => wrapped,
@@ -574,6 +576,47 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     return contents;
   });
   allowed = [];
+
+  // A person picks an element: their click goes to the picker, and the page never hears it.
+  {
+    const id = 'pane-pick';
+    const contents = await open(id, `${base}/counter`, true);
+    report['pick-allowed'] = manager.canPick(id);
+    manager.pick(id);
+    await delay(150);
+    report['pick-state'] = manager.state(id).picking ?? false;
+    await personClick(contents, '#go');
+    await delay(SETTLE_MS);
+    report['pick-page-heard'] = await js(contents, 'return window.clicked ?? 0');
+    report['pick-after'] = manager.state(id).picking ?? false;
+    report.picked = pickedElements.map((entry) => ({ ...entry, url: entry.url.replace(String(port), 'PORT'), imageBase64: entry.imageBase64?.slice(0, 4) }));
+    await personClick(contents, '#go');
+    await delay(150);
+    report['pick-then-page-heard'] = await js(contents, 'return window.clicked ?? 0');
+    pickedElements.length = 0;
+    manager.pick(id);
+    await delay(150);
+    contents.focus();
+    contents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await delay(150);
+    report['pick-escape'] = { picking: manager.state(id).picking ?? false, picked: pickedElements.length };
+    manager.pick(id);
+    await delay(100);
+    manager.cancelPick(id);
+    await delay(100);
+    report['pick-cancel'] = { picking: manager.state(id).picking ?? false, clicked: await js(contents, 'document.getElementById("go").click();return window.clicked') };
+    manager.pick(id);
+    await delay(100);
+    await manager.navigateAsPerson(id, `${base}/landed?via=pick-left`);
+    await delay(SETTLE_MS);
+    report['pick-navigated'] = manager.state(id).picking ?? false;
+    manager.forget(id);
+    const outside = 'pane-pick-outside';
+    await open(outside, `${evil}/landed?via=pick-outside`, true);
+    report['pick-outside'] = { can: manager.canPick(outside), picking: (manager.pick(outside), manager.state(outside).picking ?? false) };
+    manager.forget(outside);
+    report['pick-no-page'] = manager.canPick('pane-pick-nothing');
+  }
 
   // A tool's input reaches a pane no one has ever seen, with the app minimized too.
   const clickUnseen = async (name: string): Promise<void> => {

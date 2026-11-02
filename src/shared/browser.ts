@@ -1,4 +1,6 @@
 import { parseApprovalRequest, type ApprovalRequest } from './approval-request';
+import type { ChatAttachment } from './chat-message';
+import { quotedData } from './quoted-data';
 import { SUGGEST_TASK_SERVER } from './turn-wrap-up';
 
 /**
@@ -248,6 +250,35 @@ export function allowableOrigin(value: string): string | undefined {
   return siteClass(parsed.origin, []) === 'external' ? parsed.origin : undefined;
 }
 
+/** An element a person pressed in the pane, in the host's own reading. Everything here but `url` is the page's. */
+export interface BrowserPickedElement {
+  readonly conversationId: string;
+  readonly url: string;
+  readonly selector: string;
+  readonly role: string;
+  readonly name: string;
+  /** The element's picture, JPEG. Absent when it would not fit a message. */
+  readonly imageBase64?: string;
+}
+
+const oneLine = (value: string, chars: number): string => value.replace(/\s+/gu, ' ').trim().slice(0, chars);
+
+/**
+ * What a picked element puts in the message: its picture and a note. The words are the page's, so the note quotes them: they
+ * reach the AI as data and never as the person's, whatever the person writes beside them. At most 2 KB.
+ */
+export function browserElementAttachments(picked: BrowserPickedElement, createId: () => string): readonly ChatAttachment[] {
+  const origin = URL.canParse(picked.url) ? new URL(picked.url).origin : 'the page';
+  const note = quotedData(`Page element from ${origin}`, [
+    `url: ${oneLine(picked.url, 1_000)}`, `selector: ${oneLine(picked.selector, 400)}`, `role: ${oneLine(picked.role, 60)}`, `name: ${oneLine(picked.name, 300)}`,
+  ].join('\n'));
+  const label = `element ${oneLine(picked.selector, 80)}`;
+  return [
+    ...(picked.imageBase64 ? [{ id: createId(), name: `${label}.jpg`, mimeType: 'image/jpeg', kind: 'image' as const, data: picked.imageBase64 }] : []),
+    { id: createId(), name: `${label}.txt`, mimeType: 'text/plain', kind: 'text', data: note },
+  ];
+}
+
 /** Settings › 에이전트 › 내장 브라우저. */
 export interface BrowserSettings {
   /** The AI's browser tools; applies to the next conversation it starts. */
@@ -277,6 +308,8 @@ export interface BrowserViewState {
   readonly loading: boolean;
   readonly canBack: boolean;
   readonly canForward: boolean;
+  /** The person is picking an element. */
+  readonly picking?: boolean;
   /** Who is at the page: `driving`, a tool ran this turn; `stopped`, the person pressed 브라우저만 중지 this turn. */
   readonly ai: 'none' | 'driving' | 'stopped';
   /** The last thing the guards stopped, for the pane bar. `serial` tells one stop from the next, so a closed bar stays closed. */

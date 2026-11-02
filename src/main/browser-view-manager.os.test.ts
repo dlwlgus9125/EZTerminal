@@ -529,6 +529,41 @@ describe('addresses to offer', () => {
   });
 });
 
+describe('picking an element', () => {
+
+  it('takes the person\'s click, and the page never hears it', () => {
+    expect(report['pick-allowed']).toBe(true);
+    expect(report['pick-state']).toBe(true);
+    expect(report['pick-page-heard']).toBe(0);
+    expect(report['pick-after']).toBe(false);
+  });
+
+  it('hands over the element, in the host\'s own reading', () => {
+    expect(report.picked).toEqual([{ conversationId: 'pane-pick', url: 'http://127.0.0.1:PORT/counter', selector: '#go', role: 'button', name: 'go', imageBase64: '/9j/' }]);
+  });
+
+  it('gives the next click back to the page', () => {
+    expect(report['pick-then-page-heard']).toBe(1);
+  });
+
+  it('ends at Esc, with the keyboard in the page, and picks nothing', () => {
+    expect(report['pick-escape']).toEqual({ picking: false, picked: 0 });
+  });
+
+  it('ends when the person cancels, and the page goes on', () => {
+    expect(report['pick-cancel']).toEqual({ picking: false, clicked: 2 });
+  });
+
+  it('ends with the page', () => {
+    expect(report['pick-navigated']).toBe(false);
+  });
+
+  it('is refused on a site not allowed, and with no page', () => {
+    expect(report['pick-outside']).toEqual({ can: false, picking: false });
+    expect(report['pick-no-page']).toBe(false);
+  });
+});
+
 describe('lifecycle', () => {
   it('keeps three views live: the oldest hidden one goes, keeping its address', () => {
     const cap = report.cap as Record<string, { live: boolean; needsReopen: boolean; url: string }>;

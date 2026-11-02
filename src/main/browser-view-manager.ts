@@ -1,6 +1,6 @@
 import { BaseWindow, session as electronSession, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 
-import { addressBarUrl, BROWSER_PARTITION, siteClass, type BrowserDevCandidate, type BrowserRefusal, type BrowserSiteClass, type BrowserViewState } from '../shared/browser';
+import { addressBarUrl, BROWSER_PARTITION, siteClass, type BrowserDevCandidate, type BrowserPickedElement, type BrowserRefusal, type BrowserSiteClass, type BrowserViewState } from '../shared/browser';
 import { BrowserCdp } from './browser-cdp';
 import {
   fileInsideRoots,
@@ -48,6 +48,8 @@ const LIVE_VIEWS = 3;
 const PERSON_GESTURE_MS = 1_000;
 const PERSON_NAVIGATION_REASONS = new Set(['anchorClick', 'formSubmissionGet', 'formSubmissionPost']);
 const PERSON_INPUT = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'gestureTap']);
+/** The picker's highlight is gone from the page a frame after it is told to go. */
+const PICK_CLEAR_MS = 60;
 const ERR_ABORTED = -3;
 const ERR_BLOCKED_BY_CLIENT = -20;
 
@@ -69,6 +71,8 @@ interface Pane {
   aiTurnId?: string;
   /** The person pressed 브라우저만 중지 during this turn: its tools are refused until it ends. */
   stoppedTurnId?: string;
+  /** The person is picking an element. */
+  picking: boolean;
   /** The suspect site the person went to on this pane: open to this pane until the page leaves it. */
   visit?: string;
   blocked?: BrowserViewState['blocked'];
@@ -107,6 +111,8 @@ export interface BrowserViewManagerDeps {
   readonly onStopped?: (conversationId: string) => void;
   /** The AI used this conversation's browser for the first time: its pane opens, without focus. */
   readonly onFirstUse?: (conversationId: string) => void;
+  /** A person picked an element, on a page the AI may read. */
+  readonly onPicked?: (picked: BrowserPickedElement) => void;
   /** Addresses to offer in this conversation's empty pane. */
   readonly candidates?: (conversationId: string) => readonly BrowserDevCandidate[];
   /** The last page of a conversation, for the pane after a restart. */
@@ -211,6 +217,45 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     if (!contents?.navigationHistory.canGoForward()) return;
     this.pane(conversationId).personNavigating = true;
     contents.navigationHistory.goForward();
+  }
+
+  /** Picking takes a page the AI may read: the crop and the selector go to it. */
+  canPick(conversationId: string): boolean {
+    const page = this.page(conversationId);
+    return page.ok && page.site !== 'external';
+  }
+
+  pick(conversationId: string): void {
+    const pane = this.pane(conversationId);
+    const page = this.page(conversationId);
+    if (!page.ok || page.site === 'external') return;
+    pane.picking = true;
+    this.publish(pane);
+    page.cdp.startPick().catch(() => this.cancelPick(conversationId));
+  }
+
+  cancelPick(conversationId: string): void {
+    const pane = this.pane(conversationId);
+    if (!pane.picking) return;
+    pane.picking = false;
+    this.publish(pane);
+    pane.cdp?.stopPick().catch(() => undefined);
+  }
+
+  private async elementPressed(pane: Pane, backendNodeId: number): Promise<void> {
+    if (!pane.picking) return;
+    pane.picking = false;
+    this.publish(pane);
+    try {
+      await pane.cdp?.stopPick();
+      await new Promise((resolve) => { setTimeout(resolve, PICK_CLEAR_MS); });
+      const element = await pane.cdp?.element(backendNodeId);
+      // Read again: the wait can outlast the page, and the press can land in a frame the AI may not read.
+      if (!element || !this.canPick(pane.conversationId) || this.site(pane, element.url) === 'external') return;
+      this.deps.onPicked?.({ conversationId: pane.conversationId, ...element });
+    } catch {
+      // The element or its page went: nothing was picked.
+    }
   }
 
   /** 브라우저만 중지: tools stop for this turn; the turn runs on, and every guard stays. */
@@ -387,7 +432,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       const lastUrl = this.deps.lastUrl?.(conversationId) ?? '';
       pane = {
         conversationId, view: null, host: null, lastUrl, guarded: false, personNavigating: false, toolsRunning: 0, toolEndedAt: 0,
-        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [],
+        personInputAt: 0, needsReopen: lastUrl !== '', loading: false, usedAt: 0, roots: [], picking: false,
       };
       this.panes.set(conversationId, pane);
     }
@@ -511,6 +556,12 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       event.preventDefault();
       callback('');
     });
+    // In a pick the page has the keyboard, so Esc is heard here.
+    contents.on('before-input-event', (event, input) => {
+      if (!pane.picking || input.type !== 'keyDown' || input.key !== 'Escape') return;
+      event.preventDefault();
+      this.cancelPick(pane.conversationId);
+    });
     contents.on('input-event', (_event, input) => {
       if (pane.toolsRunning === 0 && PERSON_INPUT.has(input.type)) pane.personInputAt = this.now();
     });
@@ -525,6 +576,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     });
     contents.on('did-navigate', (_event, url) => {
       pane.personNavigating = false;
+      this.cancelPick(pane.conversationId);
       if (pane.visit !== guardOrigin(url)) delete pane.visit;
       pane.cdp?.clearRefs();
       this.remember(pane, url);
@@ -548,6 +600,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     pane.cdp = new BrowserCdp(contents, {
       onNavigationRequested: (url, reason) => { pane.requested = { url, reason, at: this.now() }; },
       classify: (url) => this.site(pane, url),
+      onElementPressed: (backendNodeId) => { void this.elementPressed(pane, backendNodeId); },
     });
   }
 
@@ -619,6 +672,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     pane.host = null;
     pane.personNavigating = false;
     delete pane.visit;
+    pane.picking = false;
     pane.loading = false;
     if (!view) return;
     const contents = view.webContents;
@@ -648,6 +702,7 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
       conversationId: pane.conversationId,
       url,
       ...(candidates.length > 0 ? { candidates } : {}),
+      ...(pane.picking ? { picking: true } : {}),
       // Always the current URL's class, never the last action's.
       ...(url ? { site: this.site(pane, url) } : {}),
       loading: pane.loading,

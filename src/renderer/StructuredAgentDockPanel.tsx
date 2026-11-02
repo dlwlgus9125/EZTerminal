@@ -34,6 +34,8 @@ import {
   submitConversationMessage,
   type ConversationCommandAccess,
 } from './conversation-commands';
+import { BROWSER_CAPABILITY } from '../shared/browser';
+import { browserHost } from './browser-commands';
 import { longRunHost } from './long-run-commands';
 import {
   AGENT_SETTINGS_CAPABILITY,
@@ -1278,6 +1280,9 @@ export function StructuredAgentDockPanel(
     },
   }) : undefined;
 
+  const browserOffered = snapshot?.capabilities?.includes(BROWSER_CAPABILITY) === true;
+  const browser = !historyOnly && owner === 'managed' && browserOffered && capabilities.browserPane ? browserHost({ sessionId, pane: capabilities.browserPane }) : undefined;
+
   const delegateDialogProps = (forSession: NonNullable<typeof session>) => ({
     profiles: delegateProfiles,
     providerLabels,
@@ -1412,6 +1417,7 @@ export function StructuredAgentDockPanel(
       {...(reviews ? { reviewStart: { ...reviews.reviewStart, onOpen: () => setReviewFormOpens((count) => count + 1) }, onReviewAction: reviews.onReviewAction } : {})}
       {...(wrapUp ? { wrapUp } : {})}
       {...(longRun ? { longRun: longRun.longRun } : {})}
+      {...(browser ? { browser } : {})}
       {...(longRun?.statusLabel ? { statusLabel: longRun.statusLabel } : {})}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,

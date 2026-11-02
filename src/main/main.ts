@@ -1189,6 +1189,9 @@ app.on('ready', async () => {
       forward: (conversationId) => browserView?.goForwardAsPerson(conversationId),
       stop: (conversationId) => browserView?.stopAi(conversationId),
       close: (conversationId) => browserView?.close(conversationId),
+      canPick: (conversationId) => browserView?.canPick(conversationId) ?? false,
+      pick: (conversationId) => browserView?.pick(conversationId),
+      cancelPick: (conversationId) => browserView?.cancelPick(conversationId),
       approvalResolved: (providerRequestId, decision, response) => browserApprovalsRef.current?.resolved(providerRequestId, decision, response),
       site: async (projectId, origin, action) => {
         await (action === 'allow' ? browserSites.allow(projectId, origin) : browserSites.revoke(projectId, origin));
@@ -4792,6 +4795,10 @@ app.on('ready', async () => {
     },
     onStopped: (conversationId) => browserApprovalsRef.current?.stopped(conversationId),
     onBlocked: (conversationId, { origin, reason }, turnId) => browserRows.blocked({ sessionId: conversationId, turnId }, { origin, reason }),
+    onPicked: (picked) => {
+      const window = mainWindowRef;
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('browser:picked', picked);
+    },
     candidates: browserCandidates,
   });
   // A window opened before this line has no later `attach`: every tool would answer no-page.

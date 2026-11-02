@@ -907,6 +907,11 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('browser:view-state', handler);
     return () => ipcRenderer.removeListener('browser:view-state', handler);
   },
+  onBrowserPicked: (listener: (picked: import('../shared/browser').BrowserPickedElement) => void): (() => void) => {
+    const handler = (_event: unknown, picked: import('../shared/browser').BrowserPickedElement): void => listener(picked);
+    ipcRenderer.on('browser:picked', handler);
+    return () => ipcRenderer.removeListener('browser:picked', handler);
+  },
   onBrowserOpenPane: (listener: (conversationId: string) => void): (() => void) => {
     const handler = (_event: unknown, conversationId: string): void => listener(conversationId);
     ipcRenderer.on('browser:open-pane', handler);

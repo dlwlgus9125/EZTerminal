@@ -264,14 +264,24 @@ describe('BrowserPanel', () => {
     expect(container.querySelector('[data-testid="browser-strip"]'), 'the same stop, pushed again').toBeNull();
   });
 
-  it('hands what later steps own to their seam', async () => {
+  it('asks the host to pick, and to stop, as a person', async () => {
     const { capabilities, props, sendCommand, push } = harness();
-    const onSeam = vi.fn();
-    await render(<BrowserPanel {...props} capabilities={capabilities} onSeam={onSeam} />);
+    await render(<BrowserPanel {...props} capabilities={capabilities} />);
     push(state());
     await settle();
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-pick"]')!.click(); });
-    expect(onSeam).toHaveBeenCalledWith({ kind: 'pick' });
-    expect(sendCommand).not.toHaveBeenCalled();
+    expect(sendCommand).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'browser.action', payload: expect.objectContaining({ action: 'pick' }) }));
+    push(state({ picking: true }));
+    await settle();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="browser-pick-cancel"]')!.click(); });
+    expect(sendCommand).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'browser.action', payload: expect.objectContaining({ action: 'cancel-pick' }) }));
+  });
+
+  it('does not offer to pick from a page the AI may not read', async () => {
+    const { capabilities, props, push } = harness();
+    await render(<BrowserPanel {...props} capabilities={capabilities} />);
+    push(state({ url: 'https://evil.example/', site: 'external' }));
+    await settle();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="browser-pick"]')!.disabled).toBe(true);
   });
 });

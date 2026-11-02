@@ -73,6 +73,27 @@ function fake() {
 const AX = (nodes: readonly Record<string, unknown>[]) => ({ nodes });
 const node = (nodeId: string, role: string, name: string, extra: Record<string, unknown> = {}) => ({ nodeId, role: { value: role }, name: { value: name }, ...extra });
 
+describe('the picker, as the page sees it', () => {
+  it('asks the debugger to pick, and stops it', async () => {
+    const { cdp, sendCommand } = fake();
+    await cdp.startPick();
+    expect(sendCommand.mock.calls.map(([method]) => method)).toEqual(['DOM.enable', 'Overlay.enable', 'Overlay.setInspectMode']);
+    expect(sendCommand.mock.calls[2]![1]).toMatchObject({ mode: 'searchForNode' });
+    sendCommand.mockClear();
+    await cdp.stopPick();
+    expect(sendCommand.mock.calls[0]).toEqual(['Overlay.setInspectMode', expect.objectContaining({ mode: 'none' })]);
+  });
+
+  it('hears which element was pressed', () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const onElementPressed = vi.fn();
+    const contents = { isDestroyed: () => false, debugger: { isAttached: () => true, attach: vi.fn(), on: (event: string, listener: (...args: unknown[]) => void) => { listeners.set(event, listener); }, sendCommand: vi.fn(async () => ({})) } };
+    new BrowserCdp(contents as unknown as WebContents, { onNavigationRequested: vi.fn(), classify: () => 'local', onElementPressed });
+    listeners.get('message')!({}, 'Overlay.inspectNodeRequested', { backendNodeId: 42 });
+    expect(onElementPressed).toHaveBeenCalledWith(42);
+  });
+});
+
 describe('parseKeys', () => {
   it('reads the keys the tool sends', () => {
     expect(parseKeys('Enter')).toMatchObject({ key: 'Enter', keyCode: 13, modifiers: 0, text: '\r' });

@@ -1241,6 +1241,8 @@ export interface ComposerSteer {
 
 export interface StructuredAgentComposerProps {
   readonly toolbar?: ReactNode;
+  /** Hears elements a person picks in this conversation's pane. */
+  readonly onElementPicked?: ChatBrowserProp['onPicked'];
   /** The conversation's AI; the message box carries its colour. */
   readonly providerId?: string;
   readonly queueItems?: readonly ConversationQueueItem[];
@@ -1364,6 +1366,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   latestTurnId,
   suggestionChipAnchor,
   steer,
+  onElementPicked,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1525,6 +1528,19 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     } catch { setError(copy.attachmentError); }
     finally { setReadingFiles(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
   };
+
+  /** Picked from the pane: the same road as a file, and the same limits. */
+  const addPicked = useRef<(additions: readonly ChatAttachment[]) => void>(() => undefined);
+  addPicked.current = (additions) => {
+    const combined = [...(valueRef.current.attachments ?? []), ...additions];
+    if (disabled || !supportsMessageContext || validateChatMessageContext({ attachments: combined, ...(valueRef.current.replyTo ? { replyTo: valueRef.current.replyTo } : {}) })) {
+      setError(copy.attachmentError);
+      return;
+    }
+    setError(null);
+    updateDraft({ ...valueRef.current, attachments: combined });
+  };
+  useEffect(() => onElementPicked?.((additions) => addPicked.current(additions)), [onElementPicked]);
 
   // Only over an empty box with nothing else in it or open over it: a draft, an attachment, a reply or the list wins.
   const suggestionShown = suggestion !== undefined && suggestion.id !== setAside && !disabled && !draft && attachments.length === 0
@@ -3265,6 +3281,7 @@ export function StructuredAgentSessionPanel({
       )}
       {!historyOnly && !(providerOwned && parent) && (
         <StructuredAgentComposer
+          {...(browser?.onPicked ? { onElementPicked: browser.onPicked } : {})}
           toolbar={settingsControls}
           providerId={providerId}
           queueItems={queueItems}

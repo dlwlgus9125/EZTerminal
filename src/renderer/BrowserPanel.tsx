@@ -15,7 +15,6 @@ import { useDockPanelHost } from './use-dock-panel-host';
  * below: this component reports that plate's rect and visibility, and turns what the person does into daemon commands.
  * While the plate shows the app's own state (empty, down, gone) or an overlay is open, the view is parked.
  *
- * The seam for a later step: `pick`/`cancel-pick` (step 14), which reach `onSeam`; nothing else is wired here.
  */
 
 export interface BrowserPanelParams {
@@ -60,11 +59,10 @@ export function browserPaneStrip(state: BrowserViewState | null, dismissed?: { r
 }
 
 export function BrowserPanel(
-  props: IDockviewPanelProps<BrowserPanelParams> & { readonly capabilities?: CapabilityAccess; readonly onSeam?: (action: BrowserPaneAction) => void },
+  props: IDockviewPanelProps<BrowserPanelParams> & { readonly capabilities?: CapabilityAccess },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
   const { conversationId } = props.params;
-  const { onSeam } = props;
   const [state, setState] = useState<BrowserViewState | null>(null);
   useEffect(() => capabilities.browserPane?.observe(conversationId, setState), [capabilities, conversationId]);
 
@@ -149,12 +147,12 @@ export function BrowserPanel(
   }, [access, sheet]);
 
   const onAction = useCallback((action: BrowserPaneAction): void => {
-    const send = (payload: { readonly action: 'navigate' | 'reload' | 'back' | 'forward' | 'stop'; readonly target?: string }): void => {
+    const send = (payload: { readonly action: 'navigate' | 'reload' | 'back' | 'forward' | 'stop' | 'pick' | 'cancel-pick'; readonly target?: string }): void => {
       void sendCardCommand(access, 'browser.action', { sessionId: conversationId, ...payload });
     };
     switch (action.kind) {
       case 'navigate': send({ action: 'navigate', target: action.url }); return;
-      case 'back': case 'forward': case 'reload': send({ action: action.kind }); return;
+      case 'back': case 'forward': case 'reload': case 'pick': case 'cancel-pick': send({ action: action.kind }); return;
       case 'stop-ai': send({ action: 'stop' }); return;
       // The page failed or its view went: load the address again, as the person who pressed the button.
       case 'retry': case 'reopen':
@@ -162,9 +160,9 @@ export function BrowserPanel(
         return;
       case 'allow-site': void openAllowSheet(action.origin); return;
       case 'dismiss': setDismissed({ ...(state?.blocked ? { blocked: state.blocked.serial } : {}), ...(state?.allowed ? { allowed: state.allowed } : {}) }); return;
-      default: onSeam?.(action);
+      default:
     }
-  }, [access, conversationId, onSeam, openAllowSheet, state?.allowed, state?.blocked, state?.url]);
+  }, [access, conversationId, openAllowSheet, state?.allowed, state?.blocked, state?.url]);
 
   const strip = browserPaneStrip(state, dismissed);
   const view: BrowserPaneProps = {
@@ -174,6 +172,7 @@ export function BrowserPanel(
     ...(strip ? { strip } : {}),
     canBack: state?.canBack ?? false,
     canForward: state?.canForward ?? false,
+    picking: state?.picking === true,
     pageHidden: overlayOpen,
     pageRef: plateRef,
     onAction,

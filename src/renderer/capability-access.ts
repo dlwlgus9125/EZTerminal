@@ -5,7 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
-import type { BrowserProjectSites, BrowserSettings, BrowserSurfaceSnapshot, BrowserViewState } from '../shared/browser';
+import type { BrowserPickedElement, BrowserProjectSites, BrowserSettings, BrowserSurfaceSnapshot, BrowserViewState } from '../shared/browser';
 import type { LongRunSettings } from '../shared/long-run';
 import type { TurnWrapUpPause, TurnWrapUpSettings } from '../shared/turn-wrap-up';
 import type { AgentHostExtensionsClient } from '../shared/agent-capabilities';
@@ -313,6 +313,8 @@ export interface BrowserPaneAccess {
   readonly setSurface: (surface: BrowserSurfaceSnapshot) => boolean;
   /** One conversation's page: its state now, then every change. */
   readonly observe: (conversationId: string, onState: (state: BrowserViewState) => void) => CapabilityCleanup;
+  /** A person picked an element in this conversation's pane. */
+  readonly onPicked: (conversationId: string, listener: (picked: BrowserPickedElement) => void) => CapabilityCleanup;
   /** The AI first used a conversation's browser. */
   readonly onOpenPane: (listener: (conversationId: string) => void) => CapabilityCleanup;
 }
@@ -1071,6 +1073,9 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
     onOpenPane(listener) {
       return desktopFor('onBrowserOpenPane')?.onBrowserOpenPane(listener) ?? (() => undefined);
+    },
+    onPicked: (conversationId, listener) => {
+      return desktopFor('onBrowserPicked')?.onBrowserPicked((picked) => { if (picked.conversationId === conversationId) listener(picked); }) ?? (() => undefined);
     },
   };
 

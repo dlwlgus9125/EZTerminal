@@ -4388,7 +4388,10 @@ it('persists empty Agents across restart and dispatches only the first submitted
 
 
 describe('what a person does in the in-app browser', () => {
-  const browserHost = () => ({ navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved: vi.fn(), site: vi.fn(async () => undefined) });
+  const browserHost = () => ({
+    navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved: vi.fn(), site: vi.fn(async () => undefined),
+    canPick: vi.fn(() => true), pick: vi.fn(), cancelPick: vi.fn(),
+  });
   const started = async (browser: ReturnType<typeof browserHost>) => {
     const h = await harness({ browser });
     await h.prepareWorkspace();
@@ -4396,6 +4399,21 @@ describe('what a person does in the in-app browser', () => {
     await h.execute('agent.create', { sessionId: 'chat', workspaceId: 'workspace-1', title: 'Chat', providerId: 'codex', permissionPreset: 'standard' });
     return h;
   };
+
+  it('picks from a page the AI may read, and refuses any other', async () => {
+    const browser = browserHost();
+    const h = await started(browser);
+    try {
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'pick' })).toMatchObject({ ok: true });
+      expect(browser.pick).toHaveBeenCalledWith('chat');
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'cancel-pick' })).toMatchObject({ ok: true });
+      expect(browser.cancelPick).toHaveBeenCalledWith('chat');
+      browser.canPick.mockReturnValue(false);
+      browser.pick.mockClear();
+      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'pick' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(browser.pick).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
 
   it('reaches the pane after the command commits', async () => {
     const browser = browserHost();
@@ -4520,13 +4538,6 @@ describe('what a person does in the in-app browser', () => {
     });
   });
 
-  it('leaves the picker to its step', async () => {
-    const browser = browserHost();
-    const h = await started(browser);
-    try {
-      expect(await h.execute('browser.action', { sessionId: 'chat', action: 'pick' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
-    } finally { await h.runtime.dispose(); await h.store.close(); }
-  });
 });
 
 describe('a browser action waiting on a person', () => {
@@ -4534,7 +4545,7 @@ describe('a browser action waiting on a person', () => {
   const approvalRequest = { v: 1 as const, kind: 'tool' as const, toolName: 'browser_click', target: 'https://staging.cart-kit.example', input: '{"element":"button \\"Pay\\""}' };
   const held = async () => {
     const approvalResolved = vi.fn();
-    const browser = { navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved, site: vi.fn(async () => undefined) };
+    const browser = { navigate: vi.fn(), reload: vi.fn(), back: vi.fn(), forward: vi.fn(), stop: vi.fn(), close: vi.fn(), approvalResolved, site: vi.fn(async () => undefined), canPick: vi.fn(() => true), pick: vi.fn(), cancelPick: vi.fn() };
     const h = await harness({ browser });
     await h.prepareWorkspace();
     await h.enable(h.codex, 'codex');

@@ -1,6 +1,7 @@
 import type { NativeImage, WebContents } from 'electron';
 
 import { BROWSER_THUMB_BYTES, type BrowserRefusal, type BrowserSiteClass } from '../shared/browser';
+import { MAX_CHAT_ATTACHMENT_BYTES } from '../shared/chat-message';
 
 /**
  * What the AI's tools do to a page, over the view's own debugger. Screenshots are `capturePage`: `Page.captureScreenshot`
@@ -16,6 +17,18 @@ const SHOT_WIDTH = 1_280;
 const SHOT_QUALITY = 80;
 const THUMB_WIDTH = 360;
 const THUMB_QUALITIES = [60, 40, 25];
+const ELEMENT_QUALITIES = [80, 60, 40];
+const PICK_HIGHLIGHT = { showInfo: false, contentColor: { r: 111, g: 168, b: 220, a: 0.35 }, borderColor: { r: 111, g: 168, b: 220, a: 0.9 } };
+/** A short path to a node, nearest id first. It runs in a world of its own, and all it reads is the page's. */
+const ELEMENT_FACTS = `function(){
+  const parts=[];
+  for(let el=this.nodeType===1?this:this.parentElement;el&&parts.length<5;el=el.parentElement){
+    if(el.id){parts.unshift('#'+CSS.escape(el.id));break}
+    const same=el.parentElement?[...el.parentElement.children].filter((other)=>other.localName===el.localName):[];
+    parts.unshift(el.localName+[...el.classList].slice(0,2).map((name)=>'.'+CSS.escape(name)).join('')+(same.length>1?':nth-of-type('+(same.indexOf(el)+1)+')':''));
+  }
+  return {selector:parts.join(' > '),url:this.ownerDocument.location.href};
+}`;
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
@@ -199,11 +212,22 @@ function quoted(value: string): string {
   return JSON.stringify(value.length > 300 ? `${value.slice(0, 300)}…` : value);
 }
 
+/** What an element is, read by the host. */
+export interface BrowserElementReading {
+  readonly url: string;
+  readonly selector: string;
+  readonly role: string;
+  readonly name: string;
+  readonly imageBase64?: string;
+}
+
 export interface BrowserCdpOptions {
   /** A frame asked to navigate, and why: read before `will-navigate`, which cannot tell a link from a script. */
   readonly onNavigationRequested: (url: string, reason: string) => void;
   /** The class of a frame's URL for this conversation. */
   readonly classify: (url: string) => BrowserSiteClass;
+  /** A person pressed an element while picking. The page never heard it (measured). */
+  readonly onElementPressed?: (backendNodeId: number) => void;
 }
 
 export class BrowserCdp {
@@ -245,6 +269,9 @@ export class BrowserCdp {
     switch (method) {
       case 'Page.frameRequestedNavigation':
         if (typeof params.url === 'string' && typeof params.reason === 'string') this.options.onNavigationRequested(params.url, params.reason);
+        return;
+      case 'Overlay.inspectNodeRequested':
+        if (typeof params.backendNodeId === 'number') this.options.onElementPressed?.(params.backendNodeId);
         return;
       case 'Page.fileChooserOpened':
         this.chooserOpened = true;
@@ -486,24 +513,61 @@ export class BrowserCdp {
     await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...common });
   }
 
-  /** At most `SHOT_WIDTH` wide, in CSS pixels: `capturePage` answers in physical ones. */
-  async screenshot(id?: string): Promise<{ readonly jpegBase64: string; readonly thumbBase64?: string; readonly width: number; readonly height: number }> {
-    let rect: { x: number; y: number; width: number; height: number } | undefined;
-    if (id !== undefined) {
-      const ref = this.ref(id);
-      const { model } = await this.send<{ model: { readonly border: readonly number[]; readonly width: number; readonly height: number } }>('DOM.getBoxModel', { backendNodeId: ref.backendNodeId })
-        .catch((error: unknown) => {
-          if (error instanceof BrowserRefused) throw error;
-          throw new BrowserRefused('stale-ref');
-        });
-      rect = { x: Math.floor(model.border[0]!), y: Math.floor(model.border[1]!), width: Math.ceil(model.width), height: Math.ceil(model.height) };
+  async startPick(): Promise<void> {
+    await this.send('DOM.enable');
+    await this.send('Overlay.enable');
+    await this.send('Overlay.setInspectMode', { mode: 'searchForNode', highlightConfig: PICK_HIGHLIGHT });
+  }
+
+  async stopPick(): Promise<void> {
+    await this.send('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} });
+    await this.send('Overlay.hideHighlight');
+  }
+
+  /** The frame a node sits in is whichever gives it a world. */
+  private async elementFacts(backendNodeId: number): Promise<{ readonly selector: string; readonly url: string } | undefined> {
+    const { frameTree } = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree');
+    const frames = (tree: FrameTree): readonly FrameTree[] => [tree, ...(tree.childFrames ?? []).flatMap(frames)];
+    for (const { frame } of frames(frameTree)) {
+      const facts = await this.inIsolatedWorld<{ selector: string; url: string }>({ backendNodeId, frameId: frame.id, role: '', name: '' }, ELEMENT_FACTS).catch((error: unknown) => {
+        if (error instanceof BrowserRefused) throw error;
+        return undefined;
+      });
+      if (facts) return facts;
     }
+    return undefined;
+  }
+
+  /** The element a person pressed. Undefined when it went before it could be read. */
+  async element(backendNodeId: number): Promise<BrowserElementReading | undefined> {
+    const facts = await this.elementFacts(backendNodeId);
+    if (!facts) return undefined;
+    const { nodes } = await this.send<{ nodes: readonly AxNode[] }>('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
+    const image = await this.capture(await this.boxOf(backendNodeId));
+    const jpeg = ELEMENT_QUALITIES.map((quality) => image.toJPEG(quality)).find((bytes) => bytes.length <= MAX_CHAT_ATTACHMENT_BYTES);
+    return { ...facts, role: text(nodes[0]?.role), name: text(nodes[0]?.name), ...(jpeg ? { imageBase64: jpeg.toString('base64') } : {}) };
+  }
+
+  private async boxOf(backendNodeId: number): Promise<{ x: number; y: number; width: number; height: number }> {
+    const { model } = await this.send<{ model: { readonly border: readonly number[]; readonly width: number; readonly height: number } }>('DOM.getBoxModel', { backendNodeId })
+      .catch((error: unknown) => {
+        if (error instanceof BrowserRefused) throw error;
+        throw new BrowserRefused('stale-ref');
+      });
+    return { x: Math.floor(model.border[0]!), y: Math.floor(model.border[1]!), width: Math.ceil(model.width), height: Math.ceil(model.height) };
+  }
+
+  /** At most `SHOT_WIDTH` wide, in CSS pixels: `capturePage` answers in physical ones. */
+  private async capture(rect?: { x: number; y: number; width: number; height: number }): Promise<NativeImage> {
     const captured: NativeImage = rect ? await this.contents.capturePage(rect) : await this.contents.capturePage();
     if (captured.isEmpty()) throw new BrowserRefused('page-gone');
     const cssWidth = rect?.width ?? (await this.send<{ cssLayoutViewport: { clientWidth: number } }>('Page.getLayoutMetrics')).cssLayoutViewport.clientWidth;
-    const physical = captured.getSize();
     const width = Math.min(SHOT_WIDTH, cssWidth);
-    const image = physical.width === width ? captured : captured.resize({ width, quality: 'good' });
+    return captured.getSize().width === width ? captured : captured.resize({ width, quality: 'good' });
+  }
+
+  async screenshot(id?: string): Promise<{ readonly jpegBase64: string; readonly thumbBase64?: string; readonly width: number; readonly height: number }> {
+    const image = await this.capture(id === undefined ? undefined : await this.boxOf(this.ref(id).backendNodeId));
     const size = image.getSize();
     const thumb = image.resize({ width: Math.min(THUMB_WIDTH, size.width), quality: 'good' });
     const thumbJpeg = THUMB_QUALITIES.map((quality) => thumb.toJPEG(quality)).find((jpeg) => jpeg.length <= BROWSER_THUMB_BYTES);
