@@ -847,6 +847,13 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
     await bound('bound-press-readable-frame', 'browser_press', enter, undefined, { before: (contents) => js(contents, 'const f=document.getElementById("frame");f.contentDocument.getElementById("inner").focus()') });
     await bound('bound-press-closed-shadow', 'browser_press', enter, undefined, { before: (contents) => js(contents, 'window.focusSealed()') });
     await bound('bound-press-foreign-frame', 'browser_press', enter, undefined, { query: `?foreign=${encodeURIComponent(`${evil}/landed?via=foreign`)}`, before: async (contents) => { await delay(SETTLE_MS); await js(contents, 'document.getElementById("foreign").focus()'); } });
+    // A pane that has never had a view: the first navigation is the AI's, to an allowed site and to a file in the folders.
+    for (const [name, url] of [['fresh-pane-allowed', `${keptOrigin}/landed?via=fresh`], ['fresh-pane-file', pathToFileURL(insidePage).href]] as const) {
+      const id = `pane-${name}`;
+      current = id;
+      report[name] = codeOf(await call(id, 'browser_navigate', { url }));
+      manager.forget(id);
+    }
   }
 
   // What a page left behind stays with it: no line of it reads as the next page's, and no capture holds a site the AI may not read.

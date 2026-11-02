@@ -90,6 +90,8 @@ export interface BrowserToolPages {
   page(conversationId: string): BrowserPageResult;
   classify(conversationId: string, url: string): BrowserSiteClass;
   navigateForTool(conversationId: string, url: string): Promise<Electron.WebContents | undefined>;
+  /** Reads the conversation's project and folders into a pane with no view yet, before anything is classed on it. */
+  scoped(conversationId: string): Promise<void>;
   refuseNavigation(conversationId: string, url: string, reason: BrowserRefusal): void;
   /** This site answered from where it must not, on this pane. */
   suspected(conversationId: string, url: string): boolean;
@@ -359,6 +361,7 @@ export class BrowserTools {
     if (!url || !/^(?:https?|file):/iu.test(url)) throw new BrowserRefused('site-not-allowed');
     // First: a suspect site also classes as external, and this reason is the true one.
     if (this.deps.pages.suspected(sessionId, url)) throw new BrowserRefused('rebind-suspected');
+    await this.deps.pages.scoped(sessionId);
     const site = this.deps.pages.classify(sessionId, url);
     if (site === 'external') {
       // The tool answers at once; allowing the site is a person's, in the pane.

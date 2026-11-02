@@ -61,6 +61,7 @@ function harness(options: Options = {}) {
     page: vi.fn(() => live.current),
     classify: vi.fn((_id: string, target: string) => siteOf(target)),
     navigateForTool: vi.fn(async () => ({ isLoading: () => false }) as unknown as Electron.WebContents),
+    scoped: vi.fn(async () => undefined),
     refuseNavigation: vi.fn(),
     suspected: vi.fn(() => false),
     state: vi.fn(() => ({ conversationId: 'chat', url, loading: false, canBack: false, canForward: false, ai: 'driving' as const })),
@@ -92,6 +93,15 @@ const ARGS: Readonly<Record<BrowserToolName, unknown>> = {
 const ALL = Object.keys(ARGS) as BrowserToolName[];
 const READS: BrowserToolName[] = ['browser_snapshot', 'browser_screenshot', 'browser_console', 'browser_wait'];
 const PAGE_ACTIONS: BrowserToolName[] = ['browser_click', 'browser_type', 'browser_press'];
+
+describe('a first navigation is classed as the conversation\'s', () => {
+  it('reads the project and folders before it classes the address', async () => {
+    const h = harness({ url: ALLOWED });
+    expect(code(await h.call('browser_navigate', { url: ALLOWED }))).toBe('ran');
+    const scoped = vi.mocked(h.pages.scoped).mock.invocationCallOrder[0]!;
+    expect(scoped).toBeLessThan(vi.mocked(h.pages.classify).mock.invocationCallOrder[0]!);
+  });
+});
 
 describe('every call answers to the host, before anything else', () => {
   it.each(ALL)('%s refuses while the setting is off', async (name) => {

@@ -355,9 +355,16 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
     return contents;
   }
 
-  /** The class of a URL for this conversation. */
+  /** The class of a URL for this conversation. Before its first view, after `scoped`: until then nothing is allowed. */
   classify(conversationId: string, url: string): BrowserSiteClass {
     return this.site(this.pane(conversationId), url);
+  }
+
+  /** A pane with no view yet knows its project and folders, so a first navigation is classed as the conversation's. */
+  async scoped(conversationId: string): Promise<void> {
+    const pane = this.pane(conversationId);
+    if (this.liveContents(pane)) return;
+    await this.readScope(pane);
   }
 
   /** This site answered from where it must not, on some pane, and is not the one the person is visiting on this one. */
@@ -476,11 +483,15 @@ export class BrowserViewManager implements BrowserNetworkGuardHost {
   private async readyView(pane: Pane): Promise<WebContents | undefined> {
     const live = this.liveContents(pane);
     if (live) return live;
+    await this.readScope(pane);
+    return this.ensureView(pane);
+  }
+
+  private async readScope(pane: Pane): Promise<void> {
     const scope = await this.deps.scope(pane.conversationId);
     if (scope) pane.projectId = scope.projectId;
     else delete pane.projectId;
     pane.roots = realRoots(scope?.roots ?? []);
-    return this.ensureView(pane);
   }
 
   private policy(pane: Pane): BrowserViewPolicy {

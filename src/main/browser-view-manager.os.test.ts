@@ -445,6 +445,10 @@ describe('an approval holds for what the person saw, and no more', () => {
     expect(bound('bound-press-readable-frame')).toEqual(expect.objectContaining({ code: 'ran', facts: expect.objectContaining({ pressed: 1 }) as unknown }));
   });
 
+  it.each(['fresh-pane-allowed', 'fresh-pane-file'])('%s: a pane with no view yet knows its conversation, so a first navigation is not refused', (name) => {
+    expect(report[name]).toBe('ran');
+  });
+
   it.each(['bound-press-closed-shadow', 'bound-press-foreign-frame'])('%s: a key whose target the host cannot read is void, and nobody is asked', (name) => {
     expect(bound(name)).toEqual(expect.objectContaining({ code: 'approval-void', asked: 0, facts: expect.objectContaining({ pressed: 0 }) as unknown }));
   });
