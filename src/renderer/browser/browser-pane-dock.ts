@@ -48,11 +48,13 @@ export function openBrowserPane(api: DockviewApi, conversationId: string, title:
   const owner = conversationPanel(api, conversationId);
   if (!owner) return false;
   const focused = document.activeElement;
-  api.addPanel({
+  const added = api.addPanel({
     id: browserPanelId(conversationId), component: BROWSER_PANE_COMPONENT, title, renderer: 'always', inactive: true,
     params: { conversationId },
     position: { referencePanel: owner, direction: 'right' },
   });
+  // `inactive` leaves a new group with no panel shown, so the pane would sit empty: it is shown in its own group, which stays inactive.
+  added.group.model.openPanel(added, { skipSetGroupActive: true });
   if (focused instanceof HTMLElement && focused.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   return true;
 }

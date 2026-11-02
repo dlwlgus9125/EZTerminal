@@ -9,9 +9,11 @@ import { openBrowserPane, showConversation } from './browser-pane-dock';
 function dock(params: Record<string, unknown>) {
   const setActive = vi.fn();
   const owner = { id: 'agent-session-1', api: { component: 'agent-session', setActive }, params };
-  const addPanel = vi.fn();
+  const openPanel = vi.fn();
+  const added = { id: 'browser-preview-session-1', group: { model: { openPanel } } };
+  const addPanel = vi.fn(() => added);
   const api = { panels: [owner], getPanel: vi.fn(() => undefined), addPanel } as unknown as DockviewApi;
-  return { api, owner, addPanel, setActive };
+  return { api, owner, addPanel, setActive, added, openPanel };
 }
 
 describe('the pane finds the conversation it belongs to', () => {
@@ -19,6 +21,12 @@ describe('the pane finds the conversation it belongs to', () => {
     const { api, owner, addPanel } = dock({ historyId: 'structured-session-session-1', conversationId: 'codex:catalog-entry-9', projectId: 'project-1' });
     expect(openBrowserPane(api, 'session-1', 'Browser')).toBe(true);
     expect(addPanel).toHaveBeenCalledWith(expect.objectContaining({ params: { conversationId: 'session-1' }, position: { referencePanel: owner, direction: 'right' } }));
+  });
+
+  it('shows the page in its own group without taking the person\'s group: a new group has no shown panel of itself', () => {
+    const { api, added, openPanel } = dock({ historyId: 'structured-session-session-1' });
+    openBrowserPane(api, 'session-1', 'Browser');
+    expect(openPanel).toHaveBeenCalledWith(added, { skipSetGroupActive: true });
   });
 
   it('brings that conversation forward when a decision waits there', () => {
