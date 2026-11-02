@@ -1,0 +1,271 @@
+import { execFile } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { build } from 'vite';
+
+/**
+ * The guards on a real `WebContentsView`, in an Electron of their own: its profile is a scratch folder, its only server is
+ * on loopback, and every `*.example` name maps there. See `browser-view-manager.harness.ts`.
+ */
+
+type Case = { readonly reached: readonly string[]; readonly all: readonly string[]; readonly url: string; readonly blocked: string | null; readonly frames: readonly string[] };
+type Report = Record<string, unknown> & { readonly fatal?: string };
+
+const root = path.resolve(__dirname, '..', '..');
+let scratch: string;
+let report: Report;
+
+beforeAll(async () => {
+  scratch = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'ez-browser-guards-')));
+  const outDir = path.join(scratch, 'bundle');
+  await build({
+    root, configFile: false, logLevel: 'silent',
+    build: {
+      ssr: path.join(root, 'src', 'main', 'browser-view-manager.harness.ts'), outDir, emptyOutDir: true, minify: false,
+      rollupOptions: { external: ['electron'], output: { format: 'es', entryFileNames: 'harness.mjs' } },
+    },
+  });
+  const electron = createRequire(__filename)('electron') as unknown as string;
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  await new Promise<void>((resolve) => {
+    execFile(electron, [path.join(outDir, 'harness.mjs'), '--scratch', scratch], { env, timeout: 150_000 }, () => resolve());
+  });
+  const file = path.join(scratch, 'report.json');
+  report = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as Report : { fatal: 'the harness wrote no report' };
+}, 180_000);
+
+afterAll(() => {
+  rmSync(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+});
+
+const of = (name: string): Case => report[name] as Case;
+
+describe('the harness', () => {
+  it('ran to the end', () => {
+    expect(report.fatal).toBeUndefined();
+    expect(report.done).toBe(true);
+  });
+});
+
+describe('a pane the AI has driven: nothing reaches the site, and the page stays', () => {
+  it.each(['guard-link', 'guard-script', 'guard-redirect-link', 'guard-redirect-tool', 'guard-form', 'guard-window-open', 'guard-target-blank', 'guard-file-link'])('%s', (name) => {
+    expect(of(name).reached).toEqual([]);
+    expect(of(name).url).toContain('/pad');
+  });
+
+  it('guard-meta-refresh: the refresh is stopped on the page that tried it', () => {
+    expect(of('guard-meta-refresh').reached).toEqual([]);
+    expect(of('guard-meta-refresh').url).toContain('/meta');
+  });
+
+  it.each(['guard-iframe', 'guard-iframe-redirect'])('%s: the frame does not load, the page stays', (name) => {
+    expect(of(name).reached).toEqual([]);
+    expect(of(name).url).toContain('/pad');
+  });
+
+  // Without this, a click that never landed would pass every `reached: []` above.
+  it('tells the pane what it stopped: each attempt really happened', () => {
+    for (const name of ['guard-link', 'guard-script', 'guard-redirect-link', 'guard-redirect-tool', 'guard-form', 'guard-window-open', 'guard-target-blank', 'guard-meta-refresh', 'guard-iframe', 'guard-iframe-redirect']) {
+      expect(of(name).blocked, name).toBe('site-not-allowed');
+    }
+  });
+});
+
+describe('a pane no one has ever seen', () => {
+  it('a tool\'s click lands, quickly', () => {
+    expect(report['unseen-click']).toMatchObject({ clicked: 1 });
+    expect((report['unseen-click'] as { ms: number }).ms).toBeLessThan(1_500);
+  });
+
+  it('with the app minimized too', () => {
+    expect(report['unseen-click-minimized']).toMatchObject({ clicked: 1 });
+    expect((report['unseen-click-minimized'] as { ms: number }).ms).toBeLessThan(1_500);
+  });
+
+  it('gives a screenshot', () => {
+    expect(report['unseen-click-shot']).toMatchObject({ empty: false });
+    expect(report['unseen-click-minimized-shot']).toMatchObject({ empty: false });
+  });
+});
+
+describe('what stops the tools lifts no guard', () => {
+  it('a late script after 중지 is refused like any other', () => {
+    expect(of('after-stop').reached).toEqual([]);
+    expect(of('after-stop').url).toContain('/pad');
+  });
+
+  it('중지 refuses the tools for the rest of the turn', () => {
+    expect(report['after-stop-refusal']).toBe('stopped');
+  });
+
+  it('a late script after the turn ends is refused like any other', () => {
+    expect(of('after-turn-end').reached).toEqual([]);
+    expect(of('after-turn-end').url).toContain('/pad');
+  });
+
+  it('a pane closed and opened again in the conversation stays guarded', () => {
+    expect(of('survives-close').reached).toEqual([]);
+    expect(report['survives-close-url']).toContain('/pad');
+  });
+});
+
+describe('only a navigation the person made is excepted', () => {
+  it('the address bar reaches the site, and the page stays unread by the AI', () => {
+    expect(of('person-address-bar').reached).toEqual(['/landed?via=address-bar']);
+    expect(report['person-address-bar-site']).toBe('external');
+    expect(report['person-address-bar-state']).toBe('external');
+  });
+
+  it('the address bar\'s pass covers its own redirect', () => {
+    expect(of('person-address-bar-redirect').reached).toEqual(['/landed?via=person-redirect']);
+  });
+
+  it('a real click on a link while no tool runs', () => {
+    expect(of('person-click').reached).toEqual(['/landed?via=link']);
+  });
+
+  it('not a script a click sets off', () => {
+    expect(of('person-click-script').reached).toEqual([]);
+    expect(of('person-click-script').url).toContain('/pad');
+  });
+
+  it('not a click that lands while a tool runs', () => {
+    expect(of('person-click-while-tool-runs').reached).toEqual([]);
+  });
+
+  it('not a script that waits out the click', () => {
+    expect(of('person-click-then-late-script').reached).toEqual([]);
+  });
+
+  it('not a script clicking a link for itself', () => {
+    expect(of('script-anchor-without-input').reached).toEqual([]);
+  });
+
+  it('a pane no AI has driven is the person\'s', () => {
+    expect(of('never-driven').reached).toEqual(['/landed?via=person-only']);
+  });
+
+  it('a popup to a local page opens here, and no window appears', () => {
+    expect(of('popup-local-opens-here').url).toContain('/landed?via=popup');
+  });
+});
+
+describe('DNS rebinding', () => {
+  it('a name resolving to this PC is cancelled before the request', () => {
+    expect(of('rebind-before-request').reached).toEqual([]);
+    expect(of('rebind-before-request').blocked).toBe('rebind-suspected');
+  });
+
+  it('for what a page pulls in too', () => {
+    expect(of('rebind-subresources').reached).toEqual([]);
+  });
+
+  it('the second layer stops a site that answers from here before its page commits', () => {
+    // The honest residual: this request did reach the server, because the address is known only from the response.
+    expect(of('rebind-second-layer').reached).toEqual(['/landed']);
+    expect(of('rebind-second-layer').blocked).toBe('rebind-suspected');
+    expect(report['rebind-second-layer-page']).toBe('local');
+    expect(of('rebind-second-layer').url).toContain('/pad');
+  });
+
+  it('and tools refuse a site whose page was already up', () => {
+    expect(of('rebind-later-response').blocked).toBe('rebind-suspected');
+    expect(report['rebind-later-page']).toBe('rebind-suspected');
+  });
+
+  it('an allowed site with a public answer loads, its own frames too', () => {
+    expect(report['allowed-loads-site']).toBe('allowed');
+    expect(of('allowed-loads').reached).toEqual(['/with-frames', '/landed?via=own-frame']);
+  });
+
+  it('a revoke applies at once', () => {
+    expect(report['revoked-at-once-site']).toBe('external');
+  });
+});
+
+describe('the app\'s own ports', () => {
+  it('no resource type reaches them, from a local page or from the person', () => {
+    expect(report.controlHits).toBe(0);
+    expect(of('control-script-top').url).toContain('/pad');
+  });
+});
+
+describe('an external top page', () => {
+  it('reaches nothing on this PC, from the first request of the page', () => {
+    expect(of('external-to-local').reached).toEqual(['/reaches-local']);
+    expect(of('external-to-local').all.filter((entry) => entry.includes('pwn'))).toEqual([]);
+  });
+
+  it('keeps its own frames, for the person who went there', () => {
+    expect(of('person-site-own-frames').reached).toEqual(['/with-frames', '/landed?via=own-frame']);
+  });
+});
+
+describe('file pages', () => {
+  it('read their own folder and nothing outside it, for every resource', () => {
+    expect(report['file-fetch-own']).toBe('body{color:red}');
+    expect(report['file-fetch-outside']).toBe('refused');
+    expect(report['file-fetch-junction'], 'a junction out of the folder').toBe('refused');
+    expect(String(report['file-frame'] ?? '')).not.toContain('OUTSIDE-SECRET');
+  });
+
+  it('a person cannot open a file outside the folders either', () => {
+    expect(report['file-outside-person-url']).not.toContain('secret');
+  });
+});
+
+describe('the page\'s world', () => {
+  it('has no preload, no sandbox hole and its own partition', () => {
+    expect(report.preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false, disableDialogs: true, preload: null, webviewTag: false, ownPartition: true });
+    expect((report.world as { globals: unknown }).globals).toEqual({ require: 'undefined', process: 'undefined', ezterminal: 'undefined', electron: 'undefined', module: 'undefined' });
+  });
+
+  it('gets no permission, and no prompt stalls it', () => {
+    const { geolocation, notification, media, display, clipboardRead, clipboardWrite } = report.world as Record<string, string>;
+    expect(geolocation).toBe('denied');
+    expect(notification).toBe('denied');
+    for (const answer of [media, display, clipboardRead, clipboardWrite]) {
+      expect(answer).not.toBe('granted');
+      expect(answer).not.toBe('stalled');
+    }
+  });
+
+  it('cannot stall on a dialog', () => {
+    expect(report.dialogMs).toBeLessThan(1_000);
+  });
+
+  it('has no way out through WebRTC', () => {
+    expect(report.webRtcPolicy).toBe('disable_non_proxied_udp');
+  });
+
+  it('shares no cookies with the app', () => {
+    expect(report.cookies).toEqual({ partition: 1, defaultSession: 0 });
+  });
+
+  it('downloads nothing', () => {
+    expect(report.download).toEqual({ blocked: 'download-blocked', onDisk: [] });
+  });
+});
+
+describe('lifecycle', () => {
+  it('keeps three views live: the oldest hidden one goes, keeping its address', () => {
+    const cap = report.cap as Record<string, { live: boolean; needsReopen: boolean; url: string }>;
+    expect(Object.values(cap).filter((pane) => pane.live)).toHaveLength(3);
+    expect(cap['cap-1']).toMatchObject({ live: false, needsReopen: true });
+    expect(cap['cap-1']!.url).toContain('cap=cap-1');
+    expect(cap['cap-2']!.live, 'used last, so kept').toBe(true);
+  });
+
+  it('never reloads an evicted page by itself', () => {
+    expect(report.capReloads).toEqual(['/landed?cap=cap-5']);
+  });
+
+  it('a crashed page is gone, not hanging', () => {
+    expect(report.crash).toEqual({ page: 'page-gone', fault: 'gone' });
+  });
+});

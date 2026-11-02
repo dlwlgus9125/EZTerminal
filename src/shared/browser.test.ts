@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ApprovalRequest } from './approval-request';
 import {
-  allowableOrigin, BROWSER_TOOLS, browserActionOf, browserActionRequestId, isBrowserActionRequest, isBrowserTool, isControlPortUrl,
+  addressBarUrl, allowableOrigin, BROWSER_TOOLS, browserActionOf, browserActionRequestId, isBrowserActionRequest, isBrowserTool, isControlPortUrl,
   isLocalHostName, looksSecret, siteClass,
 } from './browser';
 
@@ -113,6 +113,25 @@ describe('isLocalHostName', () => {
 
   it.each(['localhost.', 'localhost.evil.example', '[::ffff:7f00:1]', '0.0.0.0', '127.0.0.1.example', 'xlocalhost', '.localhost'])('%s is not', (host) => {
     expect(isLocalHostName(host)).toBe(false);
+  });
+});
+
+describe('addressBarUrl: what the address bar will load', () => {
+  it.each([
+    ['localhost:5173/cart', 'http://localhost:5173/cart'],
+    ['127.0.0.1:3000', 'http://127.0.0.1:3000/'],
+    ['foo.localhost:3000', 'http://foo.localhost:3000/'],
+    ['[::1]:8080/a', 'http://[::1]:8080/a'],
+    ['staging.cart-kit.example/cart', 'https://staging.cart-kit.example/cart'],
+    ['  http://localhost:5173/  ', 'http://localhost:5173/'],
+    ['https://staging.cart-kit.example/', 'https://staging.cart-kit.example/'],
+    ['file:///C:/repo/index.html', 'file:///C:/repo/index.html'],
+  ])('%s is %s', (typed, url) => {
+    expect(addressBarUrl(typed)).toBe(url);
+  });
+
+  it.each(['', '   ', 'javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'view-source:http://localhost/', 'about:blank', 'mailto:a@example.invalid', 'two words'])('refuses %j', (typed) => {
+    expect(addressBarUrl(typed)).toBeUndefined();
   });
 });
 

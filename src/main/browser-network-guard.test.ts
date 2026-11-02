@@ -9,6 +9,7 @@ import {
   fileInsideRoots,
   installBrowserPartitionGuards,
   isPublicAddress,
+  navigationRefusal,
   realRoots,
   requestVerdict,
   type BrowserNetworkGuardHost,
@@ -180,6 +181,47 @@ describe('requestVerdict: every request, whoever made it', () => {
 
   it('refuses what it cannot parse', async () => {
     expect(await requestVerdict(request('http://[bad', 'other'), policy(), environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+  });
+});
+
+describe('navigationRefusal: the view\'s own hooks, first', () => {
+  const ports = new Set([CONTROL_PORT]);
+  const evil = 'http://evil.example/';
+
+  it('stops an external page and frame on a guarded pane, the person\'s exception aside', () => {
+    expect(navigationRefusal(evil, 'top', policy(), ports, false)).toBe('site-not-allowed');
+    expect(navigationRefusal(evil, 'top', policy(), ports, true)).toBeUndefined();
+    expect(navigationRefusal(evil, 'sub', policy(), ports, false)).toBe('site-not-allowed');
+    expect(navigationRefusal(evil, 'sub', policy(), ports, true), 'the exception is for the top page').toBe('site-not-allowed');
+  });
+
+  it('lets local, allowed and same-origin navigations through', () => {
+    expect(navigationRefusal('http://localhost:5173/other', 'top', policy(), ports, false)).toBeUndefined();
+    expect(navigationRefusal(`${ALLOWED}/cart`, 'top', policy(), ports, false)).toBeUndefined();
+    expect(navigationRefusal('https://elsewhere.example/frame', 'sub', policy({ topUrl: 'https://elsewhere.example/' }), ports, false)).toBeUndefined();
+  });
+
+  it('takes the class of a blob or a blank page from the page that made it', () => {
+    expect(navigationRefusal('blob:http://localhost:5173/9e4c', 'top', policy(), ports, false)).toBeUndefined();
+    expect(navigationRefusal('about:blank', 'sub', policy(), ports, false)).toBeUndefined();
+    expect(navigationRefusal('blob:http://evil.example/9e4c', 'top', policy(), ports, false)).toBe('site-not-allowed');
+    expect(navigationRefusal('about:srcdoc', 'sub', policy({ topUrl: 'https://elsewhere.example/' }), ports, false), 'an external page\'s own blank frame is same-origin by class only').toBe('site-not-allowed');
+  });
+
+  it('refuses the app\'s own ports and outside files always, for a person and on an unguarded pane', () => {
+    const open = policy({ guarded: false });
+    expect(navigationRefusal(`http://localhost:${String(CONTROL_PORT)}/`, 'top', open, ports, true)).toBe('site-not-allowed');
+    expect(navigationRefusal(`http://localhost:${String(CONTROL_PORT)}/`, 'sub', open, ports, true)).toBe('site-not-allowed');
+    expect(navigationRefusal('file:///C:/secret.txt', 'top', open, ports, true)).toBe('site-not-allowed');
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'chrome://settings', 'view-source:http://localhost/', 'about:config'])('never lets a top page be %s', (url) => {
+    expect(navigationRefusal(url, 'top', policy({ guarded: false }), ports, true)).toBe('site-not-allowed');
+  });
+
+  it('leaves a pane no AI has driven to the person', () => {
+    expect(navigationRefusal(evil, 'top', policy({ guarded: false }), ports, false)).toBeUndefined();
+    expect(navigationRefusal(evil, 'sub', policy({ guarded: false }), ports, false)).toBeUndefined();
   });
 });
 

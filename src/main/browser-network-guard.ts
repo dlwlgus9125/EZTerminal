@@ -141,6 +141,29 @@ export async function requestVerdict(
   return refuse('site-not-allowed');
 }
 
+/** Where a top page may go at all. `about:` here is what a page makes of itself; the rest of `about:` is the browser's. */
+const TOP_PAGE = /^(?:https?:|file:|blob:|about:blank$|about:srcdoc$)/iu;
+
+/**
+ * Whether a view's own navigation hooks stop this navigation, and why. These run first: a stopped navigation leaves the
+ * page where it was, where a cancelled request would commit an error page at the banned URL. `personMade` is the only
+ * exception, and only for an external top page: the page then stays unread by the AI because its class says so.
+ */
+export function navigationRefusal(
+  url: string,
+  frame: 'top' | 'sub',
+  policy: BrowserViewPolicy,
+  controlPorts: ReadonlySet<number>,
+  personMade: boolean,
+): 'site-not-allowed' | undefined {
+  if (frame === 'top' && !TOP_PAGE.test(url)) return 'site-not-allowed';
+  if (isControlPortUrl(url, controlPorts)) return 'site-not-allowed';
+  if (/^file:/iu.test(url) && !fileInsideRoots(url, policy.roots)) return 'site-not-allowed';
+  if (!policy.guarded) return undefined;
+  if (siteClass(url, policy.allowedOrigins, { creator: policy.topUrl, controlPorts }) !== 'external') return undefined;
+  return (frame === 'top' ? personMade : sameOrigin(url, policy.topUrl)) ? undefined : 'site-not-allowed';
+}
+
 /** The part of a session the guards use, so the tests can hold one. */
 export interface BrowserPartitionSession {
   readonly webRequest: Pick<Electron.WebRequest, 'onBeforeRequest' | 'onResponseStarted'>;

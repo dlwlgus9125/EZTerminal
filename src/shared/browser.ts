@@ -164,6 +164,23 @@ export function siteClass(url: string, allowedOrigins: readonly string[], option
   return allowedOrigins.includes(parsed.origin) ? 'allowed' : 'external';
 }
 
+/**
+ * What the address bar loads: http(s), with the scheme a person leaves out, and a `file:` the host then limits to the
+ * conversation's folders. Nothing that runs (`javascript:`) or shows the browser's own pages.
+ */
+export function addressBarUrl(text: string): string | undefined {
+  const value = text.trim();
+  if (!value) return undefined;
+  const scheme = /^([a-z][a-z0-9+.-]*):/iu.exec(value)?.[1]?.toLowerCase();
+  // `localhost:5173/cart` parses as the scheme `localhost:`: a host and a port are no scheme.
+  const hostAndPort = /^[^/:\s]+:\d+(?:[/?#]|$)/u.test(value);
+  if (scheme && !hostAndPort) return ['http', 'https', 'file'].includes(scheme) && URL.canParse(value) ? new URL(value).href : undefined;
+  if (/\s/u.test(value)) return undefined;
+  const local = /^(?:localhost|.+\.localhost|\[::1\]|127\.\d+\.\d+\.\d+)(?:[:/?#]|$)/iu.test(value);
+  const url = `${local ? 'http' : 'https'}://${value}`;
+  return URL.canParse(url) ? new URL(url).href : undefined;
+}
+
 /** The exact origin a person may allow, or undefined: an http(s) site with no credentials or path, that needs allowing at all. */
 export function allowableOrigin(value: string): string | undefined {
   let parsed: URL;
