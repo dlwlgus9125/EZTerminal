@@ -177,6 +177,11 @@ const REFUSAL_WORDS: Readonly<Record<BrowserRefusal, string>> = {
 /** Between the AI and the page: a stale ref or an empty pane is nothing the person needs to read. */
 const UNREPORTED: ReadonlySet<BrowserRefusal> = new Set(['no-page', 'stale-ref', 'page-gone', 'unattended', 'browser-off']);
 
+/** Addresses are what programs printed: the app has checked none of them, and says so. */
+function printedAddresses(urls: readonly string[]): Readonly<Record<string, string>> {
+  return urls.length > 0 ? { devUrls: quotedData('Addresses printed in terminals and command output, unchecked', urls.join('\n')) } : {};
+}
+
 function refusal(reason: BrowserRefusal, extra: Readonly<Record<string, unknown>> = {}): BrowserToolResult {
   return { content: [{ type: 'text', text: JSON.stringify({ ok: false, code: reason, error: REFUSAL_WORDS[reason], ...extra }) }], isError: true };
 }
@@ -216,7 +221,7 @@ export class BrowserTools {
     } catch (error) {
       if (!(error instanceof BrowserRefused)) throw error;
       this.reportRefusal({ sessionId, turnId }, name, parsed.data, error.reason);
-      return refusal(error.reason, error.reason === 'no-page' ? { devUrls: this.deps.devUrls?.(sessionId) ?? [] } : {});
+      return refusal(error.reason, error.reason === 'no-page' ? printedAddresses(this.deps.devUrls?.(sessionId) ?? []) : {});
     } finally {
       this.deps.pages.endTool(sessionId);
     }

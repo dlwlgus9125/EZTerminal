@@ -1,8 +1,17 @@
 import type { BrowserDevCandidate } from '../shared/browser';
+import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { findDevUrls } from '../shared/dev-server-url';
 
 const KEPT_PER_WORKSPACE = 5;
 const TEXT_TAIL_CHARS = 16_000;
+
+/**
+ * The words in a transcript row that a program printed, or nothing. An allowlist: a web or an MCP tool's output repeats what
+ * anyone wrote, so it could plant a "dev server", and a row with no payload says nothing of what made it.
+ */
+export function devUrlOutput(item: DaemonTranscriptItem): string | undefined {
+  return item.kind === 'tool-result' && !item.isSensitive && item.payload?.type === 'tool' && item.payload.category === 'command' ? item.text : undefined;
+}
 
 /** What a workspace's terminals and AIs last named, in memory: a dev server's address outlives neither it nor the app. */
 export class BrowserDevUrls {

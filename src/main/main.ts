@@ -41,10 +41,10 @@ import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
 import { installFileToolsIpc } from './file-tools-ipc';
-import { BROWSER_CHECK_PRINCIPAL, hostBrowserTool, type BrowserDevCandidate } from '../shared/browser';
+import { BROWSER_CHECK_PRINCIPAL, type BrowserDevCandidate } from '../shared/browser';
 import { BrowserApprovals } from './browser-approvals';
 import { installBrowserIpc } from './browser-ipc';
-import { BrowserDevUrls } from './browser-dev-urls';
+import { BrowserDevUrls, devUrlOutput } from './browser-dev-urls';
 import { insideRoot } from './browser-network-guard';
 import { BrowserRows } from './browser-rows';
 import { BrowserShots } from './browser-shots';
@@ -4831,9 +4831,8 @@ app.on('ready', async () => {
       const { sessionId, fromSequence, toSequence } = event.payload;
       const workspaceId = router?.getSnapshot().sessions.find((entry) => entry.id === sessionId)?.workspaceId;
       for (const item of workspaceId ? router?.getTranscript(sessionId, fromSequence - 1, toSequence - fromSequence + 1) ?? [] : []) {
-        // A page's words are not the AI's output: a browser tool's own result names nothing to offer.
-        if (item.kind !== 'tool-result' || (item.payload?.type === 'tool' && hostBrowserTool(item.payload.name, item.payload.server))) continue;
-        browserDevUrls.addFromText(workspaceId!, item.text, 'ai');
+        const output = devUrlOutput(item);
+        if (output !== undefined) browserDevUrls.addFromText(workspaceId!, output, 'ai');
       }
       return;
     }

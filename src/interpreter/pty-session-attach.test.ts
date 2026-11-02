@@ -87,7 +87,7 @@ describe('runPtySession — local addresses a terminal prints', () => {
     say('  Local: http://localhost:5173/\n');
     say('\u001b[?1049h');
     say('https://example.com/ and http://127.0.0.1:8000/\n');
-    expect(found).toEqual(['http://localhost:5173/', 'http://127.0.0.1:8000/']);
+    expect(found).toEqual(['http://localhost:5173', 'http://127.0.0.1:8000']);
   });
 
   it('costs nothing when nobody asks', () => {

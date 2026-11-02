@@ -1,8 +1,42 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { BrowserDevUrls } from './browser-dev-urls';
+import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
+import { BrowserDevUrls, devUrlOutput } from './browser-dev-urls';
 
-const url = (port: number): string => `http://localhost:${String(port)}/`;
+const url = (port: number): string => `http://localhost:${String(port)}`;
+
+describe('devUrlOutput: what counts as a program having printed an address', () => {
+  const result = (patch: Partial<DaemonTranscriptItem>): DaemonTranscriptItem => ({
+    id: 'r', sessionId: 'chat', sequence: 1, kind: 'tool-result', text: 'Local: http://localhost:5173/', isDelta: false, isSensitive: false, createdAt: '2026-11-02T00:00:00.000Z',
+    payload: { v: 1, type: 'tool', callId: 'c', name: 'Bash', category: 'command', phase: 'result' }, ...patch,
+  });
+  const tool = (category: string, name = 'tool'): Partial<DaemonTranscriptItem> => ({ payload: { v: 1, type: 'tool', callId: 'c', name, category, phase: 'result' } as DaemonTranscriptItem['payload'] });
+
+  it('is a command\'s output', () => {
+    expect(devUrlOutput(result({}))).toBe('Local: http://localhost:5173/');
+  });
+
+  it.each(['web', 'mcp', 'read', 'search', 'list', 'edit', 'write', 'agent'])('is not a %s tool\'s: it can repeat what anyone wrote', (category) => {
+    expect(devUrlOutput(result(tool(category)))).toBeUndefined();
+  });
+
+  it('is nothing with no payload to say what made it', () => {
+    const plain = JSON.parse(JSON.stringify({ ...result({}), payload: undefined })) as DaemonTranscriptItem;
+    expect(devUrlOutput(plain)).toBeUndefined();
+  });
+
+  it('is nothing from another kind of payload', () => {
+    expect(devUrlOutput(result({ payload: { v: 1, type: 'todo', items: [] } as unknown as DaemonTranscriptItem['payload'] }))).toBeUndefined();
+  });
+
+  it('is nothing from a sensitive row', () => {
+    expect(devUrlOutput(result({ isSensitive: true }))).toBeUndefined();
+  });
+
+  it.each(['tool-call', 'assistant-message', 'user-message', 'notice'] as const)('is nothing from a %s', (kind) => {
+    expect(devUrlOutput(result({ kind }))).toBeUndefined();
+  });
+});
 
 describe('BrowserDevUrls', () => {
   it('lists the latest first, with where each was seen', () => {
