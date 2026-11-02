@@ -94,7 +94,7 @@
 - 주소 찾기에서 주소창은 빠졌고, AI 출력은 민감하지 않은 `command` 결과만 읽는다.
 - 망 막기는 "도구가 붙었을 때"가 아니라 늘 켜져 있고, 응답 주소 확인은 허용한 사이트만이 아니라 로컬이 아닌 모든 이름에 적용된다. 로컬 페이지 안의 외부 프레임도 거절한다.
 - 허용 목록은 safeStorage로 봉해 쓰고 시작할 때 한 번만 읽는다(계획에 없음, 보안 검수 B5).
-- 계획의 `scripts/guard-in-app-browser.mjs`는 만들지 않았다. 파티션·`disableDialogs`·preload 없음·`openExternal`은 OS 테스트와 단위 테스트가 지킨다.
+- 계획의 `scripts/guard-in-app-browser.mjs`는 묶음 끝 검사 뒤에 만들었다(`pnpm guard:in-app-browser`, `pnpm test`에 포함). 소스를 읽어 뷰 설정(sandbox·격리·node 없음·webview 없음·별도 파티션·`disableDialogs`·preload 없음), 파티션 단독 사용, `openExternal` 없음, 새 창 거절, 이동 검사 세 가지, 파티션의 권한·장치·다운로드 거절과 요청 검사를 고정한다. 설정을 하나씩 깨는 변형 12개를 모두 잡는 것을 확인했다. 동작 자체는 여전히 OS 테스트와 단위 테스트가 지킨다.
 
 ## 재지 못한 것
 

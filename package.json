@@ -21,7 +21,7 @@
     "lint": "eslint --ext .ts,.tsx .",
     "typecheck": "tsc --noEmit && pnpm typecheck:mobile-e2e",
     "typecheck:mobile-e2e": "tsc -p mobile/tsconfig.e2e.json --noEmit",
-    "test": "pnpm docs:check && pnpm project-map:check && pnpm test:unit && pnpm test:os && pnpm guard:approval-privacy && pnpm guard:side-question-privacy && pnpm guard:agent-cli-remote && pnpm guard:pairing-offline && pnpm guard:design-style && pnpm guard:design-reference && pnpm guard:claude-provider && pnpm guard:secure-storage",
+    "test": "pnpm docs:check && pnpm project-map:check && pnpm test:unit && pnpm test:os && pnpm guard:approval-privacy && pnpm guard:side-question-privacy && pnpm guard:agent-cli-remote && pnpm guard:pairing-offline && pnpm guard:design-style && pnpm guard:design-reference && pnpm guard:claude-provider && pnpm guard:secure-storage && pnpm guard:in-app-browser",
     "docs:check": "node scripts/check-docs.mjs",
     "project-map:check": "node scripts/check-project-maps.mjs",
     "project-map:profile": "node scripts/profile-project-map.mjs",
@@ -54,6 +54,7 @@
     "guard:design-reference": "node scripts/guard-design-reference.mjs",
     "guard:claude-provider": "node scripts/guard-claude-provider.mjs",
     "guard:secure-storage": "node scripts/guard-secure-storage.mjs",
+    "guard:in-app-browser": "node scripts/guard-in-app-browser.mjs",
     "verify:mobile-release": "node scripts/verify-no-e2e-markers.mjs mobile/dist"
   },
   "keywords": [],
