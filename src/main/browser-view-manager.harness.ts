@@ -20,6 +20,8 @@ app.setPath('userData', path.join(scratch, 'profile'));
 app.setPath('sessionData', path.join(scratch, 'profile'));
 app.setPath('downloads', path.join(scratch, 'downloads'));
 app.commandLine.appendSwitch('host-resolver-rules', 'MAP *.example 127.0.0.1, MAP gone.test ~NOTFOUND');
+// A service worker needs a secure context: this stands in for an https site, which loopback here does not have.
+app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', '*.sw.example');
 
 const SETTLE_MS = 400;
 const delay = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -38,6 +40,31 @@ function pad(evil: string, base: string, outsideFile: string): string {
 <form id=form method=post action="${evil}/landed?via=form" style="position:fixed;left:10px;top:170px"><button id=post style="font-size:22px">send</button></form>
 <button id=scripted style="position:fixed;left:10px;top:230px;font-size:22px" onclick="location.href='${evil}/landed?via=click-script'">scripted</button>`;
 }
+
+/** Scoped to its folder: a controlled page must not leak into the cases after it. */
+const WORKERS_PAGE = `<!doctype html><title>workers</title><script>
+const within=(promise)=>Promise.race([promise,new Promise((ok)=>setTimeout(()=>ok('no answer'),2500))]);
+window.register=()=>within(navigator.serviceWorker.register('sw.js',{scope:'./'}).then(()=>navigator.serviceWorker.ready).then(async()=>{
+  for(let i=0;i<60&&!navigator.serviceWorker.controller;i+=1)await new Promise((ok)=>setTimeout(ok,50));
+  return navigator.serviceWorker.controller?'controlled':'active';
+}).catch(()=>'refused'));
+window.askWorker=(url,init)=>within(new Promise((ok)=>{
+  navigator.serviceWorker.addEventListener('message',(e)=>ok(e.data),{once:true});
+  navigator.serviceWorker.controller.postMessage({url,init});
+}));
+const answer='onconnect=(e)=>{const p=e.ports[0];p.onmessage=(m)=>fetch(m.data,{mode:"no-cors"}).then(()=>p.postMessage("reached"),()=>p.postMessage("refused"))}';
+window.shared=(url,source)=>within(new Promise((ok)=>{
+  const worker=new SharedWorker(source??URL.createObjectURL(new Blob([answer],{type:'text/javascript'})));
+  worker.port.onmessage=(e)=>ok(e.data);
+  worker.onerror=()=>ok('refused');
+  worker.port.postMessage(url);
+}));
+</script>`;
+const SERVICE_WORKER = `self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',(e)=>e.waitUntil(clients.claim()));
+self.addEventListener('message',(e)=>fetch(e.data.url,e.data.init).then(()=>e.source.postMessage('reached'),()=>e.source.postMessage('refused')));
+self.addEventListener('fetch',(e)=>{if(e.request.url.includes('through-worker'))e.respondWith(fetch(e.request))});`;
+const SHARED_WORKER = 'onconnect=(e)=>{const p=e.ports[0];p.onmessage=(m)=>fetch(m.data,{mode:"no-cors"}).then(()=>p.postMessage("reached"),()=>p.postMessage("refused"))}';
 
 function startServer(record: Hit[], respond: (url: URL, response: http.ServerResponse, port: number) => boolean): Promise<http.Server> {
   const server = http.createServer((request, response) => {
@@ -90,6 +117,15 @@ async function main(): Promise<void> {
 <script>fetch('${base}/pwn-fetch',{mode:'no-cors'}).catch(()=>0);navigator.sendBeacon('${base}/pwn-beacon','x')</script>`);
       case '/with-frames':
         return html(response, `<!doctype html><title>t</title><iframe src="/landed?via=own-frame"></iframe>`);
+      case '/workers/page': return html(response, WORKERS_PAGE);
+      case '/workers/sw.js':
+        response.writeHead(200, { 'content-type': 'text/javascript' });
+        response.end(SERVICE_WORKER);
+        return true;
+      case '/workers/shared.js':
+        response.writeHead(200, { 'content-type': 'text/javascript' });
+        response.end(SHARED_WORKER);
+        return true;
       case '/with-cousin':
         return html(response, `<!doctype html><title>t</title><p>TOP-TEXT</p><iframe src="${url.searchParams.get('frame') ?? ''}"></iframe>`);
       case '/frame-text':
@@ -125,7 +161,7 @@ console.log('page says hello');setTimeout(()=>{throw new Error('thrown here')},0
   const controlBase = `http://127.0.0.1:${String(controlPort)}`;
 
   // Stands in for a site whose public DNS answer differs from where the connection goes. Everything else is the real resolver.
-  const publicNames = new Set(['evil', 'allowed', 'other', 'second', 'later', 'wide', 'clean', 'live', 'visit', 'flip', 'split', 'sub.split'].map((name) => `${name}.example`));
+  const publicNames = new Set(['evil', 'allowed', 'other', 'second', 'later', 'wide', 'clean', 'live', 'visit', 'flip', 'split', 'sub.split', 'a.sw'].map((name) => `${name}.example`));
   let secondLayer = false;
   const partition = session.fromPartition(BROWSER_PARTITION);
   const wrapped: BrowserPartitionSession = {
@@ -592,6 +628,26 @@ try{new WebSocket(e.replace('http','ws')+'/ws')}catch{}`;
   // An external top page reaches for this PC.
   await record('external-to-local', async (id) => { await manager.navigateAsPerson(id, `${evil}/reaches-local`); });
   await record('person-site-own-frames', async (id) => { await manager.navigateAsPerson(id, `${evil}/with-frames`); });
+
+  // What runs with no frame. The worker's own answer says what it managed; the server's log says what really arrived.
+  const fromPage = (contents: WebContents, code: string): Promise<unknown> => contents.executeJavaScript(code, true) as Promise<unknown>;
+  await record('worker-external-service', async (_id, contents) => {
+    report['worker-external-secure'] = await fromPage(contents, 'isSecureContext');
+    report['worker-external-service-answer'] = await fromPage(contents, 'register()');
+  }, (id) => open(id, `${siteOn('a.sw')}/workers/page?service`));
+  await record('worker-external-shared', async (_id, contents) => {
+    report['worker-external-shared-answer'] = await fromPage(contents, `shared(${JSON.stringify(`${base}/shared-external`)})`);
+  }, (id) => open(id, `${evil}/workers/page?shared`));
+  await record('worker-local', async (_id, contents) => {
+    report['worker-local-service'] = await fromPage(contents, 'register()');
+    report['worker-local-reach'] = await fromPage(contents, `askWorker(${JSON.stringify(`${base}/sw-reaches-local`)},{mode:'no-cors'})`);
+    report['worker-local-through'] = await fromPage(contents, `fetch('through-worker').then((r)=>r.status,()=>'refused')`);
+    report['worker-local-no-referrer'] = await fromPage(contents, `askWorker(${JSON.stringify(`${base}/sw-no-referrer`)},{mode:'no-cors',referrerPolicy:'no-referrer'})`);
+    report['worker-local-outside'] = await fromPage(contents, `askWorker(${JSON.stringify(`${siteOn('clean')}/sw-outside`)},{mode:'no-cors'})`);
+    report['worker-local-shared'] = await fromPage(contents, `shared(${JSON.stringify(`${base}/shared-local`)},'shared.js')`);
+    report['worker-local-control'] = await fromPage(contents, `askWorker(${JSON.stringify(`${controlBase}/sw-control`)},{mode:'no-cors'})`);
+  }, (id) => open(id, `${base}/workers/page?local`));
+  report.controlHitsAfterWorkers = controlHits.length;
 
   // file: pages.
   await record('file-inside', async (_id, contents) => {

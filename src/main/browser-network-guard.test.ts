@@ -207,12 +207,39 @@ describe('requestVerdict: every request, whoever made it', () => {
     expect(await requestVerdict(request('http://evil.example/', 'subFrame'), policy({ guarded: false }), env)).toEqual({ cancel: false });
   });
 
-  describe('a request no pane owns (a service worker)', () => {
-    it('may reach this PC and nothing else', async () => {
+  describe('a request no pane owns: a worker, or a page already gone', () => {
+    const fromPage = (url: string, referrer: string) => ({ ...request(url, 'xhr'), referrer });
+
+    it('reaches this PC only when a local page started it', async () => {
+      const env = environment();
+      expect(await requestVerdict(fromPage('http://localhost:5173/api', 'http://localhost:5173/sw.js'), undefined, env)).toEqual({ cancel: false });
+      expect(await requestVerdict(fromPage('http://127.0.0.1:8000/api', 'http://localhost:5173/'), undefined, env)).toEqual({ cancel: false });
+    });
+
+    it.each([
+      ['no referrer: a blob worker sends none', ''],
+      ['an external page', 'https://evil.example/'],
+      ['an allowed site: local is for local pages', ALLOWED],
+      ['what cannot be read', 'not a url'],
+      ['a name that only looks local', 'http://localhost.evil.example/'],
+    ])('fails closed on %s', async (_name, referrer) => {
+      expect(await requestVerdict(fromPage('http://127.0.0.1:5173/admin', referrer), undefined, environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('fails closed with no referrer given at all', async () => {
+      expect(await requestVerdict(request('http://localhost:5173/admin', 'xhr'), undefined, environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
+    });
+
+    it('reaches nothing else, whoever started it', async () => {
       const env = environment({ 'evil.example': [PUBLIC] });
-      expect(await requestVerdict(request('http://localhost:5173/sw.js', 'script'), undefined, env)).toEqual({ cancel: false });
-      expect(await requestVerdict(request('http://evil.example/exfil', 'xhr'), undefined, env)).toEqual({ cancel: true, reason: 'site-not-allowed' });
-      expect(await requestVerdict(request('file:///C:/secret.txt', 'xhr'), undefined, env)).toEqual({ cancel: true, reason: 'file-outside' });
+      expect(await requestVerdict(fromPage('http://evil.example/exfil', 'http://localhost:5173/'), undefined, env)).toEqual({ cancel: true, reason: 'site-not-allowed' });
+      expect(await requestVerdict(fromPage('file:///C:/secret.txt', 'http://localhost:5173/'), undefined, env)).toEqual({ cancel: true, reason: 'file-outside' });
+    });
+
+    it('never reaches the app\'s own ports from a local page either', async () => {
+      const port = String(CONTROL_PORT);
+      expect(await requestVerdict(fromPage(`http://localhost:${port}/mcp`, 'http://localhost:5173/'), undefined, environment())).toEqual({ cancel: true, reason: 'control-port' });
+      expect(await requestVerdict(fromPage('http://localhost:5173/', `http://localhost:${port}/`), undefined, environment())).toEqual({ cancel: true, reason: 'site-not-allowed' });
     });
   });
 
@@ -438,6 +465,13 @@ describe('installBrowserPartitionGuards', () => {
     expect(response).toEqual({ cancel: true });
     expect(fake.resolveHost).toHaveBeenCalledWith('rebind.example');
     expect(onBlocked).toHaveBeenCalledWith(3, { url: 'http://rebind.example/', resourceType: 'mainFrame', reason: 'rebind-suspected' });
+  });
+
+  it('judges a request no pane owns by the referrer Electron gives it', async () => {
+    const { session, fake } = fakeSession();
+    installBrowserPartitionGuards(session, host({ policyFor: () => undefined }));
+    expect(await before(fake, { url: 'http://localhost:5173/api', resourceType: 'xhr', referrer: 'http://localhost:5173/sw.js' })).toEqual({});
+    expect(await before(fake, { url: 'http://localhost:5173/api', resourceType: 'xhr', referrer: '' })).toEqual({ cancel: true });
   });
 
   it('tells the host a person\'s page is on its way, and only that', async () => {

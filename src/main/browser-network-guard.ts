@@ -116,9 +116,14 @@ export interface BrowserRequestEnvironment {
   readonly resolve: (host: string) => Promise<readonly string[]>;
 }
 
-/** One request. `policy` is undefined when no pane owns it: a service worker, or a pane already gone. */
+/**
+ * One request. `policy` is undefined when no pane owns it: a service or shared worker, or a pane already gone. Measured: an
+ * external site gets no service worker, because its script request is one of these, but its page's `blob:` shared worker
+ * needs no script and runs on plain http, sends no referrer, and went straight to loopback. So nothing owned by no pane
+ * reaches this PC on its name alone: only what a local page started, by a referrer no worker can forge across origins.
+ */
 export async function requestVerdict(
-  request: { readonly url: string; readonly resourceType: string },
+  request: { readonly url: string; readonly resourceType: string; readonly referrer?: string },
   policy: BrowserViewPolicy | undefined,
   environment: BrowserRequestEnvironment,
 ): Promise<BrowserRequestVerdict> {
@@ -133,9 +138,12 @@ export async function requestVerdict(
   if (parsed.protocol === 'file:') return policy && fileInsideRoots(url, policy.roots) ? PASS : refuse('file-outside');
   if (!['http:', 'https:', 'ws:', 'wss:'].includes(parsed.protocol)) return refuse('site-not-allowed');
   if (isControlPortUrl(url, environment.controlPorts)) return refuse('control-port');
+  if (!policy) {
+    const fromLocalPage = siteClass(request.referrer ?? '', [], { controlPorts: environment.controlPorts }) === 'local';
+    return isLocalHostName(parsed.hostname) && fromLocalPage ? PASS : refuse('site-not-allowed');
+  }
   const top = resourceType === 'mainFrame';
-  if (isLocalHostName(parsed.hostname)) return policy?.topExternal === true && !top ? refuse('site-not-allowed') : PASS;
-  if (!policy) return refuse('site-not-allowed');
+  if (isLocalHostName(parsed.hostname)) return policy.topExternal && !top ? refuse('site-not-allowed') : PASS;
   // Before the resolver: a clean answer now says nothing about the address it answered from before.
   if (!(top && policy.personNavigating) && policy.suspectOrigins.has(originOf(url))) return refuse('rebind-suspected');
 
@@ -229,10 +237,10 @@ export function installBrowserPartitionGuards(session: BrowserPartitionSession, 
 
   const resolve = async (name: string): Promise<readonly string[]> => (await session.resolveHost(name)).endpoints.map((endpoint) => endpoint.address);
   session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
-    const { url, resourceType, webContentsId } = details;
+    const { url, resourceType, webContentsId, referrer } = details;
     void (async () => {
       const policy = host.policyFor(webContentsId);
-      const verdict = await requestVerdict({ url, resourceType }, policy, { controlPorts: host.controlPorts(), resolve });
+      const verdict = await requestVerdict({ url, resourceType, referrer }, policy, { controlPorts: host.controlPorts(), resolve });
       if (verdict.cancel) host.onBlocked(webContentsId, { url, resourceType, reason: verdict.reason });
       else if (resourceType === 'mainFrame' && policy?.personNavigating) host.onPersonNavigation(webContentsId, url);
       return verdict.cancel;

@@ -383,6 +383,47 @@ describe('an external top page', () => {
   });
 });
 
+describe('what runs with no frame', () => {
+  it('an external site gets no service worker', () => {
+    expect(report['worker-external-secure'], 'the site could have had one').toBe(true);
+    expect(report['worker-external-service-answer']).toBe('refused');
+    expect(of('worker-external-service').all).toEqual([]);
+  });
+
+  it('an external page\'s worker reaches nothing on this PC', () => {
+    expect(report['worker-external-shared-answer']).toBe('refused');
+    expect(of('worker-external-shared').all).toEqual([]);
+  });
+
+  it('a local app keeps its service worker, and it reaches this PC', () => {
+    expect(report['worker-local-service']).toBe('controlled');
+    expect(report['worker-local-reach']).toBe('reached');
+    expect(of('worker-local').all).toContain('/sw-reaches-local');
+  });
+
+  it('and a page\'s own request through that worker', () => {
+    expect(report['worker-local-through']).toBe(200);
+    expect(of('worker-local').all).toContain('/workers/through-worker');
+  });
+
+  it('and its shared worker', () => {
+    expect(report['worker-local-shared']).toBe('reached');
+    expect(of('worker-local').all).toContain('/shared-local');
+  });
+
+  it('a local worker that hides where it came from fails closed', () => {
+    expect(report['worker-local-no-referrer']).toBe('refused');
+    expect(of('worker-local').all).not.toContain('/sw-no-referrer');
+  });
+
+  it('a local worker still reaches nothing outside, and not the app\'s own ports', () => {
+    expect(report['worker-local-outside']).toBe('refused');
+    expect(of('worker-local').all).not.toContain('/sw-outside');
+    expect(report['worker-local-control']).toBe('refused');
+    expect(report.controlHitsAfterWorkers).toBe(report.controlHits);
+  });
+});
+
 describe('file pages', () => {
   it('read their own folder and nothing outside it, for every resource', () => {
     expect(report['file-fetch-own']).toBe('body{color:red}');
